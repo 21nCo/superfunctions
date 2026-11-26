@@ -2553,3 +2553,170 @@ describe("httpExecutor Range, beside which undici rewrites Accept-Encoding", () 
     expect(create).not.toThrow(/bytes=0-1/);
   });
 });
+
+describe("httpExecutor HTML named references a non-ASCII credential form may hide in", () => {
+  const cookie = { cookie: "session=test-%C3%A9-cookie" };
+  const body = "<p>test-&eacute;-cookie</p>";
+  const run = (headers: Record<string, string>, status: number) =>
+    execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        headers,
+        fetch: stubFetch(() => new Response(body, { status, headers: { "content-type": "text/html" } })).fetch,
+      }),
+      operationOf("echo"),
+    );
+
+  it("withholds an error body and a success body that spell the decoded cookie with a reference it does not decode", async () => {
+    expect(text(await run(cookie, 500))).toBe("The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]");
+    expect(text(await run(cookie, 200))).toContain("reveals an operator credential and was withheld");
+  });
+
+  it("returns such a body unchanged when every credential form is ASCII", async () => {
+    const headers = { "x-api-key": "test-operator-key" };
+    expect(text(await run(headers, 500))).toBe(`The API responded with HTTP 500.\n\n${body}`);
+    expect(text(await run(headers, 200))).toBe(body);
+  });
+});
+
+describe("httpExecutor JSON error bodies read as they serialize", () => {
+  const headers = { "x-cfg": '{"label":"test-key"}' };
+  const run = (body: string) =>
+    execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        headers,
+        fetch: stubFetch(() => new Response(body, { status: 500, headers: { "content-type": "application/json" } })).fetch,
+      }),
+      operationOf("echo"),
+    );
+
+  it("withholds a spaced JSON body whose compact serialization echoes a credential, as a success body is", async () => {
+    expect(text(await run('{ "label": "test-key" }'))).toBe("The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]");
+  });
+
+  it("still redacts a compact JSON body's literal echo", async () => {
+    expect(text(await run('{"label":"test-key"}'))).toBe("The API responded with HTTP 500.\n\n[REDACTED]");
+  });
+
+  it("returns a spaced JSON body unchanged when it reveals no credential", async () => {
+    const body = '{ "label": "other" }';
+    expect(text(await run(body))).toBe(`The API responded with HTTP 500.\n\n${body}`);
+  });
+});
+
+describe("httpExecutor request bodies under an operator Content-Type", () => {
+  const documentWith = (content: Record<string, unknown>) => ({
+    openapi: "3.1.0",
+    info: { title: "fixed-content-type", version: "1.0.0" },
+    paths: { "/p": { post: { operationId: "p", requestBody: { required: true, content }, responses: ok } } },
+  });
+  const entry = (property: string) => ({ schema: { type: "object", required: [property], properties: { [property]: { type: "string" } } } });
+  const headers = { "Content-Type": "application/example+json" };
+
+  it("chooses the documented entry the operator's record Content-Type can label, and sends it", async () => {
+    const sent: Array<{ contentType: string | null; body: unknown }> = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push({ contentType: new Headers(init?.headers).get("content-type"), body: init?.body });
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    const { registry, tools } = fromOpenAPI(documentWith({ "application/json": entry("first"), "application/example+json": entry("second") }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers, fetch }),
+      allowMutations: true,
+    });
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/example+json" });
+    const result = await registry.callTool("p", { body: { second: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent).toEqual([{ contentType: "application/example+json", body: '{"second":"value"}' }]);
+  });
+
+  it("keeps listing an operation whose only entry conflicts, and refuses its call before fetch", async () => {
+    // With no entry the Content-Type can label, every entry is kept (a call without a body may still be made), so the
+    // operation stays listed and a call with a body is refused, as before the entry was chosen this way.
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const { registry, tools, skipped } = fromOpenAPI(documentWith({ "application/json": entry("first") }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers, fetch }),
+      allowMutations: true,
+    });
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json" });
+    const result = await registry.callTool("p", { body: { first: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Content-Type header does not match");
+    expect(urls).toEqual([]);
+  });
+});
+
+describe("httpExecutor path templates a URL parser rewrites", () => {
+  const documentWith = (path: string) => ({
+    openapi: "3.1.0",
+    info: { title: "path-template", version: "1.0.0" },
+    paths: {
+      [path]: {
+        get: {
+          operationId: "op",
+          parameters: path.includes("{id}") ? [{ name: "id", in: "path", required: true, schema: { type: "string" } }] : [],
+          responses: ok,
+        },
+      },
+    },
+  });
+
+  it.each([["/a b/x"], ["/café/{id}"]])("skips %s, which no call could send as written", (path) => {
+    const { tools, skipped } = fromOpenAPI(documentWith(path), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([{ code: "unsupported-by-executor", reason: "the operation path cannot be sent as written" }]);
+  });
+
+  it("still lists and sends a plain template", async () => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const { registry, skipped } = fromOpenAPI(documentWith("/items/{id}"), { executor: httpExecutor({ baseUrl: `${api.origin}/v1`, fetch }) });
+    expect(skipped).toEqual([]);
+    const result = await registry.callTool("op", { path: { id: "a b" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(urls).toEqual([`${api.origin}/v1/items/a%20b`]);
+  });
+});
+
+describe("httpExecutor security scheme $ref chains", () => {
+  const documentWith = (schemes: Record<string, unknown>, names: string[]) => ({
+    openapi: "3.1.0",
+    info: { title: "scheme-chains", version: "1.0.0" },
+    components: { securitySchemes: schemes },
+    paths: {
+      "/a": { get: { operationId: "a", security: names.map((name) => ({ [name]: [] })), responses: ok } },
+      "/b": { get: { operationId: "b", security: [], responses: ok } },
+    },
+  });
+  const ref = (name: string) => ({ $ref: `#/components/securitySchemes/${name}` });
+
+  it("resolves each name of a long chain once, so every alias listed as an alternative stays within the budgets", () => {
+    const count = 5000;
+    const schemes: Record<string, unknown> = { [`s${count - 1}`]: { type: "http", scheme: "bearer" } };
+    for (let index = 0; index < count - 1; index += 1) schemes[`s${index}`] = ref(`s${index + 1}`);
+    const names = Array.from({ length: count }, (_, index) => `s${index}`);
+    const started = performance.now();
+    const { tools, skipped } = fromOpenAPI(documentWith(schemes, names), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(skipped).toEqual([]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["a", "b"]);
+    expect(Object.keys(tools.find((tool) => tool.name === "a")!.operation.securitySchemes!)).toHaveLength(count);
+  });
+
+  it("still resolves a cyclic chain to no scheme, from any of its names", () => {
+    const { tools, skipped } = fromOpenAPI(documentWith({ c0: ref("c1"), c1: ref("c2"), c2: ref("c1") }, ["c0"]), {
+      executor: httpExecutor({ baseUrl: api.origin }),
+    });
+    expect(tools.map((tool) => tool.name)).toEqual(["b"]);
+    expect(skipped).toMatchObject([
+      {
+        code: "unsupported-by-executor",
+        reason: 'the security scheme "c0" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+      },
+    ]);
+    const second = fromOpenAPI(documentWith({ c0: ref("c1"), c1: ref("c2"), c2: ref("c1") }, ["c2"]), {
+      executor: httpExecutor({ baseUrl: api.origin }),
+    });
+    expect(second.tools.map((tool) => tool.name)).toEqual(["b"]);
+  });
+});

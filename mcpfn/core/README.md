@@ -256,7 +256,8 @@ for (const { operation, code, reason } of skipped) {
   the operation, path item and document, else `[{ url: "/" }]`.
 - **Security.** `operation.security` is the operation's requirement list,
   else the document's, and `operation.securitySchemes` holds the schemes it
-  names that `components.securitySchemes` defines (`$ref` followed), each as
+  names that `components.securitySchemes` defines (`$ref` followed, each
+  name resolved at most once per conversion), each as
   `{ type, name?, in?, scheme? }`. Credentials are the executor's job (D9):
   a parameter an `apiKey` scheme of the operation sends its credential in
   (header, query or cookie) is never a tool input, whatever the executor.
@@ -300,7 +301,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   schema-valid `null` empty), so `/`, `?` and `#` stay inside their segment.
   A call whose templated segment would be empty, `.` or `..`, or whose path
   a URL parser would rewrite (such as a template with a backslash), is
-  refused with an `isError` result before anything is sent. Query
+  refused with an `isError` result before anything is sent; an operation
+  whose template text outside its `{name}` parts a URL parser would rewrite
+  (such as `/a b` or `/café`) is skipped as `unsupported-by-executor`, by the
+  same check. Query
   parameters use `form` style, arrays repeating the key; with
   `allowReserved`, `:/?@$,;[]` are sent as they are while `&`, `=`, `+` and
   `#` stay encoded so a value cannot add parameters. A `null` query or
@@ -340,7 +344,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   refused, so only an explicit `{}` sends no operator headers. An operator
   `Content-Type` is sent as written with a JSON body only when its media
   type is the operation's documented one and any charset it names is UTF-8;
-  otherwise the call is refused before it is sent. The tool input offers only what the executor sends: the
+  otherwise the call is refused before it is sent. With such a `Content-Type`
+  in a record, the request body is chosen among the documented JSON entries
+  it can label, by the same rule; when none can, the operation stays listed
+  (a call without a body can still be made) and a call with a body is refused. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, and the headers undici
@@ -365,7 +372,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   JSON escapes, percent escapes (also with `+` for a space) or HTML character
   references as HTML decodes them (numeric references and every named
   reference to an ASCII character, with or without the closing `;` where HTML
-  allows it), one or two of these, in either order. A body is decoded in
+  allows it), one or two of these, in either order. When a credential form
+  has a non-ASCII character (a percent-decoded cookie value), any named
+  reference left undecoded (such as `&eacute;`) counts as an echo. A body is decoded in
   the encoding it marks or declares (a UTF-16 or UTF-8 byte order mark,
   else the `Content-Type` charset, read with quoted values respected, else
   UTF-8) and checked in that text, also with any NUL characters removed,
@@ -383,7 +392,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   reveals a credential is redacted only when it is plain, so its literal
   text is its only reading: UTF-8 that decodes cleanly, with no NUL and no
   byte order mark, no JSON escape, percent escape, `+` or HTML reference,
-  every JSON number written as it parses, and no UTF-16 form of a
+  JSON written as its compact serialization (the reading a success body is
+  checked in) with every number written as it parses, and no UTF-16 form of a
   credential in its bytes. Its literal echoes (overlapping and adjacent ones
   merged) are then shown as `[REDACTED]`, never cut inside one, and the body
   with them masked, and the excerpt as returned, must reveal nothing. Any

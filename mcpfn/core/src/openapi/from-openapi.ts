@@ -572,13 +572,21 @@ class OperationConverter {
     return result;
   }
 
-  /** A security scheme of `components.securitySchemes`, its `$ref` chain followed; a chain that ends nowhere gives none. */
+  /**
+   * A security scheme of `components.securitySchemes`, its `$ref` chain
+   * followed; a chain that ends nowhere (a cycle, a missing or external
+   * target) gives none. Every name the walk passes resolves as the name it
+   * started from, so each outcome is recorded for all of them and no name is
+   * walked twice in a conversion: the work is linear in the number of schemes.
+   */
   private securityScheme(name: string): OpenApiSecurityScheme | undefined {
     const known = this.schemeOutcomes.get(name);
     if (known !== undefined) return known ?? undefined;
     const section = isObject(this.components.securitySchemes) ? this.components.securitySchemes : {};
     let current: unknown = Object.hasOwn(section, name) ? section[name] : undefined;
-    const visited = new Set([name]);
+    const chain = [name];
+    const visited = new Set(chain);
+    let outcome: OpenApiSecurityScheme | null | undefined;
     while (isObject(current) && "$ref" in current) {
       this.schemas.chargeWork(1);
       let target: string;
@@ -589,12 +597,20 @@ class OperationConverter {
         current = undefined;
         break;
       }
-      current = !visited.has(target) && Object.hasOwn(section, target) ? section[target] : undefined;
+      if (visited.has(target) || !Object.hasOwn(section, target)) {
+        current = undefined;
+        break;
+      }
+      // A name already resolved ends the walk with its outcome.
+      outcome = this.schemeOutcomes.get(target);
+      if (outcome !== undefined) break;
       visited.add(target);
+      chain.push(target);
+      current = section[target];
     }
-    const scheme = isPlainRecord(current) ? schemeInfo(current) : undefined;
-    this.schemeOutcomes.set(name, scheme ?? null);
-    return scheme;
+    outcome ??= (isPlainRecord(current) ? schemeInfo(current) : undefined) ?? null;
+    for (const walked of chain) this.schemeOutcomes.set(walked, outcome);
+    return outcome ?? undefined;
   }
 
   /**

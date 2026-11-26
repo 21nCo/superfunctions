@@ -97,6 +97,8 @@ const HTML_NAMED = new Map<string, string>(
   }),
 );
 const HTML_LEGACY = ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT"] as const;
+const HTML_NAME = /&([A-Za-z][A-Za-z0-9]*)/g;
+const NON_ASCII = /[^\x00-\x7f]/;
 
 const encoder = new TextEncoder();
 const percentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -152,11 +154,17 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
     throw new McpFnValidationError(headerFailure(error));
   }
 
+  // A Content-Type the operator's record fixes: a documented media type it conflicts with is refused on every call, so it is not chosen.
+  const fixedContentType = fixed?.headers.get("content-type");
+  const refusal = (operation: OpenApiOperation) => unsupportedReason(operation) ?? pathRefusal(base, operation);
+
   return {
-    unsupported: unsupportedReason,
+    unsupported: refusal,
     outputSchemaRule: "every-success",
     ownsParameter: (parameter: OpenApiParameterQuery) => ownsParameter(parameter, fixedNames),
-    sendsRequestMedia: (contentType: string) => requestMediaRefusal(contentType) === undefined,
+    sendsRequestMedia: (contentType: string) =>
+      requestMediaRefusal(contentType) === undefined &&
+      (fixedContentType === undefined || !contentTypeConflicts(fixedContentType, contentType)),
 
     async execute(request: OpenApiExecuteRequest<TContext>): Promise<CallToolResult> {
       const { operation, args } = request;
@@ -175,8 +183,8 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
       let headers: Headers;
       let body: string | undefined;
       try {
-        const refusal = unsupportedReason(operation);
-        if (refusal !== undefined) throw new CallRejected(`${refusal[0]!.toUpperCase()}${refusal.slice(1)}.`);
+        const refused = refusal(operation);
+        if (refused !== undefined) throw new CallRejected(`${refused[0]!.toUpperCase()}${refused.slice(1)}.`);
         const credentials = credentialParameters(operation);
         url = requestUrl(base, operation, args, credentials.query);
         headers = requestHeaders(operation, args.header, operator.headers, credentials.header);
@@ -606,6 +614,24 @@ function holdsSecret(text: string, secrets: readonly string[]): boolean {
   return secrets.some((secret) => text.includes(secret));
 }
 
+/**
+ * Whether `text` has a named character reference `htmlUnescaped` leaves as
+ * written. Such a reference (`&eacute;`) can stand for a non-ASCII character,
+ * which only a credential form decoded from percent escapes can hold, so with
+ * one of those it counts as a possible echo.
+ */
+function opaqueReference(text: string): boolean {
+  for (const [, name] of text.matchAll(HTML_NAME)) {
+    if (!HTML_NAMED.has(name!) && !HTML_LEGACY.some((legacy) => name!.startsWith(legacy))) return true;
+  }
+  return false;
+}
+
+/** Whether a credential form has a character outside ASCII, which a named reference `htmlUnescaped` does not decode may spell. */
+function nonAsciiSecret(secrets: readonly string[]): boolean {
+  return secrets.some((secret) => NON_ASCII.test(secret));
+}
+
 /** `text` as a reader may decode it: each decoding, and each pair of them in either order, made one at a time. */
 function* decodedViews(text: string): Generator<string> {
   const decoders = [
@@ -624,14 +650,19 @@ function* decodedViews(text: string): Generator<string> {
 /**
  * Whether `text` reveals a credential to a reader who decodes it, literal
  * echoes included, also with any NUL characters removed (a UTF-16 echo read
- * as single bytes). Views are made one at a time, so memory stays a small
- * multiple of the text.
+ * as single bytes). With a non-ASCII credential form, any named reference
+ * left undecoded counts as an echo. Views are made one at a time, so memory
+ * stays a small multiple of the text.
  */
 function exposes(text: string, secrets: readonly string[]): boolean {
   if (secrets.length === 0) return false;
+  // A named reference left undecoded may spell a non-ASCII credential character.
+  const opaque = nonAsciiSecret(secrets);
   for (const view of textViews(text)) {
-    if (holdsSecret(view, secrets)) return true;
-    for (const decoded of decodedViews(view)) if (holdsSecret(decoded, secrets)) return true;
+    if (holdsSecret(view, secrets) || (opaque && opaqueReference(view))) return true;
+    for (const decoded of decodedViews(view)) {
+      if (holdsSecret(decoded, secrets) || (opaque && opaqueReference(decoded))) return true;
+    }
   }
   return false;
 }
@@ -839,7 +870,8 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
   const json = jsonStructure(text, secrets);
   let mask: Uint8Array | undefined;
   let masked: string | undefined;
-  if (bodyExposes(bytes, text, encoding, json, secrets)) {
+  // The readings a success body is checked in, its JSON serialization included.
+  if (bodyExposes(bytes, text, encoding, json, secrets) || (json !== undefined && serializedExposes(withoutBom(text), JSON.parse(withoutBom(text)), secrets))) {
     if (!isPlain(bytes, text, encoding, json, secrets)) return withheld;
     mask = literalMask(text, secrets);
     if (!mask) return withheld;
@@ -866,14 +898,17 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
  * literal credential echoes removes every echo: it is UTF-8 that re-encodes to
  * the same bytes, with no NUL and no leading byte order mark; no decoding
  * (JSON escapes, percent escapes, `+` as a space, HTML references) changes it;
- * as JSON, every number is written as it parses; and its bytes hold no UTF-16
- * form of a credential. Each condition is checked on its own, never counted.
+ * as JSON, it is its own compact serialization (the reading a success is
+ * checked in), every number written as it parses; with a non-ASCII credential
+ * form, it has no named reference left undecoded; and its bytes hold no
+ * UTF-16 form of a credential. Each condition is checked on its own, never counted.
  */
 function isPlain(bytes: Uint8Array, text: string, encoding: string, json: string | undefined, secrets: readonly string[]): boolean {
   if (encoding !== "utf-8" || text.includes("\u0000") || text.startsWith("\uFEFF")) return false;
   if (!sameBytes(encoder.encode(text), bytes)) return false;
   if (jsonUnescaped(text) !== text || percentDecoded(text) !== text || text.includes("+") || htmlUnescaped(text) !== text) return false;
-  if (json !== undefined && canonicalNumbers(text, json, 0, text.length) !== text) return false;
+  if (nonAsciiSecret(secrets) && opaqueReference(text)) return false;
+  if (json !== undefined && (compactJson(text) !== text || canonicalNumbers(text, json, 0, text.length) !== text)) return false;
   const raw = binary(bytes);
   return !secrets.some((secret) => byteForms(secret).some(([name, form]) => name !== "utf-8" && raw.includes(form)));
 }
@@ -900,6 +935,15 @@ function bodyExposes(
   if (encoding !== "utf-8" && exposes(utf8Decoder.decode(bytes), secrets)) return true;
   if (bytesHold(bytes, secrets)) return true;
   return json !== undefined && exposes(canonicalNumbers(text, json, 0, text.length), secrets);
+}
+
+/** A JSON text as it serializes once parsed, or undefined when it cannot be (nesting too deep). */
+function compactJson(text: string): string | undefined {
+  try {
+    return JSON.stringify(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 /** The body text when (a leading byte order mark aside) it is JSON and there is a credential to look for, else undefined. */
@@ -1193,17 +1237,26 @@ function bodyContentType(headers: Headers, documented: string): void {
     headers.set("content-type", documented);
     return;
   }
-  const parsed = parseMediaType(operator);
-  const expected = parseMediaType(documented)?.essence ?? documented.split(";")[0]!.trim().toLowerCase();
-  if (
-    parsed === null ||
-    parsed.essence !== expected ||
-    (parsed.charset !== undefined && !isUtf8(parsed.charset))
-  ) {
+  if (contentTypeConflicts(operator, documented)) {
     throw new CallRejected(
-      `The server's Content-Type header does not match the ${JSON.stringify(expected)} body this operation sends, so the call was not made.`,
+      `The server's Content-Type header does not match the ${JSON.stringify(documentedEssence(documented))} body this operation sends, so the call was not made.`,
     );
   }
+}
+
+/**
+ * Whether an operator Content-Type cannot label a body documented as
+ * `documented`: it is not the same media type, or names a charset other than
+ * UTF-8. The executor uses it both to choose a request body entry and to
+ * refuse a call, so the two cannot disagree.
+ */
+function contentTypeConflicts(operator: string, documented: string): boolean {
+  const parsed = parseMediaType(operator);
+  return parsed === null || parsed.essence !== documentedEssence(documented) || (parsed.charset !== undefined && !isUtf8(parsed.charset));
+}
+
+function documentedEssence(documented: string): string {
+  return parseMediaType(documented)?.essence ?? documented.split(";")[0]!.trim().toLowerCase();
 }
 
 function isUtf8(charset: string): boolean {
@@ -1327,11 +1380,33 @@ function requestUrl(
 ): string {
   const path = base.path + renderPath(operation, args.path);
   const url = base.origin + path + renderQuery(operation, args.query, credentials);
-  const parsed = new URL(url);
-  if (parsed.origin !== base.origin || parsed.pathname !== path) {
-    throw new CallRejected("The operation path cannot be sent as written.");
-  }
+  if (!pathSurvives(base, path, url)) throw new CallRejected("The operation path cannot be sent as written.");
   return url;
+}
+
+/** Whether a URL parser keeps `url` at the base origin with exactly `path` as its path. */
+function pathSurvives(base: BaseUrl, path: string, url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.origin === base.origin && parsed.pathname === path;
+}
+
+/**
+ * Why no call can send the operation's path: its template text outside the
+ * `{name}` parts (each standing for an encoded value) is rewritten by a URL
+ * parser, as `/a b` or `/café` is. The check is the one `requestUrl` makes.
+ */
+function pathRefusal(base: BaseUrl, operation: OpenApiOperation): string | undefined {
+  const path = base.path + pathTemplate(operation).replace(/\{[^{}]*\}/g, "x");
+  return pathSurvives(base, path, base.origin + path) ? undefined : "the operation path cannot be sent as written";
+}
+
+function pathTemplate(operation: OpenApiOperation): string {
+  return operation.path.startsWith("/") ? operation.path : `/${operation.path}`;
 }
 
 function parametersIn(operation: OpenApiOperation, location: OpenApiOperationParameter["in"]) {
@@ -1370,8 +1445,7 @@ function encode(parameter: OpenApiOperationParameter, text: string): string {
  */
 function renderPath(operation: OpenApiOperation, group: unknown): string {
   const declared = new Map(parametersIn(operation, "path").map((parameter) => [parameter.name, parameter]));
-  const template = operation.path.startsWith("/") ? operation.path : `/${operation.path}`;
-  return template
+  return pathTemplate(operation)
     .split("/")
     .map((segment) => {
       if (!segment.includes("{")) return segment;
