@@ -438,13 +438,18 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   // is read again, bounded by the remaining time, and a read that finishes after the deadline is discarded; once none
   // remains the read made when the check settled stands, with no file access. The decision uses the time after that
   // read, so a delivery recorded meanwhile is not taken for one in the future.
-  const handOut = async (checked: CheckResult, entry: LatestEntry, sampled: number): Promise<boolean> => {
+  const handOut = async (
+    checked: CheckResult,
+    entry: LatestEntry,
+    sampled: number,
+    budget: () => number
+  ): Promise<boolean> => {
     const dir = checkPlan.stateDir;
-    const left = remaining();
+    const left = budget();
     let shared = checked.shared ?? null;
     if (left > 0) {
       const read = await within(readCache(join(dir, UPDATE_CHECK_FILE)), left);
-      if (read === LATE || !(remaining() >= 0)) {
+      if (read === LATE || !(budget() >= 0)) {
         return false;
       }
       shared = read;
@@ -465,7 +470,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   // The notice of an on-time result, the first time it is asked for. Hand-outs in this process run one at a time per
   // app: a handle waits, within its own time, for another handle's hand-out, then decides on its own (a delivery the
   // other made within this handle's interval suppresses it).
-  const deliver = async (): Promise<string | null> => {
+  const deliver = async (budget: () => number): Promise<string | null> => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
       return null;
@@ -477,7 +482,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     }
     const dir = checkPlan.stateDir;
     for (let other = handingOut.get(dir); other !== undefined; other = handingOut.get(dir)) {
-      const left = remaining();
+      const left = budget();
       if (!(left > 0) || (await within(other, left)) === LATE) {
         return null;
       }
@@ -489,7 +494,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     handingOut.set(dir, mine);
     let delivered = false;
     try {
-      delivered = await handOut(checked, checked.entry, sampled);
+      delivered = await handOut(checked, checked.entry, sampled, budget);
     } catch {
       delivered = false;
     } finally {
@@ -501,22 +506,31 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     return delivered ? checked.notice : null;
   };
 
+  // The time left to one notice() call: the check's remaining time, and never more than was left when the call began
+  // in real time, so waits after one another (the result, another handle, the hand-out read) share one budget even when
+  // an injected clock does not advance.
+  const budgetFrom = (left: number): (() => number) => {
+    const until = monotonicNow() + left;
+    return () => Math.min(remaining(), until - monotonicNow());
+  };
+
   return {
     notice() {
       if (outcome !== "pending") {
-        return deliver();
+        return deliver(budgetFrom(remaining()));
       }
       const left = remaining();
       if (!(left > 0)) {
         outcome = "expired";
         return Promise.resolve(null);
       }
+      const budget = budgetFrom(left);
       return new Promise<string | null>((resolve) => {
         let answered = false;
         const answer = (): void => {
           if (!answered) {
             answered = true;
-            resolve(deliver());
+            resolve(deliver(budget));
           }
         };
         const timer = setTimeout(() => {

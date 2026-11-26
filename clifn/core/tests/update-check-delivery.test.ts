@@ -11,6 +11,8 @@ import { settleCacheWrites } from "../src/update-check-cache.js";
 const fsHooks = vi.hoisted(() => ({
   cacheFile: "",
   syncReads: 0,
+  /** Reads of the cache file let through before a stall applies. */
+  passReads: 0,
   stallReads: null as Promise<void> | null,
   holdRenames: null as Promise<void> | null,
 }));
@@ -30,7 +32,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const readFile = (async (file: unknown, ...rest: unknown[]) => {
     if (file === fsHooks.cacheFile && fsHooks.stallReads) {
-      await fsHooks.stallReads;
+      if (fsHooks.passReads > 0) {
+        fsHooks.passReads -= 1;
+      } else {
+        await fsHooks.stallReads;
+      }
     }
     return (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
   }) as typeof actual.readFile;
@@ -78,6 +84,7 @@ beforeEach(async () => {
   stateDir = resolveAppPaths(APP, { env }).state;
   fsHooks.cacheFile = path.join(stateDir, "update-check.json");
   fsHooks.syncReads = 0;
+  fsHooks.passReads = 0;
 });
 
 afterEach(async () => {
@@ -307,5 +314,28 @@ describe("hand-out without blocking", () => {
     clock = T0 + 106;
 
     expect(await handle.notice()).toBe(NOTICE_1_3_0);
+  });
+
+  it("shares one budget between waiting for the result and the hand-out read under a fixed clock", async () => {
+    let answer: () => void = () => undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve(new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 }));
+        })
+    );
+    const handle = check({ timeoutMs: 200, fetch });
+    const started = performance.now();
+    const pending = handle.notice();
+    await settle(150);
+    // The refresh's settle read and its write's merge read finish; the hand-out read stalls.
+    fsHooks.passReads = 2;
+    fsHooks.stallReads = gate();
+    answer();
+
+    const notice = await pending;
+
+    expect(notice).toBeNull();
+    expect(performance.now() - started).toBeLessThan(200 + 80);
   });
 });
