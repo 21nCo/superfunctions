@@ -9,6 +9,7 @@ import {
   type UpdateCheckOptions,
   type UpdateCheckRequestInit,
 } from "../src/update-check.js";
+import { settleCacheWrites } from "../src/update-check-cache.js";
 
 const tty = { isTTY: true };
 const pipe = { isTTY: false };
@@ -33,6 +34,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  await settleCacheWrites();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -55,7 +58,21 @@ function check(overrides: Partial<UpdateCheckOptions> = {}) {
   });
 }
 
+/** One run: the notice, once every cache write it started has finished. */
+async function run(overrides: Partial<UpdateCheckOptions> = {}): Promise<string | null> {
+  const notice = await check(overrides).notice();
+  await settleCacheWrites();
+  return notice;
+}
+
+async function writeCacheText(text: string): Promise<void> {
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(cacheFile, text);
+}
+
+/** The cache file once every write started so far has finished. */
 async function readCacheJson(): Promise<unknown> {
+  await settleCacheWrites();
   return JSON.parse(await readFile(cacheFile, "utf8"));
 }
 
@@ -64,6 +81,12 @@ async function exists(file: string): Promise<boolean> {
     () => true,
     () => false
   );
+}
+
+/** Gives a check whose cache file was just written time to settle (real timers). */
+async function settled(): Promise<void> {
+  await settleCacheWrites();
+  await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 /** Lets real I/O progress while fake timers hold `setTimeout`. */
@@ -89,7 +112,8 @@ describe("startUpdateCheck: request and notice", () => {
     expect(init.method).toBe("GET");
     expect(init.headers).toEqual({ Accept: "application/json" });
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0" });
+    // Resolving with the notice records its delivery.
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
     expect(await readdir(stateDir)).toEqual(["update-check.json"]);
   });
 
@@ -128,6 +152,28 @@ describe("startUpdateCheck: request and notice", () => {
     ["an array body", () => registry(["2.0.0"])],
     ["a JSON null body", () => registry("null")],
     ["a body over 64 KiB", () => registry({ latest: "2.0.0", padding: "x".repeat(70_000) })],
+    [
+      "a 500 whose body cancel never settles",
+      () =>
+        vi.fn<UpdateCheckFetch>(async () => ({
+          status: 500,
+          body: { cancel: () => new Promise<void>(() => undefined) } as unknown as ReadableStream<Uint8Array>,
+          text: () => new Promise<string>(() => undefined),
+        })),
+    ],
+    [
+      "a 500 whose body cancel throws",
+      () =>
+        vi.fn<UpdateCheckFetch>(async () => ({
+          status: 500,
+          body: {
+            cancel: () => {
+              throw new Error("locked");
+            },
+          } as unknown as ReadableStream<Uint8Array>,
+          text: () => Promise.resolve(""),
+        })),
+    ],
     [
       "a network error",
       () =>
@@ -206,6 +252,46 @@ describe("startUpdateCheck: request and notice", () => {
     // The late result is still cached for the next run.
     await until(() => exists(cacheFile));
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + 1_500, latest: "1.3.0" });
+  });
+
+  it("drops a result that arrives after the deadline, even when notice() is first called later", async () => {
+    let clock = T0;
+    let respond: ((response: Response) => void) | undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
+    const handle = check({ fetch, now: () => clock, timeoutMs: 1_500 });
+    await until(() => fetch.mock.calls.length === 1);
+
+    clock += 1_501;
+    respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
+    await until(() => exists(cacheFile));
+    await settled();
+
+    await expect(handle.notice()).resolves.toBeNull();
+    await expect(handle.notice()).resolves.toBeNull();
+  });
+
+  it("keeps a notice dropped by the timeout dropped and does not count it as delivered", async () => {
+    let clock = T0;
+    let respond: ((response: Response) => void) | undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
+    const handle = check({ fetch, now: () => clock, timeoutMs: 1_500 });
+    await until(() => fetch.mock.calls.length === 1);
+
+    clock += 1_500;
+    await expect(handle.notice()).resolves.toBeNull();
+    respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
+    await until(() => exists(cacheFile));
+    await settled();
+    // The result settled after the deadline: a later call does not return it either.
+    await expect(handle.notice()).resolves.toBeNull();
+    const cached = (await readCacheJson()) as Record<string, unknown>;
+    expect(cached).toMatchObject({ latest: "1.3.0" });
+    expect(cached).not.toHaveProperty("notifiedAt");
+
+    // The next run within the interval gives the notice from the cache, without a request.
+    const next = registry({ latest: "1.3.0" });
+    await expect(run({ fetch: next, now: () => (cached.checkedAt as number) + 1 })).resolves.toBe(NOTICE_1_3_0);
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("waits for a slow registry only within the timeout and then returns the same notice each time", async () => {
@@ -302,47 +388,80 @@ describe("startUpdateCheck: skip rules (D10)", () => {
 });
 
 describe("startUpdateCheck: cache interval", () => {
-  it("uses the cached result within the interval and requests again after it", async () => {
-    await expect(check().notice()).resolves.toBe(NOTICE_1_3_0);
+  it("uses the cached result within the interval without a second notice and requests again after it", async () => {
+    await expect(run()).resolves.toBe(NOTICE_1_3_0);
 
     const fetch = registry({ latest: "1.4.0" });
-    await expect(check({ fetch, now: () => T0 + DAY - 1 }).notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(run({ fetch, now: () => T0 + DAY - 1 })).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();
 
-    await expect(check({ fetch, now: () => T0 + DAY }).notice()).resolves.toBe(
+    await expect(run({ fetch, now: () => T0 + DAY })).resolves.toBe(
       "Update available: 1.2.0 → 1.4.0 (npm i -g my-cli)"
     );
     expect(fetch).toHaveBeenCalledTimes(1);
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY, latest: "1.4.0" });
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY, latest: "1.4.0", notifiedAt: T0 + DAY });
+  });
+
+  it("gives the notice at most once per interval, also across a refresh, and reads older cache files", async () => {
+    // A cache file without notifiedAt: an older file, or one whose notice was never delivered.
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
+    const fetch = registry({ latest: "1.3.0" });
+    const hour = 60 * 60 * 1000;
+
+    await expect(run({ fetch, now: () => T0 + hour })).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + hour });
+    await expect(run({ fetch, now: () => T0 + 2 * hour })).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+
+    // The cached result is stale, so the registry is asked again, but the last notice was less than a day ago.
+    await expect(run({ fetch, now: () => T0 + DAY })).resolves.toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY, latest: "1.3.0", notifiedAt: T0 + hour });
+
+    await expect(run({ fetch, now: () => T0 + DAY + hour })).resolves.toBe(NOTICE_1_3_0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a notifiedAt that is not a number", "yesterday"],
+    ["a notifiedAt in the future", T0 + DAY],
+  ])("treats %s as no notice delivered", async (_label, notifiedAt) => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0", notifiedAt }));
+    const fetch = registry({ latest: "1.3.0" });
+    await expect(run({ fetch, now: () => T0 + 1 })).resolves.toBe(NOTICE_1_3_0);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("uses a cached error within the interval without a request", async () => {
-    await check({ fetch: registry({}, 500) }).notice();
+    await run({ fetch: registry({}, 500) });
     const fetch = registry({ latest: "1.3.0" });
     await expect(check({ fetch, now: () => T0 + DAY - 1 }).notice()).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it("compares a cached latest with the version now running", async () => {
-    await check().notice();
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const fetch = registry({ latest: "1.3.0" });
-    await expect(check({ fetch, currentVersion: "1.3.0", now: () => T0 + 1 }).notice()).resolves.toBeNull();
+    await expect(run({ fetch, currentVersion: "1.3.0", now: () => T0 + 1 })).resolves.toBeNull();
+    await expect(run({ fetch, currentVersion: "1.2.5", now: () => T0 + 2 })).resolves.toBe(
+      "Update available: 1.2.5 → 1.3.0 (npm i -g my-cli)"
+    );
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it("honours intervalMs", async () => {
-    await check({ intervalMs: 1_000 }).notice();
+    await run({ intervalMs: 1_000 });
     const fetch = registry({ latest: "1.3.0" });
-    await check({ fetch, intervalMs: 1_000, now: () => T0 + 999 }).notice();
+    await run({ fetch, intervalMs: 1_000, now: () => T0 + 999 });
     expect(fetch).not.toHaveBeenCalled();
-    await check({ fetch, intervalMs: 1_000, now: () => T0 + 1_000 }).notice();
+    await expect(run({ fetch, intervalMs: 1_000, now: () => T0 + 1_000 })).resolves.toBe(NOTICE_1_3_0);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("treats a checkedAt in the future as stale", async () => {
-    await check({ now: () => T0 + DAY }).notice();
+    await run({ now: () => T0 + DAY });
     const fetch = registry({ latest: "1.3.0" });
-    await check({ fetch, now: () => T0 }).notice();
+    await expect(run({ fetch, now: () => T0 })).resolves.toBe(NOTICE_1_3_0);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -355,12 +474,11 @@ describe("startUpdateCheck: cache interval", () => {
     ["a latest outside the grammar", JSON.stringify({ checkedAt: T0, latest: "v9" })],
     ["error not true", JSON.stringify({ checkedAt: T0, error: "yes" })],
   ])("treats a cache file holding %s as never checked", async (_label, text) => {
-    await mkdir(stateDir, { recursive: true });
-    await writeFile(cacheFile, text);
+    await writeCacheText(text);
     const fetch = registry({ latest: "1.3.0" });
     await expect(check({ fetch, now: () => T0 + 1 }).notice()).resolves.toBe(NOTICE_1_3_0);
     expect(fetch).toHaveBeenCalledTimes(1);
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + 1, latest: "1.3.0" });
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 });
   });
 
   it("treats an unreadable cache (a directory) as never checked and still gives the notice", async () => {
@@ -375,6 +493,14 @@ describe("startUpdateCheck: cache interval", () => {
     await writeFile(stateDir, "not a directory");
     await expect(check().notice()).resolves.toBe(NOTICE_1_3_0);
   });
+
+  it("resolves only the state directory, so an unusable home directory does not stop the check", async () => {
+    // XDG_STATE_HOME / LOCALAPPDATA place the state directory; the config and cache directories would need a home.
+    vi.stubEnv("HOME", "relative-home");
+    vi.stubEnv("USERPROFILE", "relative-home");
+    await expect(check().notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toMatchObject({ latest: "1.3.0" });
+  });
 });
 
 describe("startUpdateCheck: atomic cache writes", () => {
@@ -385,8 +511,8 @@ describe("startUpdateCheck: atomic cache writes", () => {
     );
 
     expect(notices).toEqual(versions.map((latest) => `Update available: 1.2.0 → ${latest} (npm i -g my-cli)`));
-    expect(await readdir(stateDir)).toEqual(["update-check.json"]);
     const cached = (await readCacheJson()) as { checkedAt: number; latest: string };
+    expect(await readdir(stateDir)).toEqual(["update-check.json"]);
     expect(cached.checkedAt).toBe(T0);
     expect(versions).toContain(cached.latest);
   });
@@ -401,7 +527,7 @@ describe("startUpdateCheck: atomic cache writes", () => {
     await utimes(old, twoHoursAgo, twoHoursAgo);
     await utimes(unrelated, twoHoursAgo, twoHoursAgo);
 
-    await expect(check().notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(run()).resolves.toBe(NOTICE_1_3_0);
 
     expect((await readdir(stateDir)).sort()).toEqual(
       ["other.json.789.tmp", "update-check.json", "update-check.json.456-in-progress.tmp"].sort()
@@ -409,7 +535,7 @@ describe("startUpdateCheck: atomic cache writes", () => {
   });
 
   it.skipIf(process.platform === "win32")("creates the cache file with mode 0600", async () => {
-    await check().notice();
+    await run();
     expect((await stat(cacheFile)).mode & 0o777).toBe(0o600);
   });
 });

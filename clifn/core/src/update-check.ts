@@ -1,9 +1,17 @@
-import { randomUUID } from "node:crypto";
-import { lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ensureAppDir, resolveAppPaths } from "./paths.js";
+import { appDirResolver } from "./app-dirs.js";
 import { resolveTerminal, type TerminalStream } from "./terminal.js";
+import {
+  readCache,
+  trackCacheWrite,
+  UPDATE_CHECK_FILE,
+  writeCacheQuietly,
+  type CacheEntry,
+  type LatestEntry,
+} from "./update-check-cache.js";
 import { compareParsedVersions, parseVersion, type ParsedVersion } from "./version.js";
+
+export { UPDATE_CHECK_FILE } from "./update-check-cache.js";
 
 /** The part of a fetch response the update check reads. A WHATWG `Response` fits. */
 export interface UpdateCheckResponse {
@@ -37,7 +45,7 @@ export interface UpdateCheckOptions {
   currentVersion: string;
   /** Selects the cache directory (`resolveAppPaths(appName).state`) and the `<APP>_NO_UPDATE_CHECK` variable. */
   appName: string;
-  /** Minimum time between registry requests. Defaults to 24 hours. */
+  /** Minimum time between registry requests, and between two notices. Defaults to 24 hours. */
   intervalMs?: number;
   /** Bound on the whole check, counted from the start. Defaults to 1,500 ms. */
   timeoutMs?: number;
@@ -55,23 +63,18 @@ export interface UpdateCheckOptions {
 export interface UpdateCheck {
   /**
    * The notice (`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`), or `null`. Never rejects and never waits past
-   * the check's timeout: a result that is not ready by then is dropped.
+   * the check's timeout: a result that is not ready by then is dropped, and every later call resolves `null` too.
+   * Resolving with the notice counts as delivering it: the time is recorded in the cache (in the background), and no
+   * other run gives a notice until `intervalMs` has passed.
    */
   notice(): Promise<string | null>;
 }
 
-/** What the cache file holds. */
-type CacheEntry = { checkedAt: number; latest: string } | { checkedAt: number; error: true };
-
-export const UPDATE_CHECK_FILE = "update-check.json";
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 1_500;
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
-/** Temporary files a write leaves behind are removed by a later write once they are this old. */
-const STALE_TEMPORARY_MS = 60 * 60 * 1000;
 /** A dist-tags document is a few hundred bytes; a larger body is treated as garbage. */
 const MAX_BODY_BYTES = 64 * 1024;
-const TEMPORARY_FILE = /^update-check\.json\.[0-9A-Za-z-]+\.tmp$/;
 
 const NO_NOTICE: UpdateCheck = Object.freeze({ notice: () => Promise.resolve(null) });
 
@@ -128,74 +131,14 @@ function noticeFor(entry: CacheEntry, current: ParsedVersion, currentText: strin
   return `Update available: ${currentText} → ${entry.latest} (npm i -g ${name})`;
 }
 
-/** A cache entry from file text; anything else (missing, unreadable, malformed) is never checked. */
-function parseCacheEntry(text: string): CacheEntry | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const checkedAt = record.checkedAt;
-  if (typeof checkedAt !== "number" || !Number.isFinite(checkedAt)) {
-    return null;
-  }
-  if (record.error === true) {
-    return { checkedAt, error: true };
-  }
-  return typeof record.latest === "string" && parseVersion(record.latest) ? { checkedAt, latest: record.latest } : null;
+/** True when `time` is not in the future and less than `intervalMs` ago; a time in the future counts as stale. */
+function isRecent(time: number, now: number, intervalMs: number): boolean {
+  return time <= now && now - time < intervalMs;
 }
 
-async function readCache(file: string): Promise<CacheEntry | null> {
-  try {
-    return parseCacheEntry(await readFile(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-/** Removes temporary files of interrupted writes that are older than one hour. Best effort. */
-async function removeStaleTemporaryFiles(dir: string): Promise<void> {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return;
-  }
-  const cutoff = Date.now() - STALE_TEMPORARY_MS;
-  await Promise.all(
-    names
-      .filter((name) => TEMPORARY_FILE.test(name))
-      .map(async (name) => {
-        const file = join(dir, name);
-        try {
-          const info = await lstat(file);
-          if (info.isFile() && info.mtimeMs < cutoff) {
-            await rm(file, { force: true });
-          }
-        } catch {
-          // Another instance removed it first, or it cannot be read; either way it is not ours to report.
-        }
-      })
-  );
-}
-
-/** Writes the entry to a unique temporary file in `dir` and renames it over the cache file. */
-async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
-  await ensureAppDir(dir);
-  await removeStaleTemporaryFiles(dir);
-  const temporary = join(dir, `${UPDATE_CHECK_FILE}.${process.pid}-${randomUUID()}.tmp`);
-  try {
-    await writeFile(temporary, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    await rename(temporary, join(dir, UPDATE_CHECK_FILE));
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
-  }
+/** True when the entry records a notice delivered within the interval. */
+function recentlyNotified(entry: CacheEntry, now: number, intervalMs: number): boolean {
+  return "latest" in entry && entry.notifiedAt !== undefined && isRecent(entry.notifiedAt, now, intervalMs);
 }
 
 function abortRejection(signal: AbortSignal): Promise<never> {
@@ -206,6 +149,21 @@ function abortRejection(signal: AbortSignal): Promise<never> {
     }
     signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
   });
+}
+
+/**
+ * Starts cancelling a body the check does not read, without waiting: a stream whose cancel never settles (or throws)
+ * must not hold the result.
+ */
+function discard(cancel: () => unknown): void {
+  try {
+    const pending = cancel();
+    if (pending && typeof (pending as Promise<unknown>).then === "function") {
+      (pending as Promise<unknown>).then(undefined, () => undefined);
+    }
+  } catch {
+    // Nothing to release; the request is aborted in any case.
+  }
 }
 
 /** Reads at most MAX_BODY_BYTES of the body; a larger body is an error. */
@@ -222,7 +180,7 @@ async function readBody(response: UpdateCheckResponse): Promise<string> {
       }
       size += value.byteLength;
       if (size > MAX_BODY_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        discard(() => reader.cancel());
         throw new Error("response body too large");
       }
       chunks.push(value);
@@ -271,7 +229,7 @@ async function requestLatest(plan: RequestPlan): Promise<CacheEntry> {
       aborted,
     ]);
     if (response.status !== 200) {
-      await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
+      discard(() => response.body?.cancel?.());
       return { checkedAt: plan.now(), error: true };
     }
     const latest = latestFrom(await Promise.race([readBody(response), aborted]));
@@ -292,20 +250,36 @@ interface CheckPlan extends RequestPlan {
   intervalMs: number;
 }
 
-async function runCheck(plan: CheckPlan): Promise<string | null> {
+interface CheckResult {
+  notice: string | null;
+  /** The entry the notice came from, to record its delivery; null when there is no notice. */
+  entry: LatestEntry | null;
+  /** The cache write this run started, if any; settles (never rejects) when it is done. */
+  written: Promise<void>;
+}
+
+function resultFor(plan: CheckPlan, entry: CacheEntry, now: number, written: Promise<void>): CheckResult {
+  const notice = recentlyNotified(entry, now, plan.intervalMs)
+    ? null
+    : noticeFor(entry, plan.current, plan.currentText, plan.name);
+  return { notice, entry: notice !== null && "latest" in entry ? entry : null, written };
+}
+
+/** Settles as soon as the entry is known; the cache write it starts continues in the background. */
+async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   const file = join(plan.stateDir, UPDATE_CHECK_FILE);
   const cached = await readCache(file);
   const now = plan.now();
-  if (cached && cached.checkedAt <= now && now - cached.checkedAt < plan.intervalMs) {
-    return noticeFor(cached, plan.current, plan.currentText, plan.name);
+  if (cached && isRecent(cached.checkedAt, now, plan.intervalMs)) {
+    return resultFor(plan, cached, now, Promise.resolve());
   }
-  const entry = await requestLatest(plan);
-  try {
-    await writeCache(plan.stateDir, entry);
-  } catch {
-    // An unwritable cache means the next run checks again; the result of this one still stands.
-  }
-  return noticeFor(entry, plan.current, plan.currentText, plan.name);
+  const fetched = await requestLatest(plan);
+  // The last delivery carries over to the new entry, so a refresh does not give a second notice within the interval.
+  const entry: CacheEntry =
+    "latest" in fetched && cached && "latest" in cached && cached.notifiedAt !== undefined
+      ? { ...fetched, notifiedAt: cached.notifiedAt }
+      : fetched;
+  return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry));
 }
 
 /** The request plan, or null when a skip rule (D10) applies or an option cannot be used. */
@@ -345,7 +319,8 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
   if (url === null) {
     return null;
   }
-  const stateDir = resolveAppPaths(appName, { env }).state;
+  // Only the state directory: the config and cache directories may need a home directory this check never uses.
+  const stateDir = appDirResolver(appName, { env })("state");
   const now = options.now ?? Date.now;
   const timeoutMs = validDuration(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const deadline = now() + timeoutMs;
@@ -368,11 +343,11 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
  * Skipped (no request, no cache access, `notice()` resolves `null`) in JSON mode (`terminal.json`), when the terminal
  * is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` is set to a
  * non-empty value, and when `currentVersion` is outside the version grammar. A cached result younger than
- * `intervalMs` is used without a request. Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
+ * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs`. Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
  * `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
  * a status other than 200, a body that is not JSON or has no valid `latest`, or a timeout, in
  * `<state>/update-check.json`, written atomically. A notice is given only when `latest` is a release greater than
- * `currentVersion`.
+ * `currentVersion`. The result is known as soon as the registry answers; cache writes finish in the background.
  */
 export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   let plan: CheckPlan | null;
@@ -386,35 +361,72 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   }
 
   const checkPlan = plan;
-  let settled = false;
-  let value: string | null = null;
+  // "pending" until the check settles or its deadline passes, whichever comes first; the outcome never changes after.
+  let outcome: "pending" | "ready" | "expired" = "pending";
+  let ready: CheckResult | null = null;
+  let delivered = false;
+  const remaining = (): number => {
+    try {
+      return checkPlan.remainingMs();
+    } catch {
+      return 0;
+    }
+  };
   const result = runCheck(checkPlan)
-    .catch(() => null)
-    .then((notice) => {
-      settled = true;
-      value = notice;
-      return notice;
+    .catch((): CheckResult | null => null)
+    .then((checked) => {
+      if (outcome === "pending") {
+        if (remaining() >= 0) {
+          outcome = "ready";
+          ready = checked;
+        } else {
+          outcome = "expired";
+        }
+      }
     });
+
+  // The notice of an on-time result, recording its delivery once (after this run's own cache write).
+  const deliver = (): string | null => {
+    const checked: CheckResult | null = outcome === "ready" ? ready : null;
+    if (checked === null || checked.notice === null) {
+      return null;
+    }
+    if (!delivered && checked.entry !== null) {
+      delivered = true;
+      let notifiedAt: number | undefined;
+      try {
+        notifiedAt = checkPlan.now();
+      } catch {
+        notifiedAt = undefined;
+      }
+      if (notifiedAt !== undefined && Number.isFinite(notifiedAt)) {
+        const marked: LatestEntry = { ...checked.entry, notifiedAt };
+        void trackCacheWrite(checked.written.then(() => writeCacheQuietly(checkPlan.stateDir, marked)));
+      }
+    }
+    return checked.notice;
+  };
 
   return {
     notice() {
-      if (settled) {
-        return Promise.resolve(value);
+      if (outcome !== "pending") {
+        return Promise.resolve(deliver());
       }
-      let remaining: number;
-      try {
-        remaining = checkPlan.remainingMs();
-      } catch {
-        return Promise.resolve(null);
-      }
-      if (!(remaining > 0)) {
+      const left = remaining();
+      if (!(left > 0)) {
+        outcome = "expired";
         return Promise.resolve(null);
       }
       return new Promise<string | null>((resolve) => {
-        const timer = setTimeout(() => resolve(null), remaining);
-        void result.then((notice) => {
+        const timer = setTimeout(() => {
+          if (outcome === "pending") {
+            outcome = "expired";
+          }
+          resolve(deliver());
+        }, left);
+        void result.then(() => {
           clearTimeout(timer);
-          resolve(notice);
+          resolve(deliver());
         });
       });
     },

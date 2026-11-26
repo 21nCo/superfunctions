@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveAppPaths } from "../src/paths.js";
 import { runAction, type RunnerOptions } from "../src/runner.js";
 import { startUpdateCheck, type UpdateCheckFetch } from "../src/update-check.js";
+import { settleCacheWrites } from "../src/update-check-cache.js";
 
 const NOTICE = "Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)";
 const tty = { isTTY: true };
@@ -94,6 +96,21 @@ describe("runAction with updateCheck", () => {
     expect(events.join("")).not.toContain("Update available");
   });
 
+  it("never asks for or writes the notice when quiet, and keeps the exit code", async () => {
+    const { events, options } = capture();
+    const updateCheck = handle(async () => NOTICE);
+
+    const exitCode = await runAction((_options, ctx) => ctx.output.error("failed"), undefined, {
+      ...options,
+      quiet: true,
+      updateCheck,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(updateCheck.notice).not.toHaveBeenCalled();
+    expect(events).toEqual([expect.stringContaining("failed")]);
+  });
+
   it.each<[string, () => Promise<string | null>]>([
     ["null", async () => null],
     ["an empty string", async () => ""],
@@ -133,6 +150,7 @@ describe("runAction with updateCheck", () => {
     });
 
     afterEach(async () => {
+      await settleCacheWrites();
       await rm(root, { recursive: true, force: true });
     });
 
@@ -173,7 +191,9 @@ describe("runAction with updateCheck", () => {
       expect(events).toEqual([]);
       // The request is aborted at the same deadline and its error is cached in the background.
       await vi.waitFor(async () => {
-        const cached = JSON.parse(await readFile(path.join(root, "my-cli", "update-check.json"), "utf8"));
+        const env = { XDG_STATE_HOME: root, LOCALAPPDATA: root };
+        const file = path.join(resolveAppPaths("my-cli", { env }).state, "update-check.json");
+        const cached = JSON.parse(await readFile(file, "utf8"));
         expect(cached).toMatchObject({ error: true });
       });
     });

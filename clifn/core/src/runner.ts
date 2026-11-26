@@ -45,7 +45,7 @@ export interface RunnerOptions {
   /**
    * A started update check (`startUpdateCheck` from `@clifn/core/update-check`). In text mode its notice is written to
    * stderr after the action finishes, on success or failure, without changing the exit code; a notice that is not
-   * ready by the check's timeout is dropped. JSON mode never asks for or writes it.
+   * ready by the check's timeout is dropped. JSON mode and `quiet` never ask for or write it.
    */
   updateCheck?: Pick<UpdateCheck, "notice">;
 }
@@ -234,8 +234,9 @@ export async function runAction<TOptions>(
     exitCode = 1;
   }
 
-  // `mode` as read once above, so JSON lines keeps its option reads; only text mode reads `updateCheck`.
-  if (mode !== "json") {
+  // `mode` and `quiet` as read once above, so the existing option reads stay as they were; only a text-mode run that
+  // is not quiet reads `updateCheck`.
+  if (mode !== "json" && !quiet) {
     await writeUpdateNotice(runnerOptions, stderrOption);
   }
   return exitCode;
