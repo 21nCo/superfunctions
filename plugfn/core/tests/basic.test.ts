@@ -63,6 +63,22 @@ describe('PlugFn SDK', () => {
     });
   });
 
+  describe('Connection management', () => {
+    it('connects direct credentials and reports validity through the facade', async () => {
+      plug.providers.register(mockProvider('direct', { getData: mockResponse({ ok: true }) }));
+
+      const connection = await plug.connections.connect({
+        userId: 'test-user',
+        provider: 'direct',
+        credentials: { type: 'api-key', apiKey: 'test-direct-api-key' },
+      });
+
+      expect(connection).toMatchObject({ provider: 'direct', ownerKind: 'user', ownerId: 'test-user' });
+      await expect(plug.connections.isValid(connection.id)).resolves.toBe(true);
+      await expect(plug.connections.isValid('missing-connection')).resolves.toBe(false);
+    });
+  });
+
   describe('Authentication normalization', () => {
     it('rejects a malformed auth session without dereferencing a null subject', async () => {
       const malformed = plugFn({
