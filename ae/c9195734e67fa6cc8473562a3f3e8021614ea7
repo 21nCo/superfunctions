@@ -1,0 +1,23 @@
+datafn/server/__tests__/revisions.test.ts
+  s_3c4b821ef6b4dd::t_19df473697dad4 26-33,2919-2977
+datafn/server/src/execution/sync/push.ts
+  s_3c4b821ef6b4dd::t_d1622b12ad3948 246-253,504,531-534,538-540
+datafn/server/src/server.ts
+  s_3c4b821ef6b4dd::t_d23f9e8192263f 84,1524-1532,1558-1562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aec9195734e67fa6cc8473562a3f3e8021614ea7",
+  "prompts": {},
+  "sessions": {
+    "s_3c4b821ef6b4dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3c4b821ef6b4dd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
