@@ -154,6 +154,8 @@ export class OPFSStore {
       this.rootDir = await opfsRoot.getDirectoryHandle(this.rootDirName, { create: true });
       this.isInitialized = true;
     } catch (error) {
+      // Out of storage is kept as it is, so callers can tell it apart (a typed capacity refusal).
+      if (error instanceof Error && error.name === 'QuotaExceededError') throw error;
       throw new Error(
         `Failed to initialize OPFS: ${error instanceof Error ? error.message : 'Unknown error'}`
       );

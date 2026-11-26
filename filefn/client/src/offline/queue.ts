@@ -989,6 +989,18 @@ export class OfflineQueue {
   }
 
   /**
+   * Whether this queue may still act and report for its partition: it is not
+   * disposed and `currentPrincipal` reports the partition's principal now.
+   * `OfflineSync` checks it before each callback, so a callback that switches
+   * the account receives nothing more about the old principal's entries.
+   */
+  async principalIsCurrent(): Promise<boolean> {
+    if (this.disposed) return false;
+    const matches = await this.principalMatches(this.lifetime.signal);
+    return matches && !this.disposed;
+  }
+
+  /**
    * Invalidates this instance: new calls reject with FILEFN_QUEUE_DISPOSED,
    * in-flight uploads and hooks are aborted, and their late results are never
    * written. Staged data stays in storage for the next instance of the same
@@ -1018,6 +1030,11 @@ export class OfflineQueue {
     this.objectUrls.clear();
   }
 
+  /**
+   * Reports confirmed publications and provisional outcomes. The principal is
+   * checked before each delivery: once the account switched (even inside an
+   * earlier listener), no further listener receives the event.
+   */
   subscribe(listener: (event: OfflineQueueEvent) => void): () => void {
     this.assertUsable();
     this.listeners.add(listener);
@@ -1247,9 +1264,9 @@ export class OfflineQueue {
     if (outcome === BUSY) {
       throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The entry is being processed; reconcile it once that finishes', { entryId, generation });
     }
-    if (outcome.changed && outcome.record.current.phase === 'published') this.emitFor(outcome.record);
+    if (outcome.changed && outcome.record.current.phase === 'published') await this.emitFor(outcome.record);
     else if (outcome.changed) this.notifyWork();
-    this.observe(outcome.record);
+    await this.observeFenced(outcome.record);
     return snapshot(outcome.record);
   }
 
@@ -1333,7 +1350,11 @@ export class OfflineQueue {
     return results;
   }
 
-  /** Removes orphaned data and final entries past their retention. */
+  /**
+   * Removes orphaned data, the data of published generations and published
+   * entries past their retention. Failed and rejected generations may hold
+   * the only copy of the user's file: they stay until `cancel`.
+   */
   async reclaim(): Promise<OfflineQueueReclaimResult> {
     const { result, present, tombstones } = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
@@ -1438,36 +1459,43 @@ export class OfflineQueue {
     }
     const store = this.legacyStore();
     const claimName = (await sha256Hex(JSON.stringify(['legacy', uploadSessionId]))).slice(0, 40);
+    const claimsDirName = (await sha256Hex(this.legacyRootDirName)).slice(0, 40);
     const claimsDir = async (root: OfflineQueueDirectoryHandle) => {
       const claims = await root.getDirectoryHandle(LEGACY_CLAIMS_DIR, { create: true });
-      return claims.getDirectoryHandle((await sha256Hex(this.legacyRootDirName)).slice(0, 40), { create: true });
+      return claims.getDirectoryHandle(claimsDirName, { create: true });
+    };
+    // Reading creates nothing: a missing claims directory means no claim.
+    const readClaim = async (root: OfflineQueueDirectoryHandle): Promise<Blob | null> => {
+      try {
+        const claims = await root.getDirectoryHandle(LEGACY_CLAIMS_DIR);
+        return await getFile(await claims.getDirectoryHandle(claimsDirName), claimName);
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
     };
     const partitionId = await this.partitionId();
+    // Out of storage while preparing, reading or claiming: the typed capacity
+    // refusal. Nothing is removed, so the legacy upload (and a claim already
+    // written) stays and a retry completes the migration.
+    const quotaRefusal = async (): Promise<OfflineQueueStageResult> => {
+      let usage: OfflineQueueUsage = { entries: 0, bytes: 0 };
+      try {
+        usage = await this.usage();
+      } catch (error) {
+        if (!isQuotaError(error)) throw error;
+      }
+      return { status: 'refused', reason: 'capacity', limit: 'quota', usage, limits: this.limits };
+    };
     return this.withLegacyLock(async () => {
       // Read under the partition lock and the principal check, like every other read.
-      const found = await this.transact(async (root) => {
-        const claim = await getFile(await claimsDir(root), claimName);
-        let claimedBy: string | null = null;
-        if (claim) {
-          try {
-            claimedBy = String((JSON.parse(await claim.text()) as { partitionId?: unknown }).partitionId ?? '');
-          } catch {
-            claimedBy = null;
-          }
-        }
-        const legacy = await store.getPendingUpload(uploadSessionId);
-        let keyShared = false;
-        if (legacy?.idempotencyKey !== undefined) {
-          for (const other of await store.listPendingUploads()) {
-            if (other === uploadSessionId) continue;
-            if ((await store.getPendingUploadMetadata(other))?.idempotencyKey === legacy.idempotencyKey) {
-              keyShared = true;
-              break;
-            }
-          }
-        }
-        return { claimedBy, legacy, keyShared };
-      }, { disclose: true });
+      let found;
+      try {
+        found = await this.readLegacyForMigration(readClaim, store, uploadSessionId);
+      } catch (error) {
+        if (isQuotaError(error)) return quotaRefusal();
+        throw error;
+      }
       if (found.claimedBy !== null && found.claimedBy !== partitionId) {
         // Another partition admitted it; its retry removes the record.
         return { status: 'refused', reason: 'already-migrated' } as const;
@@ -1476,11 +1504,17 @@ export class OfflineQueue {
       if (!legacy) {
         if (found.claimedBy === partitionId) {
           // Admitted here and removed since (by another tab's migration, say): the entry it became.
-          const admitted = await this.transact(async (root) => {
-            const partitionDir = await this.partitionDir(root);
-            const record = (await this.readAllIn(partitionDir)).find((r) => r.migratedFrom === uploadSessionId);
-            return { record, gone: (await this.loadMeta(partitionDir)).migrated.includes(uploadSessionId) };
-          }, { disclose: true });
+          let admitted;
+          try {
+            admitted = await this.transact(async (root) => {
+              const partitionDir = await this.partitionDir(root);
+              const record = (await this.readAllIn(partitionDir)).find((r) => r.migratedFrom === uploadSessionId);
+              return { record, gone: (await this.loadMeta(partitionDir)).migrated.includes(uploadSessionId) };
+            }, { disclose: true });
+          } catch (error) {
+            if (isQuotaError(error)) return quotaRefusal();
+            throw error;
+          }
           if (admitted.record) return { status: 'staged', entry: snapshot(admitted.record) } as const;
           if (admitted.gone) return { status: 'refused', reason: 'already-migrated' } as const;
         }
@@ -1491,9 +1525,14 @@ export class OfflineQueue {
       const entryId = requireId(options.entryId ?? fileId, 'entryId');
       if (found.claimedBy === null) {
         // Written before the entry: no other partition admits it from here on.
-        await this.transact(async (root) => {
-          await writeFile(await claimsDir(root), claimName, JSON.stringify({ partitionId, uploadSessionId }), this.txFence);
-        });
+        try {
+          await this.transact(async (root) => {
+            await writeFile(await claimsDir(root), claimName, JSON.stringify({ partitionId, uploadSessionId }), this.txFence);
+          });
+        } catch (error) {
+          if (isQuotaError(error)) return quotaRefusal();
+          throw error;
+        }
       }
       const result = await this.stageBytes(
         {
@@ -1520,6 +1559,37 @@ export class OfflineQueue {
   }
 
   // ---- internals ----
+
+  /** The legacy upload, the partition that claimed it (if any) and whether its key is shared, read behind the principal check. */
+  private async readLegacyForMigration(
+    readClaim: (root: OfflineQueueDirectoryHandle) => Promise<Blob | null>,
+    store: OPFSStore,
+    uploadSessionId: string,
+  ) {
+    return this.transact(async (root) => {
+      const claim = await readClaim(root);
+      let claimedBy: string | null = null;
+      if (claim) {
+        try {
+          claimedBy = String((JSON.parse(await claim.text()) as { partitionId?: unknown }).partitionId ?? '');
+        } catch {
+          claimedBy = null;
+        }
+      }
+      const legacy = await store.getPendingUpload(uploadSessionId);
+      let keyShared = false;
+      if (legacy?.idempotencyKey !== undefined) {
+        for (const other of await store.listPendingUploads()) {
+          if (other === uploadSessionId) continue;
+          if ((await store.getPendingUploadMetadata(other))?.idempotencyKey === legacy.idempotencyKey) {
+            keyShared = true;
+            break;
+          }
+        }
+      }
+      return { claimedBy, legacy, keyShared };
+    }, { disclose: true });
+  }
 
   private assertUsable(): void {
     if (this.disposed) {
@@ -2243,8 +2313,8 @@ export class OfflineQueue {
     // nothing read is disclosed once the principal changed or the pass stopped.
     const finish = async (result: OfflineQueueProcessResult, emit = false): Promise<Plan> => {
       await this.txFence!();
-      if (emit) this.emitFor(record, signal);
-      this.observe(record);
+      if (emit) await this.emitFor(record, signal);
+      await this.observeFenced(record);
       return { kind: 'done', result };
     };
     const provisional = (reason: Extract<OfflineQueueProcessResult, { status: 'provisional' }>['reason'], emit = false) =>
@@ -2337,7 +2407,7 @@ export class OfflineQueue {
           cur.publication = {};
           await write();
           await this.txFence!();
-          this.emitFor(record, signal);
+          await this.emitFor(record, signal);
           return { kind: 'continue' };
         }
         // Recorded before the hook runs, so a crash leaves it unconfirmed rather than unpublished.
@@ -2570,19 +2640,25 @@ export class OfflineQueue {
       throw error;
     }
     if (!written) return { status: 'superseded' };
-    this.emitFor(written, signal);
-    this.observe(written);
+    await this.emitFor(written, signal);
+    await this.observeFenced(written);
     return stopReason ? { status: 'provisional', entry: snapshot(written), reason: stopReason } : null;
   }
 
-  /** Reports a journaled state to listeners, unless the queue or the pass that wrote it has stopped. */
-  private emitFor(record: JournalRecord, signal?: AbortSignal): void {
+  /**
+   * Reports a journaled state to listeners, unless the queue or the pass that
+   * wrote it has stopped. The principal is checked before each delivery, so
+   * a listener that switches the account (or stops the pass, or disposes the
+   * queue) ends the fan-out: no later listener sees the old principal's entry.
+   */
+  private async emitFor(record: JournalRecord, signal?: AbortSignal): Promise<void> {
     if (this.disposed || signal?.aborted) return;
     const entry = snapshot(record);
     const event: OfflineQueueEvent = entry.state === 'published' ? { type: 'published', entry } : { type: 'provisional', entry };
     if (event.type === 'provisional' && !entry.pending && !isTerminalPhase(entry.phase)) return;
-    for (const listener of this.listeners) {
-      // A listener that stopped the pass (or disposed the queue) ends the fan-out.
+    for (const listener of [...this.listeners]) {
+      if (!this.listeners.has(listener)) continue;
+      if (this.disposed || signal?.aborted || !(await this.principalMatches(signal ?? this.lifetime.signal))) return;
       if (this.disposed || signal?.aborted) return;
       try {
         listener(event);
@@ -2590,6 +2666,22 @@ export class OfflineQueue {
         // A listener error does not affect the queue.
       }
     }
+  }
+
+  /**
+   * `observe` after a fresh principal check: a listener (or anything else)
+   * that switched the account since the state was read leaves the waiters
+   * unsettled, for a read under their own principal, so no waiter receives
+   * the old principal's entry under the new one.
+   */
+  private async observeFenced(record: JournalRecord, tombstones?: Tombstone[]): Promise<void> {
+    if (this.disposed) return;
+    if (await this.principalMatches(this.lifetime.signal)) {
+      this.observe(record, tombstones);
+      return;
+    }
+    const cur = record.current;
+    if (cur.phase === 'published' || cur.dataRemoved) this.revokeObjectUrl(record.entryId);
   }
 
   /**

@@ -1514,6 +1514,37 @@ describe('legacy migration admission', () => {
     expect(uploader.calls.map((call) => call.idempotencyKey)).toEqual(['test-legacy-key-0011']);
   });
 
+  // Out of storage while preparing the claims directory, writing the claim or
+  // opening the legacy store: the typed capacity refusal, nothing removed, and
+  // a retry completes the migration.
+  it.each([
+    { at: 'claims directory', fault: (path: string, step: string) => step === 'mkdir' && path.includes('legacy-claims') },
+    { at: 'claim write', fault: (path: string, step: string) => step === 'close' && path.includes('legacy-claims') },
+    { at: 'legacy store root', fault: (path: string, step: string) => step === 'mkdir' && path === '/filefn-pending-uploads' },
+  ])('returns the typed quota refusal when storage runs out at the $at, keeping the legacy upload', async ({ fault }) => {
+    const id = 'offline_1731000000000_legacy013';
+    if (!fault('/filefn-pending-uploads', 'mkdir')) await writeLegacy(id, 'test-legacy-key-0013');
+    const uploader = recordingUploader();
+    const a = tab('a', { uploader });
+    storage.storage.fault = (path, step) => {
+      if (fault(path, step)) throw quotaExceeded();
+    };
+    const refused = await a.migrateLegacyUpload(id, { ownershipVerified: true });
+    expect(refused).toEqual({
+      status: 'refused',
+      reason: 'capacity',
+      limit: 'quota',
+      usage: expect.objectContaining({ entries: 0 }),
+      limits: expect.any(Object),
+    });
+    storage.storage.fault = undefined;
+    if (fault('/filefn-pending-uploads', 'mkdir')) await writeLegacy(id, 'test-legacy-key-0013');
+    expect(await a.listLegacyUploads()).toEqual([expect.objectContaining({ uploadSessionId: id })]);
+    expect(await a.migrateLegacyUpload(id, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    await a.processAll();
+    expect(uploader.calls.map((call) => call.idempotencyKey)).toEqual(['test-legacy-key-0013']);
+  });
+
   it('never returns a later generation as the entry a legacy upload became', async () => {
     await writeLegacy('offline_1731000000000_legacy012', 'test-legacy-key-0012');
     const a = tab('a');
@@ -1814,5 +1845,59 @@ describe('a hold taken while an upload runs', () => {
     expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
     const key = requests[0].split(' ')[1];
     expect(requests).toEqual([`init ${key}`, `init ${key}`, `complete ${key}`]);
+  });
+});
+
+describe('an account switch inside a callback', () => {
+  it('ends the event fan-out and leaves waiters for their own principal', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn, observeIntervalMs: 0 });
+    const { entry } = await stage(a);
+    const settled = a.whenSettled(FILE_ID, entry.generation);
+    let outcome: unknown = 'pending';
+    settled.then((value) => { outcome = value; }, (error) => { outcome = error; });
+    const first = vi.fn(() => {
+      signedIn = BOB.principal;
+    });
+    const second = vi.fn();
+    a.subscribe(first);
+    a.subscribe(second);
+
+    await a.process(FILE_ID).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(first).toHaveBeenCalledTimes(1);
+    // The second listener and the waiter never see Alice's entry while Bob is signed in.
+    expect(second).not.toHaveBeenCalled();
+    expect(outcome).toBe('pending');
+
+    // Alice is back: a read settles her waiter from the durable journal.
+    signedIn = ALICE.principal;
+    await a.get(FILE_ID);
+    expect(outcome).toMatchObject({ entryId: FILE_ID, state: 'published' });
+    a.dispose();
+  });
+
+  it('delivers no further sync callback or summary of the old principal', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', {
+      currentPrincipal: () => signedIn,
+      uploader: { upload: async () => { throw new TypeError('fetch failed'); } },
+    });
+    await a.stage({ policy: 'p', file: new Blob(['one']), entryId: 'alice-one', fileId: 'file_00000000entry01' });
+    await a.stage({ policy: 'p', file: new Blob(['two']), entryId: 'alice-two', fileId: 'file_00000000entry02' });
+    const onSyncError = vi.fn(() => {
+      signedIn = BOB.principal;
+    });
+    const onSyncProgress = vi.fn();
+    const onSyncComplete = vi.fn();
+    const sync = onlineSync(a, { onSyncError, onSyncProgress, onSyncComplete, retryDelayMs: 60_000, idlePollMs: 0 });
+
+    const summary = await sync.syncAll();
+    expect(onSyncError).toHaveBeenCalledTimes(1);
+    expect(onSyncProgress).not.toHaveBeenCalled();
+    expect(onSyncComplete).not.toHaveBeenCalled();
+    expect(summary).toEqual({ succeeded: [], failed: [], totalProcessed: 0 });
+    sync.dispose();
+    a.dispose();
   });
 });

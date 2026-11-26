@@ -11,8 +11,8 @@ import type {
  * `navigator.locks` that, like a browser, releases a tab's locks when it closes.
  */
 
-/** Called before each write and commit; throw to inject a fault (a crash or a full disk). */
-export type StorageFault = (path: string, step: 'write' | 'close') => void;
+/** Called before each directory creation, write and commit; throw to inject a fault (a crash or a full disk). */
+export type StorageFault = (path: string, step: 'mkdir' | 'write' | 'close') => void;
 
 interface Storage {
   fault?: StorageFault;
@@ -33,6 +33,7 @@ export class MemoryDirectory implements OfflineQueueDirectoryHandle {
   async getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<MemoryDirectory> {
     let entry = this.entries.get(name);
     if (!entry && options?.create) {
+      this.storage.fault?.(`${this.path}/${name}`, 'mkdir');
       entry = new MemoryDirectory(`${this.path}/${name}`, this.storage);
       this.entries.set(name, entry);
     }

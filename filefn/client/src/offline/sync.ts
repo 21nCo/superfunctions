@@ -156,12 +156,19 @@ export class OfflineSync {
 
   /** Starts a pass in the background; a pass that fails is reported and, for a queue, tried again later. */
   private runPass(): void {
-    void this.syncAll().catch((error) => this.passFailed(error));
+    void this.syncAll().catch((error) => this.passFailed(error)).catch(() => {});
   }
 
-  private passFailed(error: unknown): void {
+  private async passFailed(error: unknown): Promise<void> {
     if (this.stopped()) return;
     if (this.queueGone(error)) return;
+    // A failed pass of a queue whose principal is no longer current is retried, not reported.
+    const reportable = this.config.queue ? await this.config.queue.principalIsCurrent().catch(() => false) : true;
+    if (this.stopped()) return;
+    if (!reportable) {
+      if (this.isOnline()) this.scheduleQueueRetry();
+      return;
+    }
     this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), this.config.queue ? '*queue*' : '*sync*');
     if (this.config.queue && this.isOnline()) this.scheduleQueueRetry();
   }
@@ -321,6 +328,11 @@ export class OfflineSync {
    * during the pass (superseded) gets a follow-up pass at once, so the newer
    * one is driven even when the tab that staged it has closed. No callback
    * runs once the sync is disposed, even from inside an earlier callback.
+   * The principal is checked before each callback and before the summary is
+   * returned: once a callback (or anything else) switched the account, no
+   * further callback runs, the pass returns an empty summary with none of
+   * the old principal's entry IDs, and it is looked at again later (the old
+   * principal may come back).
    */
   private async syncQueue(queue: OfflineQueue): Promise<SyncResult> {
     const result: SyncResult = { succeeded: [], failed: [], totalProcessed: 0 };
@@ -337,8 +349,18 @@ export class OfflineSync {
     }
     progress.totalPending = outcomes.length;
     let retry = false;
+    // Before a callback or the summary: still running, and still the partition's principal.
+    const mayReport = async (): Promise<boolean> => {
+      if (this.stopped()) return false;
+      const current = await queue.principalIsCurrent();
+      if (this.stopped()) return false;
+      if (current) return true;
+      if (this.isOnline()) this.scheduleQueueRetry();
+      return false;
+    };
+    const withheld = (): SyncResult => ({ succeeded: [], failed: [], totalProcessed: 0 });
     for (const item of outcomes) {
-      if (this.stopped()) return result;
+      if (this.stopped()) return withheld();
       const { entryId } = item;
       let failure: Error | undefined;
       if ('error' in item) {
@@ -377,16 +399,18 @@ export class OfflineSync {
       if (failure) {
         result.failed.push(entryId);
         progress.failed += 1;
+        if (!(await mayReport())) return withheld();
         this.config.onSyncError(failure, entryId);
-        if (this.stopped()) return result;
       }
       result.totalProcessed += 1;
       progress.current = entryId;
-      this.config.onSyncProgress(progress);
+      if (!(await mayReport())) return withheld();
+      this.config.onSyncProgress({ ...progress });
     }
     progress.current = null;
-    if (this.stopped()) return result;
-    this.config.onSyncComplete(result);
+    if (!(await mayReport())) return withheld();
+    this.config.onSyncComplete({ succeeded: [...result.succeeded], failed: [...result.failed], totalProcessed: result.totalProcessed });
+    if (!(await mayReport())) return withheld();
     if (!retry) {
       this.queueRetries = 0;
       this.scheduleIdlePoll();

@@ -138,7 +138,7 @@ See [Render intents](../core-concepts/render-intents).
 
 ## OPFS offline
 
-`offline: { enabled: true, partition, currentPrincipal, getAuthHeaders }` activates the OPFS pipeline (all three are required for offline staging with the built-in transport, else `FILEFN_OFFLINE_PARTITION_REQUIRED`, `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`; a guest partition needs `offline.uploader` instead of `getAuthHeaders`). `currentPrincipal` must answer from local state without a network request. Replays send no cookies unless `offline.replayAmbientCredentials: true`, so `getAuthHeaders(principal)` returns a token issued for that principal. See [Features › Offline](../features/offline) for the details.
+`offline: { enabled: true, partition, currentPrincipal, getAuthHeaders }` activates the OPFS pipeline (all three are required for offline staging with the built-in transport, else `FILEFN_OFFLINE_PARTITION_REQUIRED`, `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`; a guest partition needs `offline.uploader` instead of `getAuthHeaders`). `currentPrincipal` must answer from local state without a network request. Replays never send cookies, so `getAuthHeaders(principal)` returns a token issued for that principal. See [Features › Offline](../features/offline) for the details.
 
 ## HEIC preprocessing
 
