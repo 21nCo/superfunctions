@@ -306,10 +306,11 @@ describe("startUpdateCheck: request and notice", () => {
     let clock = T0;
     let respond: ((response: Response) => void) | undefined;
     const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
-    const handle = check({ fetch, now: () => clock, timeoutMs: 1_500 });
+    // The deadline passes on the injected clock only: the request's real abort timer cannot fire during the test.
+    const handle = check({ fetch, now: () => clock, timeoutMs: SETTLE_ONLY_MS });
     await until(() => fetch.mock.calls.length === 1);
 
-    clock += 1_501;
+    clock += SETTLE_ONLY_MS + 1;
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
     // Settled past the deadline before notice() is first called: its first read, then its claim read and its refresh
     // write's read have finished.
@@ -326,10 +327,11 @@ describe("startUpdateCheck: request and notice", () => {
     let clock = T0;
     let respond: ((response: Response) => void) | undefined;
     const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
-    const handle = check({ fetch, now: () => clock, timeoutMs: 1_500 });
+    // The deadline passes on the injected clock only: the request's real abort timer cannot fire during the test.
+    const handle = check({ fetch, now: () => clock, timeoutMs: SETTLE_ONLY_MS });
     await until(() => fetch.mock.calls.length === 1);
 
-    clock += 1_500;
+    clock += SETTLE_ONLY_MS;
     await expect(handle.notice()).resolves.toBeNull();
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
     // Settled after the deadline expired it: its first read, then its claim read and its refresh write's read.
