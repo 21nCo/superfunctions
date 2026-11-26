@@ -103,7 +103,9 @@ function sortedJson(value: unknown): string {
 
 /** Every field of a state row except consumption bookkeeping. */
 function oauthStateFingerprint(record: OAuthStateRecord): string {
-  const { consumedAt: _consumedAt, expiresAt: _expiresAt, ...authorization } = record;
+  const authorization: Partial<OAuthStateRecord> = { ...record };
+  delete authorization.consumedAt;
+  delete authorization.expiresAt;
   return sortedJson(authorization);
 }
 
