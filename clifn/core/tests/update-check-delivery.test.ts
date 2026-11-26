@@ -201,12 +201,12 @@ describe("delivery records", () => {
   });
 });
 
-/** Busy-waits, so the event loop runs nothing (no timer, no I/O callback) for `ms`, as `execSync` would. */
+/**
+ * Blocks the thread, so the event loop runs nothing (no timer, no I/O callback) for `ms`, as `execSync` would. It
+ * sleeps rather than spins, so it takes no CPU from the tests running beside it.
+ */
 function blockSynchronously(ms: number): void {
-  const until = performance.now() + ms;
-  while (performance.now() < until) {
-    // Blocking on purpose.
-  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /** Transpiles `src` into `directory` as ES modules that plain node loads (no loader, no build output). */
