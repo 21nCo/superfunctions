@@ -4,6 +4,7 @@ import type {
   ScopedTriggerHandler,
   Trigger,
   TriggerHandler,
+  WebhookConfig,
   WebhookEvent,
   WebhookVerificationContext,
   WebhookWorkflowBinding,
@@ -157,7 +158,10 @@ export class WebhookHandler {
     if (scope?.revoked.aborted) {
       throw webhookBindingRevoked();
     }
-    const listenersCompleted = await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners);
+    const listenersCompleted = await this.emit(
+      provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners,
+      trigger.webhookConfig?.cloneWorkflowEvent,
+    );
     if (listenersCompleted) onListenersCompleted?.();
 
     if (processedEventKey) {
@@ -450,7 +454,8 @@ export class WebhookHandler {
     event: string,
     webhookEvent: Parameters<TriggerHandler>[0],
     scope: WebhookDispatchScope | undefined,
-    skipListeners: boolean
+    skipListeners: boolean,
+    cloneWorkflowEvent: WebhookConfig['cloneWorkflowEvent'],
   ): Promise<boolean> {
     const listeners = skipListeners ? undefined : this.handlers.get(handlerKey(provider, event));
     const workflowHandlers = scope && this.workflowHandlers.get(handlerKey(provider, event, scope.binding));
@@ -460,15 +465,13 @@ export class WebhookHandler {
     }
 
     if (scope && workflowHandlers) {
-      const snapshot = serialize(webhookEvent);
-      await this.settleHandlers(provider, event, [...workflowHandlers].map((handler) =>
-        Promise.resolve().then(() => {
-          // Deserialized buffers can retain the backing store of the serialized input.
-          const copy = Buffer.alloc(snapshot.length);
-          snapshot.copy(copy);
-          return handler(deserialize(copy), scope);
-        })
-      ));
+      const copyEvent = cloneWorkflowEvent
+        ? () => cloneWorkflowEvent(webhookEvent)
+        : snapshotWorkflowEvent(webhookEvent);
+      const calls = [...workflowHandlers].map((handler) =>
+        Promise.resolve().then(() => handler(copyEvent(), scope))
+      );
+      await this.settleHandlers(provider, event, calls);
     }
     // A scoped workflow failure must leave listeners untouched for the next attempt.
     if (scope?.revoked.aborted) {
@@ -558,6 +561,16 @@ export class WebhookHandler {
   }
 }
 
+function snapshotWorkflowEvent(event: Parameters<TriggerHandler>[0]): () => Parameters<TriggerHandler>[0] {
+  const snapshot = serialize(event);
+  return () => {
+    // Deserialized buffers can retain the backing store of the serialized input.
+    const copy = Buffer.alloc(snapshot.length);
+    snapshot.copy(copy);
+    return deserialize(copy);
+  };
+}
+
 export function isBindingId(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -593,8 +606,7 @@ export function assertWebhookReceiptScope(
 ): void {
   if (
     Boolean(receipt.workflowIdempotencyKey) !== Boolean(binding) ||
-    (receipt.metadata?.tenantId ?? undefined) !== binding?.tenantId ||
-    (binding && receipt.connectionId !== binding.connectionId)
+    (binding && (receipt.metadata?.tenantId !== binding.tenantId || receipt.connectionId !== binding.connectionId))
   ) {
     throw new WebhookHandlerError(
       'WEBHOOK_IDEMPOTENCY_CONFLICT',

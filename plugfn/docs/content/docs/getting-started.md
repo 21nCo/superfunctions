@@ -72,6 +72,8 @@ Call this factory from your host bootstrap, then `app.listen(...)` or mount the 
 
 Set `GITHUB_WEBHOOK_SECRET` to the GitHub App's configured webhook secret and point the App's webhook URL at `/api/plugfn/webhooks/github`. The installation resolver reads the server-owned registry for that App. Return one active match with its `tenantId`, `connectionId`, and a registry-owned `revoked` signal, or an empty array for an unknown installation. Reuse that signal while the binding stays active and abort it when the binding changes or is revoked. Use the same registry when authorizing workflow creation.
 
+If a custom provider emits class instances in its webhook event, set `webhookConfig.cloneWorkflowEvent` to copy the event for each workflow. Return independent copies of all mutable values and preserve the event's types. PlugFn's default copy handles structured data and buffers.
+
 `PLUGFN_ENCRYPTION_KEY` is a 32-byte key encoded as 64 hexadecimal characters. Generate and store it once in the deployment's secret manager; changing it without migrating encrypted connection state makes stored credentials unreadable. Set `APP_URL` to the application's public URL. Register the exact callback URI, such as `https://app.example.com/api/plugfn/callback/github`, with the provider and supply that URI when starting the connection.
 
 The host resolver returns an authenticated `userId` and, where applicable, `tenantId`. Returning null denies protected routes. Browser-supplied owner fields do not replace that identity. Continue with [Connections and OAuth](/docs/connections-and-oauth) and [Actions, workflows, and sync](/docs/workflows-and-sync).

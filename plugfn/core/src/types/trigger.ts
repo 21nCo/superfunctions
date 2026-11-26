@@ -42,6 +42,8 @@ export interface WebhookConfig {
   /** Extract a delivery ID only when the verifier authenticates that ID. */
   getAuthenticatedDeliveryId?: (payload: unknown, context: WebhookVerificationContext) => string | undefined;
   transformPayload?: (payload: any) => any;
+  /** Return a fully independent event for each workflow when it contains custom class instances. */
+  cloneWorkflowEvent?: (event: Readonly<TriggerEvent & WebhookEvent>) => TriggerEvent & WebhookEvent;
   shouldDispatch?: (payload: any) => boolean;
 }
 

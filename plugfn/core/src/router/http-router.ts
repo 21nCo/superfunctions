@@ -1032,8 +1032,11 @@ export async function deliverWebhook(
       : undefined;
     const skipListeners = Boolean(
       legacyReceipt &&
+      legacyReceipt.workflowIdempotencyKey == null &&
       legacyReceipt.connectionId == null &&
-      legacyReceipt.metadata?.tenantId == null &&
+      legacyReceipt.ownerKind == null &&
+      legacyReceipt.ownerId == null &&
+      legacyReceipt.metadata?.plugfnTenantId == null &&
       legacyReceipt.verificationStatus === 'verified' &&
       legacyReceipt.payloadHash === currentPayloadHash &&
       (await plugFn.runtime.webhooks.listDeliveries(legacyReceipt.id)).some((delivery) =>

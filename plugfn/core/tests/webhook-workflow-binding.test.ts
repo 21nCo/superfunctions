@@ -27,6 +27,14 @@ const deliveryModel = 'plugfn_webhook_deliveries';
 const signingCredential = 'test-webhook-secret';
 const alternateCredential = 'test-alternate-webhook-secret';
 
+class CustomWebhookPayload {
+  constructor(readonly id: string, public installationId?: string) {}
+
+  describe() {
+    return this.id;
+  }
+}
+
 describe('webhook workflow admission', () => {
   let database: MemoryAdapter;
 
@@ -440,6 +448,27 @@ describe('webhook workflow admission', () => {
     expect(listener.mock.calls[0]?.[0].payload.attachment.toString('utf8')).toBe('test-attachment');
   });
 
+  it('isolates custom typed events using the provider copy', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    await seedWorkflow(database, 'two', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send, action } = startRuntime(database, { withCustomPayload: true });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const copies = new Set<CustomWebhookPayload>();
+    action.mockImplementation(async ({ trigger }) => {
+      const payload: CustomWebhookPayload = trigger.payload.payload;
+      expect(payload.describe()).toBe('test-delivery');
+      expect(payload.installationId).toBe('test-installation-one');
+      copies.add(payload);
+      payload.installationId = 'test-mutated-installation';
+      return {};
+    });
+
+    expect((await send('test-installation-one')).status).toBe(200);
+    expect(copies.size).toBe(2);
+    expect(listener.mock.calls[0]?.[0].payload.installationId).toBe('test-installation-one');
+  });
+
   it('distinguishes authenticated delivery IDs when verified bodies match', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { send, action } = startRuntime(database, { authenticateDeliveryId: true });
@@ -467,6 +496,41 @@ describe('webhook workflow admission', () => {
     expect((await scoped.send('test-installation-one')).status).toBe(200);
     expect(listener).toHaveBeenCalledOnce();
     expect(scoped.action).toHaveBeenCalledOnce();
+  });
+
+  it('uses only unowned legacy receipts to suppress a standalone listener during scoped dispatch', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send, action } = startRuntime(database);
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const receipt = await runtime.runtime.webhooks.createReceipt({
+      provider: 'test-provider',
+      event: 'test.event',
+      idempotencyKey: 'test-delivery',
+      payloadHash: fingerprint(JSON.stringify({ id: 'test-delivery', installationId: 'test-installation-one' })),
+      owner: { kind: 'user', userId: 'test-owner', tenantId: firstBinding.tenantId },
+      verificationStatus: 'verified',
+    });
+    await runtime.runtime.webhooks.createDelivery({
+      receiptId: receipt.id, status: 'success', metadata: { triggerKey: 'test.event' },
+    });
+
+    expect((await send('test-installation-one')).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  it('retries a standalone receipt that carries application tenant metadata', async () => {
+    const { runtime, send } = startRuntime(database, { withResolver: false });
+    const listener = vi.fn().mockRejectedValueOnce(new Error('test listener failed'));
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await send()).status).toBe(503);
+    const webhooks = runtime.runtime.webhooks;
+    const receipt = await webhooks.findReceiptByIdempotencyKey('test-provider', 'test-delivery');
+    await webhooks.updateReceipt(receipt!.id, { metadata: { tenantId: 'test-application-tenant' } });
+
+    expect((await send()).status).toBe(200);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -876,6 +940,7 @@ function startRuntime(
     authenticateEventHeader?: boolean;
     errorHandlers?: WorkflowRuntimeRegistry['errorHandlers'];
     withBinaryAttachment?: boolean;
+    withCustomPayload?: boolean;
     routeAlias?: string;
     otherRouteAlias?: string;
   } = {}
@@ -924,7 +989,9 @@ function startRuntime(
       displayName: 'Test event',
       description: 'Test event',
       type: TriggerType.Webhook,
-      schema: z.object({ id: z.string(), installationId: z.string().optional() }),
+      schema: options.withCustomPayload
+        ? z.instanceof(CustomWebhookPayload)
+        : z.object({ id: z.string(), installationId: z.string().optional() }),
       handler: triggerHandler,
       webhookConfig: {
         path: `/webhooks/test-provider/${options.routeAlias ?? 'test.event'}`,
@@ -940,6 +1007,15 @@ function startRuntime(
           : undefined,
         transformPayload: options.withBinaryAttachment
           ? (payload) => ({ ...payload, attachment: Buffer.from('test-attachment') })
+          : options.withCustomPayload
+          ? ({ id, installationId }) => new CustomWebhookPayload(id, installationId)
+          : undefined,
+        cloneWorkflowEvent: options.withCustomPayload
+          ? (event: Parameters<NonNullable<WebhookConfig['cloneWorkflowEvent']>>[0]) => {
+            const { id, installationId } = event.payload;
+            const payload = new CustomWebhookPayload(id, installationId);
+            return { ...structuredClone(event), payload, data: payload };
+          }
           : undefined,
       },
     },
