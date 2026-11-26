@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requestExtra } from "./openapi-helpers.js";
@@ -206,5 +208,91 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry definition 
     });
     expect(source.definitions()[0]!.inputSchema).toEqual({ type: "object", properties: { a: { type: "string" }, b: { type: "string" } } });
     expect(Object.hasOwn(source.definitions()[0]!.inputSchema, "description")).toBe(false);
+  });
+
+  it("accepts plain JSON schema data from another realm like local data", async () => {
+    const mcpfn = await load(mode);
+    const { createSchemaCompiler } = await import("../src/validation.js");
+    const shared = createSchemaCompiler();
+    const compileSchema = vi.fn((schema: object) => shared.compile(schema));
+    const create = () => (mode === "custom" ? new mcpfn.McpFnRegistry({ compileSchema }) : mcpfn.registry());
+    const input = { type: "object", properties: { name: { type: "string", enum: ["x", "y"] } }, required: ["name"] };
+    const output = { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] };
+    const args = { type: "object", properties: { topic: { type: "string", enum: ["a", "b"] } }, required: ["topic"] };
+    const execution = { taskSupport: "optional" };
+    // JSON.parse in a vm context builds objects and arrays on that realm's
+    // Object.prototype and Array.prototype.
+    const foreign = <T>(value: T): T => runInNewContext(`JSON.parse(${JSON.stringify(JSON.stringify(value))})`) as T;
+    const tool = (schemas: { input: object; output: object; execution: object }) => ({
+      name: "t",
+      description: "Tool.",
+      inputSchema: schemas.input as never,
+      outputSchema: schemas.output as never,
+      execution: schemas.execution as never,
+      handler: async (values: { name: string }) => ({ content: [], structuredContent: values.name === "x" ? { ok: true } : { ok: "no" } }),
+      taskHandler: handler as never,
+    });
+    const prompt = (schema: object) => ({ name: "p", argumentsSchema: schema as never, get: async () => ({ messages: [] }) });
+    const local = create().register(tool({ input, output, execution })).registerPrompt(prompt(args));
+    // A local schema whose nested required array comes from another realm.
+    const mixedInput = { ...input, required: runInNewContext('["name"]') as string[] };
+    const sources = [
+      create().register(tool({ input: foreign(input), output: foreign(output), execution: foreign(execution) })).registerPrompt(prompt(foreign(args))),
+      create().register(tool({ input: mixedInput, output, execution })).registerPrompt(prompt(args)),
+    ];
+    for (const source of sources) {
+      expect(source.listTools()).toEqual(local.listTools());
+      expect(source.listPrompts()).toEqual(local.listPrompts());
+      const listed = source.listTools()[0]!.inputSchema as { required: unknown };
+      expect(Object.getPrototypeOf(listed)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf(listed.required)).toBe(Array.prototype);
+      expect(Object.isFrozen(listed.required)).toBe(true);
+      expect(source.taskSupport("t")).toBe("optional");
+      expect(() => mcpfn.validateManifest(mcpfn.createManifest(info, source))).not.toThrow();
+      expect(mcpfn.createManifest(info, source)).toEqual(mcpfn.createManifest(info, local));
+      for (const registry of [source, source.clone()]) {
+        await expect(registry.callTool("t", { name: "x" }, undefined, requestExtra())).resolves.toMatchObject({ structuredContent: { ok: true } });
+        await expect(registry.callTool("t", { name: "z" }, undefined, requestExtra())).rejects.toThrow("Invalid arguments for t");
+        await expect(registry.callTool("t", { name: "y" }, undefined, requestExtra())).rejects.toThrow("Invalid output from t");
+        await expect(registry.getPrompt("p", { topic: "a" }, undefined, requestExtra())).resolves.toEqual({ messages: [] });
+        await expect(registry.getPrompt("p", { topic: "c" }, undefined, requestExtra())).rejects.toThrow();
+      }
+    }
+  });
+
+  it("rejects non-JSON values from another realm and Array subclasses before compiling", async () => {
+    const mcpfn = await load(mode);
+    const { createSchemaCompiler } = await import("../src/validation.js");
+    const shared = createSchemaCompiler();
+    const compileSchema = vi.fn((schema: object) => shared.compile(schema));
+    const source = mode === "custom" ? new mcpfn.McpFnRegistry({ compileSchema }) : mcpfn.registry();
+    class Items extends Array<string> {}
+    const items = Items.from(["name"]);
+    const nonJson: Array<[string, unknown]> = [
+      ["vm Date", runInNewContext("new Date(0)")],
+      ["vm Map", runInNewContext("new Map()")],
+      ["vm class instance", runInNewContext("new (class Schema { constructor() { this.type = 'string'; } })()")],
+      ["vm Array subclass", runInNewContext("class Items extends Array {}; Items.from(['name'])")],
+      ["Array subclass", items],
+      ["Date with an Object.prototype prototype", Object.setPrototypeOf(new Date(0), Object.prototype)],
+      ["vm Date with its realm's Object.prototype", runInNewContext("Object.setPrototypeOf(new Date(0), Object.prototype)")],
+    ];
+    for (const [label, value] of nonJson) {
+      const inputSchema = { type: "object", properties: { s: { type: "string", default: value } }, required: ["s"] };
+      const register = () => source.register({ name: "t", description: label, inputSchema: inputSchema as never, handler });
+      expect(register, label).toThrow(mcpfn.McpFnValidationError);
+      expect(register, label).toThrow("Tool t inputSchema must be JSON data");
+      expect(() => source.register({ name: "t", description: label, inputSchema: { type: "object" }, outputSchema: { type: "object", properties: { s: { default: value } } } as never, handler }), label)
+        .toThrow("Tool t outputSchema must be JSON data");
+      expect(() => source.register({ name: "t", description: label, inputSchema: { type: "object" }, execution: { taskSupport: "optional", extra: value } as never, taskHandler: handler as never, handler }), label)
+        .toThrow("Tool t execution must be JSON data");
+      expect(() => source.registerPrompt({ name: "p", argumentsSchema: inputSchema as never, get: async () => ({ messages: [] }) }), label)
+        .toThrow("Prompt p argumentsSchema must be JSON data");
+    }
+    expect(() => source.register({ name: "t", description: "Subclass required.", inputSchema: { type: "object", required: items } as never, handler }))
+      .toThrow("Tool t inputSchema must be JSON data");
+    expect(compileSchema).not.toHaveBeenCalled();
+    expect(source.listTools()).toEqual([]);
+    expect(source.listPrompts()).toEqual([]);
   });
 });

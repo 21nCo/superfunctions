@@ -117,10 +117,36 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+// The plain-data checks recognise another realm's built-in prototypes by shape,
+// not identity: a realm's Object.prototype is the object whose own prototype is
+// null, and its Array.prototype is an array whose prototype is that object. A
+// subclass, Date, Map, RegExp, typed array or class instance from any realm has
+// a different chain and fails. An own Symbol.toStringTag is refused unread, so
+// no caller accessor runs while the tag is checked.
+function isPlainArray(value: unknown[]): boolean {
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype === Array.prototype) return true;
+  if (prototype === null || !Array.isArray(prototype)) return false;
+  const realmObject = Object.getPrototypeOf(prototype) as unknown;
+  return realmObject !== null && Object.getPrototypeOf(realmObject) === null;
+}
+
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype === null) return true;
+  if (Object.getPrototypeOf(prototype) !== null) return false;
+  if (Object.getOwnPropertyDescriptor(value, Symbol.toStringTag)) return false;
+  // The built-in tag catches an exotic object (arguments, or a Date, RegExp or
+  // Error whose prototype was reset) that sits directly on Object.prototype.
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
 /**
  * A deep-frozen copy of caller-owned schema data. Only JSON data is accepted:
- * plain objects (prototype Object.prototype or null) with data properties,
- * arrays, strings, finite numbers, booleans and null. An object property whose
+ * plain objects (prototype null or any realm's Object.prototype) with data
+ * properties, plain arrays (any realm's Array.prototype), strings, finite
+ * numbers, booleans and null. Data from another realm (vm, an iframe) is
+ * accepted like local data; the snapshot is always built in this realm. An object property whose
  * value is undefined is left out, as JSON.stringify does. Anything else (a
  * Date, Map, RegExp, typed array, class instance, function, accessor, cycle or
  * undefined array item) fails, because a frozen view of it could still change
@@ -149,9 +175,7 @@ function snapshotJson<T>(value: T, label: string): T {
     active.add(current);
     let result: unknown;
     if (Array.isArray(current)) {
-      if (Object.getPrototypeOf(current) !== Array.prototype) {
-        throw new Error(`${path} is not a plain array`);
-      }
+      if (!isPlainArray(current)) throw new Error(`${path} is not a plain array`);
       const items: unknown[] = [];
       for (let index = 0; index < current.length; index += 1) {
         const descriptor = Object.getOwnPropertyDescriptor(current, index);
@@ -162,10 +186,7 @@ function snapshotJson<T>(value: T, label: string): T {
       }
       result = items;
     } else {
-      const prototype = Object.getPrototypeOf(current) as unknown;
-      if (prototype !== Object.prototype && prototype !== null) {
-        throw new Error(`${path} is not a plain object`);
-      }
+      if (!isPlainObject(current)) throw new Error(`${path} is not a plain object`);
       const entries: Record<string, unknown> = {};
       for (const key of Object.keys(current)) {
         const descriptor = Object.getOwnPropertyDescriptor(current, key);
