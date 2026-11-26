@@ -328,15 +328,24 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
    *    throws, a plain write of the tombstone;
    * 4. if that throws too, delete: the verifier is gone, and a later return
    *    reads `unknown-handoff` instead of `already-used`.
+   * With `expectedOrigin` (only `complete()` passes it), a pending record
+   * bound to another origin, as observed or as read again, is `foreign`:
+   * nothing is written, so that origin's own return still works.
    */
   const retire = async (
     key: string,
     observed: unknown,
-    expiresAt: number
-  ): Promise<'tombstoned' | 'changed' | 'absent' | 'deleted' | 'failed'> => {
+    expiresAt: number,
+    expectedOrigin?: string
+  ): Promise<'tombstoned' | 'changed' | 'absent' | 'foreign' | 'deleted' | 'failed'> => {
     const handoffId = key.slice(keyPrefix.length);
     const swap = async (expected: string, expiry: number) =>
       await guarded.compareAndSet(key, expected, tombstoneFor(handoffId, expiry, now())) ? 'tombstoned' : 'changed';
+    const foreign = (record: StoredRecord | null) =>
+      expectedOrigin !== undefined && record?.state === 'pending' && record.origin !== expectedOrigin;
+    if (typeof observed === 'string' && foreign(parseRecord(observed, handoffId))) {
+      return 'foreign';
+    }
     if (typeof observed === 'string') {
       try {
         return await swap(observed, expiresAt);
@@ -352,6 +361,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       const record = parseRecord(current, handoffId);
       if (record?.state === 'used') {
         return 'changed';
+      }
+      if (foreign(record)) {
+        return 'foreign';
       }
       try {
         return await swap(current, record ? tombstoneExpiry(record) : expiresAt);
@@ -383,6 +395,13 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       return READ_FAILED;
     }
   };
+
+  /** The failure for a retire() outcome in complete(): another participant's tombstone, another origin's record, or `otherwise`. */
+  const retiredReason = (
+    outcome: Awaited<ReturnType<typeof retire>>,
+    otherwise: AuthFnBrowserHandoffFailureReason
+  ): AuthFnBrowserHandoffFailureReason =>
+    outcome === 'changed' ? 'already-used' : outcome === 'foreign' ? 'origin-mismatch' : otherwise;
 
   const prune = async (): Promise<number> => {
     let removed = 0;
@@ -535,30 +554,30 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         return fail(store.atomic === true ? 'unknown-handoff' : 'store-not-atomic', { handoffId, cleanUrl });
       }
       const record = typeof raw === 'string' ? parseRecord(raw, handoffId) : null;
+      // A return on another origin than the handoff's changes nothing, live
+      // or expired, so the return on the right origin still works. retire()
+      // applies the same rule to what it reads again.
+      if (record?.state === 'pending' && record.origin !== url.origin) {
+        return fail('origin-mismatch', { handoffId, cleanUrl });
+      }
       if (store.atomic !== true) {
         // Without an atomic claim two windows could both exchange; retire
         // the verifier instead.
-        if (record?.state !== 'used') {
-          await retire(key, raw, tombstoneExpiry(record));
-        }
-        return fail('store-not-atomic', { handoffId, cleanUrl });
+        const outcome = record?.state === 'used' ? 'changed' : await retire(key, raw, tombstoneExpiry(record), url.origin);
+        return fail(outcome === 'foreign' ? 'origin-mismatch' : 'store-not-atomic', { handoffId, cleanUrl });
       }
       if (!record) {
         // Unreadable, not a string, or not a record this helper wrote: it
         // cannot be trusted to be claimed later, so it is retired.
-        const outcome = await retire(key, raw, tombstoneExpiry(null));
-        return fail(outcome === 'changed' ? 'already-used' : 'malformed-state', { handoffId, cleanUrl });
+        const outcome = await retire(key, raw, tombstoneExpiry(null), url.origin);
+        return fail(retiredReason(outcome, 'malformed-state'), { handoffId, cleanUrl });
       }
       if (record.state === 'used') {
         return fail('already-used', { handoffId, cleanUrl });
       }
       if (record.expiresAt <= now()) {
-        const outcome = await retire(key, raw, tombstoneExpiry(record));
-        return fail(outcome === 'changed' ? 'already-used' : 'expired', { handoffId, cleanUrl });
-      }
-      // Refused before the claim: the return on the right origin still works.
-      if (url.origin !== record.origin) {
-        return fail('origin-mismatch', { handoffId, cleanUrl });
+        const outcome = await retire(key, raw, tombstoneExpiry(record), url.origin);
+        return fail(retiredReason(outcome, 'expired'), { handoffId, cleanUrl });
       }
 
       // From here on the callback names a live handoff, so any outcome
@@ -578,8 +597,8 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         }
         const outcome = current === null || current === undefined
           ? 'absent'
-          : await retire(key, current, record.expiresAt);
-        return fail(outcome === 'changed' ? 'already-used' : 'malformed-state', { handoffId, cleanUrl });
+          : await retire(key, current, record.expiresAt, url.origin);
+        return fail(retiredReason(outcome, 'malformed-state'), { handoffId, cleanUrl });
       }
       if (!claimed) {
         return fail('already-used', { handoffId, cleanUrl });

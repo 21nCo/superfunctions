@@ -92,6 +92,9 @@ const percentEncoded = (text: string) => Array.from(
 ).join('');
 const MAX_TTL_MS = 60 * 60 * 1000;
 
+/** `text` with each printable ASCII character replaced by its fullwidth form. */
+const fullwidth = (text: string) => text.replace(/[!-~]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0xfee0));
+
 /**
  * A fake of the server's single-use exchange: a code is bound to the
  * challenge it was minted for, and is consumed by the first exchange that
@@ -547,6 +550,53 @@ describe('createBrowserHandoff', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe('a return on another origin over a store shared across origins', () => {
+    const OTHER = 'https://other.example.com';
+    const sharedSetup = (ttlMs?: number) => {
+      const inner = createMemoryHandoffStore();
+      const shared: AuthFnBrowserHandoffStore = { ...inner, atomic: true, originScoped: false };
+      return { inner, shared, ...setup({ store: shared, ...(ttlMs ? { ttlMs } : {}) }) };
+    };
+
+    it('leaves an expired handoff of another origin as it is', async () => {
+      const { inner, make, server, clock } = sharedSetup(60_000);
+      const begun = await make().begin({ returnTo: RETURN_TO });
+      const callback = server.callbackFor(begun);
+      clock.advance(61_000);
+      const before = await dumpStore(inner);
+
+      expect(failed(await make().complete(callback.replace(APP, OTHER))).reason).toBe('origin-mismatch');
+      expect(await dumpStore(inner)).toBe(before);
+      expect(server.exchange).not.toHaveBeenCalled();
+    });
+
+    it('leaves another origin\'s handoff as it is on a store that cannot claim atomically', async () => {
+      const { inner, shared, make, server } = sharedSetup();
+      const begun = await make().begin({ returnTo: RETURN_TO });
+      const callback = server.callbackFor(begun);
+      const before = await dumpStore(inner);
+
+      expect(failed(await make({ store: { ...shared, atomic: false } }).complete(callback.replace(APP, OTHER))).reason)
+        .toBe('origin-mismatch');
+      expect(await dumpStore(inner)).toBe(before);
+      expect(server.exchange).not.toHaveBeenCalled();
+    });
+
+    it('leaves another origin\'s handoff as it is when the first read fails and the re-read finds it', async () => {
+      const { inner, shared, make, server } = sharedSetup();
+      const begun = await make().begin({ returnTo: RETURN_TO });
+      const callback = server.callbackFor(begun);
+      const before = await dumpStore(inner);
+      const flaky = scriptedStore(shared, [{ op: 'get', call: 1, fail: true }]);
+
+      expect(failed(await make({ store: flaky }).complete(callback.replace(APP, OTHER))).reason).toBe('origin-mismatch');
+      expect(await dumpStore(inner)).toBe(before);
+      expect(server.exchange).not.toHaveBeenCalled();
+      expect((await make().complete(callback)).status).toBe('completed');
+      expect(server.exchange).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.each([
@@ -1128,6 +1178,8 @@ describe('createBrowserHandoff', () => {
       note: 'dropped'
     })).toEqual({ status: 409, ...mismatchDetails });
     expect(await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, { regionId: 'eu' })).toEqual({ status: 409, regionId: 'eu' });
+    expect(await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, { authority: 'https://eu.example.test/', redirectTo: 'https://EU.example.test/' }))
+      .toEqual({ status: 409, authority: 'https://eu.example.test/', redirectTo: 'https://EU.example.test/' });
   });
 
   it.each([
@@ -1147,6 +1199,13 @@ describe('createBrowserHandoff', () => {
     ['a redirect that carries the percent-encoded code', { redirectTo: `https://eu.example.test/?c=${percentEncoded(detailsInput.code)}` }],
     ['an authority that carries double-encoded verifier bytes', {
       authority: `https://eu.example.test/${percentEncoded(percentEncoded(detailsInput.verifier.slice(5, 25)))}`
+    }],
+    // new URL lowercases and IDNA-maps the hostname, which rebuilds the secret.
+    ['an authority whose host is the code in upper case', { authority: `https://${detailsInput.code.toUpperCase()}.example.test/` }],
+    ['a redirect whose host is the code in upper case', { redirectTo: `https://${detailsInput.code.toUpperCase()}.example.test/` }],
+    ['a redirect whose host spells the code in fullwidth letters', { redirectTo: `https://${fullwidth(detailsInput.code)}.example.test/` }],
+    ['an authority whose host splits a verifier run with a soft hyphen', {
+      authority: `https://${detailsInput.verifier.slice(0, 6)}\u00ad${detailsInput.verifier.slice(6, 13)}.example.test/`
     }]
   ] as const)('drops a region-mismatch detail that is %s', async (_label, bad) => {
     const field = Object.keys(bad)[0]!;
@@ -1235,6 +1294,25 @@ describe('createBrowserHandoff', () => {
     const envelope = await client.exchangeSocialHandoff({ code: 'AUTHFN_REDIRECT_REQUIRES_NAVIGATION', verifier: plainInput.verifier });
 
     expect((envelope as { error: { code: string } }).error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+  });
+
+  it('keeps the destination of a redirect the exchange answers with, unless it carries the request', async () => {
+    const redirectFor = async (location: string) => {
+      const client = createAuthFnClient({
+        baseUrl: `${APP}/auth`,
+        fetch: async () => new Response(null, { status: 302, headers: { location } })
+      });
+      const envelope = await client.exchangeSocialHandoff(detailsInput) as { error: { code: string; details: Record<string, unknown> } };
+      expect(envelope.error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+      return envelope.error.details;
+    };
+    expect(await redirectFor('https://app.example.test/next')).toEqual({ status: 302, redirectTo: 'https://app.example.test/next' });
+    expect(await redirectFor('/next?tab=1')).toEqual({ status: 302, redirectTo: '/next?tab=1' });
+    expect(await redirectFor(`https://app.example.test/next?c=${detailsInput.code}`)).toEqual({ status: 302 });
+    expect(await redirectFor(`/next?c=${percentEncoded(detailsInput.code)}`)).toEqual({ status: 302 });
+    expect(await redirectFor(`https://${detailsInput.code.toUpperCase()}.example.test/`)).toEqual({ status: 302 });
+    expect(await redirectFor('//elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('next')).toEqual({ status: 302 });
   });
 
   it('keeps only the field of a validation error', async () => {

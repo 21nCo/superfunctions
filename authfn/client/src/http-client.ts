@@ -1,6 +1,6 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import { isRegionId } from './region-id.js';
-import { collectBodyStrings, repeatsSecret, safeLabel, safeText, type TextCheck } from './secret-text.js';
+import { collectBodyStrings, repeatsSecret, safeLabel, safeText, sharesText, type TextCheck } from './secret-text.js';
 import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
@@ -41,6 +41,7 @@ const KEPT_ERROR_DETAILS: Readonly<Record<string, Readonly<Record<string, TextCh
     continueLocally: 'boolean'
   },
   AUTHFN_RATE_LIMITED: { resetAt: isIsoTimestamp },
+  AUTHFN_REDIRECT_REQUIRES_NAVIGATION: { redirectTo: isNavigationTarget },
   AUTHFN_VALIDATION_ERROR: { field: (value) => EXCHANGE_VALIDATION_FIELDS.has(value) }
 };
 /**
@@ -381,7 +382,10 @@ function keptDetails(code: string, details: unknown, secrets: readonly string[])
     const value = details && typeof details === 'object' && Object.hasOwn(details, field)
       ? (details as Record<string, unknown>)[field]
       : undefined;
-    const keep = check === 'boolean' ? typeof value === 'boolean' : safeLabel(value, check, secrets) !== undefined;
+    const keep = check === 'boolean'
+      ? typeof value === 'boolean'
+      : safeLabel(value, check, secrets) !== undefined
+        && !((check === isAbsoluteHttpUrl || check === isNavigationTarget) && parsedUrlSharesText(value as string, secrets));
     if (keep) {
       kept[field] = value;
     }
@@ -416,6 +420,27 @@ function isAbsoluteHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** An absolute http(s) URL as `isAbsoluteHttpUrl` accepts, or a root-relative path ('/' not followed by '/' or '\\'). */
+function isNavigationTarget(value: string): boolean {
+  return isAbsoluteHttpUrl(value) || (URL_TEXT_PATTERN.test(value) && /^\/(?![/\\])/.test(value));
+}
+
+/**
+ * Whether the URL as `new URL` rebuilds it shares text with `secrets`: its
+ * href, and its hostname (lowercased and IDNA-mapped, so upper case, fullwidth
+ * letters or an ignored soft hyphen can spell a secret) against the
+ * lowercased secrets. A value that does not parse counts as sharing.
+ */
+function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean {
+  let url: URL;
+  try {
+    url = new URL(value, 'http://authfn.invalid');
+  } catch {
+    return true;
+  }
+  return secrets.some((secret) => sharesText(url.href, secret) || sharesText(url.hostname, secret.toLowerCase()));
 }
 
 function now(): number {
