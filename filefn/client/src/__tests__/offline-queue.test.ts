@@ -1302,6 +1302,38 @@ describe('durable step boundaries', () => {
     expect(keys).not.toContain('test-legacy-key-shared');
     expect(new Set(keys).size).toBe(2);
   });
+
+  it('takes over no legacy key when a sibling record cannot be read, and fails retryably when the source cannot be read', async () => {
+    const writeLegacy = async (n: string) => {
+      const id = `offline_1731000000000_legacy01${n}`;
+      const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
+      await writeCommitted(legacy, 'data.bin', `bytes ${n}`);
+      await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: `file_00000000legacy1${n}`, policy: 'p', fileName: 'old.txt', size: 7, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: 'test-legacy-key-unread' }));
+      return id;
+    };
+    const source = await writeLegacy('6');
+    const sibling = await writeLegacy('7');
+    const uploader = recordingUploader();
+    const a = tab('a', { uploader });
+    // The source itself cannot be read once: inconclusive, nothing claimed, admitted or removed.
+    let sourceFaults = 1;
+    storage.storage.fault = (path, step) => {
+      if (step === 'read' && path.endsWith(`${source}/metadata.json`) && sourceFaults-- > 0) throw new DOMException('transient', 'NotReadableError');
+    };
+    await expect(a.migrateLegacyUpload(source, { ownershipVerified: true })).rejects.toMatchObject({ name: 'NotReadableError' });
+    expect(await a.list()).toEqual([]);
+    // The sibling that shares the key cannot be read once: the key counts as shared.
+    let siblingFaults = 1;
+    storage.storage.fault = (path, step) => {
+      if (step === 'read' && path.endsWith(`${sibling}/metadata.json`) && siblingFaults-- > 0) throw new DOMException('transient', 'NotReadableError');
+    };
+    expect(await a.migrateLegacyUpload(source, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    storage.storage.fault = undefined;
+    await a.processAll();
+    expect(uploader.calls).toHaveLength(1);
+    expect(uploader.calls[0].idempotencyKey).not.toBe('test-legacy-key-unread');
+    expect(uploader.calls[0].body).toBe('bytes 6');
+  });
 });
 
 describe('capacity boundaries', () => {
@@ -1799,6 +1831,27 @@ describe('principal binding at the last storage step', () => {
     expect(result).toEqual({ status: 'refused', reason: 'principal-mismatch' });
     signedIn = ALICE.principal;
     expect((await a.list()).map((entry) => entry.metadata)).toEqual([{ title: 'alice-private' }]);
+  });
+
+  it.each(['switch', 'dispose'] as const)('removes no staged bytes when a %s lands while a cancellation raises the partition revision', async (kind) => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    await stage(a);
+    const before = storage.root.files();
+    storage.storage.fault = (path, step) => {
+      if (step !== 'close' || !path.endsWith('/partition.json')) return;
+      storage.storage.fault = undefined;
+      if (kind === 'switch') signedIn = BOB.principal;
+      else a.dispose();
+    };
+    await expect(a.cancel(FILE_ID)).rejects.toMatchObject({
+      code: kind === 'switch' ? 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' : 'FILEFN_QUEUE_DISPOSED',
+    });
+    expect(storage.root.files().filter((path) => !path.endsWith('/partition.json'))).toEqual(before.filter((path) => !path.endsWith('/partition.json')));
+    signedIn = ALICE.principal;
+    const owner = tab('owner');
+    expect((await owner.list()).map((entry) => entry.entryId)).toEqual([FILE_ID]);
+    expect(await owner.process(FILE_ID)).toMatchObject({ status: 'published' });
   });
 
   it('settles no waiter from a cancellation when the principal changes during the removal', async () => {

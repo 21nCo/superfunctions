@@ -327,100 +327,29 @@ describe('legacy pending uploads from @filefn/client 0.2.0', () => {
     await vi.waitFor(() => expect([...server.initFileIds].sort()).toEqual(Object.values(expected).sort()));
   });
 
-  it('report any other invalid stored fileId as FILEFN_INVALID_FILE_ID on sync and keep the record unchanged', async () => {
+  it('report any other invalid stored fileId as FILEFN_INVALID_FILE_ID on migration and keep the record unchanged', async () => {
     const uploadSessionId = 'offline_1731000000002_badid0001';
     await writeLegacyRecord(uploadSessionId, 'not a file id', '2026-11-01T00:00:02.000Z');
     const server = createServer();
-    const httpClient = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
-    const store = new OPFSStore();
-    const sync = new OfflineSync({
-      store,
-      client: { uploadFile: (input) => new UploadManager(httpClient).startUpload(input) },
-    });
+    const client = offlineClient(server.fetch);
 
-    await expect(sync.syncOne(uploadSessionId)).rejects.toMatchObject({ code: 'FILEFN_INVALID_FILE_ID' });
+    await expect(client.getOfflineQueue().migrateLegacyUpload(uploadSessionId, { ownershipVerified: true })).rejects.toMatchObject({
+      code: 'FILEFN_INVALID_FILE_ID',
+    });
     expect(server.calls).not.toHaveBeenCalled();
     expect(pendingDirs()).toEqual([uploadSessionId]);
     expect((await rawMetadata(uploadSessionId)).fileId).toBe('not a file id');
   });
-});
 
-describe('retry budget of migrated legacy pending uploads', () => {
-  const MAX_RETRIES = 3;
-
-  function failingSync(store: OPFSStore) {
-    const uploadFile = vi.fn(async (_input: { fileId?: string }) => {
-      throw new Error('server unavailable');
-    });
-    const sync = new OfflineSync({ store, client: { uploadFile } as never, maxRetries: MAX_RETRIES });
-    return { sync, uploadFile };
-  }
-
-  it('replays exhausted missing-ID and session-equal records once with file_<uploadSessionId>', async () => {
-    const withoutId = 'offline_1731000000003_exhaust01';
-    const sameAsSession = 'offline_1731000000004_exhaust02';
-    await writeLegacyRecord(withoutId, null, '2026-11-01T00:00:03.000Z', MAX_RETRIES);
-    await writeLegacyRecord(sameAsSession, sameAsSession, '2026-11-01T00:00:04.000Z', MAX_RETRIES);
+  it('are never replayed by the unscoped OfflineSync form: it is refused and every record stays', async () => {
+    await writeLegacyRecord(withoutId, null, '2026-11-01T00:00:00.000Z');
     const server = createServer();
     const httpClient = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
     const store = new OPFSStore();
-    expect((await store.getPendingUpload(withoutId))?.retryCount).toBe(0);
-    const sync = new OfflineSync({
-      store,
-      client: { uploadFile: (input) => new UploadManager(httpClient).startUpload(input) },
-      maxRetries: MAX_RETRIES,
-    });
-
-    await expect(sync.syncOne(withoutId)).resolves.toMatchObject({ fileId: `file_${withoutId}` });
-    await expect(sync.syncOne(sameAsSession)).resolves.toMatchObject({ fileId: `file_${sameAsSession}` });
-    expect(server.initFileIds).toEqual([`file_${withoutId}`, `file_${sameAsSession}`]);
-    expect(pendingDirs()).toEqual([]);
-  });
-
-  it('does not replenish the budget after a failed migrated replay and a reload', async () => {
-    const uploadSessionId = 'offline_1731000000005_exhaust03';
-    await writeLegacyRecord(uploadSessionId, uploadSessionId, '2026-11-01T00:00:05.000Z', MAX_RETRIES);
-    const first = failingSync(new OPFSStore());
-
-    await expect(first.sync.syncOne(uploadSessionId)).rejects.toThrow('server unavailable');
-    expect(first.uploadFile).toHaveBeenCalledTimes(1);
-    expect(first.uploadFile.mock.calls[0][0].fileId).toBe(`file_${uploadSessionId}`);
-    expect(await rawMetadata(uploadSessionId)).toMatchObject({
-      fileId: `file_${uploadSessionId}`,
-      metadataVersion: 2,
-      retryCount: 1,
-    });
-
-    // A reload reads the persisted count, not a fresh budget.
-    const reloaded = failingSync(new OPFSStore());
-    expect((await new OPFSStore().getPendingUpload(uploadSessionId))?.retryCount).toBe(1);
-    await expect(reloaded.sync.syncOne(uploadSessionId)).rejects.toThrow('server unavailable');
-    await expect(reloaded.sync.syncOne(uploadSessionId)).rejects.toThrow('server unavailable');
-    await expect(reloaded.sync.syncOne(uploadSessionId)).rejects.toThrow('Max retries exceeded');
-    expect(reloaded.uploadFile).toHaveBeenCalledTimes(2);
-
-    const afterReload = failingSync(new OPFSStore());
-    await expect(afterReload.sync.syncOne(uploadSessionId)).rejects.toThrow('Max retries exceeded');
-    expect(afterReload.uploadFile).not.toHaveBeenCalled();
-    expect(pendingDirs()).toEqual([uploadSessionId]);
-  });
-
-  it('keeps the retry limit for current records and legacy records with their own file ID', async () => {
-    const staged = 'offline_1731000000006_current01';
-    const explicitSameAsSession = 'file_session_equal_0001';
-    const legacyExplicit = 'offline_1731000000007_legacyid1';
-    const store = new OPFSStore();
-    await store.stagePendingUpload(pendingUpload({ uploadSessionId: staged, retryCount: MAX_RETRIES }));
-    await store.stagePendingUpload(
-      pendingUpload({ uploadSessionId: explicitSameAsSession, fileId: explicitSameAsSession, retryCount: MAX_RETRIES }),
-    );
-    await writeLegacyRecord(legacyExplicit, 'file_legacy_explicit_01', '2026-11-01T00:00:07.000Z', MAX_RETRIES);
-    const { sync, uploadFile } = failingSync(new OPFSStore());
-
-    for (const uploadSessionId of [staged, explicitSameAsSession, legacyExplicit]) {
-      expect((await new OPFSStore().getPendingUpload(uploadSessionId))?.retryCount).toBe(MAX_RETRIES);
-      await expect(sync.syncOne(uploadSessionId)).rejects.toThrow('Max retries exceeded');
-    }
-    expect(uploadFile).not.toHaveBeenCalled();
+    expect(
+      () => new OfflineSync({ store, client: { uploadFile: (input: never) => new UploadManager(httpClient).startUpload(input) } } as never),
+    ).toThrow(expect.objectContaining({ code: 'FILEFN_QUEUE_LEGACY_UNSCOPED' }));
+    expect(server.calls).not.toHaveBeenCalled();
+    expect(pendingDirs()).toEqual([withoutId]);
   });
 });

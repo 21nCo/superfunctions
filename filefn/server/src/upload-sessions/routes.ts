@@ -169,8 +169,18 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         }>(request);
         const { idempotencyKey, fromBody } = resolveInitIdempotencyKey(request, body);
         // A marked replay is only safe to repeat under its key: without one, a
-        // repeat would create another session. Refused before any lookup.
-        if (replayScope !== undefined && (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0)) {
+        // repeat would create another session. Refused before any lookup, as
+        // is a key given in either place that is empty or blank: one marked
+        // init names exactly one usable key.
+        const rawHeaderKey = request.headers.get('x-idempotency-key');
+        const rawBodyKey = body && typeof body === 'object' ? body.idempotencyKey : undefined;
+        const blank = (value: unknown) => typeof value !== 'string' || value.trim().length === 0;
+        if (
+          replayScope !== undefined &&
+          (blank(idempotencyKey) ||
+            (rawHeaderKey !== null && blank(rawHeaderKey)) ||
+            (rawBodyKey !== undefined && rawBodyKey !== null && blank(rawBodyKey)))
+        ) {
           throw invalidRequest('x-filefn-replay-scope requires an idempotency key (x-idempotency-key)', {
             field: 'idempotencyKey',
           });

@@ -472,6 +472,9 @@ describe('round 15: the online upload accepts what the server sends', () => {
   it.each([
     ['a legacy { data } envelope without ok', 'session_003', (data: Record<string, unknown>) => ({ data })],
     ['a server-generated session ID with ":" and "."', 'sess:2026.a', (data: Record<string, unknown>) => ({ ok: true, data })],
+    // URL parsing leaves these unchanged, so they reached the router as they are before 0.5 too.
+    ['a server-generated session ID with a literal "%"', 'sess%41x', (data: Record<string, unknown>) => ({ ok: true, data })],
+    ['a server-generated session ID with "|^[]"', 'v|1^[2]', (data: Record<string, unknown>) => ({ ok: true, data })],
   ])('completes an upload whose init answers with %s', async (_label, uploadSessionId, wrap) => {
     const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
     mockFetch
@@ -489,7 +492,9 @@ describe('round 15: the online upload accepts what the server sends', () => {
 
   it.each([
     ['a path separator', 'sess/1'],
-    ['a percent escape', 'sess%2F1'],
+    ['an escaped dot segment', '%2e'],
+    ['an escaped double-dot segment', '.%2E'],
+    ['a backslash', 'sess\\1'],
     ['a query delimiter', 'sess?1'],
     ['whitespace', 'sess 1'],
     ['a non-ASCII character', 'sess\u00e91'],

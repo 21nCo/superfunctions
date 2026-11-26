@@ -95,7 +95,7 @@ sync.dispose();
 client.dispose();
 ```
 
-Holds, verification and publication hooks, partitions, limits and crash recovery are specified in [Features › Offline](../features/offline). The `OfflineSync({ store, client })` form over a raw `OPFSStore` is deprecated: it is unscoped and does not use the queue's locks or journal.
+Holds, verification and publication hooks, partitions, limits and crash recovery are specified in [Features › Offline](../features/offline). The 0.4 `OfflineSync({ store, client })` form over a raw `OPFSStore` is refused with `FILEFN_QUEUE_LEGACY_UNSCOPED` and leaves every record in place: those uploads are unscoped, so nothing replays them automatically. Migrate them with `OfflineQueue.migrateLegacyUpload` once you can prove whose they are.
 
 ## When offline mode is the wrong choice
 

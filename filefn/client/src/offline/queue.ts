@@ -91,8 +91,10 @@ export interface OfflineQueueUploader {
    * before any request. Every send then uses the journaled scope
    * (`replayScope`). A later result that differs from it sends nothing: the
    * generation stays provisional (`FILEFN_REPLAY_SCOPE_MISMATCH`) under the
-   * same key. A rejection sends nothing either (a principal mismatch stops
-   * the pass; anything else leaves the generation provisional).
+   * same key. A rejection or a null account sends nothing either: it is
+   * the generation's own outcome (provisional, `scope-unconfirmed`, no
+   * attempt used), and the pass goes on to other entries. Only the queue's
+   * own `currentPrincipal` check, which runs after it, stops the pass.
    */
   replayScope?(principal: OfflineQueuePrincipal, signal: AbortSignal): Promise<string>;
   upload(input: {
@@ -434,7 +436,13 @@ export type OfflineQueueErrorCode =
    */
   | 'FILEFN_QUEUE_CREDENTIALS_UNAVAILABLE'
   /** `uploadFile` could not stage offline; `details` is the refused stage result. */
-  | 'FILEFN_QUEUE_REFUSED';
+  | 'FILEFN_QUEUE_REFUSED'
+  /**
+   * `new OfflineSync({ store, client })`: the unscoped pre-0.5 store is never
+   * replayed automatically; nothing was read, sent or removed. Use
+   * `OfflineQueue.migrateLegacyUpload` with ownership evidence.
+   */
+  | 'FILEFN_QUEUE_LEGACY_UNSCOPED';
 
 export class OfflineQueueError extends Error {
   constructor(
@@ -2203,12 +2211,25 @@ export class OfflineQueue {
               : 'unreadable';
         }
       }
-      const legacy = await store.getPendingUpload(uploadSessionId);
+      // Only a confirmed absence is "no record": any other read failure
+      // throws and the migration fails retryably, keeping claim and record.
+      const legacy = await store.readPendingUploadConfirmed(uploadSessionId);
       let keyShared = false;
       if (legacy?.idempotencyKey !== undefined) {
         for (const other of await store.listPendingUploads()) {
           if (other === uploadSessionId) continue;
-          if ((await store.getPendingUploadMetadata(other))?.idempotencyKey === legacy.idempotencyKey) {
+          let otherKey: string | undefined;
+          try {
+            const metadata = await store.readPendingMetadataConfirmed(other);
+            if (!metadata) continue;
+            otherKey = metadata.idempotencyKey;
+          } catch (error) {
+            if (isQuotaError(error)) throw error;
+            // A sibling that cannot be read may share the key: never take it over on a read that proves nothing.
+            keyShared = true;
+            break;
+          }
+          if (otherKey === legacy.idempotencyKey) {
             keyShared = true;
             break;
           }
@@ -2635,6 +2656,9 @@ export class OfflineQueue {
       if (!isQuotaError(error)) throw error;
       raised = false;
     }
+    // Fenced directly before the destructive call: a switch or dispose while
+    // the revision write closed keeps the bytes for their principal.
+    await this.txFence?.();
     await removeEntry(dir, name, recursive);
     if (!raised) await this.bumpRevision();
   }

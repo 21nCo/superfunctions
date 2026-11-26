@@ -56,25 +56,39 @@ export class FileFnHttpError extends Error {
 /** A successful answer that does not prove what it claims: its outcome is unknown. */
 export const UPLOAD_RESULT_INVALID_ERROR = "FILEFN_UPLOAD_RESULT_INVALID";
 
+/** The URL parser as loaded: a later replacement of the global (a test stub, say) cannot change which IDs are well formed. */
+const PathURL = URL;
+
 /**
  * A server-issued identifier such as a version or session ID. The server's
  * `generateId` may produce any string, and its router matches a path segment
- * as `URL#pathname` reports it without decoding it. So the client sends an
- * identifier as one raw path segment, and accepts one of 1-1024 characters
- * that are RFC 3986 path characters needing no percent-encoding (letters,
- * digits, `-._~!$&'()*+,;=:@`) and that is not a dot segment (`.` or `..`,
- * which URL parsing collapses). Anything else (`/`, `?`, `#`, `%`, `\`,
- * whitespace, control or non-ASCII characters) would not reach the server as
- * the same single segment, so it is not well formed.
+ * as `URL#pathname` reports it, without decoding it. So the client sends an
+ * identifier as one raw path segment, and accepts exactly the identifiers that
+ * reach the router as that same segment: 1-1024 characters, none of them `/`,
+ * `\`, `?` or `#`, that URL parsing leaves unchanged inside a path. That
+ * keeps every ID that round-tripped before (`%`, `|`, `^`, `[`, `]` included)
+ * and refuses dot segments (`.`, `..`, `%2e` and the like, which parsing
+ * collapses), whitespace, control and non-ASCII characters (which it
+ * percent-encodes).
  */
 export function isWellFormedId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length <= 1024 &&
-    /^[A-Za-z0-9\-._~!$&'()*+,;=:@]+$/.test(value) &&
-    value !== "." &&
-    value !== ".."
-  );
+  if (typeof value !== "string" || value.length === 0 || value.length > 1024) return false;
+  if (/[/\\?#]/.test(value)) return false;
+  const path = `/s/${value}/x`;
+  try {
+    return new PathURL(path, "http://filefn.invalid").pathname === path;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A version ID as the path segment the router matches: sent raw when it is
+ * well formed (as the server issued it), otherwise encoded so it stays one
+ * segment.
+ */
+function versionSegment(versionId: string): string {
+  return isWellFormedId(versionId) ? versionId : encodeURIComponent(versionId);
 }
 
 /** Checks a decoded payload: true when it has the route's shape. */
@@ -192,14 +206,18 @@ export const uploadSchemas = {
   ack: <T>(data: unknown): data is T => data === undefined || isObject(data),
   /**
    * `upload/{id}/complete` and a version read: a stored file and version. A
-   * payload that names a session status other than `completed` contradicts
-   * itself and proves nothing.
+   * payload that contradicts that, by the same marker rules as a completed
+   * `upload/init` (a session status other than `completed`, a
+   * `versionConfirmed` other than true, or a `completionStarted` other than
+   * false), proves nothing.
    */
   stored: (data: unknown): data is CompleteUploadResponse =>
     isObject(data) &&
     isValidFileId(data.fileId) &&
     isWellFormedId(data.versionId) &&
-    (data.status === undefined || data.status === "completed"),
+    (data.status === undefined || data.status === "completed") &&
+    (data.versionConfirmed === undefined || data.versionConfirmed === true) &&
+    (data.completionStarted === undefined || data.completionStarted === false),
   part: (data: unknown): data is { etag: string; recorded?: boolean } =>
     isObject(data) && optional(data.etag, isString) && optional(data.recorded, isBoolean),
 } as const;
@@ -702,7 +720,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
         ? `?${new URLSearchParams({ durationMs: String(params.durationMs) }).toString()}`
         : "";
       const path =
-        `/${encodeURIComponent(params.fileId)}/versions/${encodeURIComponent(params.versionId)}` +
+        `/${encodeURIComponent(params.fileId)}/versions/${versionSegment(params.versionId)}` +
         `/artifacts/${encodeURIComponent(params.kind)}${search}`;
       // PUT replaces the same artifact record, so a retried upload is safe.
       const response = await request<{ artifact: ArtifactDescriptor }>(

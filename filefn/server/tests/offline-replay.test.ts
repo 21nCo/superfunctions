@@ -448,7 +448,15 @@ describe('offline replays bound to the account of their first upload/init', () =
         )
         .then(async (response) => ({ status: response!.status, json: await response!.json() }));
 
-    for (const [headers, body] of [[{}, {}], [{ 'x-idempotency-key': '' }, {}], [{}, { idempotencyKey: '' }]] as const) {
+    for (const [headers, body] of [
+      [{}, {}],
+      [{ 'x-idempotency-key': '' }, {}],
+      [{}, { idempotencyKey: '' }],
+      // One usable key and a blank one in the other place, or a blank body key.
+      [{ 'x-idempotency-key': '' }, { idempotencyKey: 'test-replay-key-0206' }],
+      [{ 'x-idempotency-key': 'test-replay-key-0206' }, { idempotencyKey: '' }],
+      [{}, { idempotencyKey: '   ' }],
+    ] as const) {
       const refused = await init(headers, body);
       expect(refused.status).toBe(400);
       expect(refused.json).toMatchObject({ ok: false, error: { code: 'FILEFN_INVALID_REQUEST', details: { field: 'idempotencyKey' } } });

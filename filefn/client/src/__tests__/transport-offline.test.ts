@@ -510,6 +510,18 @@ describe('replay settlement boundaries', () => {
       },
     ],
     [
+      'completion with versionConfirmed false',
+      (path: string) => (path === '/upload/sess_1/complete' ? envelope({ fileId: FILE, versionId: 'ver_1', versionConfirmed: false }) : undefined),
+    ],
+    [
+      'the version readback with completionStarted',
+      (path: string, init: RequestInit) => {
+        if (path === '/upload/init') return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replayScopeOf(init) });
+        if (path === `/${FILE}/versions/ver_1`) return envelope({ fileId: FILE, versionId: 'ver_1', completionStarted: true });
+        return undefined;
+      },
+    ],
+    [
       'a completed init with completionStarted',
       (path: string, init: RequestInit) =>
         path === '/upload/init'

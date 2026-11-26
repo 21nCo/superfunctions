@@ -1,7 +1,6 @@
-import type { OPFSStore } from './opfs-store.js';
-import type { OfflineQueue, OfflineQueueProcessAllItem } from './queue.js';
-import { isRetryableError } from '../retry.js';
+import { OfflineQueueError, type OfflineQueue, type OfflineQueueProcessAllItem } from './queue.js';
 
+/** @deprecated The unscoped `OfflineSync({ store, client })` form is refused; kept so existing imports compile. */
 export interface UploadClient {
   uploadFile(input: {
     policy: string;
@@ -14,13 +13,20 @@ export interface UploadClient {
 }
 
 /**
- * Drives either a durable, partition-bound `queue` (recommended), or the
- * unscoped pre-0.5 `store` with its `client` (deprecated).
+ * Drives a durable, partition-bound `queue`. The pre-0.5 form over an
+ * unscoped `store` and its `client` is refused with
+ * `FILEFN_QUEUE_LEGACY_UNSCOPED` and leaves every record in place: those
+ * uploads belong to no known principal, so nothing replays them
+ * automatically. Migrate each with `OfflineQueue.migrateLegacyUpload` once
+ * the app has independent ownership evidence.
  */
 export interface SyncConfig {
-  queue?: OfflineQueue;
-  store?: OPFSStore;
-  client?: UploadClient;
+  queue: OfflineQueue;
+  /** @deprecated Refused (`FILEFN_QUEUE_LEGACY_UNSCOPED`): unscoped records are never replayed automatically. */
+  store?: never;
+  /** @deprecated Refused (`FILEFN_QUEUE_LEGACY_UNSCOPED`), together with `store`. */
+  client?: never;
+  /** @deprecated Unused: the queue's `maxUploadAttempts` limits uploads. */
   maxRetries?: number;
   retryDelayMs?: number;
   /**
@@ -54,12 +60,9 @@ export interface ConnectivityChecker {
   onOffline(callback: () => void): () => void;
 }
 
-type UploadCompletionListener = (result: { fileId: string; versionId: string } | Error) => void;
-
-type ResolvedSyncConfig = Required<Omit<SyncConfig, 'queue' | 'store' | 'client'>> & Pick<SyncConfig, 'queue' | 'store' | 'client'>;
+type ResolvedSyncConfig = Required<Omit<SyncConfig, 'store' | 'client'>>;
 
 export class OfflineSync {
-  private static readonly SETTLED_RESULT_TTL_MS = 5 * 60 * 1000;
   private config: ResolvedSyncConfig;
   private isSyncing = false;
   /** Started (`start`/`startAutoSync`) and not stopped since. */
@@ -70,20 +73,22 @@ export class OfflineSync {
   private disposed = false;
   private readonly lifetime = new AbortController();
   private connectivityChecker: ConnectivityChecker;
-  private listeners: Map<string, UploadCompletionListener[]> = new Map();
-  private settledResults: Map<string, { fileId: string; versionId: string } | Error> = new Map();
-  private settledResultTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private stopOnlineListener?: () => void;
   private stopWorkListener?: () => void;
   private stopQueueDisposeListener?: () => void;
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  private cancelledUploads: Set<string> = new Set();
-  private activeSyncControllers: Map<string, AbortController> = new Map();
-  private inFlightSyncs: Map<string, Promise<{ fileId: string; versionId: string }>> = new Map();
 
   constructor(config: SyncConfig) {
-    if (!config.queue && !(config.store && config.client)) {
-      throw new TypeError('OfflineSync needs a queue, or a store and a client');
+    const legacy = config as { store?: unknown; client?: unknown };
+    if (legacy.store !== undefined || legacy.client !== undefined) {
+      // Nothing is listed, read, sent or removed: the records stay for an explicit migration.
+      throw new OfflineQueueError(
+        'FILEFN_QUEUE_LEGACY_UNSCOPED',
+        'OfflineSync no longer replays the unscoped pre-0.5 store: migrate its uploads with OfflineQueue.migrateLegacyUpload once you can prove whose they are',
+      );
+    }
+    if (!config.queue) {
+      throw new TypeError('OfflineSync needs a queue');
     }
     this.config = {
       maxRetries: 3,
@@ -99,7 +104,7 @@ export class OfflineSync {
     this.connectivityChecker = this.createDefaultConnectivityChecker();
     // The queue's disposal disposes this sync at once: its online listener,
     // idle poll and retry timers go with it, without waiting for an event.
-    this.stopQueueDisposeListener = config.queue?.onDispose(() => this.dispose());
+    this.stopQueueDisposeListener = config.queue.onDispose(() => this.dispose());
   }
 
   /**
@@ -112,9 +117,9 @@ export class OfflineSync {
 
   /**
    * Stops driving the work for good: no further sync, retry or online
-   * listener; the upload or hook this sync is running is aborted, as are
-   * in-flight replays of the legacy store. A queue is otherwise left as it is
-   * (dispose it separately); its staged work stays for later.
+   * listener; the upload or hook this sync is running is aborted. A queue is
+   * otherwise left as it is (dispose it separately); its staged work stays
+   * for later.
    */
   dispose(): void {
     if (this.disposed) return;
@@ -123,8 +128,7 @@ export class OfflineSync {
     this.stopQueueDisposeListener?.();
     this.stopQueueDisposeListener = undefined;
     this.stopAutoSync();
-    for (const uploadSessionId of [...this.retryTimers.keys()]) this.clearRetry(uploadSessionId);
-    for (const controller of this.activeSyncControllers.values()) controller.abort();
+    for (const key of [...this.retryTimers.keys()]) this.clearRetry(key);
   }
 
   get isDisposed(): boolean {
@@ -142,14 +146,14 @@ export class OfflineSync {
     this.stopAutoSync();
     try {
       // Work this tab makes runnable (a staging, a released hold) starts a pass at once.
-      this.stopWorkListener = this.config.queue?.onWork(() => {
+      this.stopWorkListener = this.config.queue.onWork(() => {
         if (this.connectivityChecker.isOnline()) this.runPass();
       });
       this.stopOnlineListener = this.connectivityChecker.onOnline(() => this.runPass());
     } catch (error) {
       // Nothing of a failed start stays registered.
       this.stopAutoSync();
-      if (this.config.queue?.isDisposed) this.dispose();
+      if (this.config.queue.isDisposed) this.dispose();
       throw error;
     }
     this.autoSyncing = true;
@@ -168,7 +172,7 @@ export class OfflineSync {
     this.stopWorkListener = undefined;
   }
 
-  /** Starts a pass in the background; a pass that fails is reported and, for a queue, tried again later. */
+  /** Starts a pass in the background; a pass that fails is reported and tried again later. */
   private runPass(): void {
     void this.syncAll().catch((error) => this.passFailed(error)).catch(() => {});
   }
@@ -177,14 +181,14 @@ export class OfflineSync {
     if (this.stopped()) return;
     if (this.queueGone(error)) return;
     // A failed pass of a queue whose principal is no longer current is retried, not reported.
-    const reportable = this.config.queue ? await this.config.queue.principalIsCurrent().catch(() => false) : true;
+    const reportable = await this.config.queue.principalIsCurrent().catch(() => false);
     if (this.stopped()) return;
     if (!reportable) {
       if (this.isOnline()) this.scheduleQueueRetry();
       return;
     }
-    this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), this.config.queue ? '*queue*' : '*sync*');
-    if (this.config.queue && this.isOnline()) this.scheduleQueueRetry();
+    this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), '*queue*');
+    if (this.isOnline()) this.scheduleQueueRetry();
   }
 
   /**
@@ -192,48 +196,6 @@ export class OfflineSync {
    */
   isOnline(): boolean {
     return this.connectivityChecker.isOnline();
-  }
-
-  /**
-   * Register a listener for a specific upload session completion.
-   */
-  waitForUpload(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
-    const settled = this.settledResults.get(uploadSessionId);
-    if (settled) {
-      if (settled instanceof Error) {
-        return Promise.reject(settled);
-      }
-      return Promise.resolve(settled);
-    }
-
-    return new Promise((resolve, reject) => {
-      if (!this.listeners.has(uploadSessionId)) {
-        this.listeners.set(uploadSessionId, []);
-      }
-      this.listeners.get(uploadSessionId)!.push((result) => {
-        if (result instanceof Error) {
-          reject(result);
-        } else {
-          resolve(result);
-        }
-      });
-    });
-  }
-
-  private notifyListeners(uploadSessionId: string, result: { fileId: string; versionId: string } | Error) {
-    this.clearRetry(uploadSessionId);
-    this.clearSettledResult(uploadSessionId);
-    this.settledResults.set(uploadSessionId, result);
-    const expiry = setTimeout(() => {
-      this.clearSettledResult(uploadSessionId);
-      this.settledResults.delete(uploadSessionId);
-    }, OfflineSync.SETTLED_RESULT_TTL_MS);
-    this.settledResultTimers.set(uploadSessionId, expiry);
-    const listeners = this.listeners.get(uploadSessionId);
-    if (listeners) {
-      listeners.forEach(l => l(result));
-      this.listeners.delete(uploadSessionId);
-    }
   }
 
   /**
@@ -256,72 +218,7 @@ export class OfflineSync {
     this.isSyncing = true;
 
     try {
-      if (this.config.queue) {
-        return await this.syncQueue(this.config.queue);
-      }
-      const store = this.config.store!;
-      const pendingSessionIds = await store.listPendingUploads();
-
-      const result: SyncResult = {
-        succeeded: [],
-        failed: [],
-        totalProcessed: 0,
-      };
-
-      const progress: SyncProgress = {
-        totalPending: pendingSessionIds.length,
-        completed: 0,
-        failed: 0,
-        current: null,
-      };
-
-      for (const uploadSessionId of pendingSessionIds) {
-        if (this.disposed) break;
-        if (this.cancelledUploads.has(uploadSessionId)) {
-          await store.deletePendingUpload(uploadSessionId);
-          continue;
-        }
-        progress.current = uploadSessionId;
-        this.config.onSyncProgress(progress);
-
-        try {
-          const uploadResult = await this.syncOne(uploadSessionId);
-          result.succeeded.push(uploadSessionId);
-          progress.completed += 1;
-          this.notifyListeners(uploadSessionId, uploadResult);
-        } catch (error) {
-          if (this.cancelledUploads.has(uploadSessionId)) {
-            this.cancelledUploads.delete(uploadSessionId);
-            continue;
-          }
-          // A disposed sync reports nothing and leaves the upload for a live one.
-          if (this.disposed) break;
-          const err = error instanceof Error ? error : new Error('Unknown error');
-          result.failed.push(uploadSessionId);
-          progress.failed += 1;
-          this.config.onSyncError(err, uploadSessionId);
-          if (this.disposed) break;
-
-          // Check if we should notify listeners of failure (max retries reached)
-          const pending = await store.getPendingUpload(uploadSessionId);
-          if (pending && pending.retryCount >= this.config.maxRetries) {
-            this.notifyListeners(uploadSessionId, err);
-          } else if (pending && this.isOnline() && isRetryableError(err)) {
-            this.scheduleRetry(uploadSessionId);
-          } else {
-            this.notifyListeners(uploadSessionId, err);
-          }
-        }
-
-        result.totalProcessed += 1;
-        if (this.disposed) break;
-        this.config.onSyncProgress(progress);
-      }
-
-      progress.current = null;
-      if (!this.disposed) this.config.onSyncComplete(result);
-
-      return result;
+      return await this.syncQueue(this.config.queue);
     } finally {
       this.isSyncing = false;
       if (this.rerunRequested && !this.stopped()) {
@@ -439,7 +336,7 @@ export class OfflineSync {
    */
   private stopped(): boolean {
     if (this.disposed) return true;
-    if (!this.config.queue?.isDisposed) return false;
+    if (!this.config.queue.isDisposed) return false;
     this.dispose();
     return true;
   }
@@ -449,7 +346,7 @@ export class OfflineSync {
    * instead of reporting and retrying a queue that can never run again.
    */
   private queueGone(error: unknown): boolean {
-    if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_DISPOSED' || !this.config.queue?.isDisposed) return false;
+    if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_DISPOSED' || !this.config.queue.isDisposed) return false;
     this.dispose();
     return true;
   }
@@ -479,151 +376,10 @@ export class OfflineSync {
   }
 
   /**
-   * Sync a single pending upload of the legacy store.
-   */
-  async syncOne(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
-    const store = this.legacyStore();
-    if (this.disposed) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
-    const existing = this.inFlightSyncs.get(uploadSessionId);
-    if (existing) {
-      return existing;
-    }
-
-    const task = (async () => {
-      const pendingUpload = await store.getPendingUpload(uploadSessionId);
-
-      if (!pendingUpload) {
-        throw new Error(`Pending upload ${uploadSessionId} not found`);
-      }
-      // Disposed while reading: nothing is sent, the upload stays for a live sync.
-      if (this.disposed) {
-        throw new DOMException('Aborted', 'AbortError');
-      }
-
-      if (pendingUpload.retryCount >= this.config.maxRetries) {
-        throw new Error(`Max retries exceeded for ${uploadSessionId}`);
-      }
-
-      try {
-        const controller = new AbortController();
-        this.activeSyncControllers.set(uploadSessionId, controller);
-        const file = new File([pendingUpload.fileData], pendingUpload.fileName, {
-          type: pendingUpload.mimeType,
-        });
-
-        const result = await this.config.client!.uploadFile({
-          policy: pendingUpload.policy,
-          file,
-          metadata: pendingUpload.metadata,
-          fileId: pendingUpload.fileId,
-          idempotencyKey: pendingUpload.idempotencyKey,
-          signal: controller.signal,
-        });
-
-        if (this.disposed) {
-          // A disposed sync records nothing: the next one replays under the same key.
-          throw new DOMException('Aborted', 'AbortError');
-        }
-        await store.deletePendingUpload(uploadSessionId);
-        return result;
-      } catch (error) {
-        if (this.cancelledUploads.has(uploadSessionId) || (error instanceof DOMException && error.name === 'AbortError')) {
-          throw error;
-        }
-        // A disposed sync records nothing, even when the client ignored the abort.
-        if (this.disposed) throw new DOMException('Aborted', 'AbortError');
-        await store.incrementRetryCount(uploadSessionId);
-        throw error;
-      } finally {
-        this.activeSyncControllers.delete(uploadSessionId);
-      }
-    })();
-
-    this.inFlightSyncs.set(uploadSessionId, task);
-    try {
-      return await task;
-    } finally {
-      if (this.inFlightSyncs.get(uploadSessionId) === task) {
-        this.inFlightSyncs.delete(uploadSessionId);
-      }
-    }
-  }
-
-  /**
-   * Manually trigger sync for a specific upload.
-   */
-  async syncUpload(uploadSessionId: string): Promise<void> {
-    if (this.disposed || this.cancelledUploads.has(uploadSessionId)) {
-      return;
-    }
-    if (!this.isOnline()) {
-      throw new Error('Cannot sync while offline');
-    }
-
-    try {
-      const result = await this.syncOne(uploadSessionId);
-      if (this.disposed) return;
-      this.notifyListeners(uploadSessionId, result);
-    } catch (error) {
-      if (this.cancelledUploads.has(uploadSessionId)) {
-        this.cancelledUploads.delete(uploadSessionId);
-        return;
-      }
-      // A disposed sync delivers nothing: the upload stays for a live one.
-      if (this.disposed) return;
-      const err = error instanceof Error ? error : new Error('Unknown error');
-      const pending = await this.legacyStore().getPendingUpload(uploadSessionId);
-      if (this.disposed) return;
-      if (pending && pending.retryCount >= this.config.maxRetries) {
-        this.notifyListeners(uploadSessionId, err);
-        return;
-      }
-      if (pending && this.isOnline() && isRetryableError(err)) {
-        this.scheduleRetry(uploadSessionId);
-        return;
-      }
-      this.notifyListeners(uploadSessionId, err);
-    }
-  }
-
-  /**
    * Set a custom connectivity checker.
    */
   setConnectivityChecker(checker: ConnectivityChecker): void {
     this.connectivityChecker = checker;
-  }
-
-  async cancelUpload(uploadSessionId: string, reason: Error = new DOMException('Aborted', 'AbortError')): Promise<void> {
-    this.cancelledUploads.add(uploadSessionId);
-    this.clearRetry(uploadSessionId);
-    this.activeSyncControllers.get(uploadSessionId)?.abort();
-    this.notifyListeners(uploadSessionId, reason);
-    await this.legacyStore().deletePendingUpload(uploadSessionId);
-  }
-
-  private legacyStore(): OPFSStore {
-    if (!this.config.store || !this.config.client) {
-      throw new Error('This OfflineSync drives a queue: use the queue for per-entry calls');
-    }
-    return this.config.store;
-  }
-
-  private scheduleRetry(uploadSessionId: string): void {
-    if (this.disposed || this.retryTimers.has(uploadSessionId)) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this.retryTimers.delete(uploadSessionId);
-      void this.syncUpload(uploadSessionId).catch((error) => {
-        if (this.disposed) return;
-        const err = error instanceof Error ? error : new Error('Unknown error');
-        this.config.onSyncError(err, uploadSessionId);
-      });
-    }, this.config.retryDelayMs);
-    this.retryTimers.set(uploadSessionId, timer);
   }
 
   private clearRetry(uploadSessionId: string): void {
@@ -633,15 +389,6 @@ export class OfflineSync {
     }
     clearTimeout(timer);
     this.retryTimers.delete(uploadSessionId);
-  }
-
-  private clearSettledResult(uploadSessionId: string): void {
-    const timer = this.settledResultTimers.get(uploadSessionId);
-    if (!timer) {
-      return;
-    }
-    clearTimeout(timer);
-    this.settledResultTimers.delete(uploadSessionId);
   }
 
   private createDefaultConnectivityChecker(): ConnectivityChecker {
