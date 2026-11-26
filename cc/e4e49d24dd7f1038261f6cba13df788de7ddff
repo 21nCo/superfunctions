@@ -1,0 +1,19 @@
+.github/workflows/apifn-api-check.yml
+  s_79e8f3979f95c3::t_31634bb1e4dc9f 620-623
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cce4e49d24dd7f1038261f6cba13df788de7ddff",
+  "prompts": {},
+  "sessions": {
+    "s_79e8f3979f95c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0988030-089a-46f7-81d3-a25643b99e90",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

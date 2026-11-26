@@ -1,0 +1,33 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_1eb217f2cbe12c::t_79e8e07591abd3 58
+datafn/docs/public/llms-full.txt
+  s_1eb217f2cbe12c::t_47f327c53412f4 19194
+datafn/server/__tests__/revisions.test.ts
+  s_1eb217f2cbe12c::t_234ea628e460bd 78,84,2705-2750
+datafn/server/src/execution/idempotency.ts
+  s_1eb217f2cbe12c::t_126e59f8927c4a 23-52
+datafn/server/src/execution/mutation/execute.ts
+  s_1eb217f2cbe12c::t_15bac5a55c4070 10,12,1283-1286,1327,1361,1481,1500,1601,1713
+datafn/server/src/execution/sync/push.ts
+  s_1eb217f2cbe12c::t_3d902675a42048 15,260,510,1147,1154-1164,1248-1252
+datafn/server/src/routes/sync.ts
+  s_1eb217f2cbe12c::t_fb4c25a6f5e02a 254-260,466
+datafn/server/src/server.ts
+  s_1eb217f2cbe12c::t_60f02c0135e79b 43,1513-1529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "199809febb4a6de3d3804aa6e413a5b550154990",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
