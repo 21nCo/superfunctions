@@ -40,6 +40,7 @@ import {
   createPullHandler,
   createPushHandler,
   createReconcileHandler,
+  pushReadAuthorizers,
 } from "./routes/sync.js";
 import { createSeedHandler } from "./routes/seed.js";
 import { createSearchHandler } from "./routes/search.js";
@@ -1507,6 +1508,23 @@ export async function createDatafnServer<TContext = any>(
               ),
             });
           }
+        }
+
+        if (action === "push") {
+          // DATA-41: push returns a post-write row only to a caller whom the
+          // plugin and host authorization would also let query the resource
+          // (the REST read payload `{ resource }`); a denial or error omits it.
+          pushReadAuthorizers.set(enrichedCtx, async (resource) => {
+            try {
+              const readPayload = { resource };
+              if (!(await authorizePlugins({ action: "query", request: req, context: enrichedCtx, payload: readPayload })).ok) {
+                return false;
+              }
+              return config.authorize ? Boolean(await config.authorize(enrichedCtx, "query", readPayload)) : true;
+            } catch {
+              return false;
+            }
+          });
         }
 
         return completeDatafnResponse({

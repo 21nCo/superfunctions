@@ -252,6 +252,13 @@ export function createPullHandler(
 }
 
 /**
+ * DATA-41: the read authorization of a push request, set by the server's
+ * auth wrapper on the request context. Without one (direct handler use) no
+ * host read policy applies.
+ */
+export const pushReadAuthorizers = new WeakMap<object, (resource: string) => Promise<boolean>>();
+
+/**
  * Create push route handler
  */
 export function createPushHandler(
@@ -456,6 +463,7 @@ export function createPushHandler(
         actorId,
         logger,
         getDatafnMultiRegionRuntimeConfig(plugins),
+        ctx ? pushReadAuthorizers.get(ctx) : undefined,
         );
 
         timer?.startPhase("changeLog");

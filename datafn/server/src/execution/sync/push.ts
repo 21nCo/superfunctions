@@ -12,6 +12,7 @@ import {
 import type { Adapter } from "@superfunctions/db";
 import {
   isRetryableMutationResult,
+  replayedRevision,
   scopeIdempotencyStore,
   type IdempotencyStore,
   type MutationResult,
@@ -256,6 +257,7 @@ export async function executePush(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  authorizeRead?: (resource: string) => Promise<boolean>,
 ): Promise<PushResult> {
   // DFN-01: idempotency records belong to the request's namespace and actor.
   idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
@@ -505,7 +507,7 @@ export async function executePush(
       where: [{ field: "id", operator: "eq", value: mut.id }],
       namespace,
     })) as Record<string, unknown> | null;
-    if (!row || !canReadEveryField(schema, mut.resource, row)) return base;
+    if (!row || !canReadEveryField(schema, mut.resource, row) || !readableResources.has(mut.resource)) return base;
     // Record-level access was checked before the write; a grant revoked
     // since then must not let the reply disclose the row, so it is checked
     // again in the write's transaction.
@@ -1142,11 +1144,22 @@ export async function executePush(
     applied.push(mut.mutationId);
     const result: MutationResult = {
       ok: true, mutationId: mut.mutationId, affectedIds: [mut.id], errors: [], deduped: false,
-      ...(revision ? { rev: revision.rev } : {}),
+      ...(revision ? { rev: revision.rev, revTarget: { resource: revision.resource, id: revision.id } } : {}),
     };
     if (revision) revisions[mut.mutationId] = revision;
     await idempotencyStore.set(mut.clientId, mut.mutationId, result);
     batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, true);
+  }
+
+  /**
+   * DATA-41: resources whose post-write rows the caller may receive: the
+   * host and plugin authorization would let the caller query them. Decided
+   * before any write transaction opens, once per resource.
+   */
+  const readableResources = new Set<string>();
+  for (const resource of new Set(request.mutations.map((mutation: any) => mutation?.resource))) {
+    if (typeof resource !== "string" || !issuesRevisions(schema, resource)) continue;
+    if (!authorizeRead || (await authorizeRead(resource))) readableResources.add(resource);
   }
 
   // ---- Process each mutation ----
@@ -1232,9 +1245,11 @@ export async function executePush(
       if (cached.ok) {
         applied.push(mut.mutationId);
         // A deduplicated reply carries the stored revision without a row, so
-        // it discloses nothing the caller cannot read now.
-        if (typeof cached.rev === "number" && typeof mut.id === "string" && issuesRevisions(schema, mut.resource)) {
-          revisions[mut.mutationId] = { resource: mut.resource, id: mut.id, rev: cached.rev };
+        // it discloses nothing the caller cannot read now, and only to a
+        // retry of the record that revision belongs to.
+        const replayRev = replayedRevision(cached, mut);
+        if (replayRev !== undefined && issuesRevisions(schema, mut.resource)) {
+          revisions[mut.mutationId] = { resource: mut.resource, id: mut.id, rev: replayRev };
         }
         batchLocalSeen.set(batchKey, true);
         continue;

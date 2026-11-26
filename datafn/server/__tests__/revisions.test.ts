@@ -75,12 +75,13 @@ const schema = {
   ],
 } as any;
 
-async function serve(options: { enabled?: boolean; database?: Adapter; schema?: unknown } = {}) {
+async function serve(options: { enabled?: boolean; database?: Adapter; schema?: unknown; config?: Json } = {}) {
   const database = options.database ?? memoryAdapter();
   const server = await createDatafnServer({
     schema: (options.schema ?? schema) as any,
     database,
     allowUnknownResources: true,
+    ...options.config,
     ...(options.enabled === false ? {} : { revisions: { enabled: true } }),
   });
   const send = async (route: string, body: unknown): Promise<{ status: number; body: Json }> => {
@@ -2699,5 +2700,51 @@ describe("DATA-41 revisions: declared join_* resources on pull (round 15)", () =
     expect(JSON.stringify(bobGlobal.body.result)).not.toContain("alice-only");
     const aliceGlobal = await send("pull", { clientId: "client:b", cursor: "0" }, "alice");
     expect((aliceGlobal.body.result.changes as Json[]).map((change) => change.id)).toContain("join_secrets:1");
+  });
+});
+
+describe("DATA-41 revisions: PR review round 1", () => {
+  const denyReads = (action: string) => action !== "query" && action !== "pull" && action !== "clone";
+
+  it("returns no post-write row to a caller whose host or plugin authorization denies reads", async () => {
+    const plugin = { name: "no-reads", runsOn: ["server"], authorize: (input: Json) => denyReads(input.action) };
+    for (const config of [{ authorize: (_ctx: unknown, action: string) => denyReads(action) }, { plugins: [plugin] }]) {
+      const { push } = await serve({ config });
+      const inserted = await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+      expect(inserted.body.result.revisions[inserted.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+      const merged = await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" }, mutationId: "merge" });
+      expect(merged.body.result.revisions.merge).toEqual({ resource: "task", id: "task:1", rev: 2 });
+      const replay = await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" }, mutationId: "merge" });
+      expect(replay.body.result.revisions.merge).toEqual({ resource: "task", id: "task:1", rev: 2 });
+      expect(JSON.stringify([inserted.body, merged.body, replay.body])).not.toContain("$rev");
+    }
+    const reader = await serve({ config: { authorize: () => true } });
+    const inserted = await reader.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(inserted.body.result.revisions[inserted.mutationId].record).toMatchObject({ id: "task:1", title: "a", $rev: 1 });
+  });
+
+  it("replays a stored revision only to a retry of the same resource and id, on push and /mutation", async () => {
+    const { push, send } = await serve();
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" }, mutationId: "reused" });
+    const retry = await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" }, mutationId: "reused" });
+    expect(retry.body.result.revisions.reused).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    for (const target of [{ resource: "task", id: "task:2" }, { resource: "project", id: "task:1" }]) {
+      const reused = await push({ ...target, operation: "insert", record: {}, mutationId: "reused" });
+      expect(reused.body.result.applied).toContain("reused");
+      expect(reused.body.result.revisions?.reused).toBeUndefined();
+    }
+
+    const mutation = { version: 1, operation: "insert", record: {}, clientId: "c", mutationId: "once" };
+    const first = await send("mutation", { ...mutation, resource: "task", id: "task:3" });
+    expect(first.body.result.rev).toBe(1);
+    expect(first.body.result).not.toHaveProperty("revTarget");
+    const again = await send("mutation", { ...mutation, resource: "task", id: "task:3" });
+    expect(again.body.result).toMatchObject({ deduped: true, rev: 1 });
+    expect(again.body.result).not.toHaveProperty("revTarget");
+    for (const target of [{ resource: "task", id: "task:4" }, { resource: "project", id: "task:3" }]) {
+      const reused = await send("mutation", { ...mutation, ...target });
+      expect(reused.body.result.deduped).toBe(true);
+      expect(reused.body.result).not.toHaveProperty("rev");
+    }
   });
 });

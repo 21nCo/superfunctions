@@ -7,7 +7,9 @@ import type { Adapter } from "@superfunctions/db";
 import { randomUUID } from "crypto";
 import {
   isRetryableMutationResult,
+  replayedRevision,
   scopeIdempotencyStore,
+  withRevisionTarget,
   type IdempotencyStore,
   type MutationResult,
 } from "../idempotency.js";
@@ -1278,8 +1280,10 @@ export async function executeMutation(
     );
     if (cached && !isRetryableMutationResult(cached)) {
       // DATA-41: a stored revision is issued only while the current server
-      // and resource issue revisions.
-      const { rev, ...replayed } = cached as MutationResult;
+      // and resource issue revisions, and only to a retry of the record the
+      // stored revision belongs to.
+      const { rev: _stored, revTarget: _target, ...replayed } = cached as MutationResult;
+      const rev = replayedRevision(cached, mutation);
       return {
         ...replayed,
         ...(rev !== undefined && issuesRevisions(schema, mutation.resource) ? { rev } : {}),
@@ -1320,7 +1324,7 @@ export async function executeMutation(
       deduped: false,
     };
     if (mutation.clientId && mutation.mutationId) {
-      await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+      await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
     }
     return result;
   }
@@ -1354,7 +1358,7 @@ export async function executeMutation(
         deduped: false,
       };
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
       }
       return result;
     }
@@ -1474,7 +1478,7 @@ export async function executeMutation(
         deduped: false,
       };
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
       }
       return result;
     }
@@ -1493,7 +1497,7 @@ export async function executeMutation(
         await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
       }
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(txMutationResult as MutationResult, mutation));
       }
       return txMutationResult as MutationResult;
     }
@@ -1594,7 +1598,7 @@ export async function executeMutation(
         await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
       }
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(txMutationResult as MutationResult, mutation));
       }
       return txMutationResult as MutationResult;
     }
@@ -1706,7 +1710,7 @@ export async function executeMutation(
 
   // Store for idempotency only when IDs were provided
   if (mutation.clientId && mutation.mutationId) {
-    await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+    await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
   }
 
   return result;
