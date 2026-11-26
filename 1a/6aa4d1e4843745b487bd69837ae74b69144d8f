@@ -1,0 +1,33 @@
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_545bb079978e5a::t_8e3633b5b9e497 1063-1080
+packages/cli/src/utils/introspection.ts
+  s_bd8caca8b9ac65::t_7de0db47d13965 207
+packages/cli/src/utils/mysql-types.ts
+  s_bd8caca8b9ac65::t_85e4c10e950ba8 37-39,47-55
+packages/cli/src/utils/schema-diff.ts
+  s_bd8caca8b9ac65::t_324413725c5fa7 6,468,525-529,535-536,539-541,551,553
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a6aa4d1e4843745b487bd69837ae74b69144d8f",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_bd8caca8b9ac65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d2df9a-a640-491e-97cf-5c3bd3762daa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

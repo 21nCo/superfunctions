@@ -1,0 +1,55 @@
+.github/workflows/apifn-api-check-smoke.yml
+  s_59132baea83da2::t_f36fd8cc92ada6 10,20-53,66-130
+.github/workflows/apifn-api-check.yml
+  s_12031223da782f::t_fe0f295be5225f 7-34,36-45,47-49,91-100,104-116,118-142,144-146,199-202,205-237,252,255,265,288-367,370,387,401,409,411,413,419,428,439,442,456,464,467-472,477,479-483,486-488,490-575,577-580,619-626,630-635,637-645,648-650
+apifn/README.md
+  s_52aac795e73b3c::t_2b503527f5daa0 104-105,107-109,117,119,121,124-125,146-153,156-164,175-183,185-187,191-196
+apifn/cli/__tests__/check-smoke-fixtures.test.ts
+  s_59132baea83da2::t_8f76548bb0c12d 1-47
+apifn/cli/__tests__/fixtures/check-smoke/breaking/apifn.config.ts
+  s_12031223da782f::t_b6862c5e279b85 1-4
+apifn/cli/__tests__/fixtures/check-smoke/breaking/openapi.yml
+  s_12031223da782f::t_4fa2320d545a3c 1-22
+apifn/cli/__tests__/fixtures/check-smoke/breaking/router.ts
+  s_12031223da782f::t_bdc01ec7ba1014 1-18
+apifn/cli/__tests__/fixtures/check-smoke/compatible/apifn.config.ts
+  s_12031223da782f::t_5ce03b589c8f50 1-4
+apifn/cli/__tests__/fixtures/check-smoke/compatible/openapi.yml
+  s_59132baea83da2::t_cc4ca01de7ffdb 1-31
+apifn/cli/__tests__/fixtures/check-smoke/compatible/router.ts
+  s_12031223da782f::t_f898eae1c1f211 1-29
+apifn/examples/ci-cd/github-actions.yml
+  s_12031223da782f::t_a259ed34f85011 6-7,15,18-20,22,24,26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b433b765c6f470cc22c34c67db76ba69bb0e3237",
+  "prompts": {},
+  "sessions": {
+    "s_12031223da782f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-db41-7b90-aafa-aaaf93c35b87",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_59132baea83da2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-9b0a-7d92-90d3-d1a55a9c138f",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

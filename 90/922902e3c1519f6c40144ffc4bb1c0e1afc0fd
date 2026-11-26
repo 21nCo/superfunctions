@@ -1,0 +1,19 @@
+clifn/core/tests/update-check.test.ts
+  s_5bc591e1846aa3::t_c6b2db5a88e7a3 14-31,51-52,124-129,314-316,320-322,335-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90922902e3c1519f6c40144ffc4bb1c0e1afc0fd",
+  "prompts": {},
+  "sessions": {
+    "s_5bc591e1846aa3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21845-8094-7a21-b345-8e95ec186361",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

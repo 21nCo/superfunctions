@@ -1,0 +1,23 @@
+scripts/generate-uifn-catalog-accessibility.mjs
+  s_545bb079978e5a::t_33aa1781478566 16-37,39,48
+uifn/examples/shared/src/catalog-accessibility.generated.ts
+  s_545bb079978e5a::t_0c0bf39c32e7f9 2-5,63-64,125-126,193-194,268-269,323-324,334-337,346-347,353-355,357,359,362,365-366,377-381,383-384,388,394-395,406-408,423,425,427,430-431,434-435,453-454,458,464,468,473-475,492,494,497-499,502-504,518-520,522-523,527,533-535,539-540,545-547,555-559,561,563,566,569-571,581,584-588,594-1011,1015-1016
+uifn/examples/shared/src/catalog-presentation.ts
+  s_545bb079978e5a::t_9af40a6e7bcf69 14,31-40,1310-1311,1313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b40aa810a7f5548660eee2506fbd6cbb38bef176",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

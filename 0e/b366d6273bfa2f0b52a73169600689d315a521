@@ -1,0 +1,19 @@
+packages/evidence/turbo.json
+  s_029de01727d146::t_e8dbbf63347a91 6-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0eb366d6273bfa2f0b52a73169600689d315a521",
+  "prompts": {},
+  "sessions": {
+    "s_029de01727d146": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_029de01727d146",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

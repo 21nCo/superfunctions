@@ -1,0 +1,23 @@
+package-lock.json
+  s_f28924c6e75cbb::t_c326ac09ec6c35 58387
+packages/cli/CHANGELOG.md
+  s_f28924c6e75cbb::t_1c3ee5771f78e4 3
+packages/cli/package.json
+  s_f28924c6e75cbb::t_53b956c497b00c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6165ebcfdfc513898d9795e217d0fc87ef6b7410",
+  "prompts": {},
+  "sessions": {
+    "s_f28924c6e75cbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec49bf15-18d9-4f16-941f-7b2db768b4a7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

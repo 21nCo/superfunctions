@@ -1,0 +1,23 @@
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_bd8caca8b9ac65::t_9eed9e2b033122 1081-1096
+packages/cli/src/utils/schema-diff.ts
+  s_bd8caca8b9ac65::t_ee455180e96e6b 533-535,540-541
+plugfn/CHANGELOG.md
+  s_bd8caca8b9ac65::t_a757a4fc312e48 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a40cd9953f46e64ab7abf23f644ef40f36facda",
+  "prompts": {},
+  "sessions": {
+    "s_bd8caca8b9ac65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d2df9a-a640-491e-97cf-5c3bd3762daa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+clifn/core/src/update-check.ts
+  s_cff0ae0a5b34aa::t_1080b3b6e439cf 271-272,275-276,279,441,444,466-467,481,492
+clifn/core/tests/update-check-delivery.test.ts
+  s_cff0ae0a5b34aa::t_cae1e81a9eec8a 275-310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2ae6f9ddc5a36362091db0ba798b9dde08eeae9",
+  "prompts": {},
+  "sessions": {
+    "s_cff0ae0a5b34aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21727-e51a-72a0-95e9-cae9b11c023b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
