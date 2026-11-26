@@ -1,4 +1,4 @@
-import { prepareWebhookDelivery } from '../src/webhooks/webhook-handler.js';
+import { registerWebhookPreparation } from '../src/webhooks/webhook-handler.js';
 import { describe, it, expect, vi } from 'vitest';
 import { createPlugFnRouter } from '../src/router/http-router.js';
 import { plugFn } from '../src/core/plug-fn.js';
@@ -746,7 +746,11 @@ function createMockPlugFn(overrides: {
   const handleWebhook = overrides.handleWebhook ?? vi.fn(async () => ({}));
   const authenticate = overrides.authenticate ?? vi.fn(async () => ({ userId: 'u1' }));
   const createJob = overrides.createJob ?? vi.fn(async () => ({ id: 'job_1' }));
-
+  const webhooks = { on: vi.fn(), off: vi.fn(), handle: handleWebhook };
+  registerWebhookPreparation(webhooks, vi.fn(async () => ({
+    verified: true,
+    admit: async () => ({ dispatch: handleWebhook }),
+  })) as any);
   return {
     config: {
       auth: {
@@ -779,15 +783,7 @@ function createMockPlugFn(overrides: {
       delete: vi.fn(async () => {}),
       getStats: vi.fn(async () => ({})),
     },
-    webhooks: {
-      on: vi.fn(),
-      off: vi.fn(),
-      handle: handleWebhook,
-      [prepareWebhookDelivery]: vi.fn(async () => ({
-        verified: true,
-        admit: async () => ({ dispatch: handleWebhook }),
-      })),
-    },
+    webhooks,
     runtime: createMockRuntime({
       listSyncJobs: overrides.listSyncJobs,
       getSyncJob: overrides.getSyncJob,

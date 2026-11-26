@@ -180,6 +180,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           event: { type: 'string', required: true, fieldName: 'event' },
           idempotencyKey: { type: 'string', required: false, fieldName: 'idempotency_key' },
           workflowIdempotencyKey: { type: 'string', required: false, fieldName: 'workflow_idempotency_key', maxLength: 64 },
+          workflowTenantId: { type: 'string', required: false, fieldName: 'workflow_tenant_id' },
           connectionId: { type: 'string', required: false, fieldName: 'connection_id' },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },

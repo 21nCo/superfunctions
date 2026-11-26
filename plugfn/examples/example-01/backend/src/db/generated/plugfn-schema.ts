@@ -230,6 +230,7 @@ export const plugfn_webhook_receipts = pgTable(
   signatureVerified: boolean('signature_verified'),
   verificationStatus: text('verification_status').notNull(),
   workflowIdempotencyKey: text('workflow_idempotency_key'),
+  workflowTenantId: text('workflow_tenant_id'),
   },
   (table) => ({
     idx_plugfn_webhook_receipts_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_idempotency').on(table.provider, table.idempotencyKey),

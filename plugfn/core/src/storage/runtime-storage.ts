@@ -17,10 +17,12 @@ import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
+import { WebhookHandlerError } from '../webhooks/webhook-handler.js';
 
 export const claimFirstSignedWebhookDelivery = Symbol('plugfn.claimFirstSignedWebhookDelivery');
 export const webhookRuntimeReplayContext = Symbol('plugfn.webhookRuntimeReplayContext');
 export const webhookSignatureProof = Symbol('plugfn.webhookSignatureProof');
+export const webhookReceiptTenantId = Symbol('plugfn.webhookReceiptTenantId');
 
 export interface CreateProviderInstallationInput {
   provider: string;
@@ -38,6 +40,7 @@ export interface CreateConnectionGrantInput {
 
 export interface CreateWebhookReceiptInput {
   [webhookSignatureProof]?: boolean;
+  [webhookReceiptTenantId]?: string;
   provider: string;
   event: string;
   payloadHash: string;
@@ -204,6 +207,7 @@ export class AdapterRuntimeStorage {
       provider: input.provider,
       event: input.event,
       ...receiptKey,
+      ...(receiptKey.workflowIdempotencyKey ? { workflowTenantId: input[webhookReceiptTenantId] } : {}),
       connectionId: input.connectionId,
       ...ownerFields(input.owner),
       headersRedacted: input.headersRedacted,
@@ -261,7 +265,15 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
-    const { signatureVerified: _proof, ...normalizedUpdates } = updates;
+    const {
+      signatureVerified: _proof,
+      workflowIdempotencyKey: _workflowKey,
+      workflowTenantId: _workflowTenant,
+      ...normalizedUpdates
+    } = updates;
+    if ('connectionId' in updates && (await this.adapter.getWebhookReceipt(id))?.workflowIdempotencyKey) {
+      delete normalizedUpdates.connectionId;
+    }
     if (updates.metadata !== undefined) {
       const metadata: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(updates.metadata ?? {})) {
@@ -679,9 +691,9 @@ function assertMatchingWebhookReceipt(
   payloadHash: string
 ): PlugFnWebhookReceipt {
   if (receipt.payloadHash !== payloadHash) {
-    throw Object.assign(new Error('webhook idempotency key was reused with a different payload'), {
-      code: 'WEBHOOK_IDEMPOTENCY_CONFLICT', status: 409, retryable: false,
-    });
+    throw new WebhookHandlerError(
+      'WEBHOOK_IDEMPOTENCY_CONFLICT', 'webhook idempotency key was reused with a different payload', 409,
+    );
   }
   return receipt;
 }

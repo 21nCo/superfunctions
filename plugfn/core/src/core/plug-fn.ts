@@ -50,6 +50,7 @@ import {
   copyWebhookBody,
   hasWebhookSignatureProof,
   prepareWebhookDelivery,
+  registerWebhookPreparation,
   withoutWebhookReplayData,
 } from '../webhooks/webhook-handler.js';
 import { deliverWebhook } from '../router/http-router.js';
@@ -182,7 +183,6 @@ export interface PlugFn {
 
   // Webhook management
   webhooks: {
-    [prepareWebhookDelivery]: WebhookHandler[typeof prepareWebhookDelivery];
     on(provider: string, event: string, handler: TriggerHandler): void;
     off(provider: string, event: string, handler: TriggerHandler): void;
     handle(
@@ -497,7 +497,6 @@ export function plugFn(config: PlugFnConfig): PlugFn {
 
     // Webhook management
     webhooks: {
-      [prepareWebhookDelivery]: webhookHandler[prepareWebhookDelivery].bind(webhookHandler),
       on: (provider, event, handler) => webhookHandler.on(provider, event, handler),
       off: (provider, event, handler) => webhookHandler.off(provider, event, handler),
       handle: async (provider, event, payload, headers, secret, options) => {
@@ -1007,6 +1006,8 @@ export function plugFn(config: PlugFnConfig): PlugFn {
   function webhookReplayBodyExpired(expiresAt: unknown): boolean {
     return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
   }
+
+  registerWebhookPreparation(api.webhooks, webhookHandler[prepareWebhookDelivery].bind(webhookHandler));
 
   // Create dynamic provider proxies
   const proxyApi = new Proxy(api, {

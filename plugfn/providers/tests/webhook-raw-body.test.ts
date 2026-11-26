@@ -1,7 +1,6 @@
-import { prepareWebhookDelivery } from '../../core/src/webhooks/webhook-handler.js';
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { createPlugFnRouter, ProviderRegistry, WebhookHandler, NoopLogger } from 'plugfn';
+import { createPlugFnRouter, plugFn, MemoryAdapter, ProviderRegistry, WebhookHandler, NoopLogger } from 'plugfn';
 import { githubProvider } from '../src/github/index.js';
 import { linearProvider } from '../src/linear/index.js';
 import { clickupProvider } from '../src/clickup/index.js';
@@ -79,10 +78,10 @@ describe('raw-body webhook verification', () => {
     const handleWebhook = vi.fn();
     const plug = createRouterPlugMock(handleWebhook);
     plug.ready = new Promise<void>(() => undefined);
-    plug.webhooks[prepareWebhookDelivery] = vi.fn(async () => ({
+    plug.prepareWebhook.mockResolvedValue({
       verified: true,
       transformedPayload: { type: 'url_verification', challenge: 'slack-token' },
-    }));
+    });
     const router = createPlugFnRouter(plug);
 
     const response = await router.handle(
@@ -120,8 +119,8 @@ describe('raw-body webhook verification', () => {
 
     expect(response.status).toBe(200);
     expect(handleWebhook).toHaveBeenCalledTimes(1);
-    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledOnce();
-    const [provider, event, payload, , , options] = plug.webhooks[prepareWebhookDelivery].mock.calls[0];
+    expect(plug.prepareWebhook).toHaveBeenCalledOnce();
+    const [provider, event, payload, , , options] = plug.prepareWebhook.mock.calls[0];
     expect([provider, event, payload]).toEqual(['github', 'issues.opened', undefined]);
     expect(decodeBytes(options?.rawBody)).toBe(rawBody);
   });
@@ -146,7 +145,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
+    expect(plug.prepareWebhook).toHaveBeenCalledWith(
       'github',
       'issues',
       undefined,
@@ -179,7 +178,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
+    expect(plug.prepareWebhook).toHaveBeenCalledWith(
       'gmail',
       'mail.update',
       undefined,
@@ -204,7 +203,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
+    expect(plug.prepareWebhook).toHaveBeenCalledWith(
       'stripe',
       'invoice.paid',
       undefined,
@@ -497,6 +496,28 @@ function createWebhookHandler(): WebhookHandler {
 }
 
 function createRouterPlugMock(handleWebhook: ReturnType<typeof vi.fn>) {
+  const prepareWebhook = vi.fn(async (..._args: Parameters<WebhookHandler['verifyWebhook']>): Promise<unknown> => ({
+    verified: true,
+    admit: async () => ({ dispatch: handleWebhook }),
+  }));
+  const prototype = WebhookHandler.prototype as unknown as Record<symbol, typeof prepareWebhook>;
+  const preparation = Object.getOwnPropertySymbols(prototype).find((key) => key.description === 'plugfn.prepareWebhookDelivery');
+  if (!preparation) throw new Error('webhook preparation method is missing');
+  const original = prototype[preparation];
+  prototype[preparation] = prepareWebhook;
+  let webhooks;
+  try {
+    ({ webhooks } = plugFn({
+      auth: { authenticate: vi.fn() },
+      baseUrl: 'https://app.example.test',
+      database: new MemoryAdapter(),
+      encryptionKey: Buffer.alloc(32, 1).toString('hex'),
+      integrations: {},
+      logger: new NoopLogger(),
+    }));
+  } finally {
+    prototype[preparation] = original;
+  }
   return {
     config: {
       auth: {
@@ -522,15 +543,8 @@ function createRouterPlugMock(handleWebhook: ReturnType<typeof vi.fn>) {
       delete: vi.fn(async () => undefined),
       getStats: vi.fn(async () => ({})),
     },
-    webhooks: {
-      on: vi.fn(),
-      off: vi.fn(),
-      [prepareWebhookDelivery]: vi.fn(async (..._args: Parameters<WebhookHandler['verifyWebhook']>) => ({
-        verified: true,
-        admit: async () => ({ dispatch: handleWebhook }),
-      })),
-      handle: handleWebhook,
-    },
+    prepareWebhook,
+    webhooks,
     runtime: {
       webhooks: {
         createReceipt: vi.fn(async () => ({ id: 'receipt_1' })),

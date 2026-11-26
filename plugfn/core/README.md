@@ -152,10 +152,14 @@ the router. Custom providers can expose the authenticated subject and event
 through `getWorkflowSubject` and `getWorkflowEvent`. When the verifier also
 authenticates a unique delivery ID, the trigger can expose it through
 `getAuthenticatedDeliveryId`. Otherwise PlugFn
-uses the authenticated body hash to identify redeliveries. Scoped programmatic
-delivery through `PlugFn.webhooks.handle` requires the original raw body and a
-verification credential for the same signing authority. The lower-level
-`WebhookHandler.handleWebhook` supports standalone listeners.
+uses the authenticated body hash to identify redeliveries. For a provider listed
+in `workflowBindings`, pass the original request bytes as `rawBody` to
+`PlugFn.webhooks.handle` and leave signature verification enabled. This applies
+even when only standalone listeners are registered. PlugFn parses the verified
+bytes for these providers. An SDK call with only a parsed payload, or with
+signature verification disabled, rejects with `WEBHOOK_WORKFLOW_BINDING_REQUIRED`.
+Use a credential for the same signing authority for a scoped delivery. The
+lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
 Apply PlugFn schema version 9 with `superfunctions generate` and your adapter's
 migration runner before starting the upgraded webhook workers. The migration

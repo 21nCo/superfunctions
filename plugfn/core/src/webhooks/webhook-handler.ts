@@ -46,7 +46,22 @@ interface WebhookDispatchScope {
 }
 
 /** Internal preparation used by the router. Public verification returns inspection data only. */
-export const prepareWebhookDelivery = Symbol.for('plugfn.prepareWebhookDelivery');
+export const prepareWebhookDelivery = Symbol('plugfn.prepareWebhookDelivery');
+
+type WebhookPreparation = WebhookHandler[typeof prepareWebhookDelivery];
+const webhookPreparations = new WeakMap<object, WebhookPreparation>();
+
+export function registerWebhookPreparation(webhooks: object, prepare: WebhookPreparation): void {
+  webhookPreparations.set(webhooks, prepare);
+}
+
+export function prepareWebhookIngress(webhooks: object, ...args: Parameters<WebhookPreparation>): ReturnType<WebhookPreparation> {
+  const prepare = webhookPreparations.get(webhooks);
+  if (!prepare) {
+    throw new WebhookHandlerError('PLUGFN_NOT_READY', 'webhook ingress is not initialized', 503);
+  }
+  return prepare(...args);
+}
 
 export function copyWebhookBody(body: Uint8Array): Uint8Array {
   const copy = Buffer.isBuffer(body) ? Buffer.alloc(body.byteLength) : new Uint8Array(body.byteLength);
@@ -63,21 +78,14 @@ export class WebhookHandlerError extends Error {
     | 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
     | 'WEBHOOK_IDEMPOTENCY_CONFLICT'
     | 'WEBHOOK_HANDLER_FAILED'
+    | 'PLUGFN_NOT_READY'
     | 'VALIDATION_ERROR';
   readonly status: number;
   readonly retryable: boolean;
   readonly details: Record<string, unknown>;
 
   constructor(
-    code:
-      | 'WEBHOOK_SECRET_NOT_FOUND'
-      | 'WEBHOOK_SIGNATURE_INVALID'
-      | 'WEBHOOK_SIGNATURE_REQUIRED'
-      | 'WEBHOOK_WORKFLOW_BINDING_REQUIRED'
-      | 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
-      | 'WEBHOOK_IDEMPOTENCY_CONFLICT'
-      | 'WEBHOOK_HANDLER_FAILED'
-      | 'VALIDATION_ERROR',
+    code: WebhookHandlerError['code'],
     message: string,
     status = 400,
     details: Record<string, unknown> = {}
@@ -216,6 +224,12 @@ export class WebhookHandler {
     const resolvers = this.options.workflowBindings;
     const requiresBinding = resolvers && Object.hasOwn(resolvers, provider);
     const authorities = requiresBinding ? resolvers[provider] : undefined;
+    if (requiresBinding && !options.rawBody?.length) {
+      throw webhookBindingRequired('webhook providers with workflow bindings require the original raw body');
+    }
+    if (requiresBinding && this.options.verifySignatures === false) {
+      throw webhookBindingRequired('webhook providers with workflow bindings require signature verification enabled');
+    }
     // Scoped delivery must extract and dispatch from the same bytes the verifier sees.
     const rawBody = requiresBinding && options.rawBody ? copyWebhookBody(options.rawBody) : options.rawBody;
     const parsedPayload = requiresBinding || payload == null ? parseWebhookPayload(rawBody) : payload;
@@ -588,10 +602,10 @@ function handlerKey(provider: string, event: string, binding?: WebhookWorkflowBi
   return JSON.stringify([provider, event, binding?.tenantId, binding?.connectionId]);
 }
 
-function webhookBindingRequired(): WebhookHandlerError {
+function webhookBindingRequired(message = 'webhook has no unique verified workflow binding'): WebhookHandlerError {
   return new WebhookHandlerError(
     'WEBHOOK_WORKFLOW_BINDING_REQUIRED',
-    'webhook has no unique verified workflow binding',
+    message,
     403
   );
 }
@@ -610,7 +624,7 @@ export function assertWebhookReceiptScope(
 ): void {
   if (
     Boolean(receipt.workflowIdempotencyKey) !== Boolean(binding) ||
-    (binding && (receipt.metadata?.tenantId !== binding.tenantId || receipt.connectionId !== binding.connectionId))
+    (binding && (receipt.workflowTenantId !== binding.tenantId || receipt.connectionId !== binding.connectionId))
   ) {
     throw new WebhookHandlerError(
       'WEBHOOK_IDEMPOTENCY_CONFLICT',

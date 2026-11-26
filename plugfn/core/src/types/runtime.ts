@@ -73,6 +73,7 @@ export interface PlugFnWebhookReceipt {
   event: string;
   idempotencyKey?: string;
   workflowIdempotencyKey?: string;
+  workflowTenantId?: string;
   connectionId?: string;
   ownerKind?: PlugFnOwnerKind;
   ownerId?: string;

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import * as publicPlugFn from '../src/index.js';
 import { createPlugFnRouter, plugFn, TriggerType, WorkflowStatus } from '../src/index.js';
 import { createPlugFnDatabaseAdapter } from '../src/storage/adapters/database.js';
 import { MemoryAdapter } from '../src/storage/adapters/memory.js';
@@ -41,6 +42,78 @@ describe('webhook workflow admission', () => {
 
   beforeEach(() => {
     database = new MemoryAdapter();
+  });
+
+  it('keeps webhook verification capabilities out of the public API and global symbol registry', () => {
+    const { runtime } = startRuntime(database);
+    for (const name of [
+      'webhookSignatureProof', 'webhookRuntimeReplayContext', 'claimFirstSignedWebhookDelivery',
+      'webhookReceiptTenantId', 'prepareWebhookIngress', 'registerWebhookPreparation',
+    ]) {
+      expect(publicPlugFn).not.toHaveProperty(name);
+    }
+    expect(Reflect.has(runtime.webhooks, Symbol.for('plugfn.prepareWebhookDelivery'))).toBe(false);
+    expect(Object.getOwnPropertySymbols(runtime.webhooks)).toEqual([]);
+  });
+
+  it('keeps a scoped receipt bound when an application replaces its metadata', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send, action, resolveBinding } = startRuntime(database);
+    expect((await send('test-installation-one')).status).toBe(200);
+    const [receipt] = await database.findMany<publicPlugFn.PlugFnWebhookReceipt>({ model: receiptModel });
+    const updates = await runtime.runtime.webhooks.updateReceipt(receipt.id, {
+      metadata: { tenantId: secondBinding.tenantId },
+      workflowTenantId: secondBinding.tenantId,
+      workflowIdempotencyKey: 'test-other-receipt-key',
+      connectionId: secondBinding.connectionId,
+    });
+    expect(updates).toMatchObject({
+      metadata: { tenantId: secondBinding.tenantId },
+      workflowTenantId: firstBinding.tenantId,
+      workflowIdempotencyKey: receipt.workflowIdempotencyKey,
+      connectionId: firstBinding.connectionId,
+    });
+    const duplicate = await send('test-installation-one');
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    resolveBinding.mockResolvedValue([secondBinding]);
+    expect((await send('test-installation-one')).status).toBe(409);
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  it('reports SDK receipt content conflicts as webhook errors', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send } = startRuntime(database, { authenticateDeliveryId: true });
+    const headers = { 'x-test-signed-delivery': 'test-signed-delivery' };
+    expect((await send('test-installation-one', 'test-delivery', headers)).status).toBe(200);
+    const rawBody = Buffer.from(JSON.stringify({ id: 'test-other-body', installationId: 'test-installation-one' }));
+    const handle = runtime.webhooks.handle('test-provider', 'test.event', undefined, headers, signingCredential, { rawBody });
+    await expect(handle).rejects.toBeInstanceOf(publicPlugFn.WebhookHandlerError);
+    await expect(handle).rejects.toMatchObject({ code: 'WEBHOOK_IDEMPOTENCY_CONFLICT', status: 409 });
+  });
+
+  it('reports SDK workflow readiness failures as retryable webhook errors', async () => {
+    const { runtime } = startRuntime(database);
+    vi.spyOn(runtime, 'ready', 'get').mockImplementation(() => Promise.reject(new Error('test storage unavailable')));
+    const rawBody = Buffer.from(JSON.stringify({ id: 'test-delivery', installationId: 'test-installation-one' }));
+    const handle = runtime.webhooks.handle('test-provider', 'test.event', undefined, {}, signingCredential, { rawBody });
+    await expect(handle).rejects.toBeInstanceOf(publicPlugFn.WebhookHandlerError);
+    await expect(handle).rejects.toMatchObject({ code: 'PLUGFN_NOT_READY', status: 503, retryable: true });
+  });
+
+  it.each([
+    { reason: 'original raw body', withRawBody: false, verifySignatures: true },
+    { reason: 'signature verification enabled', withRawBody: true, verifySignatures: false },
+  ])('requires $reason before standalone SDK dispatch for a provider with bindings', async ({ reason, withRawBody, verifySignatures }) => {
+    const verifySignature = vi.fn(() => true);
+    const { runtime } = startRuntime(database, { verifySignature, verifySignatures });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const payload = { id: 'test-delivery' };
+    const rawBody = withRawBody ? Buffer.from(JSON.stringify(payload)) : undefined;
+    await expect(runtime.webhooks.handle('test-provider', 'test.event', payload, {}, signingCredential, { rawBody }))
+      .rejects.toMatchObject({ code: 'WEBHOOK_WORKFLOW_BINDING_REQUIRED', status: 403, message: expect.stringContaining(reason) });
+    expect(verifySignature).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it('looks up and runs only the workflow for each verified connection and tenant', async () => {

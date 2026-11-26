@@ -31,6 +31,7 @@ function getV8Tables(): TableSchema[] {
     if (table.modelName !== RECEIPT_TABLE) return table;
     const fields = { ...table.fields };
     delete fields.workflowIdempotencyKey;
+    delete fields.workflowTenantId;
     delete fields.signatureVerified;
     const indexes = table.indexes?.filter((index) => index.name !== WORKFLOW_RECEIPT_INDEX);
     return { ...table, fields, indexes };
@@ -424,7 +425,7 @@ describe('plugfn schema v9 migration', () => {
       expect(pending?.tableDiffs).toEqual([
         expect.objectContaining({
           tableName: RECEIPT_TABLE,
-          missingColumns: ['workflow_idempotency_key', 'signature_verified'],
+          missingColumns: ['workflow_idempotency_key', 'workflow_tenant_id', 'signature_verified'],
           missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
           changedIndexes: [],
         }),
@@ -439,6 +440,7 @@ describe('plugfn schema v9 migration', () => {
         ? `.addColumn('workflow_idempotency_key', 'varchar(64)', (col) => col)`
         : `ADD COLUMN workflow_idempotency_key VARCHAR(64);`);
       expect(up).toContain('runtime_replay_context');
+      expect(up).toContain('workflow_tenant_id');
       expect(up.match(/signature_verified/g)).toHaveLength(2);
       expect(up).toContain(`CREATE UNIQUE INDEX ${WORKFLOW_RECEIPT_INDEX} ON ${RECEIPT_TABLE} (workflow_idempotency_key)`);
     },

@@ -13,12 +13,14 @@ import {
   claimFirstSignedWebhookDelivery,
   webhookRuntimeReplayContext,
   webhookSignatureProof,
+  webhookReceiptTenantId,
   type CreateWebhookDeliveryInput,
 } from '../storage/runtime-storage.js';
 import {
   assertWebhookReceiptScope,
   hasWebhookSignatureProof,
-  prepareWebhookDelivery,
+  prepareWebhookIngress,
+  WebhookHandlerError,
   withoutWebhookReplayData,
   type WebhookAdmission,
 } from '../webhooks/webhook-handler.js';
@@ -906,8 +908,8 @@ async function handleWebhookRoute(
     if (!requiresBinding) {
       payloadHash = legacyWebhookPayloadHash(provider, rawBody);
     }
-    const verifyEvent = (routeEvent: string) => plugFn.webhooks[prepareWebhookDelivery](
-      provider, routeEvent, undefined, requestHeaders, secret, { rawBody }
+    const verifyEvent = (routeEvent: string) => prepareWebhookIngress(
+      plugFn.webhooks, provider, routeEvent, undefined, requestHeaders, secret, { rawBody }
     );
     let verification = await verifyEvent(resolvedEvent);
     if (verification.authenticatedWithoutSubject && resolvedEvent !== standaloneEvent) {
@@ -982,15 +984,9 @@ export async function deliverWebhook(
     try {
       await plugFn.ready;
     } catch (error) {
-      throw {
-        code: 'PLUGFN_NOT_READY',
-        message: 'workflow trigger rehydration failed',
-        status: 503,
-        retryable: true,
-        details: {
-          error: error instanceof Error ? error.message : 'unknown initialization failure',
-        },
-      };
+      throw new WebhookHandlerError('PLUGFN_NOT_READY', 'workflow trigger rehydration failed', 503, {
+        error: error instanceof Error ? error.message : 'unknown initialization failure',
+      });
     }
 
     admission.assertActive?.();
@@ -1003,15 +999,12 @@ export async function deliverWebhook(
       if (existing) {
         assertWebhookReceiptScope(existing, admission.binding);
         if (existing.payloadHash !== admittedPayloadHash) {
-          throw {
-            code: 'WEBHOOK_IDEMPOTENCY_CONFLICT',
-            message: 'webhook idempotency key was reused with a different payload',
-            status: 409,
-            retryable: false,
-            details: {
-              receiptId: existing.id,
-            },
-          };
+          throw new WebhookHandlerError(
+            'WEBHOOK_IDEMPOTENCY_CONFLICT',
+            'webhook idempotency key was reused with a different payload',
+            409,
+            { receiptId: existing.id },
+          );
         }
         if (
           existing.verificationStatus === 'verified' ||
@@ -1042,10 +1035,10 @@ export async function deliverWebhook(
       headersRedacted,
       verificationStatus,
       [webhookSignatureProof]: signatureVerified,
+      [webhookReceiptTenantId]: admission.binding?.tenantId,
       metadata: {
         contentType: headers['content-type'],
         userAgent: headers['user-agent'],
-        ...(admission.binding ? { tenantId: admission.binding.tenantId } : {}),
         ...(receiptClaimToken ? { receiptClaimToken } : {}),
       },
     });
