@@ -881,7 +881,9 @@ class OperationConverter {
    * nothing else, and never for `HEAD`, whose response has no body. Under the
    * `every-success` rule, also only when every documented 2xx response
    * offers only JSON content with that same schema: a call that may succeed
-   * with another body (or none) has no single output.
+   * with another body (or none) has no single output. Under that rule a
+   * `204` or `205` entry is never the schema's source: those statuses carry
+   * no body, so a schema written there is neither converted nor compiled.
    */
   outputSchema(raw: JsonObject, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const schema = this.responseSchema(raw);
@@ -894,6 +896,7 @@ class OperationConverter {
     // Key order: integer status codes ascend (JavaScript object order), then 2XX.
     for (const [status, value] of Object.entries(raw.responses)) {
       if (!SUCCESS_STATUS.test(status)) continue;
+      if (this.everySuccess && /^20[45]$/.test(status)) continue;
       const content = this.resolve(value, "responses").content;
       for (const [mediaType, media] of Object.entries(isObject(content) ? content : {})) {
         if (isApplicationJson(mediaType) && isObject(media) && media.schema !== undefined) return media.schema;
@@ -1812,12 +1815,45 @@ function register<TContext>(
 
 const NO_OUTPUT = Object.freeze({});
 
-/** The same schema object, or one written identically (as in two responses with the same inline schema). */
+/** Pairs of schema values `sameSchema` compares at most before it answers no. */
+const SAME_SCHEMA_BUDGET = 10_000;
+
+/**
+ * The same schema object, or one written identically (as in two responses
+ * with the same inline schema): plain records and arrays with equal keys and
+ * values, whatever the key order. Shared values (YAML aliases) are compared
+ * once per pair and a pair already being compared counts as equal, so the
+ * work is bounded by the values, not their expansion; when equality is not
+ * shown within `SAME_SCHEMA_BUDGET` pairs (or the nesting is too deep), the
+ * answer is no, which only leaves out the output schema.
+ */
 function sameSchema(left: unknown, right: unknown): boolean {
   if (left === right) return true;
   if (left === undefined || right === undefined) return false;
+  let budget = SAME_SCHEMA_BUDGET;
+  const compared = new Map<object, Set<object>>();
+  const plain = (value: object) => {
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return Array.isArray(value) || prototype === Object.prototype || prototype === null;
+  };
+  const equal = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true;
+    budget -= 1;
+    if (budget < 0) throw new RangeError("schema comparison budget exhausted");
+    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b) || !plain(a) || !plain(b)) return false;
+    let partners = compared.get(a);
+    if (partners?.has(b)) return true;
+    if (!partners) compared.set(a, (partners = new Set()));
+    partners.add(b);
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every(
+      (key) => Object.hasOwn(b, key) && equal((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+    );
+  };
   try {
-    return JSON.stringify(left) === JSON.stringify(right);
+    return equal(left, right);
   } catch {
     return false;
   }

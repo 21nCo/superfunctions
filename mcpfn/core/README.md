@@ -151,7 +151,11 @@ for (const { operation, code, reason } of skipped) {
   as a `200` with a body beside a `204`, a `2XX` range, which also covers
   the bodyless `204` and `205`, `201` and `202` with different
   bodies, or a JSON body beside `text/plain`), since a call could succeed
-  with a body the schema does not describe. Otherwise the schema becomes
+  with a body the schema does not describe. Under that rule a schema
+  written on a `204` or `205` entry is neither converted nor compiled, and
+  two responses count as having the same schema when it is the same object
+  or written identically (compared once per pair of shared values, within a
+  fixed budget; past it, no output schema). Otherwise the schema becomes
   the output schema when it accepts objects and nothing else (also through a 3.1 `$ref` with sibling
   keywords, an `allOf`, or a `not` of bare types such as
   `not: { type: "null" }`), with `writeOnly` properties left out by the same
@@ -299,8 +303,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   `#` stay encoded so a value cannot add parameters. A `null` query or
   header value is left out. The JSON body is sent with the operation's media
   type (`application/json` or the selected `*+json` type). Operations fetch
-  cannot send (`TRACE`, `GET` or `HEAD` with a request body, or a required
-  header fetch manages, such as `Connection`) are skipped by `fromOpenAPI`
+  cannot send (`TRACE`, `GET` or `HEAD` with a request body, a required
+  header fetch manages, such as `Connection` or `Sec-Fetch-Mode`, or a body
+  whose documented media type names a charset other than UTF-8, since the
+  body is sent as UTF-8) are skipped by `fromOpenAPI`
   as `unsupported-by-executor`, and so is an operation whose every security
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
@@ -317,7 +323,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
 - **Credentials (D9).** `headers` is a plain object (prototype
   `Object.prototype` or `null`) or a function of the server's trusted
   context (and the operation), called on every call, returning one or a
-  promise of one; values are printable ASCII. A `Map`, a `Headers` or
+  promise of one; values are printable ASCII. A record is validated once,
+  when the executor is created, and that copy is sent on every call:
+  changing the object later changes nothing, so rotate credentials with a
+  function. A `Map`, a `Headers` or
   another realm's object is refused rather than read as empty, and so is a
   record with a symbol or non-enumerable key: every own key is sent or
   refused, so only an explicit `{}` sends no operator headers. An operator
@@ -326,7 +335,7 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   otherwise the call is refused before it is sent. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
-  (`Connection`, `Transfer-Encoding`, `Expect`, ...), `apiKey` credential
+  (`Connection`, `Transfer-Encoding`, `Expect`, `Sec-Fetch-Mode`, ...), `apiKey` credential
   parameters and, with a `headers` record, every header it sets are not
   inputs; a value injected past validation for one of them is never sent,
   and an `apiKey` credential the operator does not set goes unsent. With a
@@ -361,8 +370,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   with those echoes masked is then checked exactly as a success body is
   (every view above, its bytes and its JSON numbers), and so is the
   excerpt as returned; the body is withheld when any check finds a
-  credential, when an encoded spelling overlaps a literal echo, or when the
-  echoes cannot be located in its bytes (a charset other than UTF-8 or
+  credential, when another reading finds an echo the literal ones do not
+  account for (a decoding, the text without NULs or its JSON numbers as
+  parsed finding more, or a byte form in UTF-8, UTF-16LE or UTF-16BE that
+  straddles a redacted span), or when the echoes cannot be located in its bytes (a charset other than UTF-8 or
   UTF-16, or UTF-8 that does not decode cleanly). Redaction uses a mask of
   the body's length, so memory stays a small multiple of `maxResponseBytes`
   however densely the body echoes a credential. A success body that reveals one is withheld with

@@ -50,13 +50,15 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 const EXCERPT_BYTES = 4096;
 const REDACTED = "[REDACTED]";
 
-// Hop-by-hop and framing headers belong to fetch: neither the operator nor a parameter sets them.
+// Hop-by-hop and framing headers belong to fetch, and so does `Sec-Fetch-Mode`,
+// which undici replaces with its own value: neither the operator nor a parameter sets them.
 const TRANSPORT_HEADERS = new Set([
   "connection",
   "content-length",
   "expect",
   "host",
   "keep-alive",
+  "sec-fetch-mode",
   "te",
   "trailer",
   "transfer-encoding",
@@ -116,11 +118,18 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
   const fetchImpl = options.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new McpFnValidationError("httpExecutor requires a fetch implementation");
   let source: HttpExecutorHeaderSource<TContext> | undefined;
+  // A record (or none) is validated once and its copy sent on every call, so
+  // changing the operator's object later cannot change what is sent or which
+  // parameters are tool inputs; per-call headers come from a function.
+  let fixed: OperatorHeaders | undefined;
   // Header names a record sets, which are never tool inputs.
   let fixedNames = new Set<string>();
   try {
     source = options.headers;
-    if (source !== undefined && typeof source !== "function") fixedNames = new Set(operatorHeaders(source).headers.keys());
+    if (typeof source !== "function") {
+      fixed = operatorHeaders(source ?? {});
+      fixedNames = new Set(fixed.headers.keys());
+    }
   } catch (error) {
     throw new McpFnValidationError(headerFailure(error));
   }
@@ -137,7 +146,7 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
       let operator: OperatorHeaders;
       try {
         // Settles as soon as the call is cancelled, even while a headers function is still running.
-        operator = await untilAborted(resolveHeaders(source, request.context, operation), signal);
+        operator = fixed ?? (await untilAborted(resolveHeaders(source, request.context, operation), signal));
       } catch (error) {
         if (signal.aborted) return cancelled();
         throw error;
@@ -290,11 +299,21 @@ function securityRefusal(operation: OpenApiOperation): string | undefined {
   return needed;
 }
 
-/** Why fetch cannot send an operation: it refuses TRACE, and a body on GET or HEAD. */
+/**
+ * Why fetch cannot send an operation: it refuses TRACE, and a body on GET or
+ * HEAD. A body is sent as UTF-8 JSON, so a documented media type that names
+ * another charset (or cannot be parsed) would mislabel it.
+ */
 function unsupportedReason(operation: OpenApiOperation): string | undefined {
   if (operation.method === "TRACE") return "fetch cannot send TRACE requests";
   if ((operation.method === "GET" || operation.method === "HEAD") && operation.requestBody) {
     return `fetch cannot send a ${operation.method} request with a body`;
+  }
+  if (operation.requestBody) {
+    const documented = parseMediaType(operation.requestBody.contentType);
+    if (documented === null || (documented.charset !== undefined && !isUtf8(documented.charset))) {
+      return "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8";
+    }
   }
   const managed = operation.parameters.find(
     (parameter) => parameter.in === "header" && parameter.required && TRANSPORT_HEADERS.has(parameter.name.toLowerCase()),
@@ -684,13 +703,36 @@ function numberTokens(json: string): string[] {
   return tokens;
 }
 
-/** The exact decimal value of a number literal, as significant digits and a power of ten. */
+/**
+ * The exact decimal value of a number literal, as significant digits and a
+ * power of ten. Read with index scans, so the work is linear in the literal's
+ * length (an upstream controls it, and the check is synchronous).
+ */
 function decimalValue(literal: string): string {
-  const [, sign, whole, fraction = "", exponent = "0"] = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal)!;
-  const digits = `${whole}${fraction}`.replace(/^0+/, "");
-  const significant = digits.replace(/0+$/, "");
-  if (significant === "") return "0";
-  const power = BigInt(exponent) - BigInt(fraction.length) + BigInt(digits.length - significant.length);
+  const negative = literal.startsWith("-");
+  const exponentAt = literal.search(/[eE]/);
+  const mantissa = literal.slice(negative ? 1 : 0, exponentAt === -1 ? literal.length : exponentAt);
+  const point = mantissa.indexOf(".");
+  const whole = point === -1 ? mantissa : mantissa.slice(0, point);
+  const fraction = point === -1 ? "" : mantissa.slice(point + 1);
+  const digits = whole + fraction;
+  let first = 0;
+  while (first < digits.length && digits[first] === "0") first += 1;
+  let last = digits.length;
+  while (last > first && digits[last - 1] === "0") last -= 1;
+  if (first === last) return "0";
+  const significant = digits.slice(first, last);
+  let exponent = exponentAt === -1 ? "0" : literal.slice(exponentAt + 1);
+  const exponentNegative = exponent.startsWith("-");
+  if (exponentNegative || exponent.startsWith("+")) exponent = exponent.slice(1);
+  let lead = 0;
+  while (lead < exponent.length - 1 && exponent[lead] === "0") lead += 1;
+  exponent = exponent.slice(lead);
+  const sign = negative ? "-" : "";
+  // Beyond 15 digits the exponent dwarfs any digit count under the body cap, so
+  // the value is no double's: a form no shortest spelling has, without BigInt work.
+  if (exponent.length > 15) return `${sign}${significant}e${exponentNegative ? "-" : "+"}${exponent}!`;
+  const power = BigInt(exponentNegative ? `-${exponent}` : exponent) - BigInt(fraction.length) + BigInt(digits.length - last);
   return `${sign}${significant}e${power}`;
 }
 
@@ -705,7 +747,9 @@ function declaredLength(response: Response): number {
  * `maxResponseBytes`) is read and checked, so no credential is judged from
  * part of its spelling. Every literal credential echo (overlapping ones
  * merged) is replaced whole and never cut. A body that reveals a credential
- * any other way, or whose echoes cannot be located in its bytes, is withheld.
+ * any other way, whose echoes cannot be located in its bytes, or in which
+ * another reading finds an echo the literal ones do not account for (one that
+ * overlaps a redacted span, which masking would only break), is withheld.
  */
 async function errorResult(response: Response, options: ResultOptions): Promise<CallToolResult> {
   const { status } = response;
@@ -735,10 +779,10 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
     // are known. The body with them masked is judged exactly as a success
     // body is (every view, its bytes and its JSON numbers) and must reveal nothing.
     mask = literalMask(text, secrets);
-    const maskedBytes = mask && maskBytes(bytes, text, encoding, mask);
-    if (!mask || !maskedBytes || decodingChangesCount(text, secrets)) return withheld;
+    const byteMask = mask && bytesBehind(bytes, text, encoding, mask);
+    if (!mask || !byteMask || unaccountedEchoes(bytes, byteMask, text, encoding, json, secrets)) return withheld;
     masked = maskText(text, mask);
-    if (bodyExposes(maskedBytes, masked, encoding, json, secrets)) return withheld;
+    if (bodyExposes(maskBytes(bytes, byteMask), masked, encoding, json, secrets)) return withheld;
   }
   // A leading byte order mark is dropped, unless a redacted credential begins with it.
   const start = text.startsWith("\uFEFF") && !mask?.[0] ? 1 : 0;
@@ -820,17 +864,68 @@ function canonicalNumbers(text: string, json: string, from: number, to: number):
 }
 
 /**
- * Whether a decoding of `text` changes how often a credential occurs, as when
- * an encoded spelling overlaps a literal echo (`te%73t-` before an echo of
- * its own shorter suffix): masking the literal one would leave part of the other.
+ * Whether a reading of the body finds a credential echo the literal echoes of
+ * `text` do not account for. Masking the literal echoes breaks an echo that
+ * overlaps one, so the masked body alone cannot show it: a decoding that
+ * changes how often a credential occurs (`te%73t-` before an echo of its own
+ * shorter suffix), the text without NULs (`test\0-key-test-key-test` for
+ * `test-key-test`) or with its JSON numbers as parsed (`1.2345e4` beside an
+ * echo of `345`) finding more, or a byte form (UTF-8, UTF-16LE, UTF-16BE, at
+ * any offset) that straddles a redacted span.
  */
-function decodingChangesCount(text: string, secrets: readonly string[]): boolean {
-  // Counted only once a decoding changes the text.
+function unaccountedEchoes(
+  bytes: Uint8Array,
+  byteMask: Uint8Array,
+  text: string,
+  encoding: string,
+  json: string | undefined,
+  secrets: readonly string[],
+): boolean {
+  // Counted only once a reading changes the text.
   let literal: number[] | undefined;
-  for (const view of decodedViews(text)) {
-    if (view === text) continue;
-    literal ??= secrets.map((secret) => occurrences(text, secret));
-    if (secrets.some((secret, index) => occurrences(view, secret) !== literal![index])) return true;
+  const counts = () => (literal ??= secrets.map((secret) => occurrences(text, secret)));
+  const changes = (view: string) => secrets.some((secret, index) => occurrences(view, secret) !== counts()[index]);
+  const adds = (view: string) => secrets.some((secret, index) => occurrences(view, secret) > counts()[index]!);
+  for (const view of decodedViews(text)) if (view !== text && changes(view)) return true;
+  // Credentials hold no NUL, so removing NULs never loses a literal echo; one more is an overlap.
+  if (text.includes("\u0000")) {
+    const joined = text.replaceAll("\u0000", "");
+    if (adds(joined)) return true;
+    for (const view of decodedViews(joined)) if (view !== joined && changes(view)) return true;
+  }
+  if (json !== undefined) {
+    const parsed = canonicalNumbers(text, json, 0, text.length);
+    if (parsed !== text && adds(parsed)) return true;
+  }
+  return bytesStraddle(bytes, byteMask, encoding, secrets);
+}
+
+/**
+ * Whether a byte form of a credential, at any offset, lies partly in the
+ * masked bytes and partly outside them. In a UTF-16 body the other byte
+ * order's form one byte off a redacted echo of the same credential (an ASCII
+ * echo `t\0e\0` read from the byte before as `\0t\0e`) is that echo, not another.
+ */
+function bytesStraddle(bytes: Uint8Array, byteMask: Uint8Array, encoding: string, secrets: readonly string[]): boolean {
+  // masked[i] is how many of the first i bytes are masked.
+  const masked = new Int32Array(bytes.length + 1);
+  for (let index = 0; index < bytes.length; index += 1) masked[index + 1] = masked[index]! + byteMask[index]!;
+  const inside = (at: number, length: number) => masked[at + length]! - masked[at]!;
+  const raw = binary(bytes);
+  for (const secret of secrets) {
+    const forms = byteForms(secret);
+    const own = forms.find(([name]) => name === encoding)?.[1];
+    for (const [name, form] of forms) {
+      // Where the body's own form of the same credential starts when this one is it read one byte off.
+      const shift = own === undefined || name === "utf-8" || name === encoding ? undefined : encoding === "utf-16le" ? 1 : -1;
+      for (let at = raw.indexOf(form); at !== -1; at = raw.indexOf(form, at + 1)) {
+        const count = inside(at, form.length);
+        if (count === 0 || count === form.length) continue;
+        const echo = shift === undefined ? -1 : at + shift;
+        if (echo >= 0 && raw.startsWith(own!, echo) && inside(echo, own!.length) === own!.length) continue;
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -870,32 +965,38 @@ function maskText(text: string, mask: Uint8Array): string {
 }
 
 /**
- * `bytes` with the bytes behind each masked character of `text` set to 0xFF
- * (never part of a UTF-8 form, nor of an ASCII credential's UTF-16 form), or
+ * Which bytes are behind the masked characters of `text` (1 each), or
  * undefined when they cannot be located: only UTF-16 (two bytes a code unit)
  * and UTF-8 that re-encodes to the same bytes are mapped.
  */
-function maskBytes(bytes: Uint8Array, text: string, encoding: string, mask: Uint8Array): Uint8Array | undefined {
-  const masked = bytes.slice();
+function bytesBehind(bytes: Uint8Array, text: string, encoding: string, mask: Uint8Array): Uint8Array | undefined {
+  const behind = new Uint8Array(bytes.length);
   if (encoding === "utf-16le" || encoding === "utf-16be") {
     for (let at = mask.indexOf(1); at !== -1; at = mask.indexOf(1, at)) {
       const stop = mask.indexOf(0, at);
       const end = stop === -1 ? mask.length : stop;
-      masked.fill(0xff, at * 2, end * 2);
+      behind.fill(1, at * 2, end * 2);
       if (stop === -1) break;
       at = stop;
     }
-    return masked;
+    return behind;
   }
   if (encoding !== "utf-8" || !sameBytes(encoder.encode(text), bytes)) return undefined;
   let offset = 0;
   for (let index = 0; index < text.length; index += 1) {
     const code = text.codePointAt(index)!;
     const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-    if (mask[index] || (size === 4 && mask[index + 1])) masked.fill(0xff, offset, offset + size);
+    if (mask[index] || (size === 4 && mask[index + 1])) behind.fill(1, offset, offset + size);
     offset += size;
     if (size === 4) index += 1;
   }
+  return behind;
+}
+
+/** `bytes` with each byte `byteMask` marks set to 0xFF (never part of a UTF-8 form, nor of an ASCII credential's UTF-16 form). */
+function maskBytes(bytes: Uint8Array, byteMask: Uint8Array): Uint8Array {
+  const masked = bytes.slice();
+  for (let index = 0; index < masked.length; index += 1) if (byteMask[index]) masked[index] = 0xff;
   return masked;
 }
 
@@ -1126,12 +1227,16 @@ function bodyContentType(headers: Headers, documented: string): void {
   if (
     parsed === null ||
     parsed.essence !== expected ||
-    (parsed.charset !== undefined && !/^utf-?8$/i.test(parsed.charset))
+    (parsed.charset !== undefined && !isUtf8(parsed.charset))
   ) {
     throw new CallRejected(
       `The server's Content-Type header does not match the ${JSON.stringify(expected)} body this operation sends, so the call was not made.`,
     );
   }
+}
+
+function isUtf8(charset: string): boolean {
+  return /^utf-?8$/i.test(charset);
 }
 
 /**

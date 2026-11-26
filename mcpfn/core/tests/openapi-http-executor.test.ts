@@ -2062,3 +2062,188 @@ describe("httpExecutor error and text bodies judged as returned", () => {
     expect(text(result)).toContain("reveals an operator credential and was withheld");
   });
 });
+
+describe("httpExecutor error excerpts with an echo the literal ones do not account for", () => {
+  const withheld = "The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]";
+  const run = (headers: Record<string, string>, body: string, contentType = "text/plain") =>
+    execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        headers,
+        fetch: stubFetch(() => new Response(body, { status: 500, headers: { "content-type": contentType } })).fetch,
+      }),
+      operationOf("echo"),
+    );
+
+  it("withholds a NUL-split echo that overlaps a literal echo of the same credential", async () => {
+    // Without the NUL the body holds the credential twice; only the second is literal, and redacting it would leave "test\0-key-".
+    expect(text(await run({ "x-self": "test-key-test" }, "test\u0000-key-test-key-test"))).toBe(withheld);
+  });
+
+  it("withholds a NUL-split echo that a literal echo of another credential bridges", async () => {
+    const headers = { "x-long": "test-long-alpha-key", "x-beta": "key-beta" };
+    expect(text(await run(headers, "test-long-alpha-key\u0000-beta"))).toBe(withheld);
+  });
+
+  it("withholds a JSON number that parses to a credential around a literal echo of a shorter one", async () => {
+    // 1.2345e4 parses to 12345; redacting the literal 345 would leave 1.2[REDACTED]e4.
+    expect(text(await run({ "x-api-key": "12345", "x-short": "345" }, '{"seen":1.2345e4}', "application/json"))).toBe(withheld);
+  });
+
+  it("still redacts overlapping literal echoes whole", async () => {
+    const headers = { "x-first": "test-key-one", "x-second": "one-more" };
+    expect(text(await run(headers, "seen test-key-one-more!"))).toBe("The API responded with HTTP 500.\n\nseen [REDACTED]!");
+  });
+});
+
+describe("httpExecutor JSON number checks on long number tokens", () => {
+  it("checks a number token with a long internal run of zeros in time linear in its length", async () => {
+    const body = `{"n":1.${"0".repeat(500_000)}1}`;
+    const { fetch } = stubFetch(() => new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    const started = performance.now();
+    const result = await execute(
+      httpExecutor<Context>({ baseUrl: api.origin, headers: { "x-api-key": "test-operator-key" }, fetch }),
+      operationOf("echo"),
+      {},
+      { hasOutputSchema: true },
+    );
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("a body that cannot be returned as structured content");
+  });
+});
+
+describe("httpExecutor response schemas compared with bounded work", () => {
+  const response = (schema: object) => ({ description: "Done", content: { "application/json": { schema } } });
+  const catalogOf = (responses: Record<string, unknown>) =>
+    fromOpenAPI(
+      { openapi: "3.1.0", info: { title: "compare", version: "1.0.0" }, paths: { "/item": { put: { operationId: "putItem", responses } } } },
+      { executor: httpExecutor({ baseUrl: api.origin }), allowMutations: true },
+    );
+
+  it("does not expand a second response's deep alias graph, and keeps the tool without an output schema", () => {
+    // Each level refers to the one below twice, as YAML aliases do: written out, it would be 2^64 nodes.
+    let shared: object = { type: "string" };
+    for (let level = 0; level < 64; level += 1) shared = { type: "object", properties: { a: shared, b: shared } };
+    const { tools, skipped } = catalogOf({
+      "200": response({ type: "object", properties: { a: { type: "string" }, b: { type: "string" } } }),
+      "201": response(shared),
+    });
+    expect(skipped).toEqual([]);
+    expect(tools.map((tool) => tool.name)).toEqual(["putItem"]);
+    expect(tools[0]!.outputSchema).toBeUndefined();
+  });
+
+  it("leaves out the output schema when equality is not shown within the budget, and keeps it for a small identical schema", () => {
+    // 10,202 pairs of objects to compare (equal strings cost nothing), over the 10,000 budget.
+    const properties = (count: number, value: () => object) =>
+      Object.fromEntries(Array.from({ length: count }, (_, index) => [`p${index}`, value()]));
+    const wide = () => ({ type: "object", properties: properties(100, () => ({ type: "object", properties: properties(100, () => ({ type: "string" })) })) });
+    const large = catalogOf({ "200": response(wide()), "201": response(wide()) });
+    expect(large.skipped).toEqual([]);
+    expect(large.tools[0]!.outputSchema).toBeUndefined();
+    const small = () => ({ type: "object", properties: { id: { type: "string" } } });
+    expect(catalogOf({ "200": response(small()), "201": response(small()) }).tools[0]!.outputSchema).toBeDefined();
+  });
+});
+
+describe("httpExecutor 204 and 205 entries with a schema that cannot compile", () => {
+  it.each([204, 205])("keeps a %i-only operation callable as a bodyless success", async (status) => {
+    const content = { "application/json": { schema: { type: "object", unevaluatedProperties: false } } };
+    const { registry, tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "bodyless", version: "1.0.0" },
+        paths: { "/item": { put: { operationId: "putItem", responses: { [String(status)]: { description: "Done", content } } } } },
+      },
+      {
+        executor: httpExecutor({ baseUrl: api.origin, fetch: stubFetch(() => new Response(null, { status })).fetch }),
+        allowMutations: true,
+      },
+    );
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.outputSchema).toBeUndefined();
+    await expect(registry.callTool("putItem", {}, undefined, requestExtra())).resolves.toEqual({
+      content: [{ type: "text", text: `The API responded with HTTP ${status} and no body.` }],
+    });
+  });
+});
+
+describe("httpExecutor header records changed after construction", () => {
+  it("sends the record as it was validated, whatever is later changed in the operator's object", async () => {
+    const sent: Headers[] = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers));
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    const record: Record<string, string> = { "x-api-key": "test-operator-key", "x-tenant": "tenant-1" };
+    const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: record, fetch });
+    delete record["x-api-key"];
+    record["x-tenant"] = "tenant-2";
+    record["x-extra"] = "added-later";
+    await execute(executor, operationOf("getItem"), { path: { id: "1" } });
+    expect(Object.fromEntries(sent[0]!)).toEqual({ "x-api-key": "test-operator-key", "x-tenant": "tenant-1" });
+  });
+});
+
+describe("httpExecutor Sec-Fetch-Mode, which undici replaces", () => {
+  const documentWith = (required: boolean) => ({
+    openapi: "3.1.0",
+    info: { title: "fetch-mode", version: "1.0.0" },
+    paths: {
+      "/mode": {
+        get: {
+          operationId: "mode",
+          parameters: [{ name: "Sec-Fetch-Mode", in: "header", required, schema: { type: "string" } }],
+          responses: ok,
+        },
+      },
+    },
+  });
+
+  it("publishes no input for an optional one", () => {
+    const { tools } = fromOpenAPI(documentWith(false), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools[0]!.operation.parameters).toEqual([]);
+  });
+
+  it("skips an operation that requires one", () => {
+    const { tools, skipped } = fromOpenAPI(documentWith(true), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([{ code: "unsupported-by-executor", reason: 'fetch manages the required header "Sec-Fetch-Mode"' }]);
+  });
+
+  it("refuses an operator entry, naming only the header", () => {
+    const create = () => httpExecutor({ baseUrl: api.origin, headers: { "Sec-Fetch-Mode": "test-mode-value" } });
+    expect(create).toThrow(McpFnValidationError);
+    expect(create).toThrow('httpExecutor headers entry "Sec-Fetch-Mode" is managed by fetch');
+    expect(create).not.toThrow(/test-mode-value/);
+  });
+});
+
+describe("httpExecutor documented request media types that name a charset", () => {
+  it("skips an operation whose JSON body is documented in a charset other than UTF-8, and sends a UTF-8 one", async () => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const body = (key: string) => ({ content: { [key]: { schema: { type: "object" } } } });
+    const { registry, tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "charsets", version: "1.0.0" },
+        paths: {
+          "/utf16": { post: { operationId: "utf16", requestBody: body("application/json; charset=utf-16"), responses: ok } },
+          "/utf8": { post: { operationId: "utf8", requestBody: body("application/json; charset=UTF-8"), responses: ok } },
+        },
+      },
+      { executor: httpExecutor({ baseUrl: api.origin, fetch }), allowMutations: true },
+    );
+    expect(tools.map((tool) => tool.name)).toEqual(["utf8"]);
+    expect(skipped).toMatchObject([
+      {
+        operation: { operationId: "utf16" },
+        code: "unsupported-by-executor",
+        reason: "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8",
+      },
+    ]);
+    await registry.callTool("utf8", { body: {} }, undefined, requestExtra());
+    expect(urls).toEqual([`${api.origin}/utf8`]);
+  });
+});
