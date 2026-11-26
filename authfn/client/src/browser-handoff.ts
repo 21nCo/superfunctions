@@ -222,6 +222,8 @@ interface PendingRecord {
   origin: string;
   path: string;
   verifier: string;
+  /** The clock when the record was written; the lifetime is judged from it, never from a later clock. */
+  issuedAt: number;
   expiresAt: number;
   regionId?: string;
 }
@@ -230,6 +232,7 @@ interface UsedRecord {
   v: 1;
   id: string;
   state: 'used';
+  issuedAt: number;
   expiresAt: number;
 }
 
@@ -256,7 +259,7 @@ const CHALLENGE_ID_PATTERN = /^[a-z0-9_-]{1,255}$/;
 const SOCIAL_METHODS = new Set(['oauth-google', 'oauth-apple', 'oauth-github']);
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
-const USED_RECORD_KEYS = ['expiresAt', 'id', 'state', 'v'].join();
+const USED_RECORD_KEYS = ['expiresAt', 'id', 'issuedAt', 'state', 'v'].join();
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const MAX_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_KEY_PREFIX = 'authfn.handoff.';
@@ -333,7 +336,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   ): Promise<'tombstoned' | 'changed' | 'absent' | 'deleted' | 'failed'> => {
     const handoffId = key.slice(keyPrefix.length);
     const swap = async (expected: string, expiry: number) =>
-      await guarded.compareAndSet(key, expected, tombstoneFor(handoffId, expiry)) ? 'tombstoned' : 'changed';
+      await guarded.compareAndSet(key, expected, tombstoneFor(handoffId, expiry, now())) ? 'tombstoned' : 'changed';
     if (typeof observed === 'string') {
       try {
         return await swap(observed, expiresAt);
@@ -346,7 +349,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       return 'absent';
     }
     if (typeof current === 'string') {
-      const record = parseRecord(current, handoffId, now());
+      const record = parseRecord(current, handoffId);
       if (record?.state === 'used') {
         return 'changed';
       }
@@ -357,7 +360,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       }
     }
     try {
-      await guarded.set(key, tombstoneFor(handoffId, expiresAt));
+      await guarded.set(key, tombstoneFor(handoffId, expiresAt, now()));
       return 'tombstoned';
     } catch {
       // The delete below.
@@ -398,7 +401,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       // began while this prune was enumerating is judged by a time no
       // earlier than its own begin.
       const current = now();
-      const record = typeof raw === 'string' ? parseRecord(raw, key.slice(keyPrefix.length), current) : null;
+      const record = typeof raw === 'string' ? parseRecord(raw, key.slice(keyPrefix.length)) : null;
       if (record?.state === 'used') {
         // An expired tombstone holds no secret: it is removed only if it is
         // still the same tombstone, and left when the store fails.
@@ -453,7 +456,8 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       const handoffId = randomBase64Url(16);
       const verifier = randomBase64Url(32);
       const handoffChallenge = await sha256Base64Url(verifier);
-      const expiresAt = now() + ttlMs;
+      const issuedAt = now();
+      const expiresAt = issuedAt + ttlMs;
       const record: PendingRecord = {
         v: 1,
         id: handoffId,
@@ -463,6 +467,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         // query the server re-encodes (auth_error, authfnCode) still matches.
         path: target.pathname + stripServerParams(target.search),
         verifier,
+        issuedAt,
         expiresAt,
         ...(regionId ? { regionId } : {})
       };
@@ -511,6 +516,11 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (!allowedOrigins.has(url.origin)) {
         return fail('origin-mismatch', { cleanUrl });
       }
+      // Only a page on the callback's origin may read, burn or exchange it.
+      const pageOrigin = (globalThis as { location?: { origin?: unknown } }).location?.origin;
+      if (typeof pageOrigin === 'string' && pageOrigin !== url.origin) {
+        return fail('origin-mismatch', { cleanUrl });
+      }
       if (handoffIdValues.length === 0) {
         // A callback that no handoff of this helper is bound to.
         return fail('flow-mismatch', { cleanUrl });
@@ -524,7 +534,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (raw === null || raw === undefined) {
         return fail(store.atomic === true ? 'unknown-handoff' : 'store-not-atomic', { handoffId, cleanUrl });
       }
-      const record = typeof raw === 'string' ? parseRecord(raw, handoffId, now()) : null;
+      const record = typeof raw === 'string' ? parseRecord(raw, handoffId) : null;
       if (store.atomic !== true) {
         // Without an atomic claim two windows could both exchange; retire
         // the verifier instead.
@@ -546,20 +556,24 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         const outcome = await retire(key, raw, tombstoneExpiry(record));
         return fail(outcome === 'changed' ? 'already-used' : 'expired', { handoffId, cleanUrl });
       }
+      // Refused before the claim: the return on the right origin still works.
+      if (url.origin !== record.origin) {
+        return fail('origin-mismatch', { handoffId, cleanUrl });
+      }
 
       // From here on the callback names a live handoff, so any outcome
       // retires it: a misdirected or corrupted return must not leave the
       // verifier for a second attempt.
       let claimed: boolean;
       try {
-        claimed = await guarded.compareAndSet(key, raw as string, tombstoneFor(handoffId, record.expiresAt));
+        claimed = await guarded.compareAndSet(key, raw as string, tombstoneFor(handoffId, record.expiresAt, now()));
       } catch {
         // Whether the claim committed is unknown, so this window never
         // exchanges. It reads the record again: another participant's
         // tombstone is left as it is; anything else is retired (and retire()
         // reads once more before any plain write).
         const current = await read(key);
-        if (typeof current === 'string' && parseRecord(current, handoffId, now())?.state === 'used') {
+        if (typeof current === 'string' && parseRecord(current, handoffId)?.state === 'used') {
           return fail('already-used', { handoffId, cleanUrl });
         }
         const outcome = current === null || current === undefined
@@ -576,9 +590,6 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         return fail('expired', { handoffId, cleanUrl });
       }
 
-      if (url.origin !== record.origin) {
-        return fail('origin-mismatch', { handoffId, cleanUrl });
-      }
       if (url.pathname + stripServerParams(url.search) !== record.path) {
         return fail('flow-mismatch', { handoffId, cleanUrl });
       }
@@ -684,7 +695,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (raw === null || raw === undefined) {
         return;
       }
-      const record = typeof raw === 'string' ? parseRecord(raw, handoffId, now()) : null;
+      const record = typeof raw === 'string' ? parseRecord(raw, handoffId) : null;
       if (record?.state !== 'used' && await retire(key, raw, tombstoneExpiry(record)) === 'failed') {
         throw new AuthFnBrowserHandoffStorageError();
       }
@@ -982,8 +993,10 @@ function guardStore(store: AuthFnBrowserHandoffStore) {
   };
 }
 
-function tombstoneFor(handoffId: string, expiresAt: number): string {
-  return JSON.stringify({ v: 1, id: handoffId, state: 'used', expiresAt } satisfies UsedRecord);
+/** A used record issued at `now`, or no earlier than `MAX_TTL_MS` before `expiresAt` after the clock stepped back. */
+function tombstoneFor(handoffId: string, expiresAt: number, now: number): string {
+  const issuedAt = Math.max(Math.min(now, expiresAt), expiresAt - MAX_TTL_MS);
+  return JSON.stringify({ v: 1, id: handoffId, state: 'used', issuedAt, expiresAt } satisfies UsedRecord);
 }
 
 function normalizeAllowedOrigins(input: readonly string[] | undefined): Set<string> {
@@ -1040,7 +1053,7 @@ function parseBeginTarget(returnTo: unknown, allowedOrigins: Set<string>): URL {
   return target;
 }
 
-function parseRecord(raw: string, handoffId: string, now: number): StoredRecord | null {
+function parseRecord(raw: string, handoffId: string): StoredRecord | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -1056,8 +1069,11 @@ function parseRecord(raw: string, handoffId: string, now: number): StoredRecord 
     || record.id !== handoffId
     || typeof record.expiresAt !== 'number'
     || !Number.isFinite(record.expiresAt)
-    // No handoff this helper begins outlives the longest TTL.
-    || record.expiresAt > now + MAX_TTL_MS
+    || typeof record.issuedAt !== 'number'
+    || !Number.isFinite(record.issuedAt)
+    // Judged from the record's own issue time, never the reading clock.
+    || record.expiresAt - record.issuedAt < 0
+    || record.expiresAt - record.issuedAt > MAX_TTL_MS
   ) {
     return null;
   }
@@ -1065,7 +1081,7 @@ function parseRecord(raw: string, handoffId: string, now: number): StoredRecord 
     // A tombstone holds nothing else; one that still carries the verifier
     // (or anything more) is not one this helper wrote.
     return Object.keys(record).sort().join() === USED_RECORD_KEYS
-      ? { v: 1, id: handoffId, state: 'used', expiresAt: record.expiresAt }
+      ? { v: 1, id: handoffId, state: 'used', issuedAt: record.issuedAt, expiresAt: record.expiresAt }
       : null;
   }
   if (
@@ -1086,6 +1102,7 @@ function parseRecord(raw: string, handoffId: string, now: number): StoredRecord 
     origin: record.origin,
     path: record.path,
     verifier: record.verifier,
+    issuedAt: record.issuedAt,
     expiresAt: record.expiresAt,
     ...(typeof record.regionId === 'string' ? { regionId: record.regionId } : {})
   };

@@ -77,6 +77,12 @@ const refusedSessionData: ReadonlyArray<readonly [string, unknown]> = ([
   });
 
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
+/** `text` with every byte percent-encoded, as an echo that hides it would send it. */
+const percentEncoded = (text: string) => Array.from(
+  new TextEncoder().encode(text),
+  (byte) => `%${byte.toString(16).toUpperCase().padStart(2, '0')}`
+).join('');
+const MAX_TTL_MS = 60 * 60 * 1000;
 
 /**
  * A fake of the server's single-use exchange: a code is bound to the
@@ -177,7 +183,7 @@ async function retiredState(store: AuthFnBrowserHandoffStore, key: string): Prom
   }
   try {
     const record = JSON.parse(String(raw)) as Record<string, unknown>;
-    return record.state === 'used' && Object.keys(record).sort().join() === 'expiresAt,id,state,v' ? 'tombstone' : 'other';
+    return record.state === 'used' && Object.keys(record).sort().join() === 'expiresAt,id,issuedAt,state,v' ? 'tombstone' : 'other';
   } catch {
     return 'other';
   }
@@ -279,6 +285,7 @@ describe('createBrowserHandoff', () => {
       v: 1,
       id: begun.handoffId,
       state: 'used',
+      issuedAt: T0,
       expiresAt: T0 + 10 * 60 * 1000
     });
     expect(await dumpStore(store)).not.toContain(verifier);
@@ -480,8 +487,48 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
+  it('leaves a handoff pending when its return arrives on another allowed origin', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const before = await dumpStore(store);
+
+    expect(failed(await make().complete(callback.replace(APP, 'https://other.example.com'))).reason).toBe('origin-mismatch');
+    expect(await dumpStore(store)).toBe(before);
+    expect(server.exchange).not.toHaveBeenCalled();
+    // The return on the origin it was begun for still completes.
+    expect((await make().complete(callback)).status).toBe('completed');
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('completes a handoff only on a page of the callback origin, over a store shared across origins', async () => {
+    const inner = createMemoryHandoffStore();
+    const shared: AuthFnBrowserHandoffStore = { ...inner, atomic: true, originScoped: false };
+    const { make, server } = setup({ store: shared });
+    const OTHER = 'https://other.example.com';
+    vi.stubGlobal('location', { origin: APP });
+    try {
+      const begun = await make().begin({ returnTo: `${OTHER}/post-auth` });
+      const key = `authfn.handoff.${begun.handoffId}`;
+      const callback = server.callbackFor(begun);
+      const before = await inner.get(key);
+
+      // A page on APP is handed the other origin's callback.
+      expect(failed(await make().complete(callback)).reason).toBe('origin-mismatch');
+      // A page on APP rewrites the callback onto its own origin.
+      expect(failed(await make().complete(callback.replace(OTHER, APP))).reason).toBe('origin-mismatch');
+      expect(await inner.get(key)).toBe(before);
+      expect(server.exchange).not.toHaveBeenCalled();
+
+      vi.stubGlobal('location', { origin: OTHER });
+      expect((await make().complete(callback)).status).toBe('completed');
+      expect(server.exchange).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([
-    ['another allowed origin', (url: string) => url.replace(APP, 'https://other.example.com'), 'origin-mismatch'],
     ['another path', (url: string) => url.replace('/post-auth', '/elsewhere'), 'flow-mismatch'],
     ['a session token instead of a code', (url: string) => url.replace('handoff=code', 'handoff=token'), 'flow-mismatch']
   ] as const)('retires a handoff whose return arrives on %s', async (_label, mutate, reason) => {
@@ -856,6 +903,10 @@ describe('createBrowserHandoff', () => {
       const data = issuedData('session-1', 'test-session-token');
       return { ok: true, requestId: 'req-echo', data: { ...data, handoff: { ...data.handoff, debugCode: code.slice(3, 11) } } };
     }],
+    ['the verifier percent-encoded in the session metadata', ({ verifier }: { code: string; verifier: string }) => {
+      const data = issuedData('session-1', 'test-session-token');
+      return { ok: true, requestId: 'req-echo', data: { ...data, session: { ...data.session, metadata: { debug: percentEncoded(verifier) } } } };
+    }],
     ['the whole body in an extra top-level field', (sent: { code: string; verifier: string }) => (
       { ok: true, requestId: 'req-echo', data: issuedData('session-1', 'test-session-token'), debug: { sent } }
     )]
@@ -1052,7 +1103,11 @@ describe('createBrowserHandoff', () => {
     ['a redirect with credentials', { redirectTo: ['https://', 'test-user', ':', 'test-pass', '@eu.account.example.com'].join('') }],
     ['a redirect longer than 2048 characters', { redirectTo: `https://eu.account.example.com/${'a'.repeat(2048)}` }],
     ['a redirect with a space', { redirectTo: 'https://eu.account.example.com/a b' }],
-    ['continueLocally that is not a boolean', { continueLocally: 'false' }]
+    ['continueLocally that is not a boolean', { continueLocally: 'false' }],
+    ['a redirect that carries the percent-encoded code', { redirectTo: `https://eu.example.test/?c=${percentEncoded(detailsInput.code)}` }],
+    ['an authority that carries double-encoded verifier bytes', {
+      authority: `https://eu.example.test/${percentEncoded(percentEncoded(detailsInput.verifier.slice(5, 25)))}`
+    }]
   ] as const)('drops a region-mismatch detail that is %s', async (_label, bad) => {
     const field = Object.keys(bad)[0]!;
     const details = await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, { ...mismatchDetails, ...bad });
@@ -1147,9 +1202,12 @@ describe('createBrowserHandoff', () => {
     await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier });
     region.value = `eu:${verifier.slice(3, 11)}`;
     await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier });
+    region.value = percentEncoded(verifier.slice(2, 22));
+    await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier });
 
     expect(metrics[0]?.accountRegion).toBe('aws:eu-west-1');
     expect(metrics[1]).not.toHaveProperty('accountRegion');
+    expect(metrics[2]).not.toHaveProperty('accountRegion');
   });
 
   it('still reports the response headers of requests without one-time secrets', async () => {
@@ -1293,6 +1351,53 @@ describe('createBrowserHandoff', () => {
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
     expect(await retiredState(store, key)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('judges a record lifetime by its own issue time, not the reading clock', async () => {
+    const { make, server, store, clock } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const record = JSON.parse(String(await store.get(key)));
+    await store.set(key, JSON.stringify({ ...record, expiresAt: record.issuedAt + MAX_TTL_MS + 1 }));
+    // Read after the impossible deadline, when no reading clock would catch it.
+    clock.advance(61 * 60 * 1000);
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain(record.verifier);
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['1 ms', 1],
+    ['30 minutes', 30 * 60 * 1000]
+  ] as const)('keeps a live handoff with the longest TTL when the clock steps back %s', async (_label, step) => {
+    const { make, server, store, clock } = setup({ ttlMs: MAX_TTL_MS });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    clock.advance(-step);
+
+    // Another window's prune, as its begin() runs one.
+    expect(await make().prune()).toBe(0);
+    expect((await make().complete(callback)).status).toBe('completed');
+    expect(await retiredState(store, `authfn.handoff.${begun.handoffId}`)).toBe('tombstone');
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a tombstone final when the clock steps back', async () => {
+    const { make, server, store, clock } = setup({ ttlMs: MAX_TTL_MS });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const callback = server.callbackFor(begun);
+    expect((await make().complete(callback)).status).toBe('completed');
+    const tombstone = await store.get(key);
+    clock.advance(-1);
+
+    expect(await make().prune()).toBe(0);
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(await store.get(key)).toBe(tombstone);
+    expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1584,7 +1689,7 @@ describe('createBrowserHandoff', () => {
     const claimed = await make().begin({ returnTo: RETURN_TO });
     const claimedKey = `authfn.handoff.${claimed.handoffId}`;
     const record = JSON.parse(String(await store.get(claimedKey)));
-    await store.set(claimedKey, JSON.stringify({ v: 1, id: record.id, state: 'used', expiresAt: record.expiresAt }));
+    await store.set(claimedKey, JSON.stringify({ v: 1, id: record.id, state: 'used', issuedAt: record.issuedAt, expiresAt: record.expiresAt }));
     clock.advance(10 * 60 * 1000);
     const unavailable = () => Promise.reject(new Error('storage unavailable'));
     const failing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable, set: unavailable, delete: unavailable };

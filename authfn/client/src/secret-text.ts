@@ -17,17 +17,41 @@ export function safeText(value: unknown, check: TextCheck, secrets: readonly str
   return secrets.some((secret) => sharesText(value, secret)) ? undefined : value;
 }
 
-/** Whether `value` contains `secret`, or any run of `SECRET_WINDOW` of its characters. */
+/**
+ * Whether `value` contains `secret`, or any run of `SECRET_WINDOW` of its
+ * characters, as written or percent-decoded up to `DECODE_PASSES` times.
+ */
 export function sharesText(value: string, secret: string): boolean {
+  const forms = decodedForms(value);
   if (secret.length <= SECRET_WINDOW) {
-    return secret.length > 0 && value.includes(secret);
+    return secret.length > 0 && forms.some((form) => form.includes(secret));
   }
   for (let index = 0; index + SECRET_WINDOW <= secret.length; index += 1) {
-    if (value.includes(secret.slice(index, index + SECRET_WINDOW))) {
+    const run = secret.slice(index, index + SECRET_WINDOW);
+    if (forms.some((form) => form.includes(run))) {
       return true;
     }
   }
   return false;
+}
+
+const DECODE_PASSES = 3;
+
+/** `value` and its percent-decoded forms, until decoding changes nothing. */
+function decodedForms(value: string): string[] {
+  const forms = [value];
+  for (let pass = 0; pass < DECODE_PASSES; pass += 1) {
+    // Never throws: a `%` without two hex digits stays as it is, and bytes
+    // that are not UTF-8 become U+FFFD.
+    const decoded = forms[pass]!.replace(/(?:%[0-9A-Fa-f]{2})+/g, (escapes) => new TextDecoder().decode(
+      Uint8Array.from(escapes.slice(1).split('%'), (hex) => Number.parseInt(hex, 16))
+    ));
+    if (decoded === forms[pass]) {
+      break;
+    }
+    forms.push(decoded);
+  }
+  return forms;
 }
 
 /**

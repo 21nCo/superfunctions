@@ -353,7 +353,7 @@ describe('createBrowserHandoff in Chromium', () => {
 
     expect(await complete(tab)).toMatchObject({ status: 'failed', reason: 'malformed-state' });
     const retired = JSON.parse(String(await readRecord(tab, begun.handoffId)));
-    expect(retired).toEqual({ v: 1, id: begun.handoffId, state: 'used', expiresAt: expect.any(Number) });
+    expect(retired).toEqual({ v: 1, id: begun.handoffId, state: 'used', issuedAt: expect.any(Number), expiresAt: expect.any(Number) });
     expect(exchanges).toBe(0);
   });
 });
