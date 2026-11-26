@@ -108,3 +108,37 @@ describe("bundled DocsFn provider", () => {
     expect(buildManifest).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("bundled runtime front matter policy", () => {
+  const executed = "__docsSiteRuntimeFrontMatterExecuted";
+  beforeEach(() => { delete (globalThis as Record<string, unknown>)[executed]; });
+
+  it.each([
+    ["plain Markdown", "# Plain page\n\nPlain body.", { title: "Index" }],
+    ["default YAML", "---\ntitle: Default YAML\norder: 3\n---\nYAML body.", { title: "Default YAML", order: 3 }],
+    ["explicit YAML", "--- yaml\ntitle: Explicit YAML\n---\nYAML body.", { title: "Explicit YAML" }],
+    ["explicit YML", "---YML\r\ntitle: Explicit YML\r\n---\r\nYAML body.", { title: "Explicit YML" }],
+  ])("keeps %s metadata", async (_name, markdown, frontmatter) => {
+    const runtime = createDocsSiteRuntime(config, { "../../../guide/index.md": markdown }, {});
+    const page = (await runtime.loadDocsSiteSource()).manifest.pages["docs:index.md"];
+    expect(page.frontmatter).toMatchObject(frontmatter);
+    expect(page.body).not.toContain("title:");
+  });
+
+  it.each([
+    ["js", `---js\n({ title: (globalThis.${executed} = true, "Executed") })\n---\nBody`],
+    ["javascript", `---javascript\n({ title: (globalThis.${executed} = true, "Executed") })\n---\nBody`],
+    ["json", '---json\n{"title":"JSON"}\n---\nBody'],
+    ["coffee", "---coffee\ntitle: 'Coffee'\n---\nBody"],
+    ["an unregistered engine", "---toml\ntitle = 'TOML'\n---\nBody"],
+  ])("rejects %s front matter before the parser runs", async (_name, markdown) => {
+    const runtime = createDocsSiteRuntime(config, {
+      "../../../guide/index.md": "# Guide",
+      "../../../blog/post.md": markdown,
+    }, {});
+    await expect(runtime.loadDocsSiteSource()).rejects.toMatchObject({
+      code: "DOCS_FRONTMATTER_UNSUPPORTED", sourcePath: "blog/post.md",
+    });
+    expect((globalThis as Record<string, unknown>)[executed]).toBeUndefined();
+  });
+});

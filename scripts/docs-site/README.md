@@ -10,7 +10,7 @@ Each new-site PR includes this shared directory at the same repository path so i
 
 Only sites whose factory wrappers import this directory consume this runtime. Check those imports when planning cross-site validation.
 
-Bundled files have no reliable filesystem modification time; the provider omits `updatedAt` instead of inventing one. YAML frontmatter uses the same gray-matter parser as the filesystem provider. Binary static files stay in SvelteKit’s static passthrough.
+Bundled files have no reliable filesystem modification time; the provider omits `updatedAt` instead of inventing one. YAML frontmatter uses the same gray-matter parser as the filesystem provider. Front matter is YAML-only: `front-matter.mjs` rejects every engine label other than the bare `---` delimiter, `yaml` or `yml` before gray-matter runs (its `js` engine evaluates code), in both the bundled runtime and the LLM prebuild. The prebuild copies the Markdown collections into a private temporary snapshot, checks those exact bytes, points the published filesystem provider at the snapshot and removes it afterwards, so a source edit after the check cannot reach the parser. Binary static files stay in SvelteKit’s static passthrough.
 
 Search-enabled consumers declare the published Core's `@searchfn/client` peer. In a workspace checkout, run `npm exec -- turbo run build --filter=<consumer-package>` from the repository root before direct `npm test` or native checks: `^build` prepares the physically imported SearchFn workspaces as well as the consumer's other declared prerequisites. A standalone install resolves published packages, whose dist files are already present. Do not substitute a root SDK pin or mocked search implementation.
 
