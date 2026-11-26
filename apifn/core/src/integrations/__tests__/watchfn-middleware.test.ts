@@ -6,7 +6,7 @@
  * The watchfn event API is replaced by a fake sink installed as the global `fetch`.
  */
 
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createRouter, type Middleware, type Route, type RouteContext } from "@superfunctions/http";
 import { apifnWatchMiddleware } from "../watchfn.js";
 
@@ -217,6 +217,75 @@ describe("TV-WATCH-004: apifnWatchMiddleware response identity and failure polic
 
         expect(response.status).toBe(418);
         expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    describe("telemetry and warning failures stay inside the telemetry boundary", () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+
+        beforeEach(() => {
+            unhandled.length = 0;
+            process.on("unhandledRejection", onUnhandled);
+        });
+
+        afterEach(() => {
+            process.off("unhandledRejection", onUnhandled);
+        });
+
+        /** Lets Node process any rejection left unhandled by the detached POST. */
+        const settleRejections = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+        it.each([
+            { mode: "awaited", fireAndForget: false },
+            { mode: "fire-and-forget", fireAndForget: true },
+        ])("a prototype-less fetch rejection is reported safely and the handler response is kept ($mode)", async ({ fireAndForget }) => {
+            const fetchMock = vi.fn().mockRejectedValue(Object.create(null));
+            vi.stubGlobal("fetch", fetchMock);
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const router = createRouter({ routes: [{ method: "GET", path: "/brew", handler: () => teapot() }] });
+            router.use(apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget }));
+
+            const response = await router.handle(new Request("http://api.local/brew"));
+
+            expect(response.status).toBe(418);
+            expect(response.headers.get("x-handler")).toBe("teapot");
+            expect(await response.text()).toBe("short and stout");
+            await vi.waitFor(() => {
+                expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to send event to watchfn: unknown error"));
+            });
+            await settleRejections();
+            expect(unhandled).toEqual([]);
+        });
+
+        it.each([
+            { mode: "awaited", fireAndForget: false },
+            { mode: "fire-and-forget", fireAndForget: true },
+        ])("a throwing console.warn does not replace the handler response ($mode)", async ({ fireAndForget }) => {
+            const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+            vi.stubGlobal("fetch", fetchMock);
+            vi.spyOn(console, "warn").mockImplementation(() => { throw new Error("warning sink unavailable"); });
+            const router = createRouter({ routes: [{ method: "GET", path: "/brew", handler: () => teapot() }] });
+            router.use(apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget }));
+
+            const response = await router.handle(new Request("http://api.local/brew"));
+
+            expect(response.status).toBe(418);
+            expect(response.headers.get("x-handler")).toBe("teapot");
+            expect(await response.text()).toBe("short and stout");
+            await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1); });
+            await settleRejections();
+            expect(unhandled).toEqual([]);
+        });
+
+        it("rethrows only the original downstream error when telemetry and warnings also fail", async () => {
+            vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Object.create(null)));
+            vi.spyOn(console, "warn").mockImplementation(() => { throw new Error("warning sink unavailable"); });
+            const failure = new Error("downstream failed");
+            const request = new Request("http://api.local/boom");
+            const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: false });
+
+            await expect(middleware(request, routeContext(request), async () => { throw failure; })).rejects.toBe(failure);
+        });
     });
 
     it("records an unhandled error as 500 and rethrows it when no error handler converts it", async () => {

@@ -195,6 +195,19 @@ export function createWatchFnClient(
 
 // ─── apifnWatchMiddleware ─────────────────────────────────────────────────────
 
+/**
+ * Formats a thrown value for a warning. Never throws: values such as
+ * `Object.create(null)` or an error whose `message` getter throws cannot be
+ * stringified safely.
+ */
+function describeError(err: unknown): string {
+    try {
+        return err instanceof Error ? String(err.message) : String(err);
+    } catch {
+        return "unknown error";
+    }
+}
+
 /** Status recorded when downstream middleware or the handler throws instead of returning a Response. */
 const UNHANDLED_ERROR_STATUS = 500;
 
@@ -230,10 +243,15 @@ export function apifnWatchMiddleware<TContext = unknown>(
     };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
 
+    /** Reports a telemetry failure. Never throws, whatever `err` is or `console.warn` does. */
     function warn(message: string, err?: unknown): void {
         if (silent) return;
-        const detail = err === undefined ? "" : `: ${err instanceof Error ? err.message : String(err)}`;
-        console.warn(`[apifn/watchfn] ${message}${detail}`);
+        try {
+            const detail = err === undefined ? "" : `: ${describeError(err)}`;
+            console.warn(`[apifn/watchfn] ${message}${detail}`);
+        } catch {
+            // A failing warning sink must not escape the telemetry boundary.
+        }
     }
 
     async function sendEvent(event: WatchFnEvent): Promise<void> {
@@ -271,7 +289,9 @@ export function apifnWatchMiddleware<TContext = unknown>(
             };
             if (fireAndForget) {
                 // Non-blocking: the response is returned without waiting for the POST.
-                void sendEvent(event);
+                // The terminal catch keeps the detached promise from ever becoming an
+                // unhandled rejection.
+                sendEvent(event).catch(() => { /* sendEvent already reported it */ });
             } else {
                 await sendEvent(event);
             }
