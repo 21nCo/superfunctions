@@ -225,6 +225,8 @@ const FRAGMENT_PARAMS = [HANDOFF_ID_PARAM, CODE_PARAM, MODE_PARAM, REGION_PARAM]
 const ERROR_QUERY_PARAMS = ['auth_error', 'auth_error_code', 'auth_provider', 'auth_request_id'];
 const TWO_FACTOR_CODE_PARAM = 'authfnCode';
 const TWO_FACTOR_QUERY_PARAMS = [TWO_FACTOR_CODE_PARAM, 'challengeId', 'primaryMethod'];
+// Bounds the re-read loop after a failed compare-and-set if the value keeps changing.
+const MAX_CLEANUP_ATTEMPTS = 3;
 /** Query parameters the social callback adds to the return target. */
 const SERVER_QUERY_PARAMS = [...ERROR_QUERY_PARAMS, ...TWO_FACTOR_QUERY_PARAMS];
 const TWO_FACTOR_REQUIRED_CODE = 'AUTHFN_2FA_REQUIRED';
@@ -291,24 +293,42 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
 
   /**
    * Runs after a compare-and-set on `key` threw. Whatever it left that could
-   * still hold a verifier is deleted; a used tombstone (another participant's
+   * still hold a verifier is removed; a used tombstone (another participant's
    * committed claim) is kept, so later returns still report `already-used`.
+   * A readable string is retired with compare-and-set against the value just
+   * read, so a claim another participant commits after that read survives;
+   * only a value that cannot be compared (unreadable, non-string) or a
+   * compare-and-set that throws again falls back to delete.
    */
   const cleanupAfterFailedSet = async (key: string): Promise<'removed' | 'used' | 'gone' | 'failed'> => {
-    let current: unknown;
-    try {
-      current = await store.get(key);
-    } catch {
-      // Unreadable, so it may still hold the verifier: delete it below.
-      current = '';
+    const deleteNow = async () => (await tryDelete(key) ? 'removed' : 'failed');
+    for (let attempt = 0; attempt < MAX_CLEANUP_ATTEMPTS; attempt += 1) {
+      let current: unknown;
+      try {
+        current = await store.get(key);
+      } catch {
+        // Unreadable, so it may still hold the verifier.
+        return deleteNow();
+      }
+      if (current === null || current === undefined) {
+        return 'gone';
+      }
+      if (typeof current !== 'string') {
+        return deleteNow();
+      }
+      if (parseRecord(current, key.slice(keyPrefix.length), now())?.state === 'used') {
+        return 'used';
+      }
+      try {
+        if (await store.compareAndSet(key, current, null)) {
+          return 'removed';
+        }
+        // Changed since the read: look at it again.
+      } catch {
+        return deleteNow();
+      }
     }
-    if (current === null || current === undefined) {
-      return 'gone';
-    }
-    if (typeof current === 'string' && parseRecord(current, key.slice(keyPrefix.length), now())?.state === 'used') {
-      return 'used';
-    }
-    return await tryDelete(key) ? 'removed' : 'failed';
+    return 'failed';
   };
 
   /**
@@ -830,7 +850,7 @@ function matching(value: string | null, pattern: RegExp): string | undefined {
 
 /**
  * Whether an exchange response issued a session: `ok`, a session object
- * with an id and a non-empty session-token handoff. `complete()` and the
+ * with a non-blank id and a non-blank session-token handoff. `complete()` and the
  * regional exchange both accept only this shape.
  */
 function isIssuedHandoffSession(
@@ -849,12 +869,13 @@ function isIssuedHandoffSession(
     && typeof session === 'object'
     && !Array.isArray(session)
     && typeof session.id === 'string'
-    && session.id.length > 0
+    && session.id.trim().length > 0
     && !!handoff
     && typeof handoff === 'object'
     && handoff.type === 'session-token'
     && typeof handoff.token === 'string'
-    && handoff.token.length > 0;
+    // The bearer resolver trims the token, so whitespace alone is no token.
+    && handoff.token.trim().length > 0;
 }
 
 async function retire(action: () => Awaitable<unknown>): Promise<void> {

@@ -10,7 +10,11 @@ interface RequestOptions {
    * The body carries one-time secrets (a handoff code and verifier). A
    * transport failure then reports a fixed name and message to
    * `onRequestMetric` and in the envelope: a fetch error can repeat the
-   * request body, so its own text and stack are never passed on.
+   * request body, so its own text and stack are never passed on. A response
+   * header value (request id, timing, account headers) that repeats a string
+   * from the body is dropped from the metric and from any envelope built
+   * from it, and an error envelope whose body repeats one is replaced by a
+   * fixed error: a proxy or adapter may reflect the request.
    */
   sensitiveBody?: boolean;
 }
@@ -100,6 +104,12 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         return buildTransportError(error, request.sensitiveBody === true);
       }
 
+      const secrets = request.sensitiveBody === true ? collectBodyStrings(request.body) : [];
+      const header = (name: string): string | undefined => {
+        const value = response.headers.get(name);
+        return value === null || repeatsSecret(value, secrets) ? undefined : value;
+      };
+
       options.onRequestMetric?.({
         method: request.method,
         path: request.path,
@@ -107,16 +117,16 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         status: response.status,
         ok: response.ok,
         durationMs: now() - startedAt,
-        requestId: response.headers.get('x-request-id') ?? undefined,
-        serverTiming: response.headers.get('server-timing') ?? undefined,
-        dbDurationMs: response.headers.get('x-account-db-duration-ms') ?? undefined,
-        dbCallCount: response.headers.get('x-account-db-call-count') ?? undefined,
-        cacheDurationMs: response.headers.get('x-account-cache-duration-ms') ?? undefined,
-        cacheCallCount: response.headers.get('x-account-cache-call-count') ?? undefined,
-        lookupDurationMs: response.headers.get('x-account-lookup-duration-ms') ?? undefined,
-        lookupCallCount: response.headers.get('x-account-lookup-call-count') ?? undefined,
-        workerColo: response.headers.get('x-account-worker-colo') ?? undefined,
-        accountRegion: response.headers.get('x-account-region') ?? undefined
+        requestId: header('x-request-id'),
+        serverTiming: header('server-timing'),
+        dbDurationMs: header('x-account-db-duration-ms'),
+        dbCallCount: header('x-account-db-call-count'),
+        cacheDurationMs: header('x-account-cache-duration-ms'),
+        cacheCallCount: header('x-account-cache-call-count'),
+        lookupDurationMs: header('x-account-lookup-duration-ms'),
+        lookupCallCount: header('x-account-lookup-call-count'),
+        workerColo: header('x-account-worker-colo'),
+        accountRegion: header('x-account-region')
       });
 
       if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
@@ -128,10 +138,10 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
             retryable: false,
             details: {
               status: response.status,
-              redirectTo: response.headers.get('location')
+              redirectTo: header('location') ?? null
             }
           },
-          requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
+          requestId: header('x-request-id') ?? 'authfn-redirect'
         };
       }
 
@@ -148,19 +158,33 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
                 status: response.status
               }
             },
-            requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
+            requestId: header('x-request-id') ?? 'authfn-empty'
           };
         }
 
         return {
           ok: true,
           data: {} as Record<string, never>,
-          requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
+          requestId: header('x-request-id') ?? 'authfn-empty'
         } as T;
       }
 
       try {
         const parsed = JSON.parse(raw) as unknown;
+        if (isAuthFnEnvelope(parsed) && !parsed.ok && repeatsSecret(raw, secrets)) {
+          return {
+            ok: false,
+            error: {
+              code: 'AUTHFN_INTERNAL_ERROR',
+              message: `AuthFn returned an error response that repeated the request (${response.status})`,
+              retryable: response.status >= 500,
+              details: {
+                status: response.status
+              }
+            },
+            requestId: 'authfn-redacted'
+          };
+        }
         if (!isAuthFnEnvelope(parsed)) {
           return {
             ok: false,
@@ -172,7 +196,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
                 status: response.status
               }
             },
-            requestId: response.headers.get('x-request-id') ?? 'authfn-invalid-envelope'
+            requestId: header('x-request-id') ?? 'authfn-invalid-envelope'
           };
         }
         return parsed as T | AuthFnErrorEnvelope;
@@ -189,7 +213,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
               status: response.status
             }
           },
-          requestId: response.headers.get('x-request-id') ?? 'authfn-non-json'
+          requestId: header('x-request-id') ?? 'authfn-non-json'
         };
       }
     }
@@ -203,6 +227,38 @@ function transportMetricError(error: unknown, sensitiveBody: boolean): { name?: 
   return error instanceof Error
     ? { name: error.name, message: error.message }
     : { message: String(error) };
+}
+
+/** Every non-empty string value in a JSON request body. */
+function collectBodyStrings(body: unknown, found: string[] = []): string[] {
+  if (typeof body === 'string') {
+    if (body.length > 0) {
+      found.push(body);
+    }
+  } else if (Array.isArray(body)) {
+    for (const item of body) {
+      collectBodyStrings(item, found);
+    }
+  } else if (body && typeof body === 'object') {
+    for (const value of Object.values(body)) {
+      collectBodyStrings(value, found);
+    }
+  }
+  return found;
+}
+
+/** Whether `value`, as sent or percent-decoded, contains any of `secrets`. */
+function repeatsSecret(value: string, secrets: readonly string[]): boolean {
+  if (secrets.length === 0) {
+    return false;
+  }
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    // Not percent-encoded; the raw value is checked below.
+  }
+  return secrets.some((secret) => value.includes(secret) || decoded.includes(secret));
 }
 
 function now(): number {

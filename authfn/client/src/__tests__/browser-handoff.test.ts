@@ -559,6 +559,105 @@ describe('createBrowserHandoff', () => {
     expect(observed).not.toContain('fetch failed for body');
   });
 
+  const reflectedResponses = [
+    ['a 502 with no body', 502, '', 'exchange-rejected'],
+    ['a 502 error envelope repeating the body', 502, 'error-echo', 'exchange-rejected'],
+    ['a 200 with no body', 200, '', 'exchange-rejected'],
+    ['a 200 issuing a session', 200, 'session', 'completed']
+  ] as const;
+  const exchangePaths = [
+    ['the client', 'direct'],
+    ['the regional client without a stored region', 'regional-current'],
+    ['the regional adapter with a stored region', 'regional-bound']
+  ] as const;
+  it.each(exchangePaths.flatMap(([label, path]) => reflectedResponses.map(
+    ([response, status, body, outcome]) => [label, response, path, status, body, outcome] as const
+  )))('keeps the verifier and code out of metrics and envelopes when response headers repeat the body through %s, on %s', async (
+    _label, _response, path, status, body, outcome
+  ) => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const envelopes: unknown[] = [];
+    // A proxy or adapter that reflects the request body into response headers.
+    const clientOptions = {
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const sent = String(init?.body);
+        const { code } = JSON.parse(sent) as { code: string };
+        const payload = body === 'session'
+          ? JSON.stringify({ ok: true, requestId: 'req-ok', data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: 'test-session-token' } } })
+          : body === 'error-echo'
+            ? JSON.stringify({ ok: false, requestId: `req ${sent}`, error: { code: 'AUTHFN_BAD_GATEWAY', message: `upstream rejected ${sent}`, retryable: true } })
+            : '';
+        return new Response(payload || null, {
+          status,
+          headers: {
+            'x-request-id': `req ${sent}`,
+            'server-timing': `proxy;desc="${encodeURIComponent(sent)}"`,
+            'x-account-region': code,
+            'x-account-worker-colo': 'test-colo'
+          }
+        });
+      },
+      onRequestMetric: (metric: AuthFnClientRequestMetric) => metrics.push(metric)
+    };
+    const resolveBaseUrl = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+    let exchange: AuthFnBrowserHandoffExchange;
+    if (path === 'direct') {
+      exchange = createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).exchangeSocialHandoff;
+    } else {
+      const regionalClient = createAuthFnRegionalClient({
+        defaultRegionId: 'us',
+        resolveBaseUrl,
+        storage: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+        clientOptions
+      });
+      exchange = createRegionalHandoffExchange({ regionalClient, resolveBaseUrl, clientOptions });
+    }
+    const { make, server, store } = setup({
+      exchange: async (input, context) => {
+        const envelope = await exchange(input, context);
+        envelopes.push(envelope);
+        return envelope;
+      }
+    });
+    const begun = await make().begin({ returnTo: RETURN_TO, ...(path === 'regional-bound' ? { regionId: 'eu' } : {}) });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const callback = server.callbackFor(begun);
+    const code = new URL(callback).hash.match(/token=([^&]+)/)![1]!;
+
+    const result = await make().complete(callback);
+
+    if (outcome === 'completed') {
+      expect(result.status).toBe('completed');
+    } else {
+      expect(failed(result).reason).toBe(outcome);
+    }
+    expect(metrics).toHaveLength(1);
+    expect(metrics[0]).toMatchObject({ path: '/social/handoff/exchange', status, workerColo: 'test-colo' });
+    expect(metrics[0]?.requestId).toBeUndefined();
+    expect(metrics[0]?.serverTiming).toBeUndefined();
+    expect(metrics[0]?.accountRegion).toBeUndefined();
+    expect(envelopes).toHaveLength(1);
+    const observed = JSON.stringify({ metrics, envelopes, result });
+    expect(observed).not.toContain(verifier);
+    expect(observed).not.toContain(code);
+  });
+
+  it('still reports the response headers of requests without one-time secrets', async () => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => new Response(null, {
+        status: 502,
+        headers: { 'x-request-id': 'req-session-1', 'server-timing': 'app;dur=3', 'x-account-region': 'us' }
+      }),
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+    const envelope = await client.getSession();
+
+    expect(envelope).toMatchObject({ ok: false, requestId: 'req-session-1' });
+    expect(metrics[0]).toMatchObject({ requestId: 'req-session-1', serverTiming: 'app;dur=3', accountRegion: 'us' });
+  });
+
   it('still reports the fetch error of requests without one-time secrets', async () => {
     const metrics: AuthFnClientRequestMetric[] = [];
     const client = createAuthFnClient({
@@ -601,6 +700,8 @@ describe('createBrowserHandoff', () => {
   it.each([
     ['an empty session', { session: {}, handoff: { type: 'session-token', token: 'test-session-token', sessionId: 's', regionId: null, expiresAt: null } }],
     ['an empty token', { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '', sessionId: 's', regionId: null, expiresAt: null } }],
+    ['a whitespace-only token', { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '   ', sessionId: 's', regionId: null, expiresAt: null } }],
+    ['a whitespace-only session id', { session: { id: ' ' }, handoff: { type: 'session-token', token: 'test-session-token', sessionId: 's', regionId: null, expiresAt: null } }],
     ['no handoff', { session: { id: 'session-1' } }]
   ])('refuses an ok exchange response with %s as exchange-rejected', async (_label, data) => {
     const exchange = vi.fn(async () => ({ ok: true, requestId: 'req-incomplete', data }) as never);
@@ -716,6 +817,42 @@ describe('createBrowserHandoff', () => {
     };
 
     expect(failed(await make({ store: broken }).complete(callback)).reason).toBe('already-used');
+    expect(JSON.parse(String(await store.get(key))).state).toBe('used');
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the tombstone of a window that claims after this window re-reads a failed claim', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const key = `authfn.handoff.${begun.handoffId}`;
+    // This window's claim throws; its cleanup re-reads the pending record,
+    // and only then does another window claim and complete.
+    let claimFailed = false;
+    let otherWindowDone = false;
+    const broken: AuthFnBrowserHandoffStore = {
+      ...store,
+      atomic: true,
+      get: async (name) => {
+        const value = await store.get(name);
+        if (claimFailed && !otherWindowDone) {
+          otherWindowDone = true;
+          expect((await make().complete(callback)).status).toBe('completed');
+        }
+        return value;
+      },
+      compareAndSet: async (name, expected, next) => {
+        if (!claimFailed) {
+          claimFailed = true;
+          throw new Error('storage unavailable');
+        }
+        return store.compareAndSet(name, expected, next);
+      }
+    };
+
+    expect(failed(await make({ store: broken }).complete(callback)).reason).toBe('already-used');
+    expect(otherWindowDone).toBe(true);
     expect(JSON.parse(String(await store.get(key))).state).toBe('used');
     expect(failed(await make().complete(callback)).reason).toBe('already-used');
     expect(server.exchange).toHaveBeenCalledTimes(1);
@@ -968,6 +1105,11 @@ describe('createRegionalHandoffExchange', () => {
       ok: true,
       requestId: 'req-empty-token',
       data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '' } }
+    })],
+    ['a whitespace-only token', () => Response.json({
+      ok: true,
+      requestId: 'req-blank-token',
+      data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '   ' } }
     })]
   ])('moves the client only for a response that carries a session (%s)', async (_label, respond) => {
     const selections: string[] = [];
