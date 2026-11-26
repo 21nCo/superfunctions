@@ -2208,4 +2208,47 @@ describe("createRequestIdempotency PR round-2 delta regressions", () => {
       expect(await holder.release(token)).toMatchObject({ outcome: "committed", response: { body: response.body } });
     }
   });
+
+  it.each([
+    ["recover", "pruned"],
+    ["recover", "outage"],
+    ["claim", "pruned"],
+    ["claim", "outage"],
+  ] as const)("%s decides from a copy another step confirmed while its lookup ran (%s receipt)", async (action, kind) => {
+    const store = new FakeAtomicStore();
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock();
+    let duringLookup: (() => Promise<void>) | undefined;
+    let outage = false;
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey: string) => {
+        const run = duringLookup;
+        duringLookup = undefined;
+        if (run) await run();
+        if (outage) throw new Error("receipt source unavailable");
+        return database.receipts.find(storeKey);
+      },
+    };
+    const make = () => createRequestIdempotency({ store, receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    const token = acquired(await make().claim(orderRequest()));
+    const response = await database.createOrder(token, "book");
+    expect(await make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    const confirmed = store.records.get(token.storeKey);
+    expect(confirmed).toMatchObject({ state: "completed", fromReceipt: true });
+    expect(confirmed).not.toHaveProperty("provisional");
+    const run = async (request: IdempotencyRequest) => {
+      // The reader sees a provisional copy; while its lookup runs, the writer confirms it, then the receipt goes away.
+      store.records.set(token.storeKey, { ...confirmed, version: "test-provisional-version", provisional: true } as IdempotencyRecord);
+      duringLookup = async () => {
+        store.records.set(token.storeKey, structuredClone(confirmed) as IdempotencyRecord);
+        if (kind === "pruned") database.receiptsByKey.delete(token.storeKey);
+        else outage = true;
+      };
+      return action === "recover" ? make().recover(request) : make().claim(request);
+    };
+    expect(await run(orderRequest())).toMatchObject({ outcome: "replay", source: "store", response: { body: response.body } });
+    outage = false;
+    database.receiptsByKey.set(token.storeKey, { ...token, response });
+    expect(await run(orderRequest({ body: { item: "pen", quantity: 2 } }))).toMatchObject({ outcome: "conflict" });
+  });
 });

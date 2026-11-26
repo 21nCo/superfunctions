@@ -1061,6 +1061,18 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       : { outcome: "conflict" };
   };
 
+  /** Whether a provisional copy read by an inspect step has since been replaced, within the step's attempts. */
+  const provisionalMoved = async (
+    storeKey: string,
+    record: ActiveIdempotencyRecord | undefined,
+    at: number,
+    attempt: number,
+  ): Promise<boolean> => {
+    if (record?.state !== "completed" || record.provisional !== true || attempt + 1 >= MAX_ATTEMPTS) return false;
+    const again = await readLive(storeKey, at);
+    return (again.kind === "present" ? again.record.version : again.expectedVersion) !== record.version;
+  };
+
   /**
    * Reads the live record and its commit evidence. A recovery-mode mismatch
    * with a live record is a conflict. With no live record, a retained
@@ -1071,13 +1083,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * receipt, and wins over any record that does not hold that exact commit:
    * a cached copy never masks a newer durable receipt. Only a confirmed copy
    * stands in for a pruned or unreachable receipt; a provisional one without
-   * its receipt leaves the key free at its version. A receipt that fails
+   * its receipt leaves the key free at its version, unless another step has
+   * since replaced it (confirmed or retired it), when the key is read again.
+   * A receipt that fails
    * validation always fails closed. The matched receipt is returned for the
    * replay.
    */
   const inspect = async (
     prepared: Prepared,
     at: number,
+    attempt = 0,
   ): Promise<{ done: ReceiptOutcome | undefined } | { live: Live; receipt?: ParsedReceipt }> => {
     const { storeKey, fingerprint, recovery } = prepared;
     const live = await readLive(storeKey, at);
@@ -1096,6 +1111,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       // A receipt-source outage never hides a complete copy of a confirmed commit: it replays (or conflicts) from
       // the store. A provisional copy, a copy missing parts, and every other record need the receipt.
       if (isConfirmedCopy(record) && record.response.omitted === undefined) return { live };
+      // A provisional copy another step has confirmed or replaced since this read is decided from the newer record.
+      if (await provisionalMoved(storeKey, record, at, attempt).catch(() => false)) return inspect(prepared, at, attempt + 1);
       throw error;
     }
     // The source answered: a malformed receipt, or one for another key, fails closed over any record.
@@ -1103,6 +1120,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     if (!receipt) {
       // A provisional copy without its receipt is no commit evidence: the key is free at the copy's version.
       if (record?.state === "completed" && record.provisional === true) {
+        if (await provisionalMoved(storeKey, record, at, attempt)) return inspect(prepared, at, attempt + 1);
         return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
       }
       // A confirmed copy whose receipt the host pruned still holds its commit: it replays until its own retention ends.
