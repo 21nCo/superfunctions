@@ -1,0 +1,23 @@
+clifn/core/src/update-check.ts
+  s_25bbdde532bf8b::t_d904fd3564af56 455-456,464-468
+clifn/core/tests/update-check-delivery.test.ts
+  s_25bbdde532bf8b::t_2bba383497c8ae 368-379
+clifn/core/tests/update-check.test.ts
+  s_25bbdde532bf8b::t_abb0268b12afcc 517,519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b2cb531598fb7c42cc8920f5c8031060c78830a",
+  "prompts": {},
+  "sessions": {
+    "s_25bbdde532bf8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d85d9856-10de-4a8b-919d-8d7e06841677",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
