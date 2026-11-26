@@ -58,22 +58,22 @@ export const UPLOAD_RESULT_INVALID_ERROR = "FILEFN_UPLOAD_RESULT_INVALID";
 
 /**
  * A server-issued identifier such as a version or session ID. The server's
- * `generateId` may produce any string, so the client accepts any string of
- * 1-1024 characters that can name exactly one encoded path segment: not
- * blank, no control characters, and not a dot segment (`.` or `..`, which
- * `encodeURIComponent` leaves as they are and URL parsing collapses). Every
- * path built from an identifier encodes it (`encodeURIComponent`).
+ * `generateId` may produce any string, and its router matches a path segment
+ * as `URL#pathname` reports it without decoding it. So the client sends an
+ * identifier as one raw path segment, and accepts one of 1-1024 characters
+ * that are RFC 3986 path characters needing no percent-encoding (letters,
+ * digits, `-._~!$&'()*+,;=:@`) and that is not a dot segment (`.` or `..`,
+ * which URL parsing collapses). Anything else (`/`, `?`, `#`, `%`, `\`,
+ * whitespace, control or non-ASCII characters) would not reach the server as
+ * the same single segment, so it is not well formed.
  */
 export function isWellFormedId(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    value.length > 0 &&
     value.length <= 1024 &&
-    value.trim().length > 0 &&
+    /^[A-Za-z0-9\-._~!$&'()*+,;=:@]+$/.test(value) &&
     value !== "." &&
-    value !== ".." &&
-    // eslint-disable-next-line no-control-regex
-    !/[\u0000-\u001f\u007f]/.test(value)
+    value !== ".."
   );
 }
 
@@ -671,7 +671,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async getFileVersion(fileId, versionId, signal) {
       return request<Record<string, unknown>>(
         "GET",
-        `/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}`,
+        `/${encodeURIComponent(fileId)}/versions/${versionId}`,
         undefined,
         signal,
         retryOptions,
@@ -745,7 +745,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async getUploadStatus(uploadSessionId, uploadSessionToken, signal) {
       return request<UploadStatusResponse>(
         "GET",
-        `/upload/${encodeURIComponent(uploadSessionId)}/status`,
+        `/upload/${uploadSessionId}/status`,
         undefined,
         signal,
         retryOptions,
@@ -757,7 +757,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async signPart(uploadSessionId, partNumber, contentLength, uploadSessionToken, signal) {
       return request<SignPartResponse>(
         "POST",
-        `/upload/${encodeURIComponent(uploadSessionId)}/parts/${partNumber}/sign`,
+        `/upload/${uploadSessionId}/parts/${partNumber}/sign`,
         { contentLength },
         signal,
         retryOptions,
@@ -769,7 +769,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async completePart(uploadSessionId, partNumber, etag, size, uploadSessionToken, signal) {
       return request<CompletePartResponse>(
         "POST",
-        `/upload/${encodeURIComponent(uploadSessionId)}/parts/${partNumber}/complete`,
+        `/upload/${uploadSessionId}/parts/${partNumber}/complete`,
         { etag, size },
         signal,
         retryOptions,
@@ -781,7 +781,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async completeUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<CompleteUploadResponse>(
         "POST",
-        `/upload/${encodeURIComponent(uploadSessionId)}/complete`,
+        `/upload/${uploadSessionId}/complete`,
         undefined,
         signal,
         retryOptions,
@@ -793,7 +793,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async abortUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<AbortUploadResponse>(
         "POST",
-        `/upload/${encodeURIComponent(uploadSessionId)}/abort`,
+        `/upload/${uploadSessionId}/abort`,
         undefined,
         signal,
         retryOptions,
@@ -828,7 +828,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
           const issuedRelative = url.startsWith("/") && !isProtocolRelative(url);
           const exactPart =
             !expectedPart ||
-            routePath === `/upload/${encodeURIComponent(expectedPart.uploadSessionId)}/parts/${expectedPart.partNumber}`;
+            routePath === `/upload/${expectedPart.uploadSessionId}/parts/${expectedPart.partNumber}`;
           const partRequest = issuedRelative && toPartRoute && exactPart;
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,

@@ -553,6 +553,80 @@ describe('replay settlement boundaries', () => {
     next.dispose();
   });
 
+  describe('round 16: no account or credentials for a matching principal is per generation', () => {
+    const FILE_A = 'file_0000000000staged';
+    const FILE_B = 'file_00000000uploaded';
+    /** A FileFn that serves one session per file. */
+    const perFile: Route = (path, init) => {
+      if (path === '/upload/init') {
+        const { fileId } = JSON.parse(String(init.body)) as { fileId: string };
+        return envelope({ uploadSessionId: `s-${fileId}`, uploadSessionToken: 'upls_1', uploadMode: 'proxy', chunkSizeBytes: 100, totalParts: 1, ...replayScopeOf(init) });
+      }
+      const match = /^\/upload\/s-(file_\w+)\/(.+)$/.exec(path);
+      if (!match) return undefined;
+      if (match[2] === 'parts/1/sign') return envelope({ url: `/upload/s-${match[1]}/parts/1`, headers: {}, expiresAt: 'x' });
+      if (match[2] === 'parts/1') return envelope({ etag: 'proxy-etag', recorded: true });
+      if (match[2] === 'complete') return envelope({ fileId: match[1], versionId: 'ver_1' });
+      return undefined;
+    };
+
+    it.each([
+      ['replayAccount names no server account', 'account'],
+      ['getAuthHeaders returns no credentials', 'credentials'],
+    ] as const)('processAll publishes a sibling awaiting verification when %s, and keeps the staged entry provisional', async (_label, missing) => {
+      const s = server(perFile);
+      let available = true;
+      let verifications = 0;
+      const c = client(s.fetch, {
+        ...(missing === 'account'
+          ? { replayAccount: () => (available ? { principalId: 'user-alice' } : null) }
+          : { getAuthHeaders: () => (available ? { authorization: 'Bearer test-token-alice' } : null) }),
+        queue: {
+          coordinator: locks.forTab('a'),
+          // B's first verification is inconclusive, so B waits uploaded.
+          hooks: { verify: async () => (++verifications === 1 ? Promise.reject(new Error('verifier offline')) : { verified: true }) },
+        },
+      });
+      const queue = c.getOfflineQueue();
+      await queue.stage({ policy: 'p', file: new Blob(['aaa']), fileId: FILE_A });
+      await queue.stage({ policy: 'p', file: new Blob(['bbb']), fileId: FILE_B });
+      expect(await queue.process(FILE_B)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'verifying' } });
+      available = false;
+
+      const results = await queue.processAll();
+      const byId = Object.fromEntries(results.map((item) => [item.entryId, 'result' in item ? item.result : item.error]));
+      expect(byId[FILE_A]).toMatchObject({ status: 'provisional', reason: 'scope-unconfirmed', entry: { attempts: 0 } });
+      expect(byId[FILE_B]).toMatchObject({ status: 'published' });
+      expect(s.keys.filter(Boolean)).toHaveLength(1);
+      expect(s.paths.filter((p) => p === 'POST /upload/init')).toHaveLength(1);
+
+      available = true;
+      expect(await queue.process(FILE_A)).toMatchObject({ status: 'published', entry: { attempts: 0 } });
+      expect(s.paths.filter((p) => p === 'POST /upload/init')).toHaveLength(2);
+      c.dispose();
+    });
+
+    it('resolves again after a no-account refusal made for a generation that was replaced meanwhile', async () => {
+      const s = server(perFile);
+      let release!: (value: null) => void;
+      const first = new Promise<null>((resolve) => (release = resolve));
+      let calls = 0;
+      const c = client(s.fetch, {
+        replayAccount: () => (++calls === 1 ? first : { principalId: 'user-alice' }),
+      });
+      const queue = c.getOfflineQueue();
+      await queue.stage({ policy: 'p', file: new Blob(['v1']), fileId: FILE_A });
+      const pass = queue.process(FILE_A);
+      await vi.waitFor(() => expect(calls).toBe(1));
+      expect(await queue.stage({ policy: 'p', file: new Blob(['v2']), fileId: FILE_A })).toMatchObject({ entry: { generation: 2 } });
+      release(null);
+      expect(await pass).toMatchObject({ status: 'published', entry: { generation: 2 } });
+      expect(calls).toBe(2);
+      expect(s.scopes).toEqual([scopeOf('user-alice')]);
+      c.dispose();
+    });
+  });
+
   it('lets go of the entry when disposed while getAuthHeaders never settles, so a new instance processes it', async () => {
     const s = server();
     let asked!: () => void;

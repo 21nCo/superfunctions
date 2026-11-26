@@ -255,9 +255,12 @@ export type OfflineQueuePhase =
 export interface OfflineQueuePending {
   stage: 'upload' | 'verification' | 'publication';
   /**
-   * `scope-unconfirmed`: the replay account's scope could not be resolved, or
-   * differs from the one journaled with the generation. Nothing was sent and
-   * no attempt was used; a pass resumes it once the scope matches again.
+   * `scope-unconfirmed`: the replay account's scope could not be resolved
+   * (no server account for the principal included), differs from the one
+   * journaled with the generation, or the replay had no credentials for the
+   * principal (`getAuthHeaders` returned none) while it still matched. No
+   * attempt was used, no waiter settles, and the same key is replayed by a
+   * later pass once the scope and credentials are back.
    */
   reason: 'ambiguous' | 'needs-reconcile' | 'retry-limit' | 'scope-unconfirmed';
   message?: string;
@@ -424,6 +427,12 @@ export type OfflineQueueErrorCode =
   | 'FILEFN_QUEUE_RETRY_LIMIT'
   /** Given to an uploader by `assertPrincipal`: the generation is held, so no further request may go out. */
   | 'FILEFN_QUEUE_HELD'
+  /**
+   * Thrown by an uploader that had no credentials for the queue's principal
+   * while it still matched: the generation stays `scope-unconfirmed` under
+   * the same key, with no attempt used.
+   */
+  | 'FILEFN_QUEUE_CREDENTIALS_UNAVAILABLE'
   /** `uploadFile` could not stage offline; `details` is the refused stage result. */
   | 'FILEFN_QUEUE_REFUSED';
 
@@ -502,7 +511,10 @@ interface JournalRecord {
   holds: Array<{ holdId: string; generation: number; operationId: string; admission?: true }>;
   /** The admission (see `LegacyClaim`) that wrote this migrated generation. */
   migrationAdmission?: string;
-  /** The legacy upload this generation was migrated from (never inherited by a later generation). */
+  /**
+   * The legacy upload this generation was migrated from, as its hashed
+   * legacy root and upload ID (never inherited by a later generation).
+   */
   migratedFrom?: string;
   /** The legacy replay key this generation took over, if any. */
   migratedKey?: string;
@@ -535,6 +547,14 @@ interface PartitionMeta {
    */
   migratedKeys: string[];
   tombstones: Tombstone[];
+  /**
+   * The partition revision: raised once by every transaction that changes the
+   * partition, before its first journal write or removal, and read by every
+   * transaction. The partition lock serializes transactions, so it orders
+   * every read of the partition, whatever entries it saw (see
+   * `seenRevision`).
+   */
+  revision: number;
 }
 
 const MAX_TOMBSTONES = 64;
@@ -755,7 +775,11 @@ async function listNames(dir: OfflineQueueDirectoryHandle, kind: 'file' | 'direc
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
-    if (signal.aborted) return onAbort();
+    if (signal.aborted) {
+      // Its outcome is discarded; a rejection is never left unhandled.
+      promise.catch(() => {});
+      return onAbort();
+    }
     signal.addEventListener('abort', onAbort, { once: true });
     promise.then(
       (value) => {
@@ -890,6 +914,17 @@ function isPermanentUploadError(error: unknown): boolean {
     return status >= 400 && status < 500 && !TRANSIENT_STATUSES.has(status);
   }
   return false;
+}
+
+/**
+ * The replay uploader had no credentials for the queue's principal while the
+ * principal still matched: this generation waits (`scope-unconfirmed`, no
+ * attempt used) under the same key; the pass goes on with other entries.
+ */
+export const CREDENTIALS_UNAVAILABLE_ERROR = 'FILEFN_QUEUE_CREDENTIALS_UNAVAILABLE' satisfies OfflineQueueErrorCode;
+
+function isCredentialsUnavailable(error: unknown): boolean {
+  return error instanceof OfflineQueueError && error.code === CREDENTIALS_UNAVAILABLE_ERROR;
 }
 
 function isPrincipalMismatch(error: unknown): boolean {
@@ -1091,16 +1126,10 @@ type AfterReturn = (settle: () => void) => void;
 /** A preview read that a newer read overtook: read again, never applied. */
 const STALE: unique symbol = Symbol('stale');
 
-/** What a preview read found for a file ID, at its durable position. */
-/**
- * A preview read: the eligible generation found (if any), the position of
- * every entry of the file present in the partition, and the position at
- * which every other entry was absent (`absent`, from the meta read).
- */
+/** A preview read: the eligible generation found (if any), at the partition revision it read. */
 type PendingRead = {
   found: { record: JournalRecord; data: ArrayBuffer } | null;
-  positions: Map<string, Position>;
-  absent: Position;
+  revision: number;
 };
 
 /**
@@ -1184,25 +1213,24 @@ export class OfflineQueue {
   private readonly disposeListeners = new Set<() => void>();
   /** The fence of the transaction this instance is running (the partition lock serializes them). */
   private txFence: Fence | undefined;
+  /** The partition revision of the transaction this instance is running (see `PartitionMeta.revision`). */
+  private txRevision: { partitionDir: OfflineQueueDirectoryHandle; value: number; bumped: boolean } | undefined;
+  /**
+   * The partition revision of the last transaction this instance ran (the
+   * partition lock orders them): what its newest read of the partition saw.
+   * A preview read made at another revision was overtaken by a later read of
+   * this instance, whatever entries either saw, and is read again.
+   */
+  private seenRevision: number | undefined;
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   /**
    * Per entry, the newest durable position (see `Position`) an observation
-   * applied; per file, the newest position of each of its entries that any
-   * observation or preview read applied (`fileView`). An observation or
-   * preview read older than these is discarded whole: it settles no waiter,
-   * revokes no preview and returns nothing. The check and what it delivers
-   * run in one synchronous block, after the read's last await.
+   * applied. An observation older than it is discarded whole: it settles no
+   * waiter and revokes no preview. The check and what it delivers run in one
+   * synchronous block, after the read's last await. Preview reads are
+   * ordered partition-wide instead (`seenRevision`).
    */
   private readonly applied = new Map<string, Position>();
-  /**
-   * Per file: the newest position of each entry of the file that any
-   * observation applied (a listing, a pass, a staging, a lookup, a removal,
-   * a preview read; a removed entry at its absence position). Each entry
-   * orders by its own durable journal position, so a preview read is ordered
-   * against every entry of its file that anything observed, never just the
-   * one it returned or earlier previews saw.
-   */
-  private readonly fileView = new Map<string, Map<string, Position>>();
   private partitionIdPromise: Promise<string> | undefined;
   private channelPromise: Promise<OfflineQueueChannel | undefined> | undefined;
   private posting: Promise<void> = Promise.resolve();
@@ -1591,11 +1619,11 @@ export class OfflineQueue {
     return this.disclosing((after) => this.listIn(after));
   }
 
-  private async listIn(after: AfterReturn): Promise<OfflineQueueEntry[]> {
+  private async listIn(after: AfterReturn, signal?: AbortSignal): Promise<OfflineQueueEntry[]> {
     const { records, meta } = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
       return { records: await this.readAllIn(partitionDir), meta: await this.loadMeta(partitionDir) };
-    }, { disclose: true });
+    }, { disclose: true, signal });
     const entries = records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
       .map(snapshot);
@@ -1773,7 +1801,7 @@ export class OfflineQueue {
    * or hook already started settles, even after the call has returned.
    */
   async process(entryId: string, options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessResult> {
-    return this.disclosing(() => this.processIn(entryId, options), STOPPED_MISMATCH);
+    return this.disclosing(() => this.processIn(entryId, options), STOPPED_MISMATCH, undefined, options.signal);
   }
 
   private async processIn(entryId: string, options: { signal?: AbortSignal }): Promise<OfflineQueueProcessResult> {
@@ -1809,11 +1837,13 @@ export class OfflineQueue {
    * so far. Held entries are returned as `held` without being processed.
    */
   async processAll(options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessAllItem[]> {
-    return this.disclosing(() => this.processAllIn(options));
+    return this.disclosing(() => this.processAllIn(options), undefined, undefined, options.signal);
   }
 
   private async processAllIn(options: { signal?: AbortSignal }): Promise<OfflineQueueProcessAllItem[]> {
-    const entries = await this.list();
+    // Listed under the pass signal: a pass stopped while the listing's
+    // principal check stalls frees the partition lock at once.
+    const entries = await this.disclosing((after) => this.listIn(after, options.signal), undefined, undefined, options.signal);
     const results: OfflineQueueProcessAllItem[] = [];
     const mismatch = () => new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "The current principal is not this queue's");
     for (const entry of entries) {
@@ -1882,13 +1912,13 @@ export class OfflineQueue {
    * touch an entry (a hold, a failed attempt) never change the choice.
    */
   async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-    // A read that a newer one overtook (its coordinator or fence returned
-    // late) is read again, never returned and never applied.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // A read that a later read of this instance overtook (its coordinator or
+    // fence returned late) is read again, never returned and never applied.
+    for (let attempt = 0; attempt < 5; attempt++) {
       const descriptor = await this.disclosing(
         () => this.readPendingDescriptor(fileId),
         undefined,
-        (read) => this.deliverPendingDescriptor(fileId, read),
+        (read) => this.deliverPendingDescriptor(read),
       );
       if (descriptor !== STALE) return descriptor;
     }
@@ -1898,47 +1928,39 @@ export class OfflineQueue {
   private async readPendingDescriptor(fileId: string): Promise<PendingRead> {
     return this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
-      const all = (await this.readAllIn(partitionDir)).filter((record) => record.current.fileId === fileId);
-      const positions = new Map(all.map((record) => [record.entryId, positionOf(record)] as const));
-      const absent = absentAt((await this.loadMeta(partitionDir)).lastGeneration);
-      const records = all.filter((record) => record.current.phase !== 'published' && !record.current.dataRemoved);
+      // Read-only: the revision this transaction read is its place in partition order.
+      const revision = this.txRevision!.value;
+      const records = (await this.readAllIn(partitionDir)).filter(
+        (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
+      );
       records.sort((a, b) => b.current.generation - a.current.generation || a.entryId.localeCompare(b.entryId));
       for (const record of records) {
         const dir = await getDir(partitionDir, await this.entryKey(record.entryId));
         const blob = dir ? await getFile(dir, record.current.dataFile) : null;
-        if (blob) return { found: { record, data: await blob.arrayBuffer() }, positions, absent };
+        if (blob) return { found: { record, data: await blob.arrayBuffer() }, revision };
       }
-      return { found: null, positions, absent };
+      return { found: null, revision };
     }, { disclose: true });
   }
 
   /**
    * The last step of a preview read, synchronous, after its outermost fence.
-   * The read is STALE (read again) when it saw any entry of the file at an
-   * older position than the newest preview read of the file, or than the
-   * newest observation of that entry, did: an entry it found absent counts
-   * at the read's absence position. Otherwise its entry's preview URL is
-   * reused, or replaced when the generation changed. A newer entry that was
-   * removed or published since does not hold back a fresh read: that read
-   * saw the removal or publication, which is newer.
+   * The read is STALE (read again) when any later transaction of this
+   * instance (a listing, a pass, a lookup, another preview read: anything
+   * whose result may already have been applied) read the partition at
+   * another revision than it did, whatever entries either saw. Otherwise its
+   * entry's preview URL is reused, or replaced when the generation changed.
    */
-  private deliverPendingDescriptor(fileId: string, read: PendingRead): PendingLocalDescriptor | null | typeof STALE {
-    const seen = this.fileView.get(fileId) ?? new Map<string, Position>();
-    const view = new Map<string, Position>();
-    for (const entryId of new Set([...read.positions.keys(), ...seen.keys()])) {
-      const position = read.positions.get(entryId) ?? read.absent;
-      if (isBefore(position, seen.get(entryId)) || isBefore(position, this.applied.get(entryId))) return STALE;
-      view.set(entryId, position);
-    }
+  private deliverPendingDescriptor(read: PendingRead): PendingLocalDescriptor | null | typeof STALE {
+    if (read.revision !== this.seenRevision) return STALE;
     if (read.found && (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function')) {
       const error = new Error('Local preview unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
       throw error;
     }
-    this.fileView.set(fileId, view);
     if (!read.found) return null;
     const { record, data } = read.found;
-    this.applied.set(record.entryId, positionOf(record));
+    if (!isBefore(positionOf(record), this.applied.get(record.entryId))) this.applied.set(record.entryId, positionOf(record));
     const cur = record.current;
     let cached = this.objectUrls.get(record.entryId);
     if (!cached || cached.operationId !== cur.operationId) {
@@ -2006,6 +2028,9 @@ export class OfflineQueue {
     const store = this.legacyStore();
     const claimName = (await sha256Hex(JSON.stringify(['legacy', uploadSessionId]))).slice(0, 40);
     const claimsDirName = (await sha256Hex(this.legacyRootDirName)).slice(0, 40);
+    // The migration's source identity: the legacy root and its upload, as
+    // claims are kept per root (legacy session IDs are only unique per root).
+    const source = `${claimsDirName}:${uploadSessionId}`;
     const claimsDir = async (root: OfflineQueueDirectoryHandle) => {
       const claims = await root.getDirectoryHandle(LEGACY_CLAIMS_DIR, { create: true });
       return claims.getDirectoryHandle(claimsDirName, { create: true });
@@ -2059,8 +2084,8 @@ export class OfflineQueue {
           try {
             admitted = await this.transact(async (root) => {
               const partitionDir = await this.partitionDir(root);
-              const record = (await this.readAllIn(partitionDir)).find((r) => r.migratedFrom === uploadSessionId);
-              return { record, gone: (await this.loadMeta(partitionDir)).migrated.includes(uploadSessionId) };
+              const record = (await this.readAllIn(partitionDir)).find((r) => r.migratedFrom === source);
+              return { record, gone: (await this.loadMeta(partitionDir)).migrated.includes(source) };
             }, { disclose: true });
           } catch (error) {
             if (isQuotaError(error)) return quotaRefusal();
@@ -2104,7 +2129,7 @@ export class OfflineQueue {
           localSource: legacy.localSource,
         },
         legacy.fileData,
-        { source: uploadSessionId, key: legacy.idempotencyKey, keyShared: found.keyShared, admissionId },
+        { source, key: legacy.idempotencyKey, keyShared: found.keyShared, admissionId },
         after,
       );
       if (
@@ -2274,6 +2299,7 @@ export class OfflineQueue {
     run: (after: AfterReturn) => Promise<T>,
     onMismatch?: () => R,
     deliver?: (value: T) => R,
+    signal?: AbortSignal,
   ): Promise<R> {
     const deferred: Array<() => void> = [];
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
@@ -2283,8 +2309,13 @@ export class OfflineQueue {
       outcome = { ok: false, error };
     }
     try {
-      if (!outcome.ok && isPrincipalMismatch(outcome.error)) throw outcome.error;
-      await this.discloseFence();
+      // A mismatch or an abort carries no entry data: thrown without another
+      // principal check (one that stalls cannot hold up a stopped call).
+      if (!outcome.ok && (isPrincipalMismatch(outcome.error) || isAbort(outcome.error))) throw outcome.error;
+      // Raced with the call's signal too, unless it already stopped: a call
+      // that stopped after its results so far returns them behind a check
+      // raced only with the queue's lifetime.
+      await this.discloseFence(signal && !signal.aborted ? signal : undefined);
     } catch (fenceError) {
       if (onMismatch && isPrincipalMismatch(fenceError)) return onMismatch();
       throw fenceError;
@@ -2439,13 +2470,20 @@ export class OfflineQueue {
     try {
       return await this.coordinator!.request(name, { signal: this.lifetime.signal }, async () => {
         await fence();
+        // Every transaction reads the partition revision first (see
+        // `seenRevision`); a change raises it before its first write.
+        const partitionDir = await this.partitionDir(root);
+        const tx = { partitionDir, value: await this.readRevision(partitionDir), bumped: false };
+        this.seenRevision = tx.value;
         this.txFence = fence;
+        this.txRevision = tx;
         try {
           const value = await fn(root);
           if (options.disclose) await fence();
           return value;
         } finally {
           this.txFence = undefined;
+          this.txRevision = undefined;
         }
       });
     } catch (error) {
@@ -2529,6 +2567,7 @@ export class OfflineQueue {
             migrated: Array.isArray(meta.migrated) ? meta.migrated.filter((id) => typeof id === 'string') : [],
             migratedKeys: Array.isArray(meta.migratedKeys) ? meta.migratedKeys.filter((key) => typeof key === 'string') : [],
             tombstones: Array.isArray(meta.tombstones) ? meta.tombstones : [],
+            revision: Number.isSafeInteger(meta.revision) ? meta.revision! : 0,
           };
         }
       } catch {
@@ -2538,17 +2577,66 @@ export class OfflineQueue {
     let lastGeneration = 0;
     for (const record of await this.readAllIn(partitionDir)) lastGeneration = Math.max(lastGeneration, record.current.generation);
     // Keys of migrations the lost meta recorded are found in the journals that took them over.
-    return { journalVersion: JOURNAL_VERSION, partitionId, lastGeneration, migrated: [], migratedKeys: [], tombstones: [] };
+    return { journalVersion: JOURNAL_VERSION, partitionId, lastGeneration, migrated: [], migratedKeys: [], tombstones: [], revision: 0 };
   }
 
   private async writeMeta(partitionDir: OfflineQueueDirectoryHandle, meta: PartitionMeta): Promise<void> {
+    const tx = this.txRevision;
+    // The transaction's partition revision travels with every meta write:
+    // raised by the first change of the transaction, kept by later ones.
+    if (tx) meta.revision = tx.bumped ? tx.value : tx.value + 1;
     await writeFile(partitionDir, PARTITION_META_FILE, JSON.stringify(meta), this.txFence);
+    if (tx && !tx.bumped) this.noteRevision(tx, meta.revision);
+  }
+
+  /**
+   * Raises the partition revision once per transaction, before its first
+   * journal write or removal commits (see `PartitionMeta.revision`): a read
+   * that comes later in partition order always sees a higher revision than
+   * any read that missed the change.
+   */
+  private async bumpRevision(): Promise<void> {
+    const tx = this.txRevision;
+    if (!tx || tx.bumped) return;
+    const meta = await this.loadMeta(tx.partitionDir);
+    meta.revision = tx.value + 1;
+    await writeFile(tx.partitionDir, PARTITION_META_FILE, JSON.stringify(meta), this.txFence);
+    this.noteRevision(tx, meta.revision);
+  }
+
+  private noteRevision(tx: { value: number; bumped: boolean }, revision: number): void {
+    tx.value = revision;
+    tx.bumped = true;
+    this.seenRevision = revision;
+  }
+
+  /** The partition revision as journaled (0 before the first change). */
+  private async readRevision(partitionDir: OfflineQueueDirectoryHandle): Promise<number> {
+    const blob = await getFile(partitionDir, PARTITION_META_FILE);
+    if (!blob) return 0;
+    try {
+      const revision = (JSON.parse(await blob.text()) as { revision?: unknown }).revision;
+      return typeof revision === 'number' && Number.isSafeInteger(revision) ? revision : 0;
+    } catch {
+      return 0;
+    }
   }
 
   /** Removes a file or directory once the transaction's fence passes. */
   private async removePath(dir: OfflineQueueDirectoryHandle, name: string, recursive = false): Promise<void> {
     await this.txFence?.();
+    // Out of storage, the revision is raised right after the removal that
+    // frees space (still under the partition lock, before any other read);
+    // reclamation never waits on a meta write the full disk refuses.
+    let raised = true;
+    try {
+      await this.bumpRevision();
+    } catch (error) {
+      if (!isQuotaError(error)) throw error;
+      raised = false;
+    }
     await removeEntry(dir, name, recursive);
+    if (!raised) await this.bumpRevision();
   }
 
   private notifyWork(): void {
@@ -2636,6 +2724,7 @@ export class OfflineQueue {
       record.current.requires.verify ||= Boolean(hooks?.verify);
       record.current.requires.publish ||= Boolean(hooks?.publish);
     }
+    await this.bumpRevision();
     record.revision += 1;
     record.updatedAt = new Date().toISOString();
     await writeFile(dir, JOURNAL_FILE, JSON.stringify(record), this.txFence);
@@ -3060,6 +3149,7 @@ export class OfflineQueue {
     const uploader = this.options.uploader;
     await this.discloseFence(signal);
     let scope: unknown;
+    let refused: { error: unknown } | undefined;
     try {
       // Raced with the pass and the queue's lifetime (`raceCallerCallback`):
       // a resolver that never settles (or ignores its signal) cannot keep the
@@ -3069,10 +3159,14 @@ export class OfflineQueue {
         [signal, this.lifetime.signal],
       );
     } catch (error) {
-      if (isPrincipalMismatch(error) || this.disposed || signal?.aborted) throw error;
-      return { error };
+      if (this.disposed || signal?.aborted) throw error;
+      // A refusal (no account for the principal, whatever its code) is this
+      // generation's outcome, not the pass's: only the principal check below
+      // stops the pass.
+      refused = { error };
     }
     await this.discloseFence(signal);
+    if (refused) return refused;
     if (!isReplayScope(scope)) {
       return { error: Object.assign(new Error('The uploader resolved no replay scope'), { code: 'FILEFN_REPLAY_SCOPE_UNCONFIRMED' }) };
     }
@@ -3151,7 +3245,7 @@ export class OfflineQueue {
       const meta = await this.loadMeta(await this.partitionDir(root));
       await this.txFence!();
       // Its absence is an observation like any other (`settleAbsent`).
-      if (!this.disposed && (await this.principalMatches(this.lifetime.signal))) {
+      if (!this.disposed && (await this.principalMatches(signal ?? this.lifetime.signal))) {
         this.settleAbsent(entryId, meta.tombstones, meta.lastGeneration);
       }
       return { kind: 'done', result: { status: 'not-found' } };
@@ -3163,7 +3257,7 @@ export class OfflineQueue {
     const finish = async (result: OfflineQueueProcessResult, emit = false): Promise<Plan> => {
       await this.txFence!();
       if (emit) await this.emitFor(record, signal);
-      await this.observeFenced(record);
+      await this.observeFenced(record, undefined, signal);
       return { kind: 'done', result };
     };
     const provisional = (reason: Extract<OfflineQueueProcessResult, { status: 'provisional' }>['reason'], emit = false) =>
@@ -3478,6 +3572,15 @@ export class OfflineQueue {
   ): Promise<OfflineQueueProcessResult | null> {
     const info = errorInfo(error);
     if (plan.kind === 'upload') {
+      if (isCredentialsUnavailable(error)) {
+        // Like a scope that did not resolve: no attempt is used and no waiter
+        // settles; the same key is replayed once credentials are back.
+        return this.commit(entryId, plan.record, signal, (state) => {
+          state.pending = { stage: 'upload', reason: 'scope-unconfirmed', message: info.message };
+          state.error = info;
+          state.claim = undefined;
+        }, 'scope-unconfirmed');
+      }
       if (isSessionEnded(error)) {
         // Confirmed final: a fresh key is journaled before the next request uses it.
         return this.commit(entryId, plan.record, signal, (state) => {
@@ -3526,7 +3629,7 @@ export class OfflineQueue {
     planned: JournalRecord,
     signal: AbortSignal | undefined,
     mutate: (state: GenerationState) => void,
-    stopReason?: 'rejected' | 'failed' | 'ambiguous',
+    stopReason?: 'rejected' | 'failed' | 'ambiguous' | 'scope-unconfirmed',
   ): Promise<OfflineQueueProcessResult | null> {
     let written: JournalRecord | null;
     try {
@@ -3554,7 +3657,7 @@ export class OfflineQueue {
     }
     if (!written) return { status: 'superseded' };
     await this.emitFor(written, signal);
-    await this.observeFenced(written);
+    await this.observeFenced(written, undefined, signal);
     return stopReason ? { status: 'provisional', entry: snapshot(written), reason: stopReason } : null;
   }
 
@@ -3588,9 +3691,10 @@ export class OfflineQueue {
    * the old principal's entry under the new one (and the failed check
    * revoked every preview).
    */
-  private async observeFenced(record: JournalRecord, tombstones?: Tombstone[]): Promise<void> {
+  private async observeFenced(record: JournalRecord, tombstones?: Tombstone[], signal?: AbortSignal): Promise<void> {
     if (this.disposed) return;
-    if (await this.principalMatches(this.lifetime.signal)) this.observe(record, tombstones);
+    // Raced with the pass signal and the lifetime (`principalMatches`).
+    if (await this.principalMatches(signal ?? this.lifetime.signal)) this.observe(record, tombstones);
   }
 
   /**
@@ -3602,20 +3706,6 @@ export class OfflineQueue {
     if (this.disposed || isBefore(position, this.applied.get(entryId))) return false;
     this.applied.set(entryId, position);
     return true;
-  }
-
-  /**
-   * Records an applied observation of an entry in its file's view (see
-   * `fileView`), and moves it out of the view of a file it no longer
-   * stages (its absence there is at least as new).
-   */
-  private viewFile(fileId: string, entryId: string, position: Position): void {
-    for (const [other, view] of this.fileView) {
-      if (other !== fileId && view.has(entryId)) view.set(entryId, { generation: position.generation, revision: Number.POSITIVE_INFINITY });
-    }
-    const view = this.fileView.get(fileId) ?? new Map<string, Position>();
-    if (!isBefore(position, view.get(entryId))) view.set(entryId, position);
-    this.fileView.set(fileId, view);
   }
 
   /** The waiters armed at or before `position`: only those may be settled from it. */
@@ -3645,7 +3735,6 @@ export class OfflineQueue {
   private observe(record: JournalRecord, tombstones?: Tombstone[]): void {
     const position = positionOf(record);
     if (!this.admit(record.entryId, position)) return;
-    this.viewFile(record.current.fileId, record.entryId, position);
     const cur = record.current;
     const cached = this.objectUrls.get(record.entryId);
     if (cached && (cur.phase === 'published' || cur.dataRemoved || cached.operationId !== cur.operationId)) {
@@ -3694,9 +3783,6 @@ export class OfflineQueue {
   private settleAbsent(entryId: string, tombstones: Tombstone[], lastGeneration: number): void {
     const position = absentAt(lastGeneration);
     if (!this.admit(entryId, position)) return;
-    for (const view of this.fileView.values()) {
-      if (view.has(entryId)) view.set(entryId, position);
-    }
     this.revokeObjectUrl(entryId);
     for (const waiter of this.takeWaiters(entryId, position, () => true)) {
       const tombstone = tombstones.find((t) => t.entryId === entryId && t.generation === waiter.generation);
@@ -3707,13 +3793,11 @@ export class OfflineQueue {
 
   /**
    * Applies, through `settleAbsent`, the absence of every entry this instance
-   * knows (waiters, previews, an applied observation, any file's view) that a
-   * partition-wide read did not find, so a preview read that saw it present
-   * earlier is ordered behind that absence.
+   * knows (waiters, previews, an applied observation) that a partition-wide
+   * read did not find.
    */
   private forgetAbsent(present: Set<string>, tombstones: Tombstone[], lastGeneration: number): void {
     const known = new Set([...this.waiters.keys(), ...this.objectUrls.keys(), ...this.applied.keys()]);
-    for (const view of this.fileView.values()) for (const entryId of view.keys()) known.add(entryId);
     for (const entryId of known) if (!present.has(entryId)) this.settleAbsent(entryId, tombstones, lastGeneration);
   }
 

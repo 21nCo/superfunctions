@@ -433,6 +433,39 @@ describe('offline replays bound to the account of their first upload/init', () =
     expect(((await own.json()) as { data: { replayScope: string } }).data.replayScope).toBe(ownerScope);
     expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['user-owner']);
   });
+
+  it('refuses a marked upload/init without a key (400) before creating a session, and keeps both key forms', async () => {
+    const app = await createApp();
+    const scope = replayScopeOf({ principalId: 'user-owner' });
+    const init = (headers: Record<string, string>, body: Record<string, unknown> = {}) =>
+      app.fileFn.router
+        .handle(
+          new Request(`${BASE}/upload/init`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-test-user': 'user-owner', 'x-filefn-replay-scope': scope, ...headers },
+            body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: FILE, ...body }),
+          }),
+        )
+        .then(async (response) => ({ status: response!.status, json: await response!.json() }));
+
+    for (const [headers, body] of [[{}, {}], [{ 'x-idempotency-key': '' }, {}], [{}, { idempotencyKey: '' }]] as const) {
+      const refused = await init(headers, body);
+      expect(refused.status).toBe(400);
+      expect(refused.json).toMatchObject({ ok: false, error: { code: 'FILEFN_INVALID_REQUEST', details: { field: 'idempotencyKey' } } });
+    }
+    expect(await app.rows('uploadSessions')).toHaveLength(0);
+    // A conflicting header and body pair is refused before any mutation.
+    expect((await init({ 'x-idempotency-key': 'test-replay-key-0204' }, { idempotencyKey: 'test-replay-key-0205' })).status).toBe(400);
+    expect(await app.rows('uploadSessions')).toHaveLength(0);
+
+    const legacy = await init({}, { idempotencyKey: 'test-replay-key-0204' });
+    expect(legacy.status).toBe(200);
+    expect(legacy.json.warnings).toContain(BODY_IDEMPOTENCY_KEY_DEPRECATED);
+    expect(legacy.json.data.replayScope).toBe(scope);
+    const header = await init({ 'x-idempotency-key': 'test-replay-key-0204' });
+    expect(header.json.data.uploadSessionId).toBe(legacy.json.data.uploadSessionId);
+    expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
 });
 
 describe('replays of a session whose completion was already decided', () => {

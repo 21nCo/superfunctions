@@ -33,7 +33,7 @@ import {
   generateOfflineSessionId,
   type SyncConfig,
 } from './offline/sync.js';
-import { OfflineQueue, OfflineQueueError, raceCallerCallback, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
+import { CREDENTIALS_UNAVAILABLE_ERROR, OfflineQueue, OfflineQueueError, raceCallerCallback, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
 
 export type {
   ArtifactDescriptor,
@@ -133,6 +133,7 @@ export type {
 } from './offline/queue.js';
 
 export {
+  CREDENTIALS_UNAVAILABLE_ERROR,
   DEFAULT_MAX_UPLOAD_ATTEMPTS,
   DEFAULT_OFFLINE_QUEUE_LIMITS,
   DEFAULT_TERMINAL_RETENTION_MS,
@@ -357,7 +358,9 @@ function replayUploader(
           ? { principalId: bound.principalId, tenantId: bound.tenantId }
           : null;
       if (!account) {
-        throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No server account for the queue's principal");
+        // This generation's outcome (provisional, no attempt used), not a
+        // principal mismatch: the principal check is the queue's.
+        throw Object.assign(new Error("No server account for the queue's principal"), { code: REPLAY_SCOPE_UNCONFIRMED_ERROR });
       }
       return replayScopeOf(account);
     },
@@ -374,7 +377,10 @@ function replayUploader(
         // settles. A late result is discarded.
         const bound = await raceCallerCallback(() => authHeaders(principal()), [input.signal]);
         if (!bound) {
-          throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
+          // A switched principal stops the pass (the check throws); otherwise
+          // the generation waits for credentials under the same key.
+          await input.assertPrincipal();
+          throw new OfflineQueueError(CREDENTIALS_UNAVAILABLE_ERROR, "No credentials for the queue's principal");
         }
         await input.assertPrincipal();
         return bound;

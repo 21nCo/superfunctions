@@ -2924,3 +2924,98 @@ describe('round 15: aborts, caller callbacks and absences', () => {
     b.dispose();
   });
 });
+
+describe('round 16: pass signals, partition-wide preview order, legacy roots and discarded callbacks', () => {
+  const isPartitionLock = (lock: string) =>
+    !lock.includes(':entry:') && !lock.includes(':admission:') && !lock.startsWith('filefn-offline-legacy:');
+
+  it("frees the partition lock when currentPrincipal stalls in processAll's listing and only the sync is disposed", async () => {
+    let hang = false;
+    let stalled = false;
+    const a = tab('a', {
+      currentPrincipal: () => {
+        if (!hang || !locks.heldNames().some(isPartitionLock)) return ALICE.principal;
+        hang = false;
+        stalled = true;
+        return new Promise<OfflineQueuePrincipal>(() => {});
+      },
+    });
+    await stage(a, 'v1');
+    const sync = onlineSync(a);
+    hang = true;
+    const pass = sync.syncAll();
+    await vi.waitFor(() => expect(stalled).toBe(true));
+    // The sync goes; its queue stays.
+    sync.dispose();
+    expect(await pass).toEqual({ succeeded: [], failed: [], totalProcessed: 0 });
+    expect(locks.heldNames().some(isPartitionLock)).toBe(false);
+    const uploader = recordingUploader();
+    const b = tab('b', { uploader });
+    const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000));
+    expect(await Promise.race([stage(b, 'v2', { entryId: 'entry-b' }), timeout])).toMatchObject({ status: 'staged' });
+    expect(await Promise.race([b.process(FILE_ID), timeout])).toMatchObject({ status: 'published' });
+    expect(uploader.calls).toHaveLength(1);
+    expect(a.isDisposed).toBe(false);
+    a.dispose();
+    b.dispose();
+  });
+
+  it('rereads a preview in a fresh instance once a later listing of it saw an entry it never knew removed', async () => {
+    vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+    const b = tab('b');
+    const older = await stage(b, 'aaa', { entryId: 'entry-a' });
+    await stage(b, 'bbbbbbbbb', { entryId: 'entry-b' });
+    // Tab a has observed nothing of the partition yet.
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    const gate = gated.arm(isPartitionLock);
+    const preview = a.getPendingLocalDescriptor(FILE_ID);
+    await gate.reached;
+    // The read found entry-b; tab b removes it, then tab a lists.
+    expect(await b.cancel('entry-b')).toBe(true);
+    expect((await a.list()).map((entry) => entry.entryId)).toEqual(['entry-a']);
+    gate.release();
+    expect(await preview).toMatchObject({ uploadSessionId: older.entry.operationId, source: { url: 'blob:size-3' } });
+    a.dispose();
+    b.dispose();
+  });
+
+  it('admits the same legacy upload ID from two legacy roots as two uploads', async () => {
+    for (const root of ['filefn-pending-uploads', 'filefn-pending-uploads-other']) {
+      const legacy = await (await storage.root.getDirectoryHandle(root, { create: true })).getDirectoryHandle('offline_1731000000000_legacy016', { create: true });
+      await writeCommitted(legacy, 'data.bin', 'old bytes');
+      await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: 'offline_1731000000000_legacy016', fileId: FILE_ID, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2 }));
+    }
+    const a = tab('a');
+    const other = tab('b', { legacyRootDir: 'filefn-pending-uploads-other' });
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy016', { ownershipVerified: true, entryId: 'm1' })).toMatchObject({ status: 'staged', entry: { entryId: 'm1' } });
+    expect(await other.migrateLegacyUpload('offline_1731000000000_legacy016', { ownershipVerified: true, entryId: 'm2' })).toMatchObject({ status: 'staged', entry: { entryId: 'm2' } });
+    expect((await a.list()).map((entry) => entry.entryId)).toEqual(['m1', 'm2']);
+    a.dispose();
+    other.dispose();
+  });
+
+  it('leaves no unhandled rejection when a principal check disposes the queue and then rejects', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      let a!: OfflineQueue;
+      let armed = false;
+      a = tab('a', {
+        currentPrincipal: () => {
+          if (!armed) return ALICE.principal;
+          a.dispose();
+          return Promise.reject(new Error('test-check-failed'));
+        },
+      });
+      await stage(a);
+      armed = true;
+      await expect(a.list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});

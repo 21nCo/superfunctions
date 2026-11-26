@@ -168,6 +168,13 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
           idempotencyKey?: unknown;
         }>(request);
         const { idempotencyKey, fromBody } = resolveInitIdempotencyKey(request, body);
+        // A marked replay is only safe to repeat under its key: without one, a
+        // repeat would create another session. Refused before any lookup.
+        if (replayScope !== undefined && (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0)) {
+          throw invalidRequest('x-filefn-replay-scope requires an idempotency key (x-idempotency-key)', {
+            field: 'idempotencyKey',
+          });
+        }
 
         const result = await service.createSession(
           // createSession validates the key (a string of bounded length).
