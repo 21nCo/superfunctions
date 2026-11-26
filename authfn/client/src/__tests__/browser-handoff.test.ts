@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AuthFnBrowserHandoffStorageError,
   createAuthFnClient,
   createAuthFnRegionalClient,
   createBrowserHandoff,
@@ -140,6 +141,52 @@ async function dumpStore(store: AuthFnBrowserHandoffStore): Promise<string> {
     entries.push([key, await store.get(key)]);
   }
   return JSON.stringify(entries);
+}
+
+/** `tombstone` when `key` holds a used record with nothing but its id and expiry. */
+async function retiredState(store: AuthFnBrowserHandoffStore, key: string): Promise<'absent' | 'tombstone' | 'other'> {
+  const raw = await store.get(key);
+  if (raw === null || raw === undefined) {
+    return 'absent';
+  }
+  try {
+    const record = JSON.parse(String(raw)) as Record<string, unknown>;
+    return record.state === 'used' && Object.keys(record).sort().join() === 'expiresAt,id,state,v' ? 'tombstone' : 'other';
+  } catch {
+    return 'other';
+  }
+}
+
+type StoreOp = 'get' | 'set' | 'delete' | 'keys' | 'compareAndSet';
+interface ScriptStep {
+  op: StoreOp;
+  /** Which call of `op` (1-based) the step applies to. */
+  call: number;
+  /** Runs before the call reaches the store, for example another window's completion. */
+  before?: () => Promise<unknown>;
+  /** The call then fails instead of reaching the store. */
+  fail?: boolean;
+}
+
+/** A window's view of a shared store whose calls follow `steps`. */
+function scriptedStore(inner: AuthFnBrowserHandoffStore, steps: ScriptStep[]): AuthFnBrowserHandoffStore {
+  const calls: Record<StoreOp, number> = { get: 0, set: 0, delete: 0, keys: 0, compareAndSet: 0 };
+  const step = async (op: StoreOp) => {
+    calls[op] += 1;
+    const match = steps.find((candidate) => candidate.op === op && candidate.call === calls[op]);
+    await match?.before?.();
+    if (match?.fail) {
+      throw new Error('storage unavailable');
+    }
+  };
+  return {
+    atomic: true,
+    get: async (key) => (await step('get'), inner.get(key)),
+    set: async (key, value) => (await step('set'), inner.set(key, value)),
+    delete: async (key) => (await step('delete'), inner.delete(key)),
+    keys: async () => (await step('keys'), inner.keys()),
+    compareAndSet: async (key, expected, next) => (await step('compareAndSet'), inner.compareAndSet(key, expected, next))
+  };
 }
 
 function failed(result: AuthFnBrowserHandoffResult) {
@@ -282,7 +329,7 @@ describe('createBrowserHandoff', () => {
       cleanUrl: RETURN_TO
     });
     // The verifier is retired, so no window can exchange this return later.
-    expect(Array.from(await shared.keys())).toEqual([]);
+    expect(await retiredState(shared, `authfn.handoff.${begun.handoffId}`)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -298,7 +345,7 @@ describe('createBrowserHandoff', () => {
 
     const begun = await make({ store: shared }).begin({ returnTo: RETURN_TO });
     expect(failed(await make({ store: unsure }).complete(server.callbackFor(begun))).reason).toBe('store-not-atomic');
-    expect(Array.from(await shared.keys())).toEqual([]);
+    expect(await retiredState(shared, `authfn.handoff.${begun.handoffId}`)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -325,13 +372,17 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 
-  it('expires a handoff by the injected clock and removes it', async () => {
+  it('expires a handoff by the injected clock and retires it', async () => {
     const { make, server, store, clock } = setup({ ttlMs: 60_000 });
     const begun = await make().begin({ returnTo: RETURN_TO });
     const callback = server.callbackFor(begun);
     clock.advance(60_000);
 
     expect(failed(await make().complete(callback)).reason).toBe('expired');
+    expect(await retiredState(store, `authfn.handoff.${begun.handoffId}`)).toBe('tombstone');
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    // The tombstone expired with the handoff, so the next prune removes it.
+    expect(await make().prune()).toBe(1);
     expect(Array.from(await store.keys())).toEqual([]);
     expect(server.exchange).not.toHaveBeenCalled();
   });
@@ -562,7 +613,10 @@ describe('createBrowserHandoff', () => {
   const reflectedResponses = [
     ['a 502 with no body', 502, '', 'exchange-rejected'],
     ['a 502 error envelope repeating the body', 502, 'error-echo', 'exchange-rejected'],
+    ['a 502 text body repeating the body', 502, 'text', 'exchange-rejected'],
     ['a 200 with no body', 200, '', 'exchange-rejected'],
+    ['a 200 text body repeating the body', 200, 'text', 'exchange-rejected'],
+    ['a 302 whose location repeats the code', 302, '', 'exchange-rejected'],
     ['a 200 issuing a session', 200, 'session', 'completed']
   ] as const;
   const exchangePaths = [
@@ -581,19 +635,30 @@ describe('createBrowserHandoff', () => {
     const clientOptions = {
       fetch: async (_input: RequestInfo | URL, init?: RequestInit) => {
         const sent = String(init?.body);
-        const { code } = JSON.parse(sent) as { code: string };
+        const { code, verifier } = JSON.parse(sent) as { code: string; verifier: string };
         const payload = body === 'session'
           ? JSON.stringify({ ok: true, requestId: 'req-ok', data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: 'test-session-token' } } })
           : body === 'error-echo'
-            ? JSON.stringify({ ok: false, requestId: `req ${sent}`, error: { code: 'AUTHFN_BAD_GATEWAY', message: `upstream rejected ${sent}`, retryable: true } })
-            : '';
+            ? JSON.stringify({ ok: false, requestId: code, error: { code: 'AUTHFN_BAD_GATEWAY', message: `upstream rejected ${sent}`, retryable: true, details: { sent } } })
+            : body === 'text'
+              ? `upstream rejected ${sent}`
+              : '';
         return new Response(payload || null, {
           status,
           headers: {
-            'x-request-id': `req ${sent}`,
+            // Each value is shaped like the field it fills, so only the
+            // check against the body keeps it out.
+            'x-request-id': code,
             'server-timing': `proxy;desc="${encodeURIComponent(sent)}"`,
-            'x-account-region': code,
-            'x-account-worker-colo': 'test-colo'
+            'x-account-region': verifier.slice(0, 20),
+            'x-account-db-duration-ms': encodeURIComponent(sent),
+            'x-account-db-call-count': sent,
+            'x-account-cache-duration-ms': code,
+            'x-account-cache-call-count': verifier,
+            'x-account-lookup-duration-ms': '2.5',
+            'x-account-lookup-call-count': '3',
+            'x-account-worker-colo': 'test-colo',
+            ...(status === 302 ? { location: `${APP}/next?code=${code}` } : {})
           }
         });
       },
@@ -631,15 +696,68 @@ describe('createBrowserHandoff', () => {
     } else {
       expect(failed(result).reason).toBe(outcome);
     }
-    expect(metrics).toHaveLength(1);
-    expect(metrics[0]).toMatchObject({ path: '/social/handoff/exchange', status, workerColo: 'test-colo' });
-    expect(metrics[0]?.requestId).toBeUndefined();
-    expect(metrics[0]?.serverTiming).toBeUndefined();
-    expect(metrics[0]?.accountRegion).toBeUndefined();
+    expect(metrics).toEqual([{
+      method: 'POST',
+      path: '/social/handoff/exchange',
+      url: expect.stringMatching(/\/social\/handoff\/exchange$/),
+      status,
+      ok: status === 200,
+      durationMs: expect.any(Number),
+      lookupDurationMs: '2.5',
+      lookupCallCount: '3',
+      workerColo: 'test-colo'
+    }]);
     expect(envelopes).toHaveLength(1);
+    if (status === 200 && body === '') {
+      // An empty success has no session; its request id came from the echoing header.
+      expect(envelopes[0]).toEqual({ ok: true, data: {}, requestId: 'authfn-redacted' });
+    } else if (outcome !== 'completed') {
+      expect(envelopes[0]).toEqual({
+        ok: false,
+        error: {
+          code: expect.stringMatching(/^AUTHFN_[A-Z_]+$/),
+          message: `AuthFn request failed (${status})`,
+          retryable: expect.any(Boolean),
+          details: { status }
+        },
+        requestId: expect.stringMatching(/^authfn-/)
+      });
+    }
     const observed = JSON.stringify({ metrics, envelopes, result });
-    expect(observed).not.toContain(verifier);
+    expect(observed).not.toContain(verifier.slice(0, 8));
     expect(observed).not.toContain(code);
+    expect(observed).not.toContain('upstream rejected');
+  });
+
+  it('redacts by the body as sent, even when the caller changes the input before the response', async () => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const sentBodies: string[] = [];
+    const input = { code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') };
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async (_url, init) => {
+        const sent = String(init?.body);
+        sentBodies.push(sent);
+        // The caller reuses its input object while the request is in flight.
+        input.code = 'test-other-code';
+        input.verifier = 'test-other-verifier';
+        const { code } = JSON.parse(sent) as { code: string };
+        return new Response(
+          JSON.stringify({ ok: false, requestId: code, error: { code: 'AUTHFN_BAD_GATEWAY', message: sent, retryable: true } }),
+          { status: 502, headers: { 'x-request-id': code } }
+        );
+      },
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+
+    const envelope = await client.exchangeSocialHandoff(input);
+
+    expect(JSON.parse(sentBodies[0]!)).toEqual({ code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') });
+    expect(metrics[0]?.requestId).toBeUndefined();
+    expect(envelope).toMatchObject({ ok: false, requestId: 'authfn-redacted', error: { code: 'AUTHFN_BAD_GATEWAY' } });
+    const observed = JSON.stringify({ metrics, envelope });
+    expect(observed).not.toContain('test-handoff-code-1');
+    expect(observed).not.toContain('test-verifier-');
   });
 
   it('still reports the response headers of requests without one-time secrets', async () => {
@@ -733,21 +851,21 @@ describe('createBrowserHandoff', () => {
     ['a short verifier', (record: Record<string, unknown>) => JSON.stringify({ ...record, verifier: 'short' })],
     ['no expiry', (record: Record<string, unknown>) => JSON.stringify({ ...record, expiresAt: 'later' })],
     ['a used record that keeps its verifier', (record: Record<string, unknown>) => JSON.stringify({ ...record, state: 'used' })]
-  ])('removes a persisted record that is %s without exchanging', async (_label, corrupt) => {
+  ])('retires a persisted record that is %s without exchanging', async (_label, corrupt) => {
     const { make, server, store } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
     const key = `authfn.handoff.${begun.handoffId}`;
     await store.set(key, corrupt(JSON.parse(String(await store.get(key)))));
 
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
-    expect(await store.get(key)).toBeNull();
+    expect(await retiredState(store, key)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
   it.each([
     ['read', 'get'],
     ['claim', 'compareAndSet']
-  ] as const)('reports a store that fails to %s as malformed-state and removes the verifier', async (_label, method) => {
+  ] as const)('reports a store that fails to %s as malformed-state and retires the verifier', async (_label, method) => {
     const { make, server, store } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
     const broken: AuthFnBrowserHandoffStore = {
@@ -756,7 +874,7 @@ describe('createBrowserHandoff', () => {
     };
 
     expect(failed(await make({ store: broken }).complete(server.callbackFor(begun))).reason).toBe('malformed-state');
-    expect(await store.get(`authfn.handoff.${begun.handoffId}`)).toBeNull();
+    expect(await retiredState(store, `authfn.handoff.${begun.handoffId}`)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -768,7 +886,7 @@ describe('createBrowserHandoff', () => {
     await store.set(key, JSON.stringify({ ...record, expiresAt: T0 + 60 * 60 * 1000 + 1 }));
 
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
-    expect(await store.get(key)).toBeNull();
+    expect(await retiredState(store, key)).toBe('tombstone');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -782,8 +900,12 @@ describe('createBrowserHandoff', () => {
     ['an over-horizon', 'malformed-state', async (store: AuthFnBrowserHandoffStore, key: string) => {
       const record = JSON.parse(String(await store.get(key)));
       await store.set(key, JSON.stringify({ ...record, expiresAt: T0 + 60 * 60 * 1000 + 1 }));
+    }],
+    ['a non-string', 'malformed-state', async (store: AuthFnBrowserHandoffStore, key: string) => {
+      // Written by something other than this helper, which stores strings.
+      await store.set(key, JSON.parse(String(await store.get(key))) as never);
     }]
-  ] as const)('removes %s record even when the store cannot compare-and-set', async (_label, reason, prepare) => {
+  ] as const)('retires %s record even when the store cannot compare-and-set', async (_label, reason, prepare) => {
     const { make, server, store, clock } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
     const key = `authfn.handoff.${begun.handoffId}`;
@@ -795,8 +917,26 @@ describe('createBrowserHandoff', () => {
     };
 
     expect(failed(await make({ store: broken }).complete(callback)).reason).toBe(reason);
-    expect(await store.get(key)).toBeNull();
-    // A later return over a working store finds nothing to claim.
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain('verifier');
+    // A later return over a working store finds the tombstone.
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('deletes the record when the store can neither compare-and-set nor write', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const callback = server.callbackFor(begun);
+    await store.set(key, '{"v":1,');
+    const unavailable = () => Promise.reject(new Error('storage unavailable'));
+    const broken: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable, set: unavailable };
+
+    expect(failed(await make({ store: broken }).complete(callback)).reason).toBe('malformed-state');
+    // The verifier is gone; the documented cost is that a later return
+    // reads unknown-handoff instead of already-used.
+    expect(await retiredState(store, key)).toBe('absent');
     expect(failed(await make().complete(callback)).reason).toBe('unknown-handoff');
     expect(server.exchange).not.toHaveBeenCalled();
   });
@@ -858,6 +998,130 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 
+  // Another window completes the same return at a chosen point of this
+  // window's retirement: its tombstone must survive, a later return reads
+  // already-used, and the code is exchanged exactly once.
+  it.each([
+    ['complete', 'its read fails after the other window completed', 'malformed-state',
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, before: other, fail: true }]],
+    ['complete', 'its read fails and the other window completes before the tombstone write', 'malformed-state',
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, fail: true }, { op: 'set', call: 1, before: other }]],
+    ['complete', 'its claim fails after the other window completed', 'already-used',
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'compareAndSet', call: 1, before: other, fail: true }]],
+    ['complete', 'its claim fails and the other window completes after the re-read', 'already-used',
+      (other: () => Promise<unknown>): ScriptStep[] => [
+        { op: 'compareAndSet', call: 1, fail: true },
+        { op: 'compareAndSet', call: 2, before: other }
+      ]],
+    ['complete', 'its claim and retirement fail around the other window\'s completion', 'malformed-state',
+      (other: () => Promise<unknown>): ScriptStep[] => [
+        { op: 'compareAndSet', call: 1, fail: true },
+        { op: 'compareAndSet', call: 2, before: other, fail: true }
+      ]],
+    ['abandon', 'the other window completes before its read', undefined,
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, before: other }]],
+    ['abandon', 'the other window completes between its read and its write', undefined,
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'compareAndSet', call: 1, before: other }]],
+    ['abandon', 'its compare-and-set fails after the other window completed', undefined,
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'compareAndSet', call: 1, before: other, fail: true }]]
+  ] as const)('keeps another window\'s tombstone when this window\'s %s runs and %s', async (action, _label, reason, script) => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const other = async () => expect((await make().complete(callback)).status).toBe('completed');
+    const thisWindow = make({ store: scriptedStore(store, script(other)) });
+
+    if (action === 'complete') {
+      expect(failed(await thisWindow.complete(callback)).reason).toBe(reason);
+    } else {
+      await thisWindow.abandon(begun.handoffId);
+    }
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(server.exchanged).toBe(1);
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces only a fixed storage error when store failures repeat the stored records', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    // Every call commits what it was asked to do, then fails with the
+    // whole store in its message and cause.
+    const leak = async () => {
+      const dump = await dumpStore(store);
+      return new Error(`storage failed: ${dump}`, { cause: dump });
+    };
+    const leaky: AuthFnBrowserHandoffStore = {
+      atomic: true,
+      get: async (key) => {
+        await store.get(key);
+        throw await leak();
+      },
+      set: async (key, value) => {
+        await store.set(key, value);
+        throw await leak();
+      },
+      delete: async (key) => {
+        throw await leak().finally(() => store.delete(key));
+      },
+      keys: async () => {
+        throw await leak();
+      },
+      compareAndSet: async (key, expected, next) => {
+        const leaked = await leak();
+        await store.compareAndSet(key, expected, next);
+        throw leaked;
+      }
+    };
+    const handoff = make({ store: leaky });
+    const thrown: unknown[] = [];
+    const capture = (promise: Promise<unknown>) => promise.then(
+      () => expect.unreachable('expected a storage error'),
+      (error: unknown) => thrown.push(error)
+    );
+
+    await capture(handoff.prune());
+    await capture(handoff.abandon(begun.handoffId));
+    const result = await make({ store: { ...leaky, keys: () => [] } }).complete(server.callbackFor(begun));
+
+    expect(failed(result).reason).toBe('malformed-state');
+    expect(thrown).toHaveLength(2);
+    for (const error of thrown) {
+      expect(error).toBeInstanceOf(AuthFnBrowserHandoffStorageError);
+      expect(error).toMatchObject({ name: 'AuthFnBrowserHandoffStorageError', message: 'The browser handoff store failed' });
+      expect((error as Error).cause).toBeUndefined();
+    }
+    const surfaced = JSON.stringify({
+      result,
+      thrown: thrown.map((error) => ({ ...(error as Error), message: (error as Error).message, stack: (error as Error).stack }))
+    });
+    expect(surfaced).not.toContain(verifier);
+    expect(surfaced).not.toContain('storage failed');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('retires a begun record whose write committed before the store failed', async () => {
+    const { make, store } = setup();
+    const committing: AuthFnBrowserHandoffStore = {
+      ...store,
+      set: async (key, value) => {
+        await store.set(key, value);
+        throw new Error(`storage failed after writing ${value}`);
+      }
+    };
+
+    const error = await make({ store: committing }).begin({ returnTo: RETURN_TO }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AuthFnBrowserHandoffStorageError);
+    expect(String((error as Error).message)).not.toContain('verifier');
+    const keys = Array.from(await store.keys());
+    expect(keys).toHaveLength(1);
+    expect(await retiredState(store, keys[0]!)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain('verifier');
+  });
+
   it('counts a pruned record only when it was removed', async () => {
     const { make, store, clock, events } = setup();
     const expired = await make().begin({ returnTo: RETURN_TO });
@@ -867,18 +1131,22 @@ describe('createBrowserHandoff', () => {
     await store.set(claimedKey, JSON.stringify({ v: 1, id: record.id, state: 'used', expiresAt: record.expiresAt }));
     clock.advance(10 * 60 * 1000);
     const unavailable = () => Promise.reject(new Error('storage unavailable'));
-    const failing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable, delete: unavailable };
+    const failing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable, set: unavailable, delete: unavailable };
 
     expect(await make({ store: failing }).prune()).toBe(0);
     expect(events.some((event) => event.type === 'pruned')).toBe(false);
     expect(await store.get(`authfn.handoff.${expired.handoffId}`)).not.toBeNull();
 
     // With only compare-and-set failing, the expired pending record is
-    // deleted and the tombstone (no verifier) is left to a later prune.
+    // retired by a plain write of its tombstone (counted), and the expired
+    // tombstone, which holds no secret, is left (not counted).
     const casFailing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable };
     expect(await make({ store: casFailing }).prune()).toBe(1);
-    expect(await store.get(`authfn.handoff.${expired.handoffId}`)).toBeNull();
-    expect(JSON.parse(String(await store.get(claimedKey))).state).toBe('used');
+    expect(await retiredState(store, `authfn.handoff.${expired.handoffId}`)).toBe('tombstone');
+    expect(await retiredState(store, claimedKey)).toBe('tombstone');
+    // A working store then removes both expired tombstones.
+    expect(await make().prune()).toBe(2);
+    expect(Array.from(await store.keys())).toEqual([]);
   });
 
   it('prunes a record under the prefix that is not a string, even one holding a verifier', async () => {
@@ -905,9 +1173,9 @@ describe('createBrowserHandoff', () => {
     });
 
     expect(await make().prune()).toBe(1);
-    expect(await store.get(key)).toBeNull();
+    expect(await retiredState(store, key)).toBe('tombstone');
     expect(await store.get('unrelated-object')).toEqual({ note: 'unrelated' });
-    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('unknown-handoff');
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('already-used');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -988,9 +1256,20 @@ describe('createBrowserHandoff', () => {
     clock.advance(1_000);
     const live = await handoff.begin({ returnTo: RETURN_TO });
 
-    expect(Array.from(await store.keys()).sort()).toEqual([`authfn.handoff.${live.handoffId}`, 'unrelated']);
+    // The expired tombstone is removed; the expired and the garbage record
+    // become tombstones without a verifier.
     expect(events).toContainEqual({ type: 'pruned', count: 3 });
+    expect(await store.get(`authfn.handoff.${used.handoffId}`)).toBeNull();
+    expect(await store.get('unrelated')).toBe('kept');
+    expect(await retiredState(store, 'authfn.handoff.garbage')).toBe('tombstone');
+    const liveKey = `authfn.handoff.${live.handoffId}`;
+    const liveVerifier = await storedVerifier(store, live.handoffId);
     await handoff.abandon(live.handoffId);
+    expect(await retiredState(store, liveKey)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain(liveVerifier);
+    expect(failed(await handoff.complete(server.callbackFor(live))).reason).toBe('already-used');
+    clock.advance(60 * 60 * 1000);
+    expect(await handoff.prune()).toBe(3);
     expect(Array.from(await store.keys())).toEqual(['unrelated']);
   });
 

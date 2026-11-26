@@ -7,6 +7,7 @@ export {
 } from './transport-auth.js';
 export type { AuthFnBearerTokenProvider } from './transport-auth-internal.js';
 export {
+  AuthFnBrowserHandoffStorageError,
   createBrowserHandoff,
   createMemoryHandoffStore,
   createIndexedDbHandoffStore,

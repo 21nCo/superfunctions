@@ -183,12 +183,21 @@ export type AuthFnBrowserHandoffResult =
   | { status: 'not-callback' };
 
 export interface AuthFnBrowserHandoff {
+  /** A store failure throws `AuthFnBrowserHandoffStorageError`, never the store's own error. */
   begin(input: AuthFnBrowserHandoffBeginInput): Promise<AuthFnBrowserHandoffBeginResult>;
   /** Completes the handoff named by a callback URL (usually `location.href`). Never throws for callback or store content. */
   complete(callbackUrl: string | URL): Promise<AuthFnBrowserHandoffResult>;
-  /** Retires a pending handoff, for example when the user closes the sign-in. */
+  /**
+   * Retires a pending handoff, for example when the user closes the sign-in.
+   * Throws `AuthFnBrowserHandoffStorageError` only if the store could neither
+   * retire nor delete it.
+   */
   abandon(handoffId: string): Promise<void>;
-  /** Removes expired records and tombstones. `begin()` also does this. Returns how many were removed. */
+  /**
+   * Retires expired or malformed records and removes expired tombstones.
+   * `begin()` also does this. Returns how many it confirmed retired or
+   * removed; a record the store fails on is left and not counted.
+   */
   prune(): Promise<number>;
 }
 
@@ -225,8 +234,7 @@ const FRAGMENT_PARAMS = [HANDOFF_ID_PARAM, CODE_PARAM, MODE_PARAM, REGION_PARAM]
 const ERROR_QUERY_PARAMS = ['auth_error', 'auth_error_code', 'auth_provider', 'auth_request_id'];
 const TWO_FACTOR_CODE_PARAM = 'authfnCode';
 const TWO_FACTOR_QUERY_PARAMS = [TWO_FACTOR_CODE_PARAM, 'challengeId', 'primaryMethod'];
-// Bounds the re-read loop after a failed compare-and-set if the value keeps changing.
-const MAX_CLEANUP_ATTEMPTS = 3;
+const READ_FAILED = Symbol('read-failed');
 /** Query parameters the social callback adds to the return target. */
 const SERVER_QUERY_PARAMS = [...ERROR_QUERY_PARAMS, ...TWO_FACTOR_QUERY_PARAMS];
 const TWO_FACTOR_REQUIRED_CODE = 'AUTHFN_2FA_REQUIRED';
@@ -265,6 +273,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   if (typeof options.exchange !== 'function') {
     throw new TypeError('createBrowserHandoff needs an exchange function, such as client.exchangeSocialHandoff');
   }
+  const guarded = guardStore(store);
   const allowedOrigins = normalizeAllowedOrigins(options.allowedOrigins);
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   if (!Number.isInteger(ttlMs) || ttlMs <= 0 || ttlMs > MAX_TTL_MS) {
@@ -292,99 +301,96 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   };
 
   /**
-   * Runs after a compare-and-set on `key` threw. Whatever it left that could
-   * still hold a verifier is removed; a used tombstone (another participant's
-   * committed claim) is kept, so later returns still report `already-used`.
-   * A readable string is retired with compare-and-set against the value just
-   * read, so a claim another participant commits after that read survives;
-   * only a value that cannot be compared (unreadable, non-string) or a
-   * compare-and-set that throws again falls back to delete.
+   * Retires the record under `key`, which was last seen holding `observed`
+   * (anything but a string when it could not be read or is not a string),
+   * by replacing it with a used tombstone that holds no verifier. A
+   * tombstone is final: retirement only ever replaces it with another
+   * tombstone, and only `prune()` removes it once it has expired. The ladder, in the order of what matters most (at most one
+   * exchange, then no verifier left behind, then a later return still
+   * reading `already-used`):
+   * 1. compare-and-set `observed` -> tombstone; `changed` when another
+   *    participant moved the record first;
+   * 2. if that throws (or nothing could be compared), a plain write of the
+   *    tombstone, which can at most overwrite another participant's
+   *    tombstone with one;
+   * 3. if that throws too, delete: the verifier is gone, and a later return
+   *    reads `unknown-handoff` instead of `already-used`.
    */
-  const cleanupAfterFailedSet = async (key: string): Promise<'removed' | 'used' | 'gone' | 'failed'> => {
-    const deleteNow = async () => (await tryDelete(key) ? 'removed' : 'failed');
-    for (let attempt = 0; attempt < MAX_CLEANUP_ATTEMPTS; attempt += 1) {
-      let current: unknown;
+  const retire = async (
+    key: string,
+    observed: unknown,
+    expiresAt: number
+  ): Promise<'tombstoned' | 'changed' | 'deleted' | 'failed'> => {
+    const tombstone = tombstoneFor(key.slice(keyPrefix.length), expiresAt);
+    if (typeof observed === 'string') {
       try {
-        current = await store.get(key);
+        return await guarded.compareAndSet(key, observed, tombstone) ? 'tombstoned' : 'changed';
       } catch {
-        // Unreadable, so it may still hold the verifier.
-        return deleteNow();
-      }
-      if (current === null || current === undefined) {
-        return 'gone';
-      }
-      if (typeof current !== 'string') {
-        return deleteNow();
-      }
-      if (parseRecord(current, key.slice(keyPrefix.length), now())?.state === 'used') {
-        return 'used';
-      }
-      try {
-        if (await store.compareAndSet(key, current, null)) {
-          return 'removed';
-        }
-        // Changed since the read: look at it again.
-      } catch {
-        return deleteNow();
+        // The plain write below.
       }
     }
-    return 'failed';
-  };
-
-  /**
-   * Removes a record this helper will not use, if it still holds `raw`, and
-   * reports whether it removed it. When the store cannot compare-and-set,
-   * anything but a used tombstone is deleted, so a verifier never outlives
-   * the decision to retire it.
-   */
-  const retireRecord = async (key: string, raw: string): Promise<boolean> => {
     try {
-      return await store.compareAndSet(key, raw, null);
+      await guarded.set(key, tombstone);
+      return 'tombstoned';
     } catch {
-      return await cleanupAfterFailedSet(key) === 'removed';
+      // The delete below.
+    }
+    try {
+      await guarded.delete(key);
+      return 'deleted';
+    } catch {
+      return 'failed';
     }
   };
-
-  const tryDelete = async (key: string): Promise<boolean> => {
+  /** When a retired record's tombstone expires: its own deadline, never earlier than now. */
+  const tombstoneExpiry = (record: StoredRecord | null): number =>
+    record ? Math.max(record.expiresAt, now()) : now() + ttlMs;
+  /** The stored value, or `READ_FAILED` when the store could not read it. */
+  const read = async (key: string): Promise<unknown> => {
     try {
-      await store.delete(key);
-      return true;
+      return await guarded.get(key);
     } catch {
-      return false;
+      return READ_FAILED;
     }
   };
 
   const prune = async (): Promise<number> => {
     let removed = 0;
-    for (const key of Array.from(await store.keys())) {
+    for (const key of await guarded.keys()) {
       if (typeof key !== 'string' || !key.startsWith(keyPrefix)) {
         continue;
       }
-      let raw: unknown;
-      try {
-        raw = await store.get(key);
-      } catch {
-        // Left for complete(), which retires what it cannot read.
-        continue;
-      }
-      if (raw === null || raw === undefined) {
-        continue;
-      }
-      if (typeof raw !== 'string') {
-        // Not written by this helper (which stores strings), and possibly
-        // holding a verifier: remove it.
-        if (await tryDelete(key)) {
-          removed += 1;
-        }
+      const raw = await read(key);
+      if (raw === READ_FAILED || raw === null || raw === undefined) {
+        // An unreadable record is left for complete(), which retires it.
         continue;
       }
       // The clock is read after the record, so a record another window
       // began while this prune was enumerating is judged by a time no
       // earlier than its own begin.
       const current = now();
-      const record = parseRecord(raw, key.slice(keyPrefix.length), current);
-      if ((!record || record.expiresAt <= current) && await retireRecord(key, raw)) {
-        removed += 1;
+      const record = typeof raw === 'string' ? parseRecord(raw, key.slice(keyPrefix.length), current) : null;
+      if (record?.state === 'used') {
+        // An expired tombstone holds no secret: it is removed only if it is
+        // still the same tombstone, and left when the store fails.
+        if (record.expiresAt <= current) {
+          try {
+            if (await guarded.compareAndSet(key, raw as string, null)) {
+              removed += 1;
+            }
+          } catch {
+            // Left for a later prune.
+          }
+        }
+        continue;
+      }
+      // Expired or malformed pending state and values this helper never
+      // writes (it stores strings) may hold a verifier: retire them.
+      if (!record || record.expiresAt <= current) {
+        const outcome = await retire(key, raw, tombstoneExpiry(record));
+        if (outcome === 'tombstoned' || outcome === 'deleted') {
+          removed += 1;
+        }
       }
     }
     if (removed > 0) {
@@ -426,7 +432,15 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         expiresAt,
         ...(regionId ? { regionId } : {})
       };
-      await store.set(keyFor(handoffId), JSON.stringify(record));
+      const key = keyFor(handoffId);
+      const serialized = JSON.stringify(record);
+      try {
+        await guarded.set(key, serialized);
+      } catch (error) {
+        // The write may have committed before the store failed: retire it.
+        await retire(key, serialized, expiresAt);
+        throw error;
+      }
       const returnTo = new URL(target.href);
       returnTo.hash = new URLSearchParams({ [HANDOFF_ID_PARAM]: handoffId }).toString();
       const expiresAtIso = new Date(expiresAt).toISOString();
@@ -472,59 +486,51 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         return fail('malformed-callback', { cleanUrl });
       }
       const key = keyFor(handoffId);
+      const raw = await read(key);
+      if (raw === null || raw === undefined) {
+        return fail(store.atomic === true ? 'unknown-handoff' : 'store-not-atomic', { handoffId, cleanUrl });
+      }
+      const record = typeof raw === 'string' ? parseRecord(raw, handoffId, now()) : null;
       if (store.atomic !== true) {
         // Without an atomic claim two windows could both exchange; retire
-        // the verifier instead (removing it is safe without a lock).
-        await retire(() => store.delete(key));
+        // the verifier instead.
+        if (record?.state !== 'used') {
+          await retire(key, raw, tombstoneExpiry(record));
+        }
         return fail('store-not-atomic', { handoffId, cleanUrl });
       }
-      let raw: string | null | undefined;
-      try {
-        raw = await store.get(key);
-      } catch {
-        // Whatever is stored cannot be trusted to be claimed later: retire it.
-        await retire(() => store.delete(key));
-        return fail('malformed-state', { handoffId, cleanUrl });
-      }
-      if (raw === null || raw === undefined) {
-        return fail('unknown-handoff', { handoffId, cleanUrl });
-      }
-      if (typeof raw !== 'string') {
-        await retire(() => store.delete(key));
-        return fail('malformed-state', { handoffId, cleanUrl });
-      }
-      const record = parseRecord(raw, handoffId, now());
       if (!record) {
-        await retireRecord(key, raw);
+        // Unreadable, not a string, or not a record this helper wrote: it
+        // cannot be trusted to be claimed later, so it is retired.
+        await retire(key, raw, tombstoneExpiry(null));
         return fail('malformed-state', { handoffId, cleanUrl });
       }
       if (record.state === 'used') {
         return fail('already-used', { handoffId, cleanUrl });
       }
       if (record.expiresAt <= now()) {
-        await retireRecord(key, raw);
+        await retire(key, raw, tombstoneExpiry(record));
         return fail('expired', { handoffId, cleanUrl });
       }
 
       // From here on the callback names a live handoff, so any outcome
       // retires it: a misdirected or corrupted return must not leave the
       // verifier for a second attempt.
-      const tombstone = JSON.stringify({
-        v: 1,
-        id: handoffId,
-        state: 'used',
-        expiresAt: record.expiresAt
-      } satisfies UsedRecord);
       let claimed: boolean;
       try {
-        claimed = await store.compareAndSet(key, raw, tombstone);
+        claimed = await guarded.compareAndSet(key, raw as string, tombstoneFor(handoffId, record.expiresAt));
       } catch {
-        // Nothing was exchanged; remove the verifier rather than leave it
-        // for a later claim the store may not be able to make either. A
-        // tombstone another participant committed meanwhile stays.
-        return await cleanupAfterFailedSet(key) === 'used'
-          ? fail('already-used', { handoffId, cleanUrl })
-          : fail('malformed-state', { handoffId, cleanUrl });
+        // Whether the claim committed is unknown, so this window never
+        // exchanges. It reads the record again: another participant's
+        // tombstone is left as it is; anything else is retired.
+        const current = await read(key);
+        if (typeof current === 'string' && parseRecord(current, handoffId, now())?.state === 'used') {
+          return fail('already-used', { handoffId, cleanUrl });
+        }
+        if (current !== null && current !== undefined && await retire(key, current, record.expiresAt) === 'changed') {
+          return fail('already-used', { handoffId, cleanUrl });
+        }
+        return fail('malformed-state', { handoffId, cleanUrl });
       }
       if (!claimed) {
         return fail('already-used', { handoffId, cleanUrl });
@@ -641,7 +647,15 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (typeof handoffId !== 'string' || !HANDOFF_ID_PATTERN.test(handoffId)) {
         return;
       }
-      await store.delete(keyFor(handoffId));
+      const key = keyFor(handoffId);
+      const raw = await read(key);
+      if (raw === null || raw === undefined) {
+        return;
+      }
+      const record = typeof raw === 'string' ? parseRecord(raw, handoffId, now()) : null;
+      if (record?.state !== 'used' && await retire(key, raw, tombstoneExpiry(record)) === 'failed') {
+        throw new AuthFnBrowserHandoffStorageError();
+      }
     },
 
     prune
@@ -878,12 +892,41 @@ function isIssuedHandoffSession(
     && handoff.token.trim().length > 0;
 }
 
-async function retire(action: () => Awaitable<unknown>): Promise<void> {
-  try {
-    await action();
-  } catch {
-    // The outcome is already decided; a store failure must not replace it.
+/**
+ * The only error the handoff throws for a store failure. It never carries
+ * the store's own message or cause, which may repeat the stored record.
+ */
+export class AuthFnBrowserHandoffStorageError extends Error {
+  constructor() {
+    super('The browser handoff store failed');
+    this.name = 'AuthFnBrowserHandoffStorageError';
   }
+}
+
+/**
+ * Wraps every store call so that a rejection or synchronous throw becomes
+ * the fixed `AuthFnBrowserHandoffStorageError`.
+ */
+function guardStore(store: AuthFnBrowserHandoffStore) {
+  const guard = async <T>(action: () => Awaitable<T>): Promise<T> => {
+    try {
+      return await action();
+    } catch {
+      throw new AuthFnBrowserHandoffStorageError();
+    }
+  };
+  return {
+    get: (key: string) => guard<unknown>(() => store.get(key)),
+    set: (key: string, value: string) => guard(() => store.set(key, value)),
+    delete: (key: string) => guard(() => store.delete(key)),
+    keys: () => guard(async () => Array.from(await store.keys())),
+    compareAndSet: (key: string, expected: string, next: string | null) =>
+      guard(() => store.compareAndSet(key, expected, next))
+  };
+}
+
+function tombstoneFor(handoffId: string, expiresAt: number): string {
+  return JSON.stringify({ v: 1, id: handoffId, state: 'used', expiresAt } satisfies UsedRecord);
 }
 
 function normalizeAllowedOrigins(input: readonly string[] | undefined): Set<string> {

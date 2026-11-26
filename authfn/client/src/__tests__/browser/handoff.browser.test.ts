@@ -346,13 +346,14 @@ describe('createBrowserHandoff in Chromium', () => {
     expect(exchanges).toBe(0);
   });
 
-  it('removes a malformed persisted record without exchanging', async () => {
+  it('retires a malformed persisted record to a tombstone without exchanging', async () => {
     const { tab, begun } = await beginAndReturn();
     const key = `authfn.handoff.${begun.handoffId}`;
     await tab.evaluate((name) => authfnTest.store().set(name, '{"v":1,"state":"pending"'), key);
 
     expect(await complete(tab)).toMatchObject({ status: 'failed', reason: 'malformed-state' });
-    expect(await readRecord(tab, begun.handoffId)).toBeNull();
+    const retired = JSON.parse(String(await readRecord(tab, begun.handoffId)));
+    expect(retired).toEqual({ v: 1, id: begun.handoffId, state: 'used', expiresAt: expect.any(Number) });
     expect(exchanges).toBe(0);
   });
 });

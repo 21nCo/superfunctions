@@ -1,5 +1,5 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
-import type { AuthFnClientOptions, AuthFnErrorEnvelope } from './types.js';
+import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
   method: 'GET' | 'POST' | 'DELETE';
@@ -7,22 +7,38 @@ interface RequestOptions {
   body?: unknown;
   csrf?: boolean;
   /**
-   * The body carries one-time secrets (a handoff code and verifier). A
-   * transport failure then reports a fixed name and message to
-   * `onRequestMetric` and in the envelope: a fetch error can repeat the
-   * request body, so its own text and stack are never passed on. A response
-   * header value (request id, timing, account headers) that repeats a string
-   * from the body is dropped from the metric and from any envelope built
-   * from it, and an error envelope whose body repeats one is replaced by a
-   * fixed error: a proxy or adapter may reflect the request.
+   * The body carries one-time secrets (a handoff code and verifier). The
+   * body is serialized once, before anything is awaited, and its strings
+   * are the secrets. Everything the request reports then passes through
+   * `redactSensitive`: no response text, error message, stack or cause
+   * reaches `onRequestMetric` or the returned error envelope.
    */
   sensitiveBody?: boolean;
 }
 
-const SENSITIVE_TRANSPORT_ERROR = {
-  name: 'AuthFnTransportError',
-  message: 'AuthFn request failed before a response was received'
-} as const;
+const TRANSPORT_FAILURE_MESSAGE = 'AuthFn request failed before a response was received';
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const DURATION_PATTERN = /^\d{1,9}(\.\d{1,6})?$/;
+const COUNT_PATTERN = /^\d{1,9}$/;
+/**
+ * The metric header fields a sensitive request may report, each only when
+ * it matches its pattern and shares no text with the body. `serverTiming`
+ * is free text, so it is never reported.
+ */
+const SENSITIVE_METRIC_FIELDS = {
+  requestId: REQUEST_ID_PATTERN,
+  dbDurationMs: DURATION_PATTERN,
+  dbCallCount: COUNT_PATTERN,
+  cacheDurationMs: DURATION_PATTERN,
+  cacheCallCount: COUNT_PATTERN,
+  lookupDurationMs: DURATION_PATTERN,
+  lookupCallCount: COUNT_PATTERN,
+  workerColo: /^[A-Za-z0-9-]{1,16}$/,
+  accountRegion: /^[A-Za-z0-9_.-]{1,64}$/
+} as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, RegExp>>;
+/** A reported value may not repeat this many consecutive characters of a secret. */
+const SECRET_WINDOW = 8;
 
 export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const fetchImpl = options.fetch ?? fetch;
@@ -39,18 +55,17 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       : options.bearerToken;
     return token?.trim() || undefined;
   };
-  const buildTransportError = (error: unknown, sensitiveBody: boolean): AuthFnErrorEnvelope => ({
+  const buildTransportError = (error: unknown): AuthFnErrorEnvelope => ({
     ok: false,
     error: {
       code: 'AUTHFN_NETWORK_ERROR',
       message:
-        error instanceof Error && !sensitiveBody
+        error instanceof Error
           ? error.message
-          : SENSITIVE_TRANSPORT_ERROR.message,
+          : 'AuthFn request failed before a response was received',
       retryable: true,
-      details: sensitiveBody
-        ? { name: SENSITIVE_TRANSPORT_ERROR.name }
-        : error instanceof Error
+      details:
+        error instanceof Error
           ? {
               name: error.name,
               stack: error.stack
@@ -62,8 +77,13 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
     requestId: 'authfn-transport-error'
   });
 
-  return {
-    requestJson: async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
+  // Sends one request; the body is serialized where it always was, after the bearer token.
+  const transport = {
+    send: async <T>(
+      request: RequestOptions,
+      serializeBody: () => string | undefined,
+      report: (metric: AuthFnClientRequestMetric) => void
+    ): Promise<T | AuthFnErrorEnvelope> => {
       const headers = new Headers();
       const url = `${baseUrl}${request.path}`;
       const startedAt = now();
@@ -90,43 +110,44 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
           method: request.method,
           headers,
           credentials,
-          body: request.body !== undefined ? JSON.stringify(request.body) : undefined
+          body: serializeBody()
         });
       } catch (error) {
-        options.onRequestMetric?.({
+        report({
           method: request.method,
           path: request.path,
           url,
           ok: false,
           durationMs: now() - startedAt,
-          error: transportMetricError(error, request.sensitiveBody === true)
+          error: error instanceof Error
+            ? {
+                name: error.name,
+                message: error.message
+              }
+            : {
+                message: String(error)
+              }
         });
-        return buildTransportError(error, request.sensitiveBody === true);
+        return buildTransportError(error);
       }
 
-      const secrets = request.sensitiveBody === true ? collectBodyStrings(request.body) : [];
-      const header = (name: string): string | undefined => {
-        const value = response.headers.get(name);
-        return value === null || repeatsSecret(value, secrets) ? undefined : value;
-      };
-
-      options.onRequestMetric?.({
+      report({
         method: request.method,
         path: request.path,
         url,
         status: response.status,
         ok: response.ok,
         durationMs: now() - startedAt,
-        requestId: header('x-request-id'),
-        serverTiming: header('server-timing'),
-        dbDurationMs: header('x-account-db-duration-ms'),
-        dbCallCount: header('x-account-db-call-count'),
-        cacheDurationMs: header('x-account-cache-duration-ms'),
-        cacheCallCount: header('x-account-cache-call-count'),
-        lookupDurationMs: header('x-account-lookup-duration-ms'),
-        lookupCallCount: header('x-account-lookup-call-count'),
-        workerColo: header('x-account-worker-colo'),
-        accountRegion: header('x-account-region')
+        requestId: response.headers.get('x-request-id') ?? undefined,
+        serverTiming: response.headers.get('server-timing') ?? undefined,
+        dbDurationMs: response.headers.get('x-account-db-duration-ms') ?? undefined,
+        dbCallCount: response.headers.get('x-account-db-call-count') ?? undefined,
+        cacheDurationMs: response.headers.get('x-account-cache-duration-ms') ?? undefined,
+        cacheCallCount: response.headers.get('x-account-cache-call-count') ?? undefined,
+        lookupDurationMs: response.headers.get('x-account-lookup-duration-ms') ?? undefined,
+        lookupCallCount: response.headers.get('x-account-lookup-call-count') ?? undefined,
+        workerColo: response.headers.get('x-account-worker-colo') ?? undefined,
+        accountRegion: response.headers.get('x-account-region') ?? undefined
       });
 
       if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
@@ -138,10 +159,10 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
             retryable: false,
             details: {
               status: response.status,
-              redirectTo: header('location') ?? null
+              redirectTo: response.headers.get('location')
             }
           },
-          requestId: header('x-request-id') ?? 'authfn-redirect'
+          requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
         };
       }
 
@@ -158,33 +179,19 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
                 status: response.status
               }
             },
-            requestId: header('x-request-id') ?? 'authfn-empty'
+            requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
           };
         }
 
         return {
           ok: true,
           data: {} as Record<string, never>,
-          requestId: header('x-request-id') ?? 'authfn-empty'
+          requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
         } as T;
       }
 
       try {
         const parsed = JSON.parse(raw) as unknown;
-        if (isAuthFnEnvelope(parsed) && !parsed.ok && repeatsSecret(raw, secrets)) {
-          return {
-            ok: false,
-            error: {
-              code: 'AUTHFN_INTERNAL_ERROR',
-              message: `AuthFn returned an error response that repeated the request (${response.status})`,
-              retryable: response.status >= 500,
-              details: {
-                status: response.status
-              }
-            },
-            requestId: 'authfn-redacted'
-          };
-        }
         if (!isAuthFnEnvelope(parsed)) {
           return {
             ok: false,
@@ -196,7 +203,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
                 status: response.status
               }
             },
-            requestId: header('x-request-id') ?? 'authfn-invalid-envelope'
+            requestId: response.headers.get('x-request-id') ?? 'authfn-invalid-envelope'
           };
         }
         return parsed as T | AuthFnErrorEnvelope;
@@ -213,20 +220,130 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
               status: response.status
             }
           },
-          requestId: header('x-request-id') ?? 'authfn-non-json'
+          requestId: response.headers.get('x-request-id') ?? 'authfn-non-json'
         };
       }
     }
   };
+
+  /**
+   * A request whose body holds secrets: the body is serialized and its
+   * secrets collected before anything is awaited, so a caller that changes
+   * the object later changes neither, and the request reports only what
+   * `redactSensitive` lets through.
+   */
+  const sendSensitive = async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
+    let body: string | undefined;
+    let secrets: string[];
+    try {
+      body = request.body !== undefined ? JSON.stringify(request.body) : undefined;
+      secrets = body === undefined ? [] : collectBodyStrings(JSON.parse(body));
+    } catch {
+      return redactSensitive.envelope(undefined, undefined, []) as AuthFnErrorEnvelope;
+    }
+    let status: number | undefined;
+    let result: unknown;
+    try {
+      result = await transport.send<T>(request, () => body, (metric) => {
+        status = metric.status;
+        try {
+          options.onRequestMetric?.(redactSensitive.metric(metric, secrets));
+        } catch {
+          // A failing metric hook must not turn an issued session into an error.
+        }
+      });
+    } catch {
+      result = undefined;
+    }
+    return redactSensitive.envelope(result, status, secrets) as T | AuthFnErrorEnvelope;
+  };
+
+  return {
+    requestJson: <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> =>
+      request.sensitiveBody === true
+        ? sendSensitive<T>(request)
+        : transport.send<T>(
+            request,
+            () => (request.body !== undefined ? JSON.stringify(request.body) : undefined),
+            (metric) => options.onRequestMetric?.(metric)
+          )
+  };
 }
 
-function transportMetricError(error: unknown, sensitiveBody: boolean): { name?: string; message: string } {
-  if (sensitiveBody) {
-    return { ...SENSITIVE_TRANSPORT_ERROR };
+/**
+ * The one shape a sensitive request reports in. The metric keeps method,
+ * path, url, status, ok and duration, plus header fields that match their
+ * pattern and share no text with the body; a transport failure is a fixed
+ * name and message. A success envelope is passed on with a safe request id;
+ * any other result becomes an error envelope with a code that matches the
+ * error code pattern, a fixed message, `details: { status }` and a safe
+ * request id.
+ */
+const redactSensitive = {
+  metric(metric: AuthFnClientRequestMetric, secrets: readonly string[]): AuthFnClientRequestMetric {
+    const safe: AuthFnClientRequestMetric = {
+      method: metric.method,
+      path: metric.path,
+      url: metric.url,
+      ...(metric.status !== undefined ? { status: metric.status } : {}),
+      ok: metric.ok,
+      durationMs: metric.durationMs
+    };
+    for (const [field, pattern] of Object.entries(SENSITIVE_METRIC_FIELDS)) {
+      const value = safeText(metric[field as keyof typeof SENSITIVE_METRIC_FIELDS], pattern, secrets);
+      if (value !== undefined) {
+        safe[field as keyof typeof SENSITIVE_METRIC_FIELDS] = value;
+      }
+    }
+    if (metric.error) {
+      safe.error = { name: 'AuthFnTransportError', message: TRANSPORT_FAILURE_MESSAGE };
+    }
+    return safe;
+  },
+
+  envelope(result: unknown, status: number | undefined, secrets: readonly string[]): unknown {
+    const candidate = (typeof result === 'object' && result !== null ? result : {}) as {
+      ok?: unknown;
+      requestId?: unknown;
+      error?: { code?: unknown; retryable?: unknown };
+    };
+    const requestId = safeText(candidate.requestId, REQUEST_ID_PATTERN, secrets) ?? 'authfn-redacted';
+    if (candidate.ok === true) {
+      return candidate.requestId === requestId ? result : { ...candidate, requestId };
+    }
+    const error = typeof candidate.error === 'object' && candidate.error !== null ? candidate.error : {};
+    return {
+      ok: false,
+      error: {
+        code: safeText(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR',
+        message: status === undefined ? TRANSPORT_FAILURE_MESSAGE : `AuthFn request failed (${status})`,
+        retryable: typeof error.retryable === 'boolean' ? error.retryable : status === undefined || status >= 500,
+        details: status === undefined ? {} : { status }
+      },
+      requestId
+    } satisfies AuthFnErrorEnvelope;
   }
-  return error instanceof Error
-    ? { name: error.name, message: error.message }
-    : { message: String(error) };
+};
+
+/** `value` when it is a string that matches `pattern` and shares no text with `secrets`. */
+function safeText(value: unknown, pattern: RegExp, secrets: readonly string[]): string | undefined {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    return undefined;
+  }
+  return secrets.some((secret) => sharesText(value, secret)) ? undefined : value;
+}
+
+/** Whether `value` contains `secret`, or any run of `SECRET_WINDOW` of its characters. */
+function sharesText(value: string, secret: string): boolean {
+  if (secret.length <= SECRET_WINDOW) {
+    return value.includes(secret);
+  }
+  for (let index = 0; index + SECRET_WINDOW <= secret.length; index += 1) {
+    if (value.includes(secret.slice(index, index + SECRET_WINDOW))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Every non-empty string value in a JSON request body. */
@@ -245,20 +362,6 @@ function collectBodyStrings(body: unknown, found: string[] = []): string[] {
     }
   }
   return found;
-}
-
-/** Whether `value`, as sent or percent-decoded, contains any of `secrets`. */
-function repeatsSecret(value: string, secrets: readonly string[]): boolean {
-  if (secrets.length === 0) {
-    return false;
-  }
-  let decoded = value;
-  try {
-    decoded = decodeURIComponent(value);
-  } catch {
-    // Not percent-encoded; the raw value is checked below.
-  }
-  return secrets.some((secret) => value.includes(secret) || decoded.includes(secret));
 }
 
 function now(): number {
