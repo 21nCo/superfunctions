@@ -1,7 +1,6 @@
 import { Buffer, constants } from "node:buffer";
 import { types } from "node:util";
 import { getHeapStatistics } from "node:v8";
-import { isMainThread, resourceLimits } from "node:worker_threads";
 
 const CIRCULAR = '"[Circular]"';
 const REDACTED = '"[REDACTED]"';
@@ -22,7 +21,7 @@ export const PROJECTION_REPEAT_LIMIT = 64;
  * level is read, where JSON.stringify would exhaust the stack.
  */
 export const MAX_NESTING_DEPTH = 512;
-/** The share of V8's old-generation limit one result document may use as text (see `documentLimit`). */
+/** The share of V8's heap limit one result document may use as text at most (see `documentLimit`). */
 const HEAP_SHARE = 16;
 /**
  * The share of the text budget, in keys, that the key lists of the objects open on the active path may hold together
@@ -177,146 +176,25 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
   return account === undefined ? Number.POSITIVE_INFINITY : work[account];
 }
 
-const MIB = 2 ** 20;
 /**
- * The semi-space V8 gives an isolate by default on a machine with 16 GiB or more, by V8 version (measured with
- * `--max-old-space-size=32`: 48 MiB of young generation on Node 20 and 22, 192 MiB on Node 24, 96 MiB on Node 26), in
- * MiB. Another version is assumed to use the largest of them; a machine with less memory uses less, never more.
+ * The longest result document, in characters including its newline, whatever heap the process runs with:
+ * 2,097,152 (2 MiB of text, a sixteenth of a 32 MiB old generation). The document text, the one copy that joins it
+ * and the diagnostics a run keeps (with the copies `list()` returns) are all bounded by this one figure, so they fit
+ * a 32 MiB old generation in every configuration. It is fixed because Node reports no old-generation limit and the
+ * flags that size one may be out of sight (a worker started with `execArgv: []`, a NODE_OPTIONS changed before load,
+ * `--minor-ms`): no flag or NODE_OPTIONS value raises it, and only a smaller heap lowers it (see `documentLimit`).
+ * A larger result fails with the bounded CLIFN_RUNNER_FAILED document; use JSON lines for output of that size.
  */
-const DEFAULT_SEMI_SPACE_MB: Readonly<Record<string, number>> = { "11.3": 16, "12.4": 16, "13.6": 64, "14.6": 32 };
-const LARGEST_DEFAULT_SEMI_SPACE_MB = 64;
-const OLD_SPACE_FLAG = /^--?max[-_]old[-_]space[-_]size=\+?(\d+)$/;
-const SEMI_SPACE_FLAG = /^--?max[-_]semi[-_]space[-_]size=\+?(\d+)$/;
-/**
- * NODE_OPTIONS as this module read it when it loaded: Node read it at startup and no API reports that value, and a
- * change made afterwards (for child processes) did not size this heap, so it is never read again.
- */
-const startupNodeOptions = process.env.NODE_OPTIONS ?? "";
-/** The command line as this module found it when it loaded (the process can change the array). */
-const startupExecArgv: readonly string[] = [...process.execArgv];
-
-/** Splits NODE_OPTIONS as Node does: on spaces, with double quotes grouping and a backslash escaping inside them. */
-function nodeOptionsTokens(options: string): string[] {
-  const tokens: string[] = [];
-  let token = "";
-  let quoted = false;
-  for (let index = 0; index < options.length; index += 1) {
-    const char = options[index];
-    if (quoted && char === "\\" && index + 1 < options.length) {
-      index += 1;
-      token += options[index];
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === " " && !quoted) {
-      tokens.push(token);
-      token = "";
-    } else {
-      token += char;
-    }
-  }
-  tokens.push(token);
-  return tokens;
-}
-
-/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB; 0 leaves the size to V8. */
-function sizeFlag(options: readonly string[], flag: RegExp): number | undefined {
-  let size: number | undefined;
-  for (const option of options) {
-    const match = flag.exec(option);
-    if (match) {
-      size = Number(match[1]);
-    }
-  }
-  return size;
-}
-
-/** The young generation V8 builds from semi-spaces of `semiSpaceMb`: three of them, rounded up to a power of two. */
-function youngGeneration(semiSpaceMb: number): number {
-  let semiSpace = MIB / 2;
-  while (semiSpace < semiSpaceMb * MIB) {
-    semiSpace *= 2;
-  }
-  return 3 * semiSpace;
-}
-
-/** Whether `bytes` is a size V8 gives a young generation: three semi-spaces of a power of two (half a MiB or more). */
-function isYoungGenerationSize(bytes: number): boolean {
-  return bytes >= youngGeneration(0) && youngGeneration(bytes / 3 / MIB) === bytes;
-}
-
-/** The heap limit less the largest young generation size up to `young` that is below it (all of it, when it fits). */
-function lessYoungGeneration(heapLimit: number, young: number): number {
-  let largest = 0;
-  for (let size = youngGeneration(0); size <= young && size < heapLimit; size *= 2) {
-    largest = size;
-  }
-  return heapLimit - largest;
-}
+export const DOCUMENT_MAX_LENGTH = 2_097_152;
 
 /**
- * The bytes of V8's heap a document may be sized from: never more than its old generation, where the document text,
- * its one joined copy and the diagnostics a run keeps live. V8 reports only `heap_size_limit`, which adds the young
- * generation, and the flags that sized this heap may be out of sight (a worker started with `execArgv: []` under a
- * flagged process, a NODE_OPTIONS changed before this module loaded), so it is the heap limit less a young generation
- * at least as large as this isolate's: the command line's `--max-semi-space-size`'s (V8 reads the command line after
- * NODE_OPTIONS), or else the larger of the one Node configured it with (in a worker, the size `resourceLimits` reports
- * it asked for or Node's default, which process flags other than a semi-space size do not change; on the main thread,
- * this V8 version's default) and a NODE_OPTIONS `--max-semi-space-size`'s. Exact sizes come first: on the main thread
- * the command line's `--max-old-space-size` when the rest of the heap limit is a young generation's size, and on
- * either NODE_OPTIONS' when it and the young generation the flags leave add up to the heap limit, so a NODE_OPTIONS
- * changed before load cannot raise it. In a worker, the `--max-old-space-size` it sees (the command line's, else
- * NODE_OPTIONS') also caps it, since a process flag overrides the worker's own old generation; that covers a hidden
- * flag changing its young generation. A size of 0 leaves that size to V8 (a command line's 0 still overrides
- * NODE_OPTIONS). Not accounted for: a `--max-semi-space-size` hidden from a worker that sees no `--max-old-space-size`
- * (`execArgv: []` and `env: {}`) or removed from NODE_OPTIONS before this module loaded, and a worker's own `env`
- * NODE_OPTIONS, which is taken at its word. The command line and NODE_OPTIONS are read as they were at load. Read once.
- */
-function oldGenerationLimit(): number {
-  const heapLimit = getHeapStatistics().heap_size_limit;
-  const commandLine = startupExecArgv;
-  const nodeOptions = nodeOptionsTokens(startupNodeOptions);
-  const [commandOld, commandSemi] = [sizeFlag(commandLine, OLD_SPACE_FLAG), sizeFlag(commandLine, SEMI_SPACE_FLAG)];
-  const [optionsOld, optionsSemi] = [sizeFlag(nodeOptions, OLD_SPACE_FLAG), sizeFlag(nodeOptions, SEMI_SPACE_FLAG)];
-  const [major, minor] = process.versions.v8.split(".");
-  const defaultYoung = youngGeneration(DEFAULT_SEMI_SPACE_MB[`${major}.${minor}`] ?? LARGEST_DEFAULT_SEMI_SPACE_MB);
-  const requested = resourceLimits.maxYoungGenerationSizeMb;
-  const own = !isMainThread && typeof requested === "number" && requested > 0 ? youngGeneration(requested / 3) : defaultYoung;
-  // A semi-space size of 0 leaves the young generation Node configured.
-  const semiYoung = (semi: number) => (semi > 0 ? youngGeneration(semi) : own);
-  const optionsYoung = optionsSemi === undefined ? 0 : semiYoung(optionsSemi);
-  if (isMainThread && commandOld && commandOld * MIB < heapLimit && isYoungGenerationSize(heapLimit - commandOld * MIB)) {
-    return commandOld * MIB;
-  }
-  // NODE_OPTIONS' old generation, when it and the young generation the flags leave add up to the heap limit.
-  let flagsLeave = own;
-  if (commandSemi !== undefined) {
-    flagsLeave = semiYoung(commandSemi);
-  } else if (optionsSemi !== undefined) {
-    flagsLeave = optionsYoung;
-  }
-  if (commandOld === undefined && optionsOld && optionsOld * MIB + flagsLeave === heapLimit) {
-    return optionsOld * MIB;
-  }
-  let old = lessYoungGeneration(heapLimit, commandSemi === undefined ? Math.max(own, optionsYoung) : flagsLeave);
-  // A process flag overrides a worker's own old generation, so the one a worker sees caps it (a command line's 0 too).
-  const processOld = commandOld ?? optionsOld;
-  if (!isMainThread && processOld) {
-    old = Math.min(old, processOld * MIB);
-  }
-  return old;
-}
-
-let oldGenerationBytes: number | undefined;
-
-/**
- * The longest result document, in characters including its newline: the smaller of the engine's maximum string
- * length (where `JSON.stringify` itself throws) and a sixteenth of V8's old-generation limit (see
- * `oldGenerationLimit`), so the document text, the one copy that joins it and the diagnostics a run keeps fit the
- * heap the process runs with, whatever young generation its Node version adds.
+ * The longest result document, in characters including its newline: DOCUMENT_MAX_LENGTH, or less where the engine's
+ * maximum string length or a sixteenth of V8's whole heap limit (`heap_size_limit`, as in a worker with small
+ * `resourceLimits`) is smaller. The heap figure can only lower the budget, never raise it.
  */
 export function documentLimit(): number {
-  oldGenerationBytes ??= oldGenerationLimit();
-  return Math.min(constants.MAX_STRING_LENGTH, Math.floor(oldGenerationBytes / HEAP_SHARE));
+  const heapShare = Math.floor(getHeapStatistics().heap_size_limit / HEAP_SHARE);
+  return Math.min(DOCUMENT_MAX_LENGTH, constants.MAX_STRING_LENGTH, heapShare);
 }
 
 /** A document budget of `limit` characters, `documentLimit()` by default (tests pass a smaller one). */

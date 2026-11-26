@@ -953,8 +953,9 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
   });
 
   it("serializes in one pass: a one-shot getter beside a projection loop runs once and the loop is cut at the cap", async () => {
-    // Each projection carries the same 76 KiB string: 64 of them fit the document, so the run keeps its outcome.
-    const text = "t".repeat(76 * 1024);
+    // Each projection carries the same 12 KiB string: 64 of them in the error details and 64 in the diagnostic details
+    // fit the 2 Mi-character document together, so the run keeps its outcome.
+    const text = "t".repeat(12 * 1024);
     const created: Array<{ getter: number; toJSON: number }> = [];
     const make = () => {
       const counts = { getter: 0, toJSON: 0 };
@@ -1173,14 +1174,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
   });
 
   it("prints large ordinary data byte for byte as JSON.stringify does", { timeout: 60_000 }, async () => {
-    const dense = Array.from({ length: 5_000_000 }, (_, index) => index % 10);
+    // Each close to the 2,097,152-character document limit.
+    const dense = Array.from({ length: 1_000_000 }, (_, index) => index % 10);
     const denseResult = await runDocument(() => ({ data: dense }));
     expect(denseResult.exitCode).toBe(0);
     expect(denseResult.writes).toBe(1);
     expect(denseResult.out).toBe(`${JSON.stringify({ ok: true, data: dense })}\n`);
 
     const wide = Object.fromEntries(
-      Array.from({ length: 200_000 }, (_, id) => [
+      Array.from({ length: 16_000 }, (_, id) => [
         `key-${id}`,
         { id, name: `name-${id}`, tags: ["a", "b"], on: id % 2 === 0, none: null, ratio: id / 7 },
       ])
@@ -1450,8 +1452,9 @@ describe("document mode number boxes and throughput", () => {
     });
   });
 
-  it("resolves 100,000 ordinary records within a bounded multiple of native JSON", async () => {
-    const records = Array.from({ length: 100_000 }, (_, index) => ({ id: index, name: `n${index}`, tags: ["a"] }));
+  it("resolves 40,000 ordinary records within a bounded multiple of native JSON", async () => {
+    // About 1.6 million characters, within the 2,097,152-character document limit.
+    const records = Array.from({ length: 40_000 }, (_, index) => ({ id: index, name: `n${index}`, tags: ["a"] }));
     let started = performance.now();
     JSON.parse(JSON.stringify(records));
     const nativeMs = performance.now() - started;
@@ -1460,7 +1463,7 @@ describe("document mode number boxes and throughput", () => {
     const result = await runDocument(() => ({ data: records }));
     const documentMs = performance.now() - started;
 
-    expect((parseOnlyDocument(result).data as unknown[]).length).toBe(100_000);
+    expect((parseOnlyDocument(result).data as unknown[]).length).toBe(40_000);
     // Generous: the walker that probed slots by throwing took about 90 times native; this one takes about 3.
     expect(documentMs).toBeLessThan(nativeMs * 25 + 500);
   });

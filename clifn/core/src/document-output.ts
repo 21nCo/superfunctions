@@ -524,7 +524,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   // when it was added), and in `headLengths` the length of that head. So what the run retains per diagnostic is its
   // text, one string header and two array slots, a fixed overhead below its at least MIN_DIAGNOSTIC_LENGTH characters,
   // never an object or a second string for its details; with at most `maxDiagnostics` of them, the whole is bounded
-  // by a small multiple of the limit, which is sized from the old generation where they live (see `documentLimit`).
+  // by a small multiple of the limit, a fixed figure that no heap flag raises (see `documentLimit`).
   const entries: Array<string | undefined> = [];
   const headLengths: number[] = [];
   // The copies `list()` returns, parsed from the kept text the first time they are listed; `copied` entries so far.
