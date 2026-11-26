@@ -1,13 +1,18 @@
 // The update check's cache file (CLI-14). Internal: not in the package's exports.
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ensureAppDir } from "./paths.js";
 import { parseVersion } from "./version.js";
 
-/** What the cache file holds. `notifiedAt` is when a notice was last delivered; older files have none. */
+/**
+ * What the cache file holds. `notifiedAt` is when a notice was last delivered, on either shape: an error refresh keeps
+ * it, so a delivery is not forgotten. Older files have none.
+ */
 export type LatestEntry = { checkedAt: number; latest: string; notifiedAt?: number };
-export type CacheEntry = LatestEntry | { checkedAt: number; error: true };
+export type ErrorEntry = { checkedAt: number; error: true; notifiedAt?: number };
+export type CacheEntry = LatestEntry | ErrorEntry;
 
 export const UPDATE_CHECK_FILE = "update-check.json";
 /** Temporary files a write leaves behind are removed by a later write once they are this old. */
@@ -50,21 +55,47 @@ export function parseCacheEntry(text: string): CacheEntry | null {
   if (typeof checkedAt !== "number" || !Number.isFinite(checkedAt)) {
     return null;
   }
+  let entry: CacheEntry;
   if (record.error === true) {
-    return { checkedAt, error: true };
-  }
-  if (typeof record.latest !== "string" || !parseVersion(record.latest)) {
+    entry = { checkedAt, error: true };
+  } else if (typeof record.latest === "string" && parseVersion(record.latest)) {
+    entry = { checkedAt, latest: record.latest };
+  } else {
     return null;
   }
-  const notifiedAt = record.notifiedAt;
-  return typeof notifiedAt === "number" && Number.isFinite(notifiedAt)
-    ? { checkedAt, latest: record.latest, notifiedAt }
-    : { checkedAt, latest: record.latest };
+  return withNotifiedAt(entry, record.notifiedAt);
+}
+
+/** The entry with `notifiedAt` set when it is a finite number, else without one. */
+function withNotifiedAt(entry: CacheEntry, notifiedAt: unknown): CacheEntry {
+  const base: CacheEntry =
+    "latest" in entry ? { checkedAt: entry.checkedAt, latest: entry.latest } : { checkedAt: entry.checkedAt, error: true };
+  return typeof notifiedAt === "number" && Number.isFinite(notifiedAt) ? { ...base, notifiedAt } : base;
+}
+
+/** The later of two delivery times; undefined when neither records one. */
+function laterDelivery(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) {
+    return b;
+  }
+  return b === undefined ? a : Math.max(a, b);
 }
 
 export async function readCache(file: string): Promise<CacheEntry | null> {
   try {
     return parseCacheEntry(await readFile(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The cache entry, read synchronously: the hand-out check reads the small cache file without awaiting, so `notice()`
+ * never waits on it. Null for a missing, unreadable or malformed file.
+ */
+export function readCacheSync(file: string): CacheEntry | null {
+  try {
+    return parseCacheEntry(readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -110,16 +141,26 @@ async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
   }
 }
 
-/** Writes the entry, never rejecting: an unwritable cache means the next run checks again. */
+/**
+ * Writes the entry, keeping the later `notifiedAt` of the entry and of the file as it is right before the write, so a
+ * refresh never drops a delivery another run recorded during its request. Two writes racing inside that read-then-rename
+ * window are the last-rename-wins boundary.
+ */
+async function writeCacheMerged(dir: string, entry: CacheEntry): Promise<void> {
+  const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+  await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt)));
+}
+
+/** Writes the entry (see `writeCacheMerged`), never rejecting: an unwritable cache means the next run checks again. */
 export function writeCacheQuietly(dir: string, entry: CacheEntry): Promise<void> {
-  return trackCacheWrite(writeCache(dir, entry).catch(() => undefined));
+  return trackCacheWrite(writeCacheMerged(dir, entry).catch(() => undefined));
 }
 
 /**
- * Records that the notice for `entry.latest` was delivered at `notifiedAt`, once `after` (this run's own write) has
- * settled. It re-reads the cache first so it never rolls back what another run wrote meanwhile: an error entry or an
- * entry for another version is left as it is, and an entry for the same version keeps its newer `checkedAt`. Never
- * rejects.
+ * Records that a notice was delivered at `notifiedAt`, once `after` (this run's own write) has settled. It re-reads the
+ * cache and adds the delivery to whatever entry is there, newer of the file and `entry` by `checkedAt`: an error entry
+ * or an entry for another version another run wrote meanwhile keeps its content and gains `notifiedAt`, so the
+ * delivery is neither rolled back nor forgotten. A later `notifiedAt` already in the file is kept. Never rejects.
  */
 export function recordDeliveryQuietly(
   dir: string,
@@ -129,16 +170,10 @@ export function recordDeliveryQuietly(
 ): Promise<void> {
   const record = async (): Promise<void> => {
     await after;
-    const read = await readCache(join(dir, UPDATE_CHECK_FILE));
-    let current: LatestEntry | null = null;
-    if (read !== null) {
-      if (!("latest" in read) || read.latest !== entry.latest) {
-        return;
-      }
-      current = read;
-    }
-    const base = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
-    await writeCache(dir, { checkedAt: base.checkedAt, latest: base.latest, notifiedAt });
+    const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+    const base: CacheEntry = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
+    const delivered = laterDelivery(laterDelivery(current?.notifiedAt, base.notifiedAt), notifiedAt);
+    await writeCache(dir, withNotifiedAt(base, delivered));
   };
   return trackCacheWrite(record().catch(() => undefined));
 }

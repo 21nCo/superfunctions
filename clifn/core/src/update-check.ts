@@ -3,6 +3,7 @@ import { appDirResolver } from "./app-dirs.js";
 import { resolveTerminal, type TerminalStream } from "./terminal.js";
 import {
   readCache,
+  readCacheSync,
   recordDeliveryQuietly,
   UPDATE_CHECK_FILE,
   writeCacheQuietly,
@@ -65,8 +66,11 @@ export interface UpdateCheck {
    * The notice (`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`), or `null`. Never rejects and never waits past
    * the check's timeout: a result that is not ready by then is dropped, and every later call resolves `null` too.
    * Resolving with the notice counts as delivering it: only the first call that resolves with it gets it (later calls on
-   * the same handle resolve `null`), the time is recorded in the cache (in the background, without replacing a newer
-   * entry another run wrote), and no other run gives a notice until `intervalMs` has passed.
+   * the same handle resolve `null`), and the time is recorded in the cache in the background (added to whatever entry
+   * is there, so a newer entry another run wrote is kept). Right before handing the notice out the cache file is read
+   * again, synchronously, and the notice is dropped when it records a delivery within `intervalMs`, so no run gives it
+   * once another run's delivery is recorded. Two runs handing it out at the same moment, before either delivery is
+   * written, may both give it: the last-rename-wins boundary of concurrent instances.
    */
   notice(): Promise<string | null>;
 }
@@ -139,7 +143,7 @@ function isRecent(time: number, now: number, intervalMs: number): boolean {
 
 /** True when the entry records a notice delivered within the interval. */
 function recentlyNotified(entry: CacheEntry, now: number, intervalMs: number): boolean {
-  return "latest" in entry && entry.notifiedAt !== undefined && isRecent(entry.notifiedAt, now, intervalMs);
+  return entry.notifiedAt !== undefined && isRecent(entry.notifiedAt, now, intervalMs);
 }
 
 function abortRejection(signal: AbortSignal): Promise<never> {
@@ -275,11 +279,9 @@ async function runCheck(plan: CheckPlan): Promise<CheckResult> {
     return resultFor(plan, cached, now, Promise.resolve());
   }
   const fetched = await requestLatest(plan);
-  // The last delivery carries over to the new entry, so a refresh does not give a second notice within the interval.
-  const entry: CacheEntry =
-    "latest" in fetched && cached && "latest" in cached && cached.notifiedAt !== undefined
-      ? { ...fetched, notifiedAt: cached.notifiedAt }
-      : fetched;
+  // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
+  // within the interval; the write also keeps a later delivery another run recorded during the request.
+  const entry: CacheEntry = cached?.notifiedAt === undefined ? fetched : { ...fetched, notifiedAt: cached.notifiedAt };
   return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry));
 }
 
@@ -351,7 +353,8 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
  * Skipped (no request, no cache access, `notice()` resolves `null`) in JSON mode (`terminal.json`), when the terminal
  * is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` is set to a
  * non-empty value, and when `currentVersion` is outside the version grammar. A cached result younger than
- * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs`. Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
+ * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two runs racing
+ * to hand it out may both give it; see `notice()`). Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
  * `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
  * a status other than 200, a body that is not JSON or has no valid `latest`, or a timeout, in
  * `<state>/update-check.json`, written atomically. A notice is given only when `latest` is a release greater than
@@ -394,7 +397,9 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       }
     });
 
-  // The notice of an on-time result, the first time it is asked for; records its delivery after this run's own write.
+  // The notice of an on-time result, the first time it is asked for, unless the cache already records a delivery
+  // within the interval (another run handed it out since this check settled). The cache file is read synchronously,
+  // so this never waits. Records the delivery after this run's own write.
   const deliver = (): string | null => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
@@ -407,9 +412,14 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     } catch {
       notifiedAt = undefined;
     }
-    if (notifiedAt !== undefined && Number.isFinite(notifiedAt)) {
-      void recordDeliveryQuietly(checkPlan.stateDir, checked.entry, notifiedAt, checked.written);
+    if (notifiedAt === undefined || !Number.isFinite(notifiedAt)) {
+      return checked.notice;
     }
+    const shared = readCacheSync(join(checkPlan.stateDir, UPDATE_CHECK_FILE));
+    if (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs)) {
+      return null;
+    }
+    void recordDeliveryQuietly(checkPlan.stateDir, checked.entry, notifiedAt, checked.written);
     return checked.notice;
   };
 

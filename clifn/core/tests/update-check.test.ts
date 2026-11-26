@@ -470,19 +470,19 @@ describe("startUpdateCheck: cache interval", () => {
     [
       "a newer error entry",
       { checkedAt: T0 + 10, error: true },
-      { checkedAt: T0 + 10, error: true },
+      { checkedAt: T0 + 10, error: true, notifiedAt: T0 + 20 },
     ],
     [
       "a newer entry for another version",
       { checkedAt: T0 + 10, latest: "1.4.0" },
-      { checkedAt: T0 + 10, latest: "1.4.0" },
+      { checkedAt: T0 + 10, latest: "1.4.0", notifiedAt: T0 + 20 },
     ],
     [
       "a newer entry for the same version",
       { checkedAt: T0 + 10, latest: "1.3.0" },
       { checkedAt: T0 + 10, latest: "1.3.0", notifiedAt: T0 + 20 },
     ],
-  ])("records delivery without rolling back %s another run wrote meanwhile", async (_label, newer, expected) => {
+  ])("records delivery on %s another run wrote meanwhile, without rolling it back", async (_label, newer, expected) => {
     let clock = T0;
     const fetch = registry({ latest: "1.3.0" });
     const handle = check({ fetch, now: () => clock });
@@ -494,6 +494,92 @@ describe("startUpdateCheck: cache interval", () => {
     clock = T0 + 20;
     await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
     await expect(readCacheJson()).resolves.toEqual(expected);
+  });
+
+  it("gives no notice from a handle that settled before another run's delivery was recorded", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
+    const fetch = registry({ latest: "1.3.0" });
+    const first = check({ fetch, now: () => T0 + 1 });
+    const second = check({ fetch, now: () => T0 + 2 });
+    await settled();
+
+    await expect(first.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 1 });
+    await expect(second.notice()).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 1 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["the same version", { checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 }],
+    ["another version", { checkedAt: T0 + 1, latest: "1.4.0", notifiedAt: T0 + 1 }],
+    ["an error entry", { checkedAt: T0 + 1, error: true, notifiedAt: T0 + 1 }],
+  ])("gives no notice once another run recorded a delivery on %s after this check settled", async (_label, other) => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
+    const handle = check({ now: () => T0 + 2 });
+    await settled();
+
+    await writeCacheText(JSON.stringify(other));
+    await expect(handle.notice()).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual(other);
+  });
+
+  it("keeps a delivery across an error refresh and gives the notice again only after the interval", async () => {
+    const hour = 60 * 60 * 1000;
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
+    let clock = T0 + hour;
+    const delivering = check({ now: () => clock });
+    await settled();
+
+    // An overlapping run refreshes the stale entry and the registry fails; it lands between settle and hand-out.
+    await expect(
+      run({ fetch: registry("down", 500), now: () => T0 + DAY + 1, intervalMs: DAY - 2 * hour })
+    ).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY + 1, error: true });
+
+    clock = T0 + DAY + 2;
+    await expect(delivering.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY + 1, error: true, notifiedAt: T0 + DAY + 2 });
+
+    // The error entry is stale for this run, so it asks again; the delivery carries over and holds the notice back.
+    const fetch = registry({ latest: "1.3.0" });
+    await expect(run({ fetch, now: () => T0 + 2 * DAY + 1 })).resolves.toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await expect(readCacheJson()).resolves.toEqual({
+      checkedAt: T0 + 2 * DAY + 1,
+      latest: "1.3.0",
+      notifiedAt: T0 + DAY + 2,
+    });
+    await expect(run({ fetch, now: () => T0 + 2 * DAY + 2 })).resolves.toBe(NOTICE_1_3_0);
+  });
+
+  it("carries a delivery over to an error entry when a refresh fails", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 5 }));
+    await expect(run({ fetch: registry("down", 500), now: () => T0 + DAY })).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY, error: true, notifiedAt: T0 + 5 });
+    // A cached error with a delivery is still a valid entry: no request within the interval.
+    const fetch = registry({ latest: "1.3.0" });
+    await expect(run({ fetch, now: () => T0 + DAY + 1 })).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a delivery another run recorded while this run's request was in flight", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY, latest: "1.3.0" }));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetch = vi.fn<UpdateCheckFetch>(async () => {
+      await gate;
+      return new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 });
+    });
+    const refreshing = check({ fetch, now: () => T0 + 2, timeoutMs: 60_000 });
+    await until(() => fetch.mock.calls.length === 1);
+
+    await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY, latest: "1.3.0", notifiedAt: T0 + 1 }));
+    release();
+    await expect(refreshing.notice()).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + 2, latest: "1.3.0", notifiedAt: T0 + 1 });
   });
 
   it.each([
@@ -584,11 +670,15 @@ describe("startUpdateCheck: atomic cache writes", () => {
       versions.map((latest) => check({ fetch: registry({ latest }) }).notice())
     );
 
+    // The last-rename-wins boundary: hand-outs racing before any delivery is written may each give the notice.
     expect(notices).toEqual(versions.map((latest) => `Update available: 1.2.0 → ${latest} (npm i -g my-cli)`));
-    const cached = (await readCacheJson()) as { checkedAt: number; latest: string };
+    const cached = (await readCacheJson()) as { checkedAt: number; latest: string; notifiedAt: number };
     expect(await readdir(stateDir)).toEqual(["update-check.json"]);
     expect(cached.checkedAt).toBe(T0);
     expect(versions).toContain(cached.latest);
+    // Once a delivery is written, no later run within the interval gives the notice.
+    expect(cached.notifiedAt).toBe(T0);
+    await expect(run({ fetch: registry({ latest: "1.9.0" }), now: () => T0 + 1 })).resolves.toBeNull();
   });
 
   it("removes temporary files older than one hour on the next write and keeps the rest", async () => {
