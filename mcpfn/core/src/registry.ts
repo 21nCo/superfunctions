@@ -582,8 +582,51 @@ function exceedsJsonNodes(value: unknown, limit: number): boolean {
 
 interface CompileEntry {
   kind: "compile";
+  /** The object the compiler received. */
   schema: object;
+  /**
+   * A deep copy taken before the compile (built-in compilers only), so an
+   * in-place edit after a failed registration cannot change what clone()
+   * replays. Undefined when the schema cannot be copied (for example, it
+   * holds a function); clone() then replays the live object best-effort.
+   */
+  snapshot: object | undefined;
   ok: boolean;
+}
+
+function snapshotSchema(schema: object): object | undefined {
+  try {
+    return structuredClone(schema);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Structural equality of a live schema and its snapshot; cycle-safe. */
+function sameSchemaValue(
+  a: unknown,
+  b: unknown,
+  seen = new Map<object, Set<object>>(),
+): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  let pairs = seen.get(a);
+  if (pairs?.has(b)) return true;
+  if (!pairs) seen.set(a, (pairs = new Set()));
+  pairs.add(b);
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.hasOwn(b, key)) return false;
+    if (!sameSchemaValue(
+      (a as Record<string, unknown>)[key],
+      (b as Record<string, unknown>)[key],
+      seen,
+    )) return false;
+  }
+  return true;
 }
 
 type CompileLogEntry<TContext> =
@@ -608,15 +651,26 @@ export class McpFnRegistry<TContext = undefined> {
    * references. A built-in compiler is a fresh instance given the same compiles,
    * in the same order, as this registry's compiler (failed registrations
    * included), so it resolves exactly the `$id`s this registry resolves.
+   * A failed registration's compiles replay as they were compiled, even if the
+   * caller edited those schema objects in place afterwards.
    */
   clone(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
     // A shared custom compiler already holds whatever state it keeps.
     const builtIn = this.options.compileSchema === undefined;
-    for (const entry of this.compileLog) {
-      if (entry.kind === "registration") entry.replay(target);
-      else if (builtIn) target.replayCompile(entry.schema, entry.ok);
+    // Whether each entry's schema object is compiled again by a later entry.
+    const recompiledLater: boolean[] = [];
+    const later = new Set<object>();
+    for (let index = this.compileLog.length - 1; index >= 0; index -= 1) {
+      const entry = this.compileLog[index]!;
+      const schemas = entry.kind === "registration" ? entry.schemas : [entry.schema];
+      recompiledLater[index] = entry.kind === "compile" && later.has(entry.schema);
+      for (const schema of schemas) later.add(schema);
     }
+    this.compileLog.forEach((entry, index) => {
+      if (entry.kind === "registration") entry.replay(target);
+      else if (builtIn) target.replayCompileEntry(entry, recompiledLater[index]!);
+    });
     return target;
   }
 
@@ -639,6 +693,28 @@ export class McpFnRegistry<TContext = undefined> {
     return this.compileLog.flatMap((entry) => entry.kind === "registration" ? entry.schemas : []);
   }
 
+  private replayCompileEntry(entry: CompileEntry, recompiledLater: boolean): void {
+    const { schema, snapshot, ok } = entry;
+    if (snapshot === undefined) {
+      // Not copyable, so its compiled form is unknown: replay the live object
+      // and accept either outcome rather than fail the clone over it.
+      try {
+        this.compile(schema);
+      } catch {
+        // Best-effort replay; the outcome is not compared.
+      }
+      return;
+    }
+    // Unchanged: replay the same object, so a compiler that caches by object
+    // identity (Ajv) treats its later compiles exactly as the source's did.
+    if (sameSchemaValue(schema, snapshot)) return this.replayCompile(schema, ok);
+    // Edited in place after a failed compile and compiled again later: that
+    // later compile supersedes it (Ajv reuses the failed entry for the same
+    // object; cfworker keeps nothing from a failed compile).
+    if (!ok && recompiledLater) return;
+    this.replayCompile(snapshot, ok);
+  }
+
   private replayCompile(schema: object, expectedOk: boolean): void {
     let ok = true;
     let cause: unknown;
@@ -658,13 +734,15 @@ export class McpFnRegistry<TContext = undefined> {
 
   /** The single compile chokepoint: every attempt is logged, failures included. */
   private compile(schema: object): CompiledSchema {
+    // Only a built-in compiler's compiles are replayed, so only they need a copy.
+    const snapshot = this.options.compileSchema === undefined ? snapshotSchema(schema) : undefined;
     let ok = false;
     try {
       const compiled = this.compileSchema(schema);
       ok = true;
       return compiled;
     } finally {
-      this.compileLog.push({ kind: "compile", schema, ok });
+      this.compileLog.push({ kind: "compile", schema, snapshot, ok });
     }
   }
 

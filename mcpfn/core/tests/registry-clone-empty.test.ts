@@ -128,10 +128,10 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
   async function load() {
     if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
     vi.resetModules();
-    const { McpFnRegistry, structuredResult } = await import("../src/index.js");
+    const { McpFnRegistry, structuredResult, defineMcpFnServer } = await import("../src/index.js");
     const { createSchemaCompiler } = await import("../src/validation.js");
     expect(createSchemaCompiler().engine).toBe(engine);
-    return { McpFnRegistry, structuredResult };
+    return { McpFnRegistry, structuredResult, defineMcpFnServer };
   }
 
   const handler = async () => ({ content: [], structuredContent: { ok: true } });
@@ -228,6 +228,79 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
     });
     if (sourceAccepts) expect(register).not.toThrow();
     else expect(register).toThrow("invalid JSON Schema");
+  });
+
+  async function expectNameValidates(registry: Registry, tool: string) {
+    await expect(registry.callTool(tool, { name: "x" }, undefined, requestExtra()))
+      .resolves.toMatchObject({ structuredContent: { ok: true } });
+    await expect(registry.callTool(tool, { name: 1 }, undefined, requestExtra()))
+      .rejects.toThrow(`Invalid arguments for ${tool}`);
+  }
+
+  it("replays a failed compile as compiled after the caller fixes the schema in place and retries", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await load();
+    const source = new McpFnRegistry();
+    const plain: { type: string; properties: { name: { type: string } }; required: string[] } =
+      { type: "object", properties: { name: { type: "bogus" } }, required: ["name"] };
+    const withId = { ...objectWithId("https://test.invalid/fixed-in-place"), properties: { name: { type: "bogus" } } };
+    for (const [name, inputSchema] of [["plain", plain], ["with-id", withId]] as const) {
+      expect(() => source.register({ name, description: "Invalid nested type.", inputSchema, handler }))
+        .toThrow("invalid JSON Schema");
+      inputSchema.properties.name.type = "string";
+      source.register({ name, description: "Fixed in place.", inputSchema, handler });
+    }
+
+    const replayed = source.clone();
+    const declaration = defineMcpFnServer({ info: { name: "test", version: "0.0.0" }, registry: source });
+    for (const derived of [replayed, declaration.registry]) {
+      expect(derived.listTools().map((tool) => tool.name)).toEqual(["plain", "with-id"]);
+      for (const name of ["plain", "with-id"]) await expectNameValidates(derived, name);
+    }
+    for (const name of ["plain", "with-id"]) await expectNameValidates(source, name);
+  });
+
+  it("replays an ok input schema as compiled after the caller changes its $id in place and retries", async () => {
+    const { McpFnRegistry } = await load();
+    const firstId = "https://test.invalid/first-id";
+    const inputSchema = objectWithId(firstId);
+    const definition = {
+      name: "retried",
+      description: "Valid input, invalid output.",
+      inputSchema,
+      outputSchema: { type: "object", properties: { a: { type: "not-a-type" } } } as object,
+      handler,
+    };
+    const source = new McpFnRegistry();
+    expect(() => source.register(definition)).toThrow("invalid JSON Schema");
+    inputSchema.$id = "https://test.invalid/second-id";
+    definition.outputSchema = { type: "object" };
+    source.register(definition);
+    // The source compiler kept the first $id from the failed registration.
+    source.register({ name: "uses-first", description: "Refers to the first id.", inputSchema: refTo(firstId), handler });
+
+    const replayed = source.clone();
+    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["retried", "uses-first"]);
+    for (const registry of [source, replayed]) {
+      await expectNameValidates(registry, "retried");
+      await expectRefValidates(registry, "uses-first");
+    }
+  });
+
+  it("does not fail clone() over a failed compile whose schema cannot be copied", async () => {
+    const { McpFnRegistry } = await load();
+    const uncopyable = { ...objectWithId("https://test.invalid/uncopyable"), examples: [() => undefined] };
+    const source = new McpFnRegistry();
+    expect(() => source.register({
+      name: "broken",
+      description: "Uncopyable input, invalid output.",
+      inputSchema: uncopyable,
+      outputSchema: { type: "object", properties: { a: { type: "not-a-type" } } },
+      handler,
+    })).toThrow("invalid JSON Schema");
+    source.register({ name: "later", description: "Plain.", inputSchema: objectWithId("https://test.invalid/later"), handler });
+    const replayed = source.clone();
+    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["later"]);
+    await expectNameValidates(replayed, "later");
   });
 
   it("leaks no later registration in either direction", async () => {
