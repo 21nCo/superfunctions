@@ -714,8 +714,10 @@ describe("startUpdateCheck: atomic cache writes", () => {
       versions.map((latest) => check({ fetch: registry({ latest }) }).notice())
     );
 
-    // Within one process only one handle gives the notice; the cache keeps whichever result was renamed last.
-    expect(notices.filter((notice) => notice !== null)).toEqual([`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`]);
+    // Within one process only one handle gives the notice, whichever settles first; the cache keeps the last rename.
+    const given = notices.filter((notice) => notice !== null);
+    expect(given).toHaveLength(1);
+    expect(versions.map((latest) => `Update available: 1.2.0 → ${latest} (npm i -g my-cli)`)).toContain(given[0]);
     const cached = (await readCacheJson()) as { checkedAt: number; latest: string; notifiedAt: number };
     expect(await readdir(stateDir)).toEqual(["update-check.json"]);
     expect(cached.checkedAt).toBe(T0);
