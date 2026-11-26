@@ -94,6 +94,49 @@ describe("McpFn server declarations", () => {
     expect(declaration.createServer().manifest()).toEqual(declaration.manifest());
   });
 
+  it("retains a supplied schema compiler when declaration definitions are added", () => {
+    let compiled = 0;
+    const registry = new McpFnRegistry({
+      compileSchema: () => {
+        compiled += 1;
+        return () => true;
+      },
+    });
+    const declaration = defineMcpFnServer({
+      info: { name: "runtime-safe", version: "1.0.0" },
+      registry,
+      tools: [{
+        name: "ping",
+        description: "Return a pong.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ pong: true }),
+      }],
+    });
+    expect(compiled).toBe(1);
+    expect(declaration.registry.listTools().map(({ name }) => name)).toEqual(["ping"]);
+    expect(registry.listTools()).toEqual([]);
+  });
+
+  it("recompiles a supplied registry's definitions with its own schema compiler", () => {
+    const compiledSchemas: object[] = [];
+    const inputSchema = { type: "object" };
+    const registry = new McpFnRegistry({
+      compileSchema: (schema) => {
+        compiledSchemas.push(schema);
+        return () => true;
+      },
+    }).register({
+      name: "existing",
+      description: "An existing tool.",
+      inputSchema,
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const declaration = defineMcpFnServer({ info: { name: "copied", version: "1.0.0" }, registry });
+    expect(compiledSchemas).toEqual([inputSchema, inputSchema]);
+    expect(declaration.registry.clone().listTools().map(({ name }) => name)).toEqual(["existing"]);
+    expect(compiledSchemas).toHaveLength(3);
+  });
+
   it("keeps task-store capability flags identical in manifest and runtime", () => {
     const declaration = defineMcpFnServer({
       info: { name: "tasks", version: "1.0.0" },

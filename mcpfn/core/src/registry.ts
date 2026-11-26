@@ -2,7 +2,6 @@ import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import {
   createSchemaCompiler,
   type CompiledSchema,
-  type SchemaCompiler,
   type SchemaIssue,
 } from "./validation.js";
 import type {
@@ -44,6 +43,73 @@ interface RegisteredTool<TContext> {
 interface RegisteredPrompt<TContext> {
   definition: McpFnPromptDefinition<TContext>;
   validateArguments: CompiledSchema;
+}
+
+/** One failure reported by a {@link McpFnSchemaValidator}. */
+export interface McpFnSchemaValidationIssue {
+  instancePath?: string;
+  message?: string;
+  keyword: string;
+}
+
+/**
+ * A validator returned by a {@link McpFnSchemaCompiler}. Like an Ajv validate
+ * function, it returns whether `data` is valid and, on failure, sets `errors`.
+ */
+export interface McpFnSchemaValidator {
+  (data: unknown): boolean;
+  errors?: readonly McpFnSchemaValidationIssue[] | null;
+}
+
+/** Compile a JSON Schema into a validator; throw when the schema is invalid. */
+export type McpFnSchemaCompiler = (schema: object) => McpFnSchemaValidator;
+
+export interface McpFnRegistryOptions {
+  /**
+   * Replace the built-in schema engine (Ajv, or @cfworker/json-schema where
+   * code generation is unavailable). Clones of this registry, including the
+   * copy a server declaration makes, keep using it.
+   */
+  compileSchema?: McpFnSchemaCompiler;
+}
+
+const MAX_CUSTOM_SCHEMA_ISSUES = 100;
+
+function customSchemaIssues(errors: unknown): SchemaIssue[] {
+  const issues: SchemaIssue[] = [];
+  if (Array.isArray(errors)) {
+    for (const error of errors.slice(0, MAX_CUSTOM_SCHEMA_ISSUES)) {
+      const issue = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
+      issues.push({
+        instancePath: typeof issue.instancePath === "string" ? issue.instancePath : "",
+        message: typeof issue.message === "string" ? issue.message : undefined,
+        keyword: typeof issue.keyword === "string" ? issue.keyword : "schema",
+      });
+    }
+  }
+  // A rejection must always carry a diagnostic, even from a terse validator.
+  return issues.length > 0
+    ? issues
+    : [{ instancePath: "", message: "Schema validation failed", keyword: "schema" }];
+}
+
+function adaptSchemaCompiler(
+  compileSchema: McpFnSchemaCompiler,
+): (schema: object) => CompiledSchema {
+  return (schema) => {
+    const validate = compileSchema(schema);
+    if (typeof validate !== "function") {
+      throw new TypeError("compileSchema must return a validator function");
+    }
+    const compiled = ((data: unknown): boolean => {
+      // Fail closed: only an explicit `true` accepts the value.
+      const valid = validate(data) === true;
+      compiled.errors = valid ? null : customSchemaIssues(validate.errors);
+      return valid;
+    }) as CompiledSchema;
+    compiled.errors = null;
+    return compiled;
+  };
 }
 
 interface RegisteredTemplate<TContext> {
@@ -481,13 +547,14 @@ function exceedsJsonNodes(value: unknown, limit: number): boolean {
 }
 
 export class McpFnRegistry<TContext = undefined> {
-  private readonly schemaCompiler: SchemaCompiler;
+  private readonly options: McpFnRegistryOptions;
+  private readonly compileSchema: (schema: object) => CompiledSchema;
   private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
   private readonly schemas: object[] = [];
 
   /** Clone in successful registration order, preserving cross-definition references. */
   clone(): McpFnRegistry<TContext> {
-    const target = new McpFnRegistry<TContext>();
+    const target = new McpFnRegistry<TContext>(this.options);
     for (const register of this.registrations) register(target);
     return target;
   }
@@ -507,8 +574,18 @@ export class McpFnRegistry<TContext = undefined> {
   >();
   private readonly prompts = new Map<string, RegisteredPrompt<TContext>>();
 
-  constructor() {
-    this.schemaCompiler = createSchemaCompiler();
+  constructor(options: McpFnRegistryOptions = {}) {
+    const { compileSchema } = options;
+    if (compileSchema !== undefined && typeof compileSchema !== "function") {
+      throw new TypeError("McpFnRegistry compileSchema must be a function");
+    }
+    this.options = { compileSchema };
+    if (compileSchema) {
+      this.compileSchema = adaptSchemaCompiler(compileSchema);
+    } else {
+      const compiler = createSchemaCompiler();
+      this.compileSchema = (schema) => compiler.compile(schema);
+    }
   }
 
   register<TDefinition extends McpFnToolDefinition<TContext>>(
@@ -567,9 +644,9 @@ export class McpFnRegistry<TContext = undefined> {
     let validateInput: CompiledSchema;
     let validateOutput: CompiledSchema | undefined;
     try {
-      validateInput = this.schemaCompiler.compile(definition.inputSchema);
+      validateInput = this.compileSchema(definition.inputSchema);
       validateOutput = definition.outputSchema !== undefined
-        ? this.schemaCompiler.compile(definition.outputSchema)
+        ? this.compileSchema(definition.outputSchema)
         : undefined;
     } catch (error) {
       throw new McpFnValidationError(
@@ -744,7 +821,7 @@ export class McpFnRegistry<TContext = undefined> {
     }
     let validateArguments: CompiledSchema;
     try {
-      validateArguments = this.schemaCompiler.compile(promptSchema(definition));
+      validateArguments = this.compileSchema(promptSchema(definition));
     } catch (error) {
       throw new McpFnValidationError(
         `Prompt ${definition.name} contains an invalid arguments JSON Schema`,

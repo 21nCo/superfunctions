@@ -8,6 +8,7 @@ import {
   McpFnRegistry,
   createMcpFnServer,
   structuredResult,
+  type McpFnSchemaValidator,
 } from "../src/index.js";
 
 describe("McpFnServer", () => {
@@ -101,6 +102,86 @@ describe("McpFnServer", () => {
     await client.connect(clientTransport);
     closeables.push(client, server);
     await expect(client.callTool({ name: "echo", arguments: {} })).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("accepts a runtime-safe schema compiler without using Ajv compilation", async () => {
+    let compileCount = 0;
+    let handlerCalls = 0;
+    const registry = new McpFnRegistry({
+      compileSchema: () => {
+        compileCount += 1;
+        const validate: McpFnSchemaValidator = (data: unknown) => {
+          const valid = Boolean(data && typeof data === "object" &&
+            (data as Record<string, unknown>).value === "allowed");
+          validate.errors = valid ? null : [{ keyword: "const", message: "value is not allowed" }];
+          return valid;
+        };
+        return validate;
+      },
+    }).register({
+      name: "safe",
+      description: "Validate without generated code.",
+      inputSchema: { type: "object", properties: { value: { type: "string" } } },
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    const server = createMcpFnServer({ info: { name: "safe", version: "1.0.0" }, registry });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    expect(compileCount).toBe(1);
+    const denied = await client.callTool({ name: "safe", arguments: { value: "denied" } });
+    expect(denied).toMatchObject({ isError: true });
+    expect(JSON.stringify(denied)).toContain("value is not allowed");
+    expect(handlerCalls).toBe(0);
+    await expect(client.callTool({ name: "safe", arguments: { value: "allowed" } }))
+      .resolves.toMatchObject({ structuredContent: { ok: true } });
+    expect(handlerCalls).toBe(1);
+  });
+
+  it("fails closed when a supplied schema validator returns a non-true value", async () => {
+    let handlerCalls = 0;
+    const registry = new McpFnRegistry({
+      // A terse validator: a truthy non-boolean result and no error details.
+      compileSchema: () => (() => "yes") as unknown as McpFnSchemaValidator,
+    }).register({
+      name: "terse",
+      description: "Validate with a terse validator.",
+      inputSchema: { type: "object" },
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    const server = createMcpFnServer({ info: { name: "terse", version: "1.0.0" }, registry });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    const result = await client.callTool({ name: "terse", arguments: {} });
+    expect(result).toMatchObject({ isError: true });
+    expect(JSON.stringify(result)).toContain("Schema validation failed");
+    expect(handlerCalls).toBe(0);
+  });
+
+  it("reports a schema compiler failure as an invalid tool schema", () => {
+    const registry = new McpFnRegistry({
+      compileSchema: () => { throw new Error("unsupported keyword"); },
+    });
+    expect(() => registry.register({
+      name: "broken",
+      description: "Has a schema the compiler rejects.",
+      inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    })).toThrow("Tool broken contains an invalid JSON Schema");
+    expect(registry.listTools()).toEqual([]);
   });
 
   it("normalizes structured results without treating repeated references as cycles", () => {
