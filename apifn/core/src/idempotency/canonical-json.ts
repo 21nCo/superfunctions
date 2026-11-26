@@ -1,34 +1,25 @@
 /**
  * Canonical JSON for request fingerprints.
  *
- * Two values that JSON-serialize to the same document produce the same string,
- * independent of object key order. It follows `JSON.stringify` semantics for
- * `toJSON` (called per value with its key), omitted object properties and
- * array holes (encoded as `null`). Values that JSON would silently change or
- * collapse (non-finite numbers, bigint, functions, symbols, Map/Set and other
- * class instances, cycles) are rejected, so two different request bodies can
- * never share a fingerprint because one of them lost information.
+ * It encodes plain JSON data only, as `apifn/contracts` canonical JSON does:
+ * strings, finite numbers, booleans, null, arrays without holes or undefined
+ * items, and plain objects (keys sorted by UTF-16 code unit; undefined
+ * properties omitted). Anything a JSON serializer would change, collapse or
+ * convert (sparse arrays, undefined array items, Dates, Buffers, Maps, class
+ * instances, any object with `toJSON`, non-finite numbers, bigint, functions,
+ * symbols, cycles) is rejected, so two different request bodies can never
+ * share a fingerprint. Hosts pass the validated, parsed JSON body.
  */
 
 const MAX_DEPTH = 256;
 
-/** Encodes a JSON value canonically. A top-level `undefined` encodes as `null`. */
+/** Encodes plain JSON data canonically; throws a TypeError for anything else. */
 export function canonicalJson(value: unknown): string {
-  return encode(value, "", 0, new Set()) ?? "null";
+  return encode(value, "", 0, new Set());
 }
 
-/** Returns undefined when JSON would omit the value (an object property) or write `null` (an array item). */
-function encode(input: unknown, key: string, depth: number, ancestors: Set<object>): string | undefined {
+function encode(value: unknown, path: string, depth: number, ancestors: Set<object>): string {
   if (depth > MAX_DEPTH) throw new TypeError(`canonicalJson: value is nested deeper than ${MAX_DEPTH} levels`);
-  let value = input;
-  if (typeof value === "object" && value !== null) {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") {
-      value = toJSON.call(value, key);
-      if (value === input) throw new TypeError("canonicalJson: toJSON returned its own object");
-    }
-  }
-  if (value === undefined) return undefined;
   if (value === null) return "null";
   switch (typeof value) {
     case "string":
@@ -36,35 +27,42 @@ function encode(input: unknown, key: string, depth: number, ancestors: Set<objec
     case "boolean":
       return value ? "true" : "false";
     case "number":
-      if (!Number.isFinite(value)) throw new TypeError("canonicalJson: numbers must be finite");
+      if (!Number.isFinite(value)) throw new TypeError(`canonicalJson: non-finite number at ${path || "/"}`);
       return JSON.stringify(value);
     case "object":
-      return encodeObject(value, depth, ancestors);
+      return encodeObject(value, path, depth, ancestors);
     default:
-      throw new TypeError(`canonicalJson: ${typeof value} values are not JSON`);
+      throw new TypeError(`canonicalJson: ${typeof value} at ${path || "/"} is not JSON data`);
   }
 }
 
-function encodeObject(value: object, depth: number, ancestors: Set<object>): string {
-  if (ancestors.has(value)) throw new TypeError("canonicalJson: value contains a cycle");
+function encodeObject(value: object, path: string, depth: number, ancestors: Set<object>): string {
+  if (ancestors.has(value)) throw new TypeError(`canonicalJson: cycle at ${path || "/"}`);
+  // A toJSON hook would let two different values share one encoding (Date and its ISO string).
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") throw new TypeError(`canonicalJson: object with toJSON at ${path || "/"} is not plain JSON data`);
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
       const items: string[] = [];
-      // An index loop visits holes, which JSON writes as null.
-      for (let index = 0; index < value.length; index += 1) {
-        items.push(encode(value[index], String(index), depth + 1, ancestors) ?? "null");
+      // The length is read once, so a getter that grows the array cannot extend the walk.
+      const length = value.length;
+      for (let index = 0; index < length; index += 1) {
+        if (!Object.hasOwn(value, index)) throw new TypeError(`canonicalJson: sparse array hole at ${path}/${index}`);
+        const item: unknown = value[index];
+        if (item === undefined) throw new TypeError(`canonicalJson: undefined array item at ${path}/${index}`);
+        items.push(encode(item, `${path}/${index}`, depth + 1, ancestors));
       }
       return `[${items.join(",")}]`;
     }
     const prototype: unknown = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError("canonicalJson: only plain objects, arrays and JSON primitives are supported");
+      throw new TypeError(`canonicalJson: non-plain object at ${path || "/"}`);
     }
+    const record = value as Record<string, unknown>;
     const entries: string[] = [];
-    for (const key of Object.keys(value).sort(compareCodeUnits)) {
-      const item = encode((value as Record<string, unknown>)[key], key, depth + 1, ancestors);
-      if (item !== undefined) entries.push(`${JSON.stringify(key)}:${item}`);
+    for (const key of Object.keys(record).sort(compareCodeUnits)) {
+      const item = record[key];
+      if (item !== undefined) entries.push(`${JSON.stringify(key)}:${encode(item, `${path}/${key}`, depth + 1, ancestors)}`);
     }
     return `{${entries.join(",")}}`;
   } finally {

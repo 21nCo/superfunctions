@@ -661,23 +661,41 @@ describe("createRequestIdempotency receipt reconciliation", () => {
 });
 
 describe("canonicalJson", () => {
-  it("sorts keys and matches JSON for plain data", () => {
-    expect(canonicalJson({ b: [1, "x", null, undefined], a: { d: true, c: -0 }, e: undefined })).toBe(
-      '{"a":{"c":0,"d":true},"b":[1,"x",null,null]}',
-    );
-    expect(canonicalJson(undefined)).toBe("null");
-    expect(canonicalJson(new Date(0))).toBe('"1970-01-01T00:00:00.000Z"');
+  it("sorts keys, omits undefined properties and matches JSON for plain data", () => {
+    const value = { b: [1, "x", null], a: { d: true, c: -0 }, e: undefined, toJSON: "a data member" };
+    expect(canonicalJson(value)).toBe('{"a":{"c":0,"d":true},"b":[1,"x",null],"toJSON":"a data member"}');
+    expect(JSON.parse(canonicalJson(value))).toEqual(JSON.parse(JSON.stringify(value)));
+    expect(canonicalJson(Object.assign(Object.create(null), { z: 1, a: 2 }))).toBe('{"a":2,"z":1}');
   });
 
-  it("follows JSON for array holes and toJSON results", () => {
+  it("rejects values a JSON serializer would convert, so they never alias plain data", () => {
+    class Order {
+      item = "book";
+    }
     // eslint-disable-next-line no-sparse-arrays
     const holes = [1, , 3];
-    const omitted = { toJSON: () => undefined };
-    const keyed = { toJSON: (key: string) => `key:${key}` };
-    const value = { holes, empty: new Array(1), omitted, list: [omitted], keyed };
-    expect(canonicalJson(value)).toBe('{"empty":[null],"holes":[1,null,3],"keyed":"key:keyed","list":[null]}');
-    expect(JSON.parse(canonicalJson(value))).toEqual(JSON.parse(JSON.stringify(value)));
-    expect(canonicalJson(new Array(1))).not.toBe(canonicalJson([]));
+    for (const value of [
+      new Date(0),
+      Buffer.from("a"),
+      new Order(),
+      { toJSON: () => "converted" },
+      Object.assign([1], { toJSON: () => [2] }),
+      holes,
+      new Array(1),
+      [1, undefined, 3],
+      undefined,
+    ]) {
+      expect(() => canonicalJson(value)).toThrow(TypeError);
+      expect(() => canonicalJson({ nested: [value] })).toThrow(TypeError);
+    }
+  });
+
+  it("refuses a body that is not plain JSON data instead of aliasing its JSON form", async () => {
+    const { idempotency, store } = setup();
+    await expect(idempotency.claim(orderRequest({ body: { at: new Date(0) } }))).rejects.toThrow(TypeError);
+    await expect(idempotency.claim(orderRequest({ body: { data: Buffer.from("a") } }))).rejects.toThrow(TypeError);
+    expect(store.writes).toBe(0);
+    acquired(await idempotency.claim(orderRequest({ body: { at: "1970-01-01T00:00:00.000Z" } })));
   });
 
   it("rejects values that JSON would change or collapse", () => {
@@ -804,6 +822,7 @@ describe("createRequestIdempotency round-3 regressions", () => {
       storeKey: slow.storeKey,
       fingerprint: slow.fingerprint,
       generation: slow.generation,
+      claimId: slow.claimId,
       response: { status: 201, headers: { "set-cookie": "session=test-session-value", "content-type": "text/plain" }, body: "ok" },
     });
     const result = await idempotency.settle(current, { status: 409 });
@@ -825,5 +844,125 @@ describe("createRequestIdempotency round-3 regressions", () => {
       expect(await sha256Fingerprint(input)).toBe(createHash("sha256").update(input).digest("hex"));
     }
     expect(() => createRequestIdempotency({ store })).toThrow(/options\.nonce/);
+  });
+});
+
+describe("createRequestIdempotency round-4 regressions", () => {
+  const cookieResponse = { status: 201, headers: { "set-cookie": "session=test-session-value", "content-type": "text/plain" }, body: "ok" };
+
+  it.each([
+    ["evicted", "settle"],
+    ["evicted", "release"],
+    ["released", "settle"],
+    ["released", "release"],
+  ] as const)(
+    "reports another claim's receipt as committed, without its credentials, after the first record was %s (%s)",
+    async (loss, action) => {
+      const { idempotency, database, store } = setup();
+      const first = acquired(await idempotency.claim(orderRequest()));
+      if (loss === "evicted") store.records.clear();
+      else expect(await idempotency.release(first)).toEqual({ outcome: "released" });
+
+      const second = acquired(await idempotency.claim(orderRequest()));
+      // Eviction restarts the generation; a release tombstone continues it.
+      expect(second.generation).toBe(loss === "evicted" ? first.generation : first.generation + 1);
+      expect(second.claimId).not.toBe(first.claimId);
+      // The first claim's handler commits late; the second claim's commit then fails.
+      database.receiptsByKey.set(first.storeKey, { ...first, response: cookieResponse });
+
+      const result = action === "settle" ? await idempotency.settle(second, { status: 409 }) : await idempotency.release(second);
+      expect(result).toEqual({ outcome: "committed", response: { status: 201, headers: { "content-type": "text/plain" }, body: "ok" } });
+    },
+  );
+
+  it("keeps a release tombstone with the generation until retention ends", async () => {
+    const { idempotency, store, clock } = setup();
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    clock.advance(10);
+    expect(await idempotency.release(token)).toEqual({ outcome: "released" });
+    expect(store.records.get(token.storeKey)).toMatchObject({ state: "released", generation: token.generation, expiresAt: clock.time + 60_000 });
+    // A released key is free for any body.
+    const next = acquired(await idempotency.claim(orderRequest({ recovery: "none", body: { item: "pen" } })));
+    expect(next.generation).toBe(token.generation + 1);
+  });
+
+  it("settles with the receipt's response when the holder's response differs only in a header", async () => {
+    const { idempotency, database } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const committed = await database.createOrder(token, "book");
+    database.receiptsByKey.set(token.storeKey, { ...token, response: { ...committed, headers: { ...committed.headers, location: "/orders/1" } } });
+
+    const sent = { ...committed, headers: { ...committed.headers, location: "/orders/other" } };
+    const result = await idempotency.settle(token, sent);
+    expect(result).toEqual({ outcome: "settled", response: { ...committed, headers: { "content-type": "application/json", location: "/orders/1" } } });
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", response: { headers: { location: "/orders/1" } } });
+  });
+
+  it("drops fields a Connection header nominates on write and on replay", async () => {
+    const headers = { Connection: "close, X-Hop-Trace", "X-Hop-Trace": "test-trace", "x-keep": "kept" };
+    expect(normalizeIdempotentResponse({ status: 200, headers })).toEqual({ status: 200, headers: { "x-keep": "kept" } });
+
+    const { idempotency, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    store.records.set(token.storeKey, {
+      state: "completed",
+      version: "v",
+      generation: 1,
+      fingerprint: token.fingerprint,
+      recovery: "none",
+      expiresAt: 2_000_000,
+      response: { status: 200, headers: { connection: "x-hop-trace", "x-hop-trace": "test-trace", "x-keep": "kept" } },
+    });
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toMatchObject({
+      outcome: "replay",
+      response: { status: 200, headers: { "x-keep": "kept" } },
+    });
+  });
+
+  it("fails closed on stored records and receipts that contradict the write path", async () => {
+    const { idempotency, store, database } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const base = { state: "completed", version: "v", generation: 1, fingerprint: token.fingerprint, recovery: "receipt", expiresAt: 2_000_000 };
+    for (const record of [
+      { ...base, response: { status: 200, headers: { "x-a": "a" }, omitted: ["headers"] } },
+      { ...base, response: { status: 200, headers: {}, body: "kept", omitted: ["headers"] } },
+      { ...base, response: { status: 200, headers: {}, omitted: [] } },
+      { ...base, response: { status: 200, headers: {}, omitted: ["body", "body"] } },
+      { ...base, recovery: "none", fromReceipt: true, response: { status: 200, headers: {} } },
+    ]) {
+      store.records.set(token.storeKey, record as unknown as IdempotencyRecord);
+      await expect(idempotency.claim(orderRequest(record.recovery === "none" ? { recovery: "none" } : {}))).rejects.toThrow(/malformed record/);
+    }
+
+    store.records.clear();
+    for (const receipt of [
+      { ...token, response: { status: 0 } },
+      { ...token, response: { status: 201, headers: { "x-a": "a\r\nb" } } },
+      { ...token, response: { status: 201, body: 42 } },
+      { ...token, claimId: "", response: { status: 201 } },
+    ]) {
+      database.receiptsByKey.set(token.storeKey, receipt as unknown as IdempotencyReceipt);
+      await expect(idempotency.claim(orderRequest())).rejects.toThrow(/malformed receipt/);
+      await expect(idempotency.settle(token, { status: 201 })).rejects.toThrow(/malformed receipt/);
+    }
+  });
+
+  it("starts the lease at the claim write, after a slow receipt lookup", async () => {
+    const clock = new FakeClock();
+    const database = new FakeOrderDatabase();
+    let slowLookups = 1;
+    const receipts = {
+      find: async (storeKey: string) => {
+        if (slowLookups > 0) {
+          slowLookups -= 1;
+          clock.advance(5_000); // longer than the lease
+        }
+        return database.receipts.find(storeKey);
+      },
+    };
+    const { idempotency } = setup({ clock, receipts });
+    const first = acquired(await idempotency.claim(orderRequest()));
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "in_progress" });
+    expect(first.generation).toBe(1);
   });
 });

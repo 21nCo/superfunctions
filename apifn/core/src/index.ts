@@ -141,6 +141,7 @@ export type {
   IdempotencyToken,
   IdempotentResponse,
   PendingIdempotencyRecord,
+  ReleasedIdempotencyRecord,
   RequestIdempotency,
   RequestIdempotencyOptions,
   StoredIdempotentResponse,
