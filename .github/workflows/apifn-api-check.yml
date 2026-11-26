@@ -490,28 +490,26 @@ jobs:
             git -C "$GITHUB_WORKSPACE" diff --binary "$CHECKOUT_COMMIT" "${outside_node_modules[@]}"
           }
           before="$(tree_state | sha256sum)"
-          # Lifecycle scripts (the caller's and its dependencies') run only when the caller sets allow_install_scripts:
-          # true; anything else installs with them off. Either way npm ci runs in this read-only job, and the tree and
-          # HEAD checks around it fail closed.
-          ignore_scripts=true
+          # The npm bundled with Node 20 (10.8) still runs the prepare script of a git dependency, or of a directory
+          # dependency it installs as a copy, under --ignore-scripts; npm 11.21 (pacote 21) skips it. This exact npm is
+          # installed outside the checkout, from outside the caller's directory (so its .npmrc does not apply), without
+          # scripts, and put first on PATH for the caller install only.
+          caller_npm="$RUNNER_TEMP/apifn-caller-npm"
+          (cd "$RUNNER_TEMP" && npm install --global --prefix "$caller_npm" --ignore-scripts --no-audit --no-fund npm@11.21.3)
+          export PATH="$caller_npm/bin:$PATH"
+          if [ "$(npm --version)" != "11.21.3" ]; then
+            echo "::error::The caller install needs npm 11.21.3; found $(npm --version)"
+            exit 1
+          fi
+          # Lifecycle scripts (the caller's and its dependencies', prepare included) run only when the caller sets
+          # allow_install_scripts: true; anything else installs with them off. Either way npm ci runs in this read-only
+          # job, and the tree and HEAD checks around it fail closed.
           if [ "$ALLOW_INSTALL_SCRIPTS" == "true" ]; then
-            ignore_scripts=false
             echo "allow_install_scripts is true: npm ci runs the lifecycle scripts."
+            npm ci --ignore-scripts=false
           else
             echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
-            # --ignore-scripts does not stop npm from running the prepare script of a git dependency, or of a directory
-            # dependency it installs as a copy, while packing it. These settings reach every npm process of the
-            # install: scripts stay off, and where npm passes script-shell to that packing step (recent npm 10 and
-            # later) the script runs /usr/bin/false instead, so the install fails without running it. The npm bundled
-            # with Node 20 (10.8) packs with /bin/sh and still runs it, here in the read-only job, between the HEAD and
-            # tree checks (apifn/README.md).
-            export npm_config_ignore_scripts=true npm_config_script_shell=/usr/bin/false
-          fi
-          if ! npm ci --ignore-scripts="$ignore_scripts"; then
-            if [ "$ignore_scripts" == "true" ]; then
-              echo "::error::npm ci --ignore-scripts failed in $PWD (see above). A dependency npm prepares by running a script (a git dependency, or a directory dependency installed as a copy) cannot be installed with allow_install_scripts: false; set it to true if the router needs it."
-            fi
-            exit 1
+            npm ci --ignore-scripts
           fi
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
             echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."

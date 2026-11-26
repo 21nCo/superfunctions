@@ -100,7 +100,8 @@ jobs:
       cli_source: workspace
       post_pr_comment: false
 
-  # The fixture's committed spec includes a route its router serves only after its postinstall script ran.
+  # The fixture's committed spec includes a route its router serves only after its postinstall script ran, and one
+  # served only after the prepare script of its directory dependency (installed as a copy) ran.
   # allow_install_scripts: true runs npm ci with lifecycle scripts, so the check passes.
   router-install-scripts:
     if: github.repository == '21nCo/superfunctions'
@@ -118,10 +119,10 @@ jobs:
       base_branch: dev
       post_pr_comment: false
 
-  # The default (allow_install_scripts omitted) runs npm ci --ignore-scripts: the route is missing, so the check reports
-  # drift, and removing it from the committed spec is breaking. base_spec pins that base, so the result is the same
-  # before and after the fixture lands on dev. enforce_gates: false keeps this caller non-blocking; router-outputs
-  # asserts the failure.
+  # The default (allow_install_scripts omitted) runs npm ci --ignore-scripts, and an explicit false does the same:
+  # openapi.scripts-off.yml has neither script-gated route, so the check passes against it only when neither the
+  # postinstall script nor the dependency's prepare script ran (npm 10.8 would still run that prepare). base_spec pins
+  # the base to the same file, so the result is the same before and after the fixture lands on dev.
   router-install-scripts-default:
     if: github.repository == '21nCo/superfunctions'
     permissions:
@@ -132,15 +133,31 @@ jobs:
       working_directory: apifn/cli/__tests__/fixtures/check-smoke/install-scripts
       router_path: router.ts
       config_path: apifn.config.ts
-      spec_path: openapi.yml
-      base_spec: openapi.yml
-      enforce_gates: false
+      spec_path: openapi.scripts-off.yml
+      base_spec: openapi.scripts-off.yml
+      cli_source: workspace
+      base_branch: dev
+      post_pr_comment: false
+
+  router-install-scripts-false:
+    if: github.repository == '21nCo/superfunctions'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/apifn-api-check.yml
+    with:
+      working_directory: apifn/cli/__tests__/fixtures/check-smoke/install-scripts
+      router_path: router.ts
+      config_path: apifn.config.ts
+      spec_path: openapi.scripts-off.yml
+      base_spec: openapi.scripts-off.yml
+      allow_install_scripts: false
       cli_source: workspace
       base_branch: dev
       post_pr_comment: false
 
   router-outputs:
-    needs: [router-compatible, router-breaking, router-install-scripts, router-install-scripts-default]
+    needs: [router-compatible, router-breaking, router-install-scripts, router-install-scripts-default, router-install-scripts-false]
     if: github.repository == '21nCo/superfunctions' && (always())
     runs-on: ubuntu-latest
     permissions: {}
@@ -163,6 +180,10 @@ jobs:
           NO_SCRIPTS_VERDICT: ${{ needs.router-install-scripts-default.outputs.verdict }}
           NO_SCRIPTS_DRIFT: ${{ needs.router-install-scripts-default.outputs.drift }}
           NO_SCRIPTS_BREAKING: ${{ needs.router-install-scripts-default.outputs.breaking }}
+          FALSE_SCRIPTS_RESULT: ${{ needs.router-install-scripts-false.result }}
+          FALSE_SCRIPTS_VERDICT: ${{ needs.router-install-scripts-false.outputs.verdict }}
+          FALSE_SCRIPTS_DRIFT: ${{ needs.router-install-scripts-false.outputs.drift }}
+          FALSE_SCRIPTS_BREAKING: ${{ needs.router-install-scripts-false.outputs.breaking }}
         run: |
           set -euo pipefail
           failed=0
@@ -189,7 +210,11 @@ jobs:
           expect router-install-scripts.verdict "$SCRIPTS_VERDICT" pass
           expect router-install-scripts.drift "$SCRIPTS_DRIFT" false
           expect router-install-scripts-default.result "$NO_SCRIPTS_RESULT" success
-          expect router-install-scripts-default.verdict "$NO_SCRIPTS_VERDICT" fail
-          expect router-install-scripts-default.drift "$NO_SCRIPTS_DRIFT" true
-          expect router-install-scripts-default.breaking "$NO_SCRIPTS_BREAKING" true
+          expect router-install-scripts-default.verdict "$NO_SCRIPTS_VERDICT" pass
+          expect router-install-scripts-default.drift "$NO_SCRIPTS_DRIFT" false
+          expect router-install-scripts-default.breaking "$NO_SCRIPTS_BREAKING" false
+          expect router-install-scripts-false.result "$FALSE_SCRIPTS_RESULT" success
+          expect router-install-scripts-false.verdict "$FALSE_SCRIPTS_VERDICT" pass
+          expect router-install-scripts-false.drift "$FALSE_SCRIPTS_DRIFT" false
+          expect router-install-scripts-false.breaking "$FALSE_SCRIPTS_BREAKING" false
           exit "$failed"

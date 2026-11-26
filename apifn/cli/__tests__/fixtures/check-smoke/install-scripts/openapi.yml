@@ -12,6 +12,15 @@ paths:
       summary: Served only after the postinstall script ran
       tags:
         - users
+  /prepare-script:
+    get:
+      operationId: getPrepareScript
+      responses:
+        "200":
+          description: The prepare script ran
+      summary: Served only after the prepare-dep prepare script ran
+      tags:
+        - users
   /users:
     get:
       operationId: listUsers

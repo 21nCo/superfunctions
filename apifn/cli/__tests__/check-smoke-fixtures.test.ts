@@ -1,7 +1,8 @@
 /**
  * The fixtures .github/workflows/apifn-api-check-smoke.yml checks through the reusable API check workflow (API-4).
  * A generator change in a dependency does not trigger that workflow, so this test keeps the committed specs in sync
- * and the breaking fixture breaking: the smoke asserts verdict=pass for one and verdict=fail, breaking=true for the other.
+ * and the breaking fixture breaking: the smoke asserts verdict=pass for one and verdict=fail, breaking=true for the other,
+ * and the install-scripts specs matching the router with and without its install and prepare script markers.
  */
 
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -13,11 +14,16 @@ import type { CheckReport } from "../src/commands/check.js";
 
 const SMOKE = path.join(import.meta.dirname, "fixtures", "check-smoke");
 
-async function check(fixture: string, extra: string[], dir = path.join(SMOKE, fixture)): Promise<{ code: number; report: CheckReport }> {
+async function check(
+  fixture: string,
+  extra: string[],
+  dir = path.join(SMOKE, fixture),
+  spec = "openapi.yml"
+): Promise<{ code: number; report: CheckReport }> {
   let stdout = "";
   let stderr = "";
   const code = await runCli(
-    ["check", path.join(dir, "router.ts"), "--config", path.join(dir, "apifn.config.ts"), "--spec", path.join(dir, "openapi.yml"), ...extra, "--format", "json"],
+    ["check", path.join(dir, "router.ts"), "--config", path.join(dir, "apifn.config.ts"), "--spec", path.join(dir, spec), ...extra, "--format", "json"],
     {
       cwd: SMOKE,
       stdout: (text) => {
@@ -46,21 +52,31 @@ describe("API check smoke fixtures", () => {
     expect(report.breaking.map((entry) => entry.path)).toEqual(["paths./users.get"]);
   });
 
-  it("install-scripts: passes only when its postinstall marker exists, and reports drift without it", async () => {
-    // A copy, so the marker never lands in the checkout; postinstall.mjs writes the same file under npm ci.
+  it("install-scripts: openapi.yml needs both script markers, openapi.scripts-off.yml needs neither", async () => {
+    // A copy, so the markers never land in the checkout; postinstall.mjs and prepare-dep/prepare.mjs write the same
+    // files under npm ci with lifecycle scripts.
     const dir = mkdtempSync(path.join(tmpdir(), "apifn-install-scripts-"));
+    const marker = (name: string) => writeFileSync(path.join(dir, "node_modules", name), "");
     try {
       cpSync(path.join(SMOKE, "install-scripts"), dir, { recursive: true, filter: (src) => !src.includes("node_modules") });
+      // The smoke's scripts-off jobs (allow_install_scripts omitted or false) check against openapi.scripts-off.yml.
+      const scriptsOff = await check("install-scripts", ["--base-spec", path.join(dir, "openapi.scripts-off.yml")], dir, "openapi.scripts-off.yml");
+      expect(scriptsOff.code).toBe(0);
+      expect(scriptsOff.report).toMatchObject({ verdict: "pass", drift: false, valid: true, breaking: [] });
       const withoutScripts = await check("install-scripts", [], dir);
-      expect(withoutScripts.code).toBe(1);
       expect(withoutScripts.report).toMatchObject({ verdict: "fail", drift: true, valid: true, breaking: [] });
-      // The smoke's default job pins its base to the committed spec: the missing route is also a breaking change.
-      const pinned = await check("install-scripts", ["--base-spec", path.join(dir, "openapi.yml")], dir);
-      expect(pinned.report).toMatchObject({ verdict: "fail", drift: true });
-      expect(pinned.report.breaking.map((entry) => entry.path)).toEqual(["paths./install-script.get"]);
 
       mkdirSync(path.join(dir, "node_modules"), { recursive: true });
-      writeFileSync(path.join(dir, "node_modules", ".apifn-install-script-ran"), "");
+      // Either script alone adds its route, so the scripts-off check fails and openapi.yml still drifts.
+      for (const name of [".apifn-prepare-script-ran", ".apifn-install-script-ran"]) {
+        marker(name);
+        const off = await check("install-scripts", [], dir, "openapi.scripts-off.yml");
+        expect(off.report).toMatchObject({ verdict: "fail", drift: true });
+        rmSync(path.join(dir, "node_modules", name));
+      }
+
+      marker(".apifn-prepare-script-ran");
+      marker(".apifn-install-script-ran");
       const withScripts = await check("install-scripts", [], dir);
       expect(withScripts.code).toBe(0);
       expect(withScripts.report).toMatchObject({ verdict: "pass", drift: false, valid: true, breaking: [] });
