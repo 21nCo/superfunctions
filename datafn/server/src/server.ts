@@ -1241,15 +1241,45 @@ export async function createDatafnServer<TContext = any>(
    * answer within this time; otherwise the push returns its revisions alone.
    */
   const POST_WRITE_READ_TIMEOUT_MS = 2_000;
-  const withinDeadline = async (pending: Promise<Response>, deadline: number): Promise<Response | undefined> => {
+  /** Cancels a discarded read-back body; a failed cancel changes nothing. */
+  const discardBody = (body: { cancel(): Promise<void> } | null | undefined): void => {
+    try {
+      body?.cancel().catch(() => undefined);
+    } catch {
+      // Already released or closed.
+    }
+  };
+  /**
+   * Dispatches a read-back through the router and reads its JSON body, both
+   * before `deadline`. Undefined for a non-2xx answer, an unreadable body or
+   * a missed deadline; a body that is not read is cancelled.
+   */
+  const readBackWithin = (request: Request, deadline: number): Promise<unknown> => {
+    let expired = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const read = (async () => {
+      const response = await router.handle(request);
+      if (expired || !response.ok || !response.body) {
+        discardBody(response.body);
+        return undefined;
+      }
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      return JSON.parse(text + decoder.decode()) as unknown;
+    })();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()));
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => {
+        expired = true;
+        discardBody(reader);
+        resolve(undefined);
+      }, Math.max(0, deadline - Date.now()));
     });
-    const response = await Promise.race([pending, expired]).finally(() => clearTimeout(timer));
-    // A late answer is discarded unread.
-    if (!response) pending.then((late) => late.body?.cancel(), () => undefined);
-    return response;
+    return Promise.race([read.catch(() => undefined), timeout]).finally(() => clearTimeout(timer));
   };
 
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
@@ -1578,14 +1608,14 @@ export async function createDatafnServer<TContext = any>(
               const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
               const probe: PostWriteReadProbe = {};
               postWriteReads.set(readRequest, probe);
-              const response = await withinDeadline(router.handle(readRequest), readDeadline);
+              const body = (await readBackWithin(readRequest, readDeadline)) as
+                { ok?: boolean; result?: { data?: unknown } } | undefined;
               const executed = probe.executed;
               const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
               if (
-                !response?.ok || executed?.namespace !== pushNamespace || query?.resource !== resource ||
+                executed?.namespace !== pushNamespace || query?.resource !== resource ||
                 query.accessMode === "sharedWithMe" || query.namespaceFilter
               ) continue;
-              const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
               if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
               for (const row of body.result.data as Array<Record<string, unknown>>) {
                 if (row && typeof row.id === "string" && chunk.includes(row.id)) rows.set(row.id, row);

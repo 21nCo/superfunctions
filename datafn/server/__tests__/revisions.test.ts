@@ -3208,4 +3208,32 @@ describe("DATA-41 revisions: PR review round 3", () => {
     )).resolves.toMatchObject({ ok: true });
     expect(Object.getOwnPropertySymbols(context)).toEqual([]);
   });
+
+  it("bounds the read-back body by the deadline and cancels discarded bodies, even when cancel fails", async () => {
+    const served = await serve();
+    let mode: "stall" | "deny" = "stall";
+    const cancelled: string[] = [];
+    // A body that sends part of a JSON document, never closes, and whose cancel rejects.
+    const stuckBody = (label: string) => new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"ok":true,"result":{"data":[')); },
+      cancel() {
+        cancelled.push(label);
+        throw new Error("cancel failed");
+      },
+    });
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      await response.body?.cancel();
+      return new Response(stuckBody(mode), { status: mode === "stall" ? 200 : 403, headers: { "content-type": "application/json" } });
+    });
+    const stalled = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(stalled.body.result.revisions[stalled.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    mode = "deny";
+    const denied = await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b" } });
+    expect(denied.body.result.revisions[denied.mutationId]).toEqual({ resource: "task", id: "task:2", rev: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(cancelled).toEqual(["stall", "deny"]);
+  });
 });
+
