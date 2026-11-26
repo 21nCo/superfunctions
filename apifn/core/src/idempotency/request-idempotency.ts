@@ -875,8 +875,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   /**
    * How recording a receipt ended: `recorded` (written), `lost` (a newer
-   * writer holds the key), `failed` (a fenced write threw; the receipt still
-   * decides) or `gone` (no receipt is left for the key: decide again).
+   * writer holds the key: read it again), `failed` (the write threw, or lost
+   * to a newer writer after a recheck validated the receipt: it decides) or
+   * `gone` (no receipt is left for the key: decide again).
    */
   type Recorded = { kind: "recorded" | "lost" | "failed"; receipt: ParsedReceipt } | { kind: "gone" };
 
@@ -951,7 +952,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         }
       }
     }
-    return latest ? { kind, receipt: latest } : { kind: "gone" };
+    // A newer commit the recheck validated decides, even when the write lost to its writer.
+    return latest ? { kind: written === true ? "recorded" : "failed", receipt: latest } : { kind: "gone" };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.

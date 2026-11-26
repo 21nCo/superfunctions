@@ -1873,6 +1873,34 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     expect((await idempotency.claim(orderRequest())).outcome).toBe("acquired");
   });
 
+  it("settles from a newer receipt the recheck validated when the write over an absence lost to its record", async () => {
+    const database = new FakeOrderDatabase();
+    const paused = pausingReceipts(database);
+    let finds: number | undefined;
+    const receipts = {
+      find: async (storeKey: string) => {
+        if (finds !== undefined && (finds += 1) > 2) throw new Error("receipt lookup failed");
+        return paused.receipts.find(storeKey);
+      },
+    };
+    const store = new FakeAtomicStore();
+    const { idempotency } = setup({ store, receipts });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(holder, "book");
+    store.records.clear();
+    const { newer, run } = newerEpoch(idempotency, database, store, false);
+    paused.pauseNext(async () => {
+      const saved = finds;
+      finds = undefined;
+      await run();
+      finds = saved;
+    });
+    finds = 0;
+
+    expect(await idempotency.release(holder)).toEqual({ outcome: "conflict" });
+    expect([...store.records.values()][0]).toMatchObject({ receiptClaimId: newer.claimId });
+  });
+
   it("replays a complete confirmed copy from the store while the receipt source is down", async () => {
     const database = new FakeOrderDatabase();
     let down = false;
