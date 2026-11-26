@@ -1,0 +1,47 @@
+.github/workflows/apifn-api-check.yml
+  s_13f35ef098767b::t_466b07f523c6e0 31-35,133-137,203-205,449-452,463,488-498
+apifn/README.md
+  s_13f35ef098767b::t_c3beff1a61b4e5 164,199
+.github/workflows/apifn-api-check-smoke.yml
+  s_b20646d8f9ade1::t_cf1e63fa57509b 103-138,140,156-162,185-191
+apifn/cli/__tests__/check-smoke-fixtures.test.ts
+  s_b20646d8f9ade1::t_f5004c20d2572d 7-8,16,48-66
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/apifn.config.ts
+  s_b20646d8f9ade1::t_8fd88ed815ec82 1-4
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/npm-shrinkwrap.json
+  s_b20646d8f9ade1::t_4eaf8988de500e 1-13
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/openapi.yml
+  s_b20646d8f9ade1::t_1a57bc16f1d510 1-25
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/package.json
+  s_b20646d8f9ade1::t_8a89fe0e310b24 1-9
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/postinstall.mjs
+  s_b20646d8f9ade1::t_ffcfde6b670f9a 1-6
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts/router.ts
+  s_b20646d8f9ade1::t_a837c50a396506 1-38
+apifn/examples/ci-cd/github-actions.yml
+  s_b20646d8f9ade1::t_6496886f587194 28-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b89527393bff3ceb164786a596163e8f18d842f",
+  "prompts": {},
+  "sessions": {
+    "s_13f35ef098767b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2145f-9b5c-73f0-9133-4a95f3393b53",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b20646d8f9ade1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e60f0d-0c79-4d7b-9bba-1dc75c7577fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
