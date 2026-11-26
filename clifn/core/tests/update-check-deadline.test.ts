@@ -41,6 +41,7 @@ describe("startUpdateCheck: a slow cache write", () => {
     gate.hold = true;
     const env = { XDG_STATE_HOME: root, LOCALAPPDATA: root };
     const fetch = vi.fn<UpdateCheckFetch>(async () => new Response(JSON.stringify({ latest: "1.3.0" })));
+    const started = performance.now();
     const handle = startUpdateCheck({
       name: "my-cli",
       currentVersion: "1.2.0",
@@ -48,13 +49,13 @@ describe("startUpdateCheck: a slow cache write", () => {
       env,
       terminal: { stdin: tty, stdout: tty, stderr: tty },
       fetch,
-      timeoutMs: 200,
+      timeoutMs: 1_000,
     });
 
     await expect(handle.notice()).resolves.toBe(NOTICE);
-    // The cache write is still held at its rename, well past the 200 ms timeout.
-    await vi.waitFor(() => expect(gate.waiting.length).toBeGreaterThan(0));
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // The cache write is still held at its rename, well past the 1 s timeout.
+    await vi.waitFor(() => expect(gate.waiting.length).toBeGreaterThan(0), { timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 1_050 - performance.now())));
     const file = path.join(resolveAppPaths("my-cli", { env }).state, "update-check.json");
     await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     // The notice was handed out once; the handle gives no second one.

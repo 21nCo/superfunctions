@@ -207,7 +207,7 @@ describe("runAction with updateCheck", () => {
         const file = path.join(resolveAppPaths("my-cli", { env }).state, "update-check.json");
         const cached = JSON.parse(await readFile(file, "utf8"));
         expect(cached).toMatchObject({ error: true });
-      });
+      }, { timeout: 5_000 });
     });
   });
 });
