@@ -304,7 +304,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   header value is left out. The JSON body is sent with the operation's media
   type (`application/json` or the selected `*+json` type). Operations fetch
   cannot send (`TRACE`, `GET` or `HEAD` with a request body, a required
-  header fetch manages, such as `Connection`, `Sec-Fetch-Mode` or `Range`, or a body
+  header fetch manages, such as `Connection`, `Sec-Fetch-Mode` or `Range`,
+  a required header whose name is not an HTTP token (such as `X Bad`), or a body
   whose documented media type names a charset other than UTF-8, since the
   body is sent as UTF-8, or has a character no header can carry, such as a
   CR, LF, NUL or one above 0xFF) are skipped by `fromOpenAPI`
@@ -340,7 +341,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, and the headers undici
   rewrites: `Sec-Fetch-Mode`, and `Range`, beside which it adds `identity`
-  to `Accept-Encoding`; an operator entry for one is refused), `apiKey` credential
+  to `Accept-Encoding`; an operator entry for one is refused), optional
+  headers whose name is not an HTTP token, `apiKey` credential
   parameters and, with a `headers` record, every header it sets are not
   inputs; a value injected past validation for one of them is never sent,
   and an `apiKey` credential the operator does not set goes unsent. With a

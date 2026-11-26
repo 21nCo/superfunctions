@@ -242,13 +242,18 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
 
 /**
  * Whether a query or header parameter is the executor's own: a forbidden
- * header (D9), an optional header fetch manages (a required one makes the
- * operation unsupported instead), or a header the operator's record sets.
+ * header (D9), an optional header fetch manages or whose name is not an HTTP
+ * token, so it cannot be sent (a required one makes the operation
+ * unsupported instead), or a header the operator's record sets.
  */
 function ownsParameter(parameter: OpenApiParameterQuery, fixedNames: ReadonlySet<string>): boolean {
   if (parameter.in !== "header") return false;
   const lower = parameter.name.toLowerCase();
-  return isForbiddenHeader(lower) || fixedNames.has(lower) || (!parameter.required && TRANSPORT_HEADERS.has(lower));
+  return (
+    isForbiddenHeader(lower) ||
+    fixedNames.has(lower) ||
+    (!parameter.required && (TRANSPORT_HEADERS.has(lower) || !HEADER_NAME.test(parameter.name)))
+  );
 }
 
 /** The query and header parameters an apiKey scheme of the operation sends its credential in (header names lower case). */
@@ -328,6 +333,14 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
     (parameter) => parameter.in === "header" && parameter.required && TRANSPORT_HEADERS.has(parameter.name.toLowerCase()),
   );
   if (managed) return `fetch manages the required header ${JSON.stringify(managed.name)}`;
+  const unsendable = operation.parameters.find(
+    (parameter) =>
+      parameter.in === "header" &&
+      parameter.required &&
+      !isForbiddenHeader(parameter.name.toLowerCase()) &&
+      !HEADER_NAME.test(parameter.name),
+  );
+  if (unsendable) return `the required header ${JSON.stringify(unsendable.name)} is not a valid HTTP header name`;
   return securityRefusal(operation);
 }
 

@@ -1567,6 +1567,7 @@ function privateCopy(document: object): JsonObject {
  * timestamp) is left alone.
  */
 function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
+  const markLevel = levelMarker();
   try {
     markLevel(document.security, ownValue(copy, "security"));
     const paths = document.paths;
@@ -1620,22 +1621,41 @@ function clonesUnchanged(value: unknown): boolean {
 }
 
 /**
- * Marks the requirements of one security level. Only the elements present are
- * read (a sparse array's length costs nothing), by their own keys, never by a
- * method the caller's array could override; an element defined by an accessor
- * is marked too, as its value is not known.
+ * Returns a function that marks the requirements of one security level. Only
+ * the elements present are read (a sparse array's length costs nothing), by
+ * their own keys, never by a method the caller's array could override; an
+ * element defined by an accessor is marked too, as its value is not known.
+ * A security array many operations share is inspected once: its verdict is
+ * kept by identity and applied to each copy, and a copy (structuredClone
+ * keeps the sharing) is marked once, so the work follows the distinct input,
+ * not the number of references.
  */
-function markLevel(level: unknown, copied: unknown): void {
-  if (!Array.isArray(level) || !Array.isArray(copied)) return;
+function levelMarker(): (level: unknown, copied: unknown) => void {
+  const verdicts = new WeakMap<unknown[], number[]>();
+  const marked = new WeakSet<unknown[]>();
+  return (level, copied) => {
+    if (!Array.isArray(level) || !Array.isArray(copied) || marked.has(copied)) return;
+    marked.add(copied);
+    let indexes = verdicts.get(level);
+    if (indexes === undefined) {
+      indexes = unplainRequirements(level);
+      verdicts.set(level, indexes);
+    }
+    for (const index of indexes) if (index < copied.length) copied[index] = null;
+  };
+}
+
+/** The indexes of a security level's elements that are not plain objects, or not known. */
+function unplainRequirements(level: unknown[]): number[] {
+  const indexes: number[] = [];
   for (const key of Object.keys(level)) {
     if (!ARRAY_INDEX.test(key)) continue;
-    const index = Number(key);
-    if (index >= copied.length) continue;
     const descriptor = Object.getOwnPropertyDescriptor(level, key);
     if (descriptor === undefined) continue;
     const requirement: unknown = descriptor.value;
-    if (!("value" in descriptor) || (isObject(requirement) && !clonesUnchanged(requirement))) copied[index] = null;
+    if (!("value" in descriptor) || (isObject(requirement) && !clonesUnchanged(requirement))) indexes.push(Number(key));
   }
+  return indexes;
 }
 
 const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;

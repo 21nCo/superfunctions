@@ -2318,6 +2318,82 @@ describe("httpExecutor security arrays read without their methods", () => {
   });
 });
 
+describe("httpExecutor security arrays shared by many operations", () => {
+  const documentWith = (security: unknown[], count: number) => ({
+    openapi: "3.1.0",
+    info: { title: "shared-security", version: "1.0.0" },
+    paths: Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`/op${index}`, { get: { operationId: `op${index}`, security, responses: ok } }]),
+    ),
+  });
+
+  it("inspects one large array once, however many operations (excluded ones included) reference it", () => {
+    const security: unknown[] = Array.from({ length: 2000 }, () => ({}));
+    const started = performance.now();
+    const { tools } = fromOpenAPI(documentWith(security, 5000), {
+      executor: httpExecutor({ baseUrl: api.origin }),
+      include: ["op0"],
+    });
+    expect(performance.now() - started).toBeLessThan(400);
+    expect(tools.map((tool) => tool.name)).toEqual(["op0"]);
+  });
+
+  it("still marks a class-instance entry of the shared array for every operation that uses it", () => {
+    class Requirement {}
+    const { tools, skipped } = fromOpenAPI(documentWith([{}, new Requirement()], 3), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }),
+    });
+    expect(tools).toEqual([]);
+    expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual(
+      ["op0", "op1", "op2"].map((id) => [
+        id,
+        "unsupported-by-executor",
+        "its security cannot be read: the operation's security has a requirement that is not a plain object",
+      ]),
+    );
+  });
+});
+
+describe("httpExecutor header parameters whose name is not an HTTP token", () => {
+  const documentWith = (required: boolean) => ({
+    openapi: "3.1.0",
+    info: { title: "bad-header-name", version: "1.0.0" },
+    paths: {
+      "/bad": {
+        get: {
+          operationId: "bad",
+          parameters: [
+            { name: "X Bad", in: "header", required, schema: { type: "string" } },
+            { name: "X-Good", in: "header", schema: { type: "string" } },
+          ],
+          responses: ok,
+        },
+      },
+    },
+  });
+
+  it("skips an operation that requires one, as no request could carry it", () => {
+    const { tools, skipped } = fromOpenAPI(documentWith(true), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([
+      { code: "unsupported-by-executor", reason: 'the required header "X Bad" is not a valid HTTP header name' },
+    ]);
+  });
+
+  it("publishes no input for an optional one, and the call still sends", async () => {
+    const sent: Headers[] = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers));
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    const { registry, tools } = fromOpenAPI(documentWith(false), { executor: httpExecutor({ baseUrl: api.origin, fetch }) });
+    expect(tools[0]!.operation.parameters.map((parameter) => parameter.name)).toEqual(["X-Good"]);
+    const result = await registry.callTool("bad", { header: { "X-Good": "test-good" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent.map((headers) => headers.get("x-good"))).toEqual(["test-good"]);
+  });
+});
+
 describe("httpExecutor structured results of deeply nested bodies", () => {
   it("returns text within twice the body size, not a pretty-printed expansion", async () => {
     let value: object = { leaf: Array.from({ length: 20_000 }, () => 0) };
