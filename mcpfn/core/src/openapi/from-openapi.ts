@@ -9,6 +9,7 @@ import {
   type McpFnJsonSchema,
   type McpFnObjectSchema,
   type SchemaCompiler,
+  type SchemaEngine,
 } from "@mcpfn/core";
 import {
   CONTEXT_FREE_FAILURES,
@@ -24,6 +25,7 @@ import {
   TOO_DEEP,
   type OpenApiVersion,
 } from "./schema.js";
+import { isForbiddenHeader } from "./headers.js";
 import type {
   FromOpenApiOptions,
   FromOpenApiResult,
@@ -58,18 +60,6 @@ const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 const MAX_NAME_LENGTH = 128;
 const MAX_DESCRIPTION_LENGTH = 2000;
 
-// D9: credentials and transport headers are the executor's job, never inputs.
-// OpenAPI itself says Accept, Content-Type and Authorization header parameters
-// SHALL be ignored.
-const FORBIDDEN_HEADERS = new Set([
-  "authorization",
-  "cookie",
-  "host",
-  "content-length",
-  "accept",
-  "content-type",
-]);
-
 /** A remembered resolution: its target, or its skip thrown afresh. */
 function settled(outcome: JsonObject | OpenApiSkip): JsonObject {
   if (outcome instanceof OpenApiSkip) throw new OpenApiSkip(outcome.code, outcome.message);
@@ -79,11 +69,6 @@ function settled(outcome: JsonObject | OpenApiSkip): JsonObject {
 function entryObject(value: unknown, kind: string): JsonObject {
   if (!isObject(value)) throw new OpenApiSkip("invalid-operation", `a ${kind} entry is not an object`);
   return value;
-}
-
-function isForbiddenHeader(name: string): boolean {
-  const lower = name.toLowerCase();
-  return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
 }
 
 interface SelectorSet {
@@ -331,6 +316,8 @@ class OperationConverter {
     version: OpenApiVersion,
     /** Whether tools may share identical schema objects (see `toolSchema`). */
     private readonly shareSchemas: boolean,
+    /** Whether an output schema must describe every documented success (`OpenApiExecutor.outputSchemaRule`). */
+    private readonly everySuccess = false,
   ) {
     this.components = isObject(document.components) ? document.components : {};
     const dialect = document.jsonSchemaDialect;
@@ -746,11 +733,15 @@ class OperationConverter {
    * The schema of the first 2xx `application/json` response entry that has
    * one. It is always converted, so the skip rules apply whatever its shape
    * or method; it becomes the output schema only when it accepts objects and
-   * nothing else, and never for `HEAD`, whose response has no body.
+   * nothing else, and never for `HEAD`, whose response has no body. Under the
+   * `every-success` rule, also only when every documented 2xx response
+   * offers only JSON content with that same schema: a call that may succeed
+   * with another body (or none) has no single output.
    */
   outputSchema(raw: JsonObject, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const schema = this.responseSchema(raw);
-    return schema === undefined ? undefined : this.convertOutput(schema, method);
+    if (schema === undefined) return undefined;
+    return this.convertOutput(schema, method, !this.everySuccess || this.everySuccessHas(raw, schema));
   }
 
   private responseSchema(raw: JsonObject): unknown {
@@ -766,11 +757,37 @@ class OperationConverter {
     return undefined;
   }
 
-  private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
+  /**
+   * Whether every documented 2xx response has content, all of it JSON
+   * (`application/json` or `*+json`) declaring `schema`. A response that
+   * cannot be resolved describes no known body, so it answers no; it never
+   * skips the operation.
+   */
+  private everySuccessHas(raw: JsonObject, schema: unknown): boolean {
+    if (!isObject(raw.responses)) return false;
+    for (const [status, value] of Object.entries(raw.responses)) {
+      if (!SUCCESS_STATUS.test(status)) continue;
+      let content: unknown;
+      try {
+        content = this.resolve(value, "responses").content;
+      } catch (error) {
+        if (error instanceof OpenApiSkip) return false;
+        throw error;
+      }
+      const entries = Object.entries(isObject(content) ? content : {});
+      if (entries.length === 0) return false;
+      for (const [mediaType, media] of entries) {
+        if (!isJsonMediaType(mediaType) || !isObject(media) || !sameSchema(media.schema, schema)) return false;
+      }
+    }
+    return true;
+  }
+
+  private convertOutput(schema: unknown, method: OpenApiMethod, exclusive: boolean): McpFnObjectSchema | undefined {
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
     const { values } = this.schemas.admits(schema);
-    const objectOnly = method !== "HEAD" && values.size === 1 && values.has("object");
+    const objectOnly = exclusive && method !== "HEAD" && values.size === 1 && values.has("object");
     // A schema the registry would reject is not hidden by discarding it, nor
     // by leaving out writeOnly properties: those are checked as written
     // (which applies the same skip rules as converting it).
@@ -1281,6 +1298,9 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
   if (!options.executor || typeof options.executor.execute !== "function") {
     throw new McpFnValidationError("fromOpenAPI requires an executor with an execute function");
   }
+  if (options.executor.unsupported !== undefined && typeof options.executor.unsupported !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.unsupported must be a function");
+  }
   if (options.name !== undefined && typeof options.name !== "function") {
     throw new McpFnValidationError("fromOpenAPI name must be a function");
   }
@@ -1322,7 +1342,12 @@ export function fromOpenAPI<TContext>(
     options,
   };
   const source = privateCopy(document);
-  const converter = new OperationConverter(source, version, options.registry === undefined);
+  const converter = new OperationConverter(
+    source,
+    version,
+    options.registry === undefined,
+    options.executor.outputSchemaRule === "every-success",
+  );
   const skipped: OpenApiSkippedOperation[] = [];
   const candidates: Candidate[] = [];
   for (const [path, pathItem] of Object.entries(isObject(source.paths) ? source.paths : {})) {
@@ -1424,11 +1449,19 @@ function register<TContext>(
   options: FromOpenApiOptions<TContext>,
 ): FromOpenApiResult<TContext> {
   const registry = options.registry ?? new McpFnRegistry<TContext>();
+  const executor = options.executor;
+  // Operations the executor cannot send are skipped before any name is chosen or checked.
+  candidates = candidates.filter(({ operation }) => {
+    const unsupported = executor.unsupported?.(operation);
+    if (typeof unsupported !== "string") return true;
+    converter.dropOperation(operation);
+    skipped.push({ operation: operationRef(operation), code: "unsupported-by-executor", reason: unsupported });
+    return false;
+  });
   const names = new ToolNames(options, registry);
   // name() results are checked before anything is registered.
   const chosen = options.name ? candidates.map(({ operation }) => names.choose(operation)) : undefined;
   const tools: OpenApiToolInfo[] = [];
-  const executor = options.executor;
   // Shared schemas (see OperationConverter.toolSchema) leave the registry's
   // Ajv as fresh copies would: it resolves later schemas against the
   // anonymous schema it compiled last, which a cached object does not
@@ -1476,6 +1509,24 @@ function register<TContext>(
     const name = chosen ? chosen[index]! : names.next(operation);
     const description = toolDescription(operation);
     const annotations = toolAnnotations(operation.method);
+    // Lets an executor tell a success the schema does not describe from one it does, compiled at the first call.
+    let compiled: ((value: unknown) => boolean) | undefined;
+    const checkOutput = outputSchema
+      ? (value: Record<string, unknown>) => {
+          try {
+            compiled ??= createSchemaCompiler(engine as SchemaEngine).compile(outputSchema);
+          } catch {
+            // A schema this engine cannot compile is left to the registry's verdict.
+            return true;
+          }
+          try {
+            return compiled(value) === true;
+          } catch {
+            // Such as a value nested too deeply to validate.
+            return false;
+          }
+        }
+      : undefined;
     try {
       registry.register({
         name,
@@ -1483,7 +1534,15 @@ function register<TContext>(
         inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         annotations,
-        handler: (args, _context, extra) => executor.execute({ operation, args, signal: extra.signal }),
+        handler: (args, context, extra) =>
+          executor.execute({
+            operation,
+            args,
+            context,
+            signal: extra.signal,
+            hasOutputSchema: outputSchema !== undefined,
+            ...(checkOutput ? { checkOutput } : {}),
+          }),
       });
     } catch (error) {
       converter.releaseCopy(catalogNodes);
@@ -1515,6 +1574,17 @@ function register<TContext>(
 }
 
 const NO_OUTPUT = Object.freeze({});
+
+/** The same schema object, or one written identically (as in two responses with the same inline schema). */
+function sameSchema(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
 
 function operationRef(operation: OpenApiOperation): OpenApiOperationRef {
   return {

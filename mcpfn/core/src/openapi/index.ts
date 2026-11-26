@@ -18,3 +18,5 @@ export type {
   OpenApiSkippedOperation,
   OpenApiToolInfo,
 } from "./types.js";
+export { httpExecutor } from "./http-executor.js";
+export type { HttpExecutorHeaders, HttpExecutorHeaderSource, HttpExecutorOptions } from "./http-executor.js";

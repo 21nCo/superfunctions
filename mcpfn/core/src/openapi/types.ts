@@ -106,7 +106,8 @@ export type OpenApiSkipCode =
   | "unsupported-component-name"
   | "circular-object"
   | "invalid-operation"
-  | "invalid-schema";
+  | "invalid-schema"
+  | "unsupported-by-executor";
 
 export interface OpenApiSkippedOperation {
   operation: OpenApiOperationRef;
@@ -115,16 +116,39 @@ export interface OpenApiSkippedOperation {
   reason: string;
 }
 
-export interface OpenApiExecuteRequest {
+export interface OpenApiExecuteRequest<TContext = unknown> {
   operation: OpenApiOperation;
   /** Arguments exactly as validated by the registry against the tool's input schema. */
   args: Record<string, unknown>;
+  /** The trusted context the server's `context` factory built for this call. */
+  context: TContext;
   signal: AbortSignal;
+  /** Whether the tool declares an output schema, so a success must carry `structuredContent`. */
+  hasOutputSchema: boolean;
+  /**
+   * With an output schema: whether a value satisfies it, so an executor can
+   * report a success the schema does not describe instead of returning
+   * structured content the registry would reject.
+   */
+  checkOutput?: (value: Record<string, unknown>) => boolean;
 }
 
-/** Sends a validated tool call to the API. The HTTP implementation is separate (MCP-6). */
-export interface OpenApiExecutor {
-  execute(request: OpenApiExecuteRequest): CallToolResult | Promise<CallToolResult>;
+/** Sends a validated tool call to the API, such as the one `httpExecutor` returns. */
+export interface OpenApiExecutor<TContext = unknown> {
+  execute(request: OpenApiExecuteRequest<TContext>): CallToolResult | Promise<CallToolResult>;
+  /**
+   * Why this executor cannot send an operation, or `undefined` when it can.
+   * `fromOpenAPI` skips such operations (`unsupported-by-executor`) instead
+   * of exposing tools whose every call would fail.
+   */
+  unsupported?(operation: OpenApiOperation): string | undefined;
+  /**
+   * Which response schema becomes a tool's output schema. `first-success`
+   * (the default): the first 2xx JSON schema. `every-success`: that schema
+   * only when every documented 2xx response offers only JSON content with
+   * the same schema, so no documented success falls outside it.
+   */
+  readonly outputSchemaRule?: "first-success" | "every-success";
 }
 
 /**
@@ -135,7 +159,7 @@ export interface OpenApiExecutor {
 export type OpenApiSelector = string | { readonly operationId: string };
 
 export interface FromOpenApiOptions<TContext = undefined> {
-  executor: OpenApiExecutor;
+  executor: OpenApiExecutor<NoInfer<TContext>>;
   /** When present, only matching operations are exposed. */
   include?: readonly OpenApiSelector[];
   /** Matching operations are never exposed; `exclude` wins over `include`. */

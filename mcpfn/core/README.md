@@ -145,8 +145,13 @@ for (const { operation, code, reason } of skipped) {
   shape or method; a schema that is discarded, or whose `writeOnly`
   properties are left out, is first compiled by mcpFn's validator as
   written. A `HEAD` tool never declares an output schema, since its response
-  has no body. Otherwise the schema becomes the output schema when it
-  accepts objects and nothing else (also through a 3.1 `$ref` with sibling
+  has no body. When the executor sets `outputSchemaRule: "every-success"`
+  (as `httpExecutor` does), neither does an operation whose documented 2xx
+  responses do not all offer only JSON content with that same schema (such
+  as a `200` with a body beside a `204`, `201` and `202` with different
+  bodies, or a JSON body beside `text/plain`), since a call could succeed
+  with a body the schema does not describe. Otherwise the schema becomes
+  the output schema when it accepts objects and nothing else (also through a 3.1 `$ref` with sibling
   keywords, an `allOf`, or a `not` of bare types such as
   `not: { type: "null" }`), with `writeOnly` properties left out by the same
   rule as `readOnly` ones in inputs; when that rule cannot be applied, the
@@ -244,6 +249,97 @@ for (const { operation, code, reason } of skipped) {
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.
+- **Executor.** `execute` receives `{ operation, args, context, signal,
+  hasOutputSchema, checkOutput }`: `context` is the trusted context the
+  server's `context` factory built for the call, `hasOutputSchema` says
+  whether a success must carry `structuredContent`, and `checkOutput(value)`
+  (with an output schema) says whether a value satisfies it. An executor may
+  set `outputSchemaRule` (see Outputs) and implement `unsupported(operation)`,
+  returning why it cannot send an operation; such operations are skipped
+  (`unsupported-by-executor`) before any tool name is chosen.
+
+### Sending calls over HTTP
+
+`httpExecutor()` is the executor that sends each call as one HTTP request to
+an API the operator fixes, with credentials the operator supplies:
+
+```ts
+import { fromOpenAPI, httpExecutor } from "@mcpfn/core/openapi";
+
+const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
+  executor: httpExecutor<{ apiToken: string }>({
+    baseUrl: "https://api.example.com/v1",
+    headers: (context) => ({ authorization: `Bearer ${context.apiToken}` }),
+    timeoutMs: 30_000,
+    maxResponseBytes: 1024 * 1024,
+  }),
+});
+```
+
+- **Where requests go.** `baseUrl` is an absolute `http:` or `https:` URL
+  without credentials, query or fragment; the operation's path is appended
+  to its path, and the document's `servers` are ignored. Path parameters are
+  percent-encoded with `encodeURIComponent` (array items joined by commas, a
+  schema-valid `null` empty), so `/`, `?` and `#` stay inside their segment.
+  A call whose templated segment would be empty, `.` or `..`, or whose path
+  a URL parser would rewrite (such as a template with a backslash), is
+  refused with an `isError` result before anything is sent. Query
+  parameters use `form` style, arrays repeating the key; with
+  `allowReserved`, `:/?@$,;[]` are sent as they are while `&`, `=`, `+` and
+  `#` stay encoded so a value cannot add parameters. A `null` query or
+  header value is left out. The JSON body is sent with the operation's media
+  type (`application/json` or the selected `*+json` type). Operations fetch
+  cannot send (`TRACE`, `GET` or `HEAD` with a request body, or a required
+  header fetch manages, such as `Connection`) are skipped by `fromOpenAPI`
+  as `unsupported-by-executor`. It sets `outputSchemaRule: "every-success"`
+  (see Outputs).
+- **Credentials (D9).** `headers` is a record or a function of the server's
+  trusted context (and the operation), called on every call; values are
+  printable ASCII. Header parameters are set after them, except the
+  forbidden ones (`Authorization`, `Cookie`, `Host`, `Content-Length`,
+  `Proxy-*`, `Accept`, `Content-Type`), transport headers (`Connection`,
+  `Transfer-Encoding`, ...) and any header the operator set, so a caller can
+  neither replace nor add credentials; argument names the operation does not
+  declare are never read. Nothing from the MCP client's request, such as its
+  `Authorization` header, is forwarded. Every operator header value is
+  treated as a secret and never appears in results or errors. The executor
+  looks for each value as sent (trimmed), the credential after a scheme such
+  as `Bearer`, and each value of a `Cookie` header, also percent-decoded as
+  UTF-8 (a cookie parser's reading); and for echoes of these spelled with
+  JSON escapes, percent escapes (also with `+` for a space), HTML character
+  references (one or two of these, in either order), or as a JSON number.
+  An error excerpt shows literal echoes (overlapping ones merged) as
+  `[REDACTED]`, never cut inside one, and is withheld when the body reveals a
+  credential any other way. A success body that reveals one is withheld with
+  an `isError` result that says the call succeeded, since rewriting it could
+  change the data; so a short or common header value withholds every
+  success body that happens to contain it. These spellings cover an upstream
+  that reflects a credential it received; an upstream set on leaking one can
+  always disguise it, and is outside what the executor can detect. An
+  invalid header, a record whose properties throw, or a failing `headers`
+  function is a server error (`MCPFN_TOOL_ERROR` for the client) whose
+  message names at most the header, never a value or the function's own
+  error.
+- **Responses.** Redirects are never followed (`redirect: "manual"`): a 3xx
+  is an `isError` result naming the status. A 2xx becomes structured content
+  when the tool has an output schema, else text. A 2xx the output schema
+  does not describe (no body, as for `204` or `HEAD`, a body that is not a
+  JSON object, one that fails `checkOutput`, or one whose numbers JSON
+  parsing would change, such as an integer beyond 2^53) cannot be
+  structured content; it is an `isError` result that says the call
+  succeeded and not to repeat it, followed by the body text. Any other
+  status is an `isError` result with the status and an excerpt of at most
+  4 KiB of its body, which is read whole first. A body over
+  `maxResponseBytes` (default 1 MiB), read or declared by `Content-Length`,
+  is cancelled and reported with the status and no excerpt. `timeoutMs`
+  (default 30 s) bounds the response and its body (an error status already
+  received is still reported), and the MCP request's abort signal cancels
+  the call, also while the `headers` function runs; a response that arrives
+  after either has its body cancelled. Network failures are reported
+  without details. Pass `fetch` to use another implementation.
+- **Not covered.** A base URL that resolves to internal addresses (DNS
+  rebinding), instructions inside upstream responses, and a local user who
+  can read the operator's environment are outside this executor's guarantees.
 
 ## Server context and errors
 
