@@ -64,22 +64,28 @@ export interface UpdateCheck {
   /**
    * The notice (`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`), or `null`. Never rejects and never waits past
    * the check's timeout: a result that is not ready by then is dropped, and every later call resolves `null` too.
-   * Resolving with the notice counts as delivering it: only the first call that resolves with it gets it (later calls on
-   * the same handle resolve `null`), and the time is recorded in the cache in the background (added to whatever entry
-   * is there, so a newer entry another run wrote is kept, and an earlier delivery never replaces a later one). The
-   * notice is dropped when a delivery within `intervalMs` of the hand-out time is known. The cache is read when the
-   * check settles (that read must finish before the timeout for the result to count), then reread in the background
-   * every 250 ms (unref'd timers, one read at a time, for at most one hour) until the notice is handed out or dropped,
-   * and, while time remains, read once more at hand-out, asynchronously and bounded by the remaining time (a read that
-   * does not finish in time drops the notice). Every delivery a read saw counts; a failed or empty read erases none.
-   * When no time remains, as after an action longer than the timeout, the decision uses what the rereads saw, without
-   * any file access, and the notice is dropped when their last read started more than 1 s earlier (for example after
-   * the event loop was blocked). So no run gives it once another run's delivery is recorded before its last read;
-   * within one process only one handle per app gives it. Two processes whose last reads both come before either
-   * delivery is written may both give it: a window of one reread period (at most 1 s) plus the other run's write, the
-   * last-rename-wins boundary of concurrent instances.
+   *
+   * The notice is claimed when the check settles, inside the timeout: the cache read that settles it (on a cache hit
+   * the first read, after a refresh a read once the registry answered) and the clock at that moment decide whether a
+   * delivery within `intervalMs` is known. If none is, and no other handle of this app in this process holds a claim
+   * within the interval, the handle claims the notice and records the claim time as `notifiedAt` in the cache, in the
+   * background (on a refresh, in the one write of the new entry; the later `notifiedAt` is kept, so an earlier one
+   * never replaces it). After that, `notice()` gives the claimed notice to its first call without any file access,
+   * however long the action ran, and every later call resolves `null`. Once the check settles, no I/O outlives it but
+   * that single write.
+   *
+   * So the notice is given at most once per `intervalMs`: a claim counts as the delivery, and a run that claims it and
+   * never shows it (the action crashes, the process exits, `notice()` is never called) uses up that interval's notice.
+   * Two processes whose claim reads both come before either one's claim is written (the window from one run's claim
+   * read to its rename) may both claim it: the last-rename-wins boundary of concurrent instances.
    */
   notice(): Promise<string | null>;
+  /**
+   * Says the notice will not be read, as in quiet or JSON mode: a check that has not settled yet claims nothing, so a
+   * later run can give the notice; a claim already made stands. Every later `notice()` call resolves `null`. Optional:
+   * `runAction` calls it when present.
+   */
+  discard?(): void;
 }
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -88,12 +94,10 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 /** A dist-tags document is a few hundred bytes; a larger body is treated as garbage. */
 const MAX_BODY_BYTES = 64 * 1024;
 
-const NO_NOTICE: UpdateCheck = Object.freeze({ notice: () => Promise.resolve(null) });
+const NO_NOTICE: UpdateCheck = Object.freeze({ notice: () => Promise.resolve(null), discard: () => undefined });
 
-/** When a handle in this process last handed out a notice, per state directory, before the cache records it. */
-const handedOutAt = new Map<string, number>();
-/** The hand-out in progress per state directory in this process; settles `true` when it delivered the notice. */
-const handingOut = new Map<string, Promise<boolean>>();
+/** When a handle in this process last claimed the notice, per state directory, before the cache records it. */
+const claimedAt = new Map<string, number>();
 
 /** Set means present and not empty. */
 function isSet(env: Readonly<Record<string, string | undefined>>, name: string): boolean {
@@ -264,63 +268,42 @@ interface CheckPlan extends RequestPlan {
 
 interface CheckResult {
   notice: string | null;
-  /** The entry the notice came from, to record its delivery; null when there is no notice. */
+  /** The entry the notice came from, to record its claim; null when there is no notice. */
   entry: LatestEntry | null;
-  /** The delivery times (`notifiedAt`) the cache showed while the check ran; weighed at hand-out time. */
+  /** The delivery times (`notifiedAt`) the check's cache reads showed; weighed with the settle-time clock. */
   seen: number[];
-  /** When (monotonic clock) the check's last cache read started. */
-  readAt: number;
+  /** A refreshed entry still to be written (with the claim, when there is one); null on a cache hit. */
+  refreshed: CacheEntry | null;
 }
 
-function resultFor(plan: CheckPlan, entry: CacheEntry, seen: Array<CacheEntry | null>, readAt: number): CheckResult {
+function resultFor(plan: CheckPlan, entry: CacheEntry, seen: Array<CacheEntry | null>, refreshed: boolean): CheckResult {
   const notice = noticeFor(entry, plan.current, plan.currentText, plan.name);
   const times = seen.flatMap((item) => (item?.notifiedAt === undefined ? [] : [item.notifiedAt]));
-  return { notice, entry: notice !== null && "latest" in entry ? entry : null, seen: times, readAt };
+  return {
+    notice,
+    entry: notice !== null && "latest" in entry ? entry : null,
+    seen: times,
+    refreshed: refreshed ? entry : null,
+  };
 }
 
-/** Settles as soon as the entry is known; the cache write it starts continues in the background. */
+/** Settles as soon as the entry and the claim read are known; the cache write is left to the caller. */
 async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   const file = join(plan.stateDir, UPDATE_CHECK_FILE);
-  const readAt = monotonicNow();
   const cached = await readCache(file);
   const now = plan.now();
   if (cached && isRecent(cached.checkedAt, now, plan.intervalMs)) {
-    return resultFor(plan, cached, [cached], readAt);
+    // The claim read is this read.
+    return resultFor(plan, cached, [cached], false);
   }
   const fetched = await requestLatest(plan);
   // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
   // within the interval; the write also keeps a later delivery another run recorded during the request.
   const entry: CacheEntry = cached?.notifiedAt === undefined ? fetched : { ...fetched, notifiedAt: cached.notifiedAt };
-  void writeCacheQuietly(plan.stateDir, entry, plan.now);
   // The claim read: a delivery another run recorded during the request. The result counts only when this read, too,
-  // finishes before the timeout.
-  const claimAt = monotonicNow();
+  // finishes before the timeout; the refreshed entry is written after it, carrying the claim when there is one.
   const shared = await readCache(file);
-  return resultFor(plan, entry, [entry, shared], claimAt);
-}
-
-const LATE = Symbol("late");
-/** How often a ready notice rereads the cache in the background until it is handed out or dropped. */
-const REREAD_MS = 250;
-/**
- * A hand-out with no time left uses what the cache showed only when that read started at most this long ago (real
- * time); otherwise, for example after the event loop was blocked, the notice is dropped.
- */
-const FRESH_MS = 1_000;
-/** Background rereads stop this long after the check settled; a hand-out with no time left after that gives none. */
-const OBSERVE_MS = 60 * 60 * 1000;
-/** The longest delay `setTimeout` takes as given; a longer one would fire at once. */
-const MAX_TIMER_MS = 2 ** 31 - 1;
-
-/** The promise's value, or LATE when it does not settle within `ms`. The promise must never reject. */
-function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof LATE> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(LATE), Math.min(ms, MAX_TIMER_MS));
-    void promise.then((value) => {
-      clearTimeout(timer);
-      resolve(value);
-    });
-  });
+  return resultFor(plan, entry, [entry, shared], true);
 }
 
 function monotonicNow(): number {
@@ -391,9 +374,9 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
  * Skipped (no request, no cache access, `notice()` resolves `null`) in JSON mode (`terminal.json`), when the terminal
  * is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` is set to a
  * non-empty value, and when `currentVersion` is outside the version grammar. A cached result younger than
- * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two processes whose
- * last cache reads both come before either delivery is written may both give it; see `notice()`). Otherwise it sends
- * `GET <registry>/-/package/<name>/dist-tags` with `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
+ * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (claimed when the check
+ * settles; two processes whose claim reads both come before either claim is written may both give it; see `notice()`).
+ * Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
  * a status other than 200, a body that is not JSON or has no valid `latest`, or a timeout, in
  * `<state>/update-check.json`, written atomically. A notice is given only when `latest` is a release greater than
  * `currentVersion`. The result is known as soon as the registry answers; cache writes finish in the background.
@@ -410,11 +393,13 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   }
 
   const checkPlan = plan;
+  const dir = checkPlan.stateDir;
   // "pending" until the check settles or its deadline passes, whichever comes first; the outcome never changes after.
   let outcome: "pending" | "ready" | "expired" = "pending";
-  let ready: CheckResult | null = null;
-  // The notice is handed out by at most one notice() call; every later call resolves null.
-  let handedOut = false;
+  // The notice this handle claimed when the check settled, until the first notice() call takes it.
+  let claimed: string | null = null;
+  // Set by discard(): no notice will be read, so none is claimed.
+  let discarded = false;
   const remaining = (): number => {
     try {
       return checkPlan.remainingMs();
@@ -422,58 +407,6 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       return 0;
     }
   };
-  // What the cache has shown since the check began: every delivery time seen (a later read adds to it and never erases
-  // one) and when the last completed read started. Kept current by rereads in the background from the moment a notice
-  // is ready until it is handed out or dropped; unref'd, one read at a time, so they never keep the process alive.
-  const file = join(checkPlan.stateDir, UPDATE_CHECK_FILE);
-  const seen = new Set<number>();
-  let readAt = Number.NEGATIVE_INFINITY;
-  let observing = false;
-  let rereadTimer: ReturnType<typeof setTimeout> | undefined;
-  const observe = (read: CacheEntry | null, startedAt: number): void => {
-    if (read?.notifiedAt !== undefined) {
-      seen.add(read.notifiedAt);
-    }
-    readAt = Math.max(readAt, startedAt);
-  };
-  const stopObserving = (): void => {
-    observing = false;
-    clearTimeout(rereadTimer);
-  };
-  const scheduleReread = (until: number): void => {
-    rereadTimer = setTimeout(() => {
-      const startedAt = monotonicNow();
-      void readCache(file).then((read) => {
-        if (observing) {
-          observe(read, startedAt);
-          if (monotonicNow() < until) {
-            scheduleReread(until);
-          }
-        }
-      });
-    }, REREAD_MS);
-    (rereadTimer as { unref?: () => void }).unref?.();
-  };
-
-  const result = runCheck(checkPlan)
-    .catch((): CheckResult | null => null)
-    .then((checked) => {
-      if (outcome === "pending") {
-        if (remaining() >= 0) {
-          outcome = "ready";
-          ready = checked;
-          if (checked !== null && checked.notice !== null && !handedOut) {
-            checked.seen.forEach((time) => seen.add(time));
-            readAt = checked.readAt;
-            observing = true;
-            scheduleReread(monotonicNow() + OBSERVE_MS);
-          }
-        } else {
-          outcome = "expired";
-        }
-      }
-    });
-
   const clock = (): number | undefined => {
     try {
       const time = checkPlan.now();
@@ -483,115 +416,88 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     }
   };
 
-  // Hands the notice out unless a delivery within the interval is known, and records it. While time remains the cache
-  // is read once more, bounded by the remaining time (a read that finishes after the deadline drops the notice) and
-  // added to what was seen; once none remains the decision uses what the rereads saw, with no file access, and only
-  // when their last read started within FRESH_MS. The interval is decided here, on the time after that read, so a
-  // delivery that expired since the check settled no longer suppresses the notice.
-  const handOut = async (entry: LatestEntry, budget: () => number): Promise<boolean> => {
-    const dir = checkPlan.stateDir;
-    const left = budget();
-    if (left > 0) {
-      const startedAt = monotonicNow();
-      const read = await within(readCache(file), left);
-      if (read === LATE || !(budget() >= 0)) {
-        return false;
-      }
-      observe(read, startedAt);
-    } else if (!(monotonicNow() - readAt <= FRESH_MS)) {
-      return false;
+  // The claim, decided once when an on-time check settles, on the settle-time clock: the notice is claimed unless a
+  // delivery within the interval is known (from the check's cache reads, or a claim by another handle of this app in
+  // this process). A clock that cannot tell the time cannot show the interval has passed: no claim.
+  const claim = (checked: CheckResult): number | undefined => {
+    if (discarded || checked.notice === null || checked.entry === null) {
+      return undefined;
     }
-    // A clock that cannot tell the time cannot show the interval has passed: no notice, nothing recorded.
-    const notifiedAt = clock();
-    if (notifiedAt === undefined) {
-      return false;
+    const at = clock();
+    if (at === undefined) {
+      return undefined;
     }
-    const previous = handedOutAt.get(dir);
-    if (
-      (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) ||
-      [...seen].some((time) => isRecent(time, notifiedAt, checkPlan.intervalMs))
-    ) {
-      return false;
+    const previous = claimedAt.get(dir);
+    const known = previous === undefined ? checked.seen : [...checked.seen, previous];
+    if (known.some((time) => isRecent(time, at, checkPlan.intervalMs))) {
+      return undefined;
     }
-    handedOutAt.set(dir, notifiedAt);
-    void recordDeliveryQuietly(dir, entry, notifiedAt, checkPlan.now);
-    return true;
+    claimedAt.set(dir, at);
+    claimed = checked.notice;
+    return at;
   };
 
-  // The notice of an on-time result, the first time it is asked for. Hand-outs in this process run one at a time per
-  // app: a handle waits, within its own time, for another handle's hand-out, then decides on its own (a delivery the
-  // other made within this handle's interval suppresses it).
-  const deliver = async (budget: () => number): Promise<string | null> => {
-    const checked: CheckResult | null = outcome === "ready" ? ready : null;
-    if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
-      return null;
+  // The only I/O after the check settles: one write, in the background, of the refreshed entry (with the claim) or,
+  // on a cache hit, of the claim alone.
+  const persist = (checked: CheckResult, notifiedAt: number | undefined): void => {
+    if (checked.refreshed !== null) {
+      const entry = notifiedAt === undefined ? checked.refreshed : { ...checked.refreshed, notifiedAt };
+      void writeCacheQuietly(dir, entry, checkPlan.now);
+    } else if (notifiedAt !== undefined && checked.entry !== null) {
+      void recordDeliveryQuietly(dir, checked.entry, notifiedAt, checkPlan.now);
     }
-    handedOut = true;
-    stopObserving();
-    const dir = checkPlan.stateDir;
-    for (let other = handingOut.get(dir); other !== undefined; other = handingOut.get(dir)) {
-      const left = budget();
-      if (!(left > 0) || (await within(other, left)) === LATE) {
-        return null;
+  };
+
+  const result = runCheck(checkPlan)
+    .catch((): CheckResult | null => null)
+    .then((checked) => {
+      let notifiedAt: number | undefined;
+      if (outcome === "pending") {
+        if (remaining() >= 0) {
+          outcome = "ready";
+          notifiedAt = checked === null ? undefined : claim(checked);
+        } else {
+          outcome = "expired";
+        }
       }
-    }
-    let settle: (delivered: boolean) => void = () => undefined;
-    const mine = new Promise<boolean>((resolve) => {
-      settle = resolve;
+      if (checked !== null) {
+        persist(checked, notifiedAt);
+      }
     });
-    handingOut.set(dir, mine);
-    let delivered = false;
-    try {
-      delivered = await handOut(checked.entry, budget);
-    } catch {
-      delivered = false;
-    } finally {
-      if (handingOut.get(dir) === mine) {
-        handingOut.delete(dir);
-      }
-      settle(delivered);
-    }
-    return delivered ? checked.notice : null;
-  };
 
-  // The time left to one notice() call: the check's remaining time, and never more than was left when the call began
-  // in real time, so waits after one another (the result, another handle, the hand-out read) share one budget even when
-  // an injected clock does not advance.
-  const budgetFrom = (left: number): (() => number) => {
-    const until = monotonicNow() + left;
-    return () => Math.min(remaining(), until - monotonicNow());
+  // The claimed notice, to the first call only.
+  const take = (): string | null => {
+    const notice = claimed;
+    claimed = null;
+    return notice;
   };
 
   return {
     notice() {
       if (outcome !== "pending") {
-        return deliver(budgetFrom(remaining()));
+        return Promise.resolve(take());
       }
       const left = remaining();
       if (!(left > 0)) {
         outcome = "expired";
         return Promise.resolve(null);
       }
-      const budget = budgetFrom(left);
       return new Promise<string | null>((resolve) => {
-        let answered = false;
-        const answer = (): void => {
-          if (!answered) {
-            answered = true;
-            resolve(deliver(budget));
-          }
-        };
         const timer = setTimeout(() => {
           if (outcome === "pending") {
             outcome = "expired";
           }
-          answer();
+          resolve(take());
         }, left);
         void result.then(() => {
           clearTimeout(timer);
-          answer();
+          resolve(take());
         });
       });
+    },
+    discard() {
+      discarded = true;
+      claimed = null;
     },
   };
 }

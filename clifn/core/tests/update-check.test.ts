@@ -9,7 +9,7 @@ import {
   type UpdateCheckOptions,
   type UpdateCheckRequestInit,
 } from "../src/update-check.js";
-import { settleCacheWrites } from "../src/update-check-cache.js";
+import { recordDeliveryQuietly, settleCacheWrites } from "../src/update-check-cache.js";
 
 const tty = { isTTY: true };
 const pipe = { isTTY: false };
@@ -487,17 +487,10 @@ describe("startUpdateCheck: cache interval", () => {
       { checkedAt: T0 + 10, latest: "1.3.0" },
       { checkedAt: T0 + 10, latest: "1.3.0", notifiedAt: T0 + 20 },
     ],
-  ])("records delivery on %s another run wrote meanwhile, without rolling it back", async (_label, newer, expected) => {
-    let clock = T0;
-    const fetch = registry({ latest: "1.3.0" });
-    const handle = check({ fetch, now: () => clock });
-    await until(() => exists(cacheFile));
-    await settled();
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0" });
-
+  ])("records a claim on %s another run wrote meanwhile, without rolling it back", async (_label, newer, expected) => {
+    // The claim's read-merge-write reads the file as it is when the write runs.
     await writeCacheText(JSON.stringify(newer));
-    clock = T0 + 20;
-    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
+    await recordDeliveryQuietly(stateDir, { checkedAt: T0, latest: "1.3.0" }, T0 + 20, () => T0 + 20);
     await expect(readCacheJson()).resolves.toEqual(expected);
   });
 
@@ -558,43 +551,54 @@ describe("startUpdateCheck: cache interval", () => {
     ["the same version", { checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 }],
     ["another version", { checkedAt: T0 + 1, latest: "1.4.0", notifiedAt: T0 + 1 }],
     ["an error entry", { checkedAt: T0 + 1, error: true, notifiedAt: T0 + 1 }],
-  ])("gives no notice once another run recorded a delivery on %s after this check settled", async (_label, other) => {
+  ])("gives no notice once another run recorded a delivery on %s before this check settled", async (_label, other) => {
+    await writeCacheText(JSON.stringify(other));
+    const fetch = registry({ latest: "1.3.0" });
+    const handle = check({ fetch, now: () => T0 + 2 });
+    await settled();
+
+    await expect(handle.notice()).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual(other);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("hands out a claim made when the check settled even when another run writes the file later", async () => {
+    // The window from one run's claim read to its claim rename is the last-rename-wins boundary; after the claim, the
+    // handle no longer reads the file.
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const handle = check({ now: () => T0 + 2 });
     await settled();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 2 });
 
-    await writeCacheText(JSON.stringify(other));
-    await expect(handle.notice()).resolves.toBeNull();
-    await expect(readCacheJson()).resolves.toEqual(other);
+    await writeCacheText(JSON.stringify({ checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 }));
+    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
   });
 
-  it("keeps a delivery across an error refresh and gives the notice again only after the interval", async () => {
+  it("keeps a claim across an error refresh and gives the notice again only after the interval", async () => {
     const hour = 60 * 60 * 1000;
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
-    let clock = T0 + hour;
-    const delivering = check({ now: () => clock });
+    const delivering = check({ now: () => T0 + hour });
     await settled();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + hour });
 
-    // An overlapping run refreshes the stale entry and the registry fails; it lands between settle and hand-out.
+    // An overlapping run refreshes the stale entry and the registry fails; it lands between the claim and hand-out.
     await expect(
       run({ fetch: registry("down", 500), now: () => T0 + DAY + 1, intervalMs: DAY - 2 * hour })
     ).resolves.toBeNull();
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY + 1, error: true });
-
-    clock = T0 + DAY + 2;
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY + 1, error: true, notifiedAt: T0 + hour });
     await expect(delivering.notice()).resolves.toBe(NOTICE_1_3_0);
-    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0 + DAY + 1, error: true, notifiedAt: T0 + DAY + 2 });
 
-    // The error entry is stale for this run, so it asks again; the delivery carries over and holds the notice back.
+    // The cached error holds requests back for its interval; after it, the claim has expired and the notice is due.
     const fetch = registry({ latest: "1.3.0" });
-    await expect(run({ fetch, now: () => T0 + 2 * DAY + 1 })).resolves.toBeNull();
+    await expect(run({ fetch, now: () => T0 + DAY + hour })).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(run({ fetch, now: () => T0 + 2 * DAY + 2 })).resolves.toBe(NOTICE_1_3_0);
     expect(fetch).toHaveBeenCalledTimes(1);
     await expect(readCacheJson()).resolves.toEqual({
-      checkedAt: T0 + 2 * DAY + 1,
+      checkedAt: T0 + 2 * DAY + 2,
       latest: "1.3.0",
-      notifiedAt: T0 + DAY + 2,
+      notifiedAt: T0 + 2 * DAY + 2,
     });
-    await expect(run({ fetch, now: () => T0 + 2 * DAY + 2 })).resolves.toBe(NOTICE_1_3_0);
   });
 
   it("carries a delivery over to an error entry when a refresh fails", async () => {

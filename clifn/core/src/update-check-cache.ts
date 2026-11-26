@@ -144,14 +144,33 @@ async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
 
 /**
  * Writes the entry, keeping the later `notifiedAt` (not after `now`) of the entry and of the file as it is right before
- * the write, so a refresh never drops a delivery another run recorded during its request. Writes in this process are
+ * the write, so a refresh never drops a delivery another run recorded during its request; the entry's own `notifiedAt`
+ * (a claim) is kept when the clock now throws or is not a number. Writes in this process are
  * serialized per directory; two processes racing inside the read-then-rename window are the last-rename-wins boundary.
  */
 function writeCacheMerged(dir: string, entry: CacheEntry, now: () => number): Promise<void> {
   return serialized(dir, async () => {
     const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-    await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt, now())));
+    const at = futureBound(now, entry.notifiedAt);
+    await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt, at)));
   });
+}
+
+/**
+ * What counts as the future for a write: the clock now, and never less than the delivery being written, so that
+ * delivery is kept when the clock now throws or is not a number.
+ */
+function futureBound(now: () => number, notifiedAt: number | undefined): number {
+  let time: number;
+  try {
+    time = now();
+  } catch {
+    time = Number.NaN;
+  }
+  if (notifiedAt === undefined) {
+    return time;
+  }
+  return Number.isFinite(time) ? Math.max(notifiedAt, time) : notifiedAt;
 }
 
 /** Writes the entry (see `writeCacheMerged`), never rejecting: an unwritable cache means the next run checks again. */
@@ -160,9 +179,8 @@ export function writeCacheQuietly(dir: string, entry: CacheEntry, now: () => num
 }
 
 /**
- * Records that a notice was delivered at `notifiedAt`. Called at hand-out time, so the record joins this process's
- * queue for the directory right then: behind this run's own refresh write (queued when the check settled) and behind
- * every delivery handed out earlier. It re-reads the cache and adds the delivery to the entry the file holds, whatever
+ * Records that a notice was claimed at `notifiedAt` (a cache hit's claim). Called when the check settles, so the
+ * record joins this process's queue for the directory right then, behind every write queued earlier. It re-reads the cache and adds the delivery to the entry the file holds, whatever
  * its `checkedAt` (`entry` only when the file is missing or malformed): an error entry or an entry for another version
  * another run wrote meanwhile keeps its content and gains `notifiedAt`, so the delivery is neither rolled back nor
  * forgotten. The later of the file's `notifiedAt` and this one is kept, so an earlier delivery never replaces a later
@@ -176,14 +194,7 @@ export function recordDeliveryQuietly(
 ): Promise<void> {
   const record = serialized(dir, async () => {
     const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-    // The delivery time itself bounds what counts as the future when the clock now throws or is not a number.
-    let at = notifiedAt;
-    try {
-      const time = now();
-      at = Number.isFinite(time) ? Math.max(notifiedAt, time) : notifiedAt;
-    } catch {
-      at = notifiedAt;
-    }
+    const at = futureBound(now, notifiedAt);
     await writeCache(dir, withNotifiedAt(current ?? entry, laterDelivery(current?.notifiedAt, notifiedAt, at)));
   });
   return trackCacheWrite(record.catch(() => undefined));

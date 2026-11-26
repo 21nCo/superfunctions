@@ -45,9 +45,10 @@ export interface RunnerOptions {
   /**
    * A started update check (`startUpdateCheck` from `@clifn/core/update-check`). In text mode its notice is written to
    * stderr after the action finishes, on success or failure, without changing the exit code; a notice that is not
-   * ready by the check's timeout is dropped. JSON mode and `quiet` never ask for or write it.
+   * ready by the check's timeout is dropped. JSON mode and `quiet` never ask for or write it, and call its optional
+   * `discard()` at the start, so a check that has not settled yet claims no notice.
    */
-  updateCheck?: Pick<UpdateCheck, "notice">;
+  updateCheck?: Pick<UpdateCheck, "notice" | "discard">;
 }
 
 export interface RunnerContext {
@@ -113,6 +114,10 @@ export async function runAction<TOptions>(
   const mode = runnerOptions.mode;
   const stdoutOption = runnerOptions.stdout;
   const stderrOption = runnerOptions.stderr;
+  // A run that will not ask for the update notice says so before the check settles, so it claims none.
+  if (mode === "json" || quiet) {
+    discardUpdateCheck(runnerOptions);
+  }
   const documentMode = mode === "json" && runnerOptions.jsonStyle === "document";
   const documentStderr = stderrOption ?? ((text: string) => process.stderr.write(text));
   // Streamed child output that has no writer of its own: written to stderr as advice, so a stderr writer that throws
@@ -235,11 +240,23 @@ export async function runAction<TOptions>(
   }
 
   // `mode` and `quiet` as read once above, so the existing option reads stay as they were; only a text-mode run that
-  // is not quiet reads `updateCheck`.
+  // is not quiet asks for the notice (the others discarded it at the start).
   if (mode !== "json" && !quiet) {
     await writeUpdateNotice(runnerOptions, stderrOption);
   }
   return exitCode;
+}
+
+/** Tells the update check, if any, that its notice will not be read. Advisory: a throwing check is ignored. */
+function discardUpdateCheck(runnerOptions: RunnerOptions): void {
+  try {
+    const updateCheck = runnerOptions.updateCheck;
+    if (updateCheck !== undefined && updateCheck !== null && typeof updateCheck.discard === "function") {
+      updateCheck.discard();
+    }
+  } catch {
+    // Nothing to tell; the check claims as it would have.
+  }
 }
 
 /**
