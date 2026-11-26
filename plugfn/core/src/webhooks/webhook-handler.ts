@@ -47,6 +47,12 @@ interface WebhookDispatchScope {
 /** Internal preparation used by the router. Public verification returns inspection data only. */
 export const prepareWebhookDelivery = Symbol.for('plugfn.prepareWebhookDelivery');
 
+export function copyWebhookBody(body: Uint8Array): Uint8Array {
+  const copy = Buffer.isBuffer(body) ? Buffer.alloc(body.byteLength) : new Uint8Array(body.byteLength);
+  copy.set(body);
+  return copy;
+}
+
 export class WebhookHandlerError extends Error {
   readonly code:
     | 'WEBHOOK_SECRET_NOT_FOUND'
@@ -207,7 +213,7 @@ export class WebhookHandler {
     const requiresBinding = resolvers && Object.hasOwn(resolvers, provider);
     const authorities = requiresBinding ? resolvers[provider] : undefined;
     // Scoped delivery must extract and dispatch from the same bytes the verifier sees.
-    const rawBody = requiresBinding && options.rawBody ? Uint8Array.from(options.rawBody) : options.rawBody;
+    const rawBody = requiresBinding && options.rawBody ? copyWebhookBody(options.rawBody) : options.rawBody;
     const parsedPayload = requiresBinding || payload == null ? parseWebhookPayload(rawBody) : payload;
     const verificationContext: WebhookVerificationContext = {
       rawBody,

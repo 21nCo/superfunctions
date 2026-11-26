@@ -45,7 +45,7 @@ import {
 } from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
 import { WorkflowEngine } from './workflow-engine.js';
-import { WebhookHandler, prepareWebhookDelivery } from '../webhooks/webhook-handler.js';
+import { WebhookHandler, copyWebhookBody, prepareWebhookDelivery } from '../webhooks/webhook-handler.js';
 import { deliverWebhook } from '../router/http-router.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
 import {
@@ -491,7 +491,11 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       on: (provider, event, handler) => webhookHandler.on(provider, event, handler),
       off: (provider, event, handler) => webhookHandler.off(provider, event, handler),
       handle: async (provider, event, payload, headers, secret, options) => {
-        const rawBody = options?.rawBody && Uint8Array.from(options.rawBody);
+        const suppliedBody = options?.rawBody;
+        const authorities = config.webhooks?.workflowBindings;
+        const rawBody = suppliedBody && authorities && Object.hasOwn(authorities, provider)
+          ? copyWebhookBody(suppliedBody)
+          : suppliedBody;
         const verified = await webhookHandler[prepareWebhookDelivery](
           provider, event, payload, headers, secret, { rawBody }
         );

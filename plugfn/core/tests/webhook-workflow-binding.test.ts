@@ -7,6 +7,7 @@ import { MemoryAdapter } from '../src/storage/adapters/memory.js';
 import { AdapterRuntimeStorage } from '../src/storage/runtime-storage.js';
 import { mockProvider } from '../src/testing/index.js';
 import { NoopLogger } from '../src/utils/logger.js';
+import type { WebhookConfig } from '../src/types/trigger.js';
 import type { Workflow, WorkflowContext, WorkflowRuntimeRegistry } from '../src/types/workflow.js';
 
 const firstBinding = {
@@ -289,6 +290,9 @@ describe('webhook workflow admission', () => {
       ...input, idempotencyKey: 'test-scope-key', idempotencyNamespace: 'workflow',
     });
     const attempt = await webhooks.createDelivery({ receiptId: standalone.id });
+    await expect(webhooks.updateDelivery(attempt.id, { receiptId: scoped.id, status: 'success' })).rejects.toMatchObject({
+      code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', status: 409,
+    });
     await expect(webhooks.updateDelivery(attempt.id, { receiptId: scoped.id })).resolves.toMatchObject({
       workflowScoped: true,
     });
@@ -312,16 +316,31 @@ describe('webhook workflow admission', () => {
     const attempt = await webhooks.createDelivery({ receiptId: standalone.id });
     const worker = vi.fn(async () => {
       await expect(webhooks.updateDelivery(attempt.id, { receiptId: scoped.id })).rejects.toMatchObject({
-        code: 'WEBHOOK_DELIVERY_ACTIVE', status: 409,
+        code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', status: 409,
       });
     });
 
     expect(await webhooks.processDueDeliveries(worker)).toMatchObject({ succeeded: 1 });
     expect(worker).toHaveBeenCalledOnce();
+    await expect(webhooks.updateDelivery(attempt.id, { receiptId: scoped.id })).rejects.toMatchObject({
+      code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', status: 409,
+    });
     expect(await webhooks.listDeliveries(scoped.id)).toEqual([]);
     expect(await webhooks.listDeliveries(standalone.id)).toEqual([
       expect.objectContaining({ id: attempt.id, status: 'success' }),
     ]);
+  });
+
+  it('preserves the original Buffer for a standalone SDK verifier', async () => {
+    const rawBody = Buffer.from(JSON.stringify({ id: 'test-delivery' }));
+    const verify: NonNullable<WebhookConfig['verifySignature']> = (_payload, _signature, _secret, context) =>
+      context?.rawBody === rawBody && Buffer.isBuffer(context.rawBody);
+    const { runtime } = startRuntime(database, { withResolver: false, verifySignature: verify });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    await expect(runtime.webhooks.handle('test-provider', 'test.event', undefined, {}, signingCredential, { rawBody }))
+      .resolves.toMatchObject({ verified: true });
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it('resolves installations only within the verified signing authority', async () => {
@@ -849,6 +868,7 @@ function startRuntime(
   database: MemoryAdapter,
   options: {
     withVerifier?: boolean;
+    verifySignature?: WebhookConfig['verifySignature'];
     verifySignatures?: boolean;
     withResolver?: boolean;
     authenticateDeliveryId?: boolean;
@@ -909,7 +929,7 @@ function startRuntime(
       webhookConfig: {
         path: `/webhooks/test-provider/${options.routeAlias ?? 'test.event'}`,
         method: 'POST',
-        verifySignature: options.withVerifier === false ? undefined : () => true,
+        verifySignature: options.withVerifier === false ? undefined : options.verifySignature ?? (() => true),
         getWorkflowSubject: (payload: unknown) =>
           z.object({ installationId: z.string() }).safeParse(payload).data?.installationId,
         getWorkflowEvent: (_payload, { headers }) => options.authenticateEventHeader

@@ -293,21 +293,28 @@ export class AdapterRuntimeStorage {
 
     const model = this.adapter.models.webhookDeliveries;
     const byId: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
-    const workflowScoped = await this.workflowDeliveryScope(fields.receiptId);
-    // The retry worker and receipt reassignment compete on the stored status.
-    // Change the receipt and its scope marker in the same conditional write.
-    const reassigned = await this.adapter.database.updateMany({
+    const existing = await this.adapter.database.findOne<PlugFnWebhookDelivery>({ model, where: byId });
+    if (!existing) throw new NotFoundError(model, byId);
+    const where: WhereClause[] = [...byId, { field: 'receiptId', operator: 'eq', value: existing.receiptId }];
+    const changes: Partial<PlugFnWebhookDelivery> = data;
+    if (existing.receiptId !== fields.receiptId) {
+      if ((fields.status !== undefined && fields.status !== 'pending') ||
+          (fields.attempts !== undefined && fields.attempts !== 0)) {
+        throw webhookDeliveryReassignmentConflict();
+      }
+      // Attempt history belongs to the receipt that produced it.
+      where.push({ field: 'status', operator: 'eq', value: 'pending' });
+      where.push({ field: 'attempts', operator: 'eq', value: 0 });
+      changes.workflowScoped = await this.workflowDeliveryScope(fields.receiptId);
+    }
+    const updated = await this.adapter.database.updateMany({
       model,
-      where: [...byId, { field: 'status', operator: 'ne', value: 'running' }],
-      data: { ...data, workflowScoped },
+      where,
+      data: changes,
     });
     const delivery = await this.adapter.database.findOne<PlugFnWebhookDelivery>({ model, where: byId });
     if (!delivery) throw new NotFoundError(model, byId);
-    if (!reassigned) {
-      throw Object.assign(new Error('cannot reassign a running webhook delivery'), {
-        code: 'WEBHOOK_DELIVERY_ACTIVE', status: 409, retryable: true,
-      });
-    }
+    if (!updated) throw webhookDeliveryReassignmentConflict();
     return delivery;
   }
 
@@ -611,6 +618,12 @@ function syncJobClaimLost(id: string): Error {
 
 function workflowReceiptKey(provider: string, idempotencyKey: string): string {
   return createHash('sha256').update(JSON.stringify([provider, idempotencyKey])).digest('hex');
+}
+
+function webhookDeliveryReassignmentConflict(): Error {
+  return Object.assign(new Error('only an unattempted pending webhook delivery can be reassigned'), {
+    code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', status: 409, retryable: false,
+  });
 }
 
 function assertMatchingWebhookReceipt(
