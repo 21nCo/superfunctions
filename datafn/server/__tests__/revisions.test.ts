@@ -2528,3 +2528,176 @@ describe("DATA-41 revisions: round 14", () => {
     expect(membershipReads).toBe(2);
   });
 });
+
+describe("DATA-41 revisions: round 15", () => {
+  const zonedSchema = {
+    resources: [
+      {
+        name: "zoned",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: false },
+          { name: "__ns", type: "string" as const, required: false },
+        ],
+        permissions: { read: { fields: ["title"] }, write: { fields: ["title", "__ns"] } },
+      },
+      { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }] },
+    ],
+    relations: [],
+  } as any;
+
+  it("withholds a declared __ns field the read policy hides, with $rev, on push, clone, pull and versioned queries", async () => {
+    const database = memoryAdapter();
+    const { push, send } = await serve({ database, schema: zonedSchema });
+    const hiddenValue = "zone-hidden-value";
+    const inserted = await push({ resource: "zoned", operation: "insert", id: "zoned:1", record: { title: "t", __ns: hiddenValue } });
+    expect(inserted.body.ok, JSON.stringify(inserted.body)).toBe(true);
+    const merged = await push({ resource: "zoned", operation: "replace", id: "zoned:1", record: { title: "u", __ns: hiddenValue } });
+    expect(merged.body.ok, JSON.stringify(merged.body)).toBe(true);
+    await push({ resource: "zoned", operation: "insert", id: "zoned:2", record: { title: "v", __ns: hiddenValue } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "readable" } });
+
+    // Push: rev only, no post-write row for the field-restricted record.
+    for (const res of [inserted, merged]) {
+      const entry = res.body.result.revisions[res.mutationId];
+      expect(entry).toMatchObject({ resource: "zoned", id: "zoned:1" });
+      expect(entry).not.toHaveProperty("record");
+    }
+
+    // Clone, every mode.
+    configureRevisions(zonedSchema, { enabled: true });
+    const cloneRows = [
+      (await executeClone({ clientId: "client:b", tables: ["zoned"], page: { table: "zoned", limit: 1 } } as any, zonedSchema, database, NS)).data.zoned,
+      (await executeClone({ clientId: "client:b", tables: ["zoned"] } as any, zonedSchema, database, NS, undefined, 1)).data.zoned,
+      (await send("clone", { clientId: "client:b", tables: ["zoned", "task"] })).body.result.data.zoned,
+    ];
+    for (const rows of cloneRows) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row).toHaveProperty("title");
+        expect(row).not.toHaveProperty("__ns");
+        expect(row).not.toHaveProperty("$rev");
+      }
+    }
+
+    // Pull, canonical and global.
+    const canonical = await send("pull", { clientId: "client:b", cursors: { zoned: "0", task: "0" } });
+    expect(canonical.status).toBe(200);
+    expect(canonical.body.result.records.zoned.length).toBeGreaterThan(0);
+    for (const row of canonical.body.result.records.zoned) {
+      expect(row).not.toHaveProperty("__ns");
+      expect(row).not.toHaveProperty("$rev");
+    }
+    const global = await send("pull", { clientId: "client:b", cursor: "0" });
+    expect(global.status).toBe(200);
+    const zonedChanges = (global.body.result.changes as Json[]).filter((change) => change.resource === "zoned");
+    expect(zonedChanges.length).toBeGreaterThan(0);
+    for (const change of zonedChanges) {
+      if (change.record) {
+        expect(change.record).not.toHaveProperty("__ns");
+        expect(change.record).not.toHaveProperty("$rev");
+      }
+    }
+
+    // Versioned query.
+    const query = await send("query", { resource: "zoned", version: 1, withRevisions: true });
+    expect(query.status).toBe(200);
+    expect(query.body.result.data.length).toBeGreaterThan(0);
+    for (const row of query.body.result.data as Json[]) {
+      expect(row).not.toHaveProperty("__ns");
+      expect(row).not.toHaveProperty("$rev");
+    }
+
+    for (const body of [inserted.body, merged.body, canonical.body, global.body, query.body]) {
+      expect(JSON.stringify(body)).not.toContain(hiddenValue);
+    }
+    for (const rows of cloneRows) expect(JSON.stringify(rows)).not.toContain(hiddenValue);
+
+    // A fully readable resource keeps its rows and revisions.
+    const fullClone = await send("clone", { clientId: "client:b", tables: ["task"] });
+    expect(fullClone.body.result.data.task).toEqual([expect.objectContaining({ id: "task:1", title: "readable", $rev: 1 })]);
+    const readable = await send("query", { resource: "task", version: 1, withRevisions: true });
+    expect(readable.body.result.data).toEqual([expect.objectContaining({ id: "task:1", $rev: 1 })]);
+  });
+});
+
+describe("DATA-41 revisions: declared join_* resources on pull (round 15)", () => {
+  const joinPullSchema = {
+    resources: [
+      { name: "join_notes", version: 1, fields: [{ name: "body", type: "string" as const, required: false }] },
+      {
+        name: "join_secrets",
+        version: 1,
+        capabilities: ["timestamps", "audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        fields: [{ name: "body", type: "string" as const, required: false }],
+      },
+      { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }] },
+      { name: "tag", version: 1, fields: [{ name: "label", type: "string" as const, required: false }] },
+    ],
+    relations: [{ from: "task", to: "tag", type: "many-many", relation: "tags" }],
+  } as any;
+
+  async function serveAs() {
+    let actor = "alice";
+    const database = memoryAdapter();
+    const server = await createDatafnServer({
+      schema: joinPullSchema,
+      database,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      namespaceProvider: { getNamespace: () => NS, getActorId: () => actor as any },
+    } as any);
+    const send = async (route: string, body: unknown, as: string) => {
+      actor = as;
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+      return { status: res.status, body: (await res.json()) as Json };
+    };
+    let seq = 0;
+    const push = async (mutation: Json, as = "alice") => {
+      seq += 1;
+      const res = await send("push", { clientId: "client:a", mutations: [{ version: 1, clientId: "client:a", mutationId: `m${seq}`, ...mutation }] }, as);
+      expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+      return res;
+    };
+    return { send, push };
+  }
+
+  it("returns a declared join_* resource in its data bucket, applies its access checks, and keeps join stores in joins", async () => {
+    const { send, push } = await serveAs();
+    await push({ resource: "join_notes", operation: "insert", id: "join_notes:1", record: { body: "public" } });
+    await push({ resource: "join_secrets", operation: "insert", id: "join_secrets:1", record: { body: "alice-only" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "t" } });
+    await push({ resource: "tag", operation: "insert", id: "tag:1", record: { label: "l" } });
+    await push({ resource: "task", operation: "relate", id: "task:1", relations: { tags: { $ref: "tag:1" } } });
+
+    const cursors = { join_notes: "0", join_secrets: "0", join_task_tags_tag: "0" };
+    const canonical = await send("pull", { clientId: "client:b", cursors, includeJoins: true }, "alice");
+    expect(canonical.status).toBe(200);
+    const result = canonical.body.result;
+    expect(result.records.join_notes).toEqual([expect.objectContaining({ id: "join_notes:1", body: "public", $rev: 1 })]);
+    expect(result.records.join_secrets).toEqual([expect.objectContaining({ id: "join_secrets:1", body: "alice-only" })]);
+    expect(result.joins?.join_notes).toBeUndefined();
+    expect(result.joins?.join_secrets).toBeUndefined();
+    // A real many-many join store keeps the joins branch.
+    expect(result.joins.join_task_tags_tag.upsert.length).toBeGreaterThan(0);
+    expect(result.records).not.toHaveProperty("join_task_tags_tag");
+
+    // Bob may not read alice's private join_secrets row, on either pull.
+    const bobCanonical = await send("pull", { clientId: "client:c", cursors, includeJoins: true }, "bob");
+    expect(bobCanonical.status).toBe(200);
+    expect(bobCanonical.body.result.records.join_notes).toEqual([expect.objectContaining({ id: "join_notes:1" })]);
+    expect(bobCanonical.body.result.records.join_secrets).toEqual([]);
+    const bobGlobal = await send("pull", { clientId: "client:c", cursor: "0" }, "bob");
+    expect(bobGlobal.status).toBe(200);
+    const bobIds = (bobGlobal.body.result.changes as Json[]).map((change) => change.id);
+    expect(bobIds).toContain("join_notes:1");
+    expect(bobIds).not.toContain("join_secrets:1");
+    expect(JSON.stringify(bobGlobal.body.result)).not.toContain("alice-only");
+    const aliceGlobal = await send("pull", { clientId: "client:b", cursor: "0" }, "alice");
+    expect((aliceGlobal.body.result.changes as Json[]).map((change) => change.id)).toContain("join_secrets:1");
+  });
+});

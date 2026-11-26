@@ -215,8 +215,20 @@ export function canReadEveryField(
   const declared = resourceFieldNames(resource);
   const fields = new Set([...declared, ...Object.keys(row ?? {})]);
   return [...fields].every(
-    (field) => field === "__ns" || isRevisionMetadata(declared, field) || canReadField(schema, resource, field),
+    (field) =>
+      isStoragePartitionField(declared, field) ||
+      isRevisionMetadata(declared, field) ||
+      canReadField(schema, resource, field),
   );
+}
+
+/**
+ * `__ns` is the storage partition column a namespaced adapter adds to rows,
+ * unless the resource declares its own `__ns` field: a declared `__ns` is an
+ * ordinary application field and its read policy applies to it.
+ */
+function isStoragePartitionField(declared: readonly string[], field: string): boolean {
+  return field === "__ns" && !declared.includes("__ns");
 }
 
 /** `$rev` is revision metadata unless the resource declares its own `$rev` field. */
@@ -240,7 +252,10 @@ export function withoutUnreadableFields(
   const declared = resourceFieldNames(resource);
   const readable: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(row)) {
-    if (field === "__ns" || (!isRevisionMetadata(declared, field) && canReadField(schema, resource, field))) {
+    if (
+      isStoragePartitionField(declared, field) ||
+      (!isRevisionMetadata(declared, field) && canReadField(schema, resource, field))
+    ) {
       readable[field] = value;
     }
   }

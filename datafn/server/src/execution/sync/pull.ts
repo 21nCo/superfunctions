@@ -10,6 +10,7 @@ import {
   issuesRevisions,
   isRevisionCertified,
   revisionsEnabled,
+  tracksRevisions,
   wireChange,
   withoutUncertifiedRevision,
 } from "../revisions.js";
@@ -156,8 +157,14 @@ function isFeedResource(resource: string): boolean {
   return ACTOR_FEED_RESOURCES.includes(resource as (typeof ACTOR_FEED_RESOURCES)[number]);
 }
 
-function isDataResourceKey(resource: string): boolean {
-  return !resource.startsWith("join_") && !resource.startsWith("__datafn_");
+/**
+ * Whether `resource` is a data resource (not a join store or an internal
+ * table). Join stores are recognized from the schema's many-many relations,
+ * never by prefix alone, so a declared resource named `join_*` gets its data
+ * bucket and its access checks; an undeclared `join_*` key keeps base routing.
+ */
+function isDataResourceKey(resource: string, schema: DatafnSchema): boolean {
+  return tracksRevisions(resource, schema);
 }
 
 function validateCursor(cursor: string): boolean {
@@ -830,7 +837,7 @@ async function executePullGlobalCursor(
     }
 
     if (
-      isDataResourceKey(change.resource) &&
+      isDataResourceKey(change.resource, schema) &&
       isPrivateShareableResource(schema, change.resource)
     ) {
       if (!actorId) {
@@ -1050,7 +1057,7 @@ async function executePullCanonical(
   const cursors: Record<string, string> = Object.create(null);
 
   for (const resource of requestedResourceKeys) {
-    if (!resource.startsWith("join_") && !resource.startsWith("__datafn_")) {
+    if (isDataResourceKey(resource, schema)) {
       records[resource] = [];
       deleted[resource] = [];
     }
@@ -1082,7 +1089,7 @@ async function executePullCanonical(
   } = mergeCanonicalChangeStreamsBounded(allResourceChanges, limit);
 
   for (const { resource, change } of limitedChanges) {
-    if (resource.startsWith("join_")) {
+    if (resource.startsWith("join_") && !isDataResourceKey(resource, schema)) {
       if (!joins[resource]) {
         joins[resource] = { upsert: [], delete: [] };
       }
@@ -1098,7 +1105,7 @@ async function executePullCanonical(
       continue;
     }
 
-    if (!isDataResourceKey(resource)) {
+    if (!isDataResourceKey(resource, schema)) {
       continue;
     }
 
@@ -1170,7 +1177,7 @@ async function executePullCanonical(
   let feedHasMore = false;
   if (actorId) {
     const requestedResources = new Set(
-      requestedResourceKeys.filter((resource) => isDataResourceKey(resource)),
+      requestedResourceKeys.filter((resource) => isDataResourceKey(resource, schema)),
     );
     const actorFeedCursor = request.cursors[ACTOR_FEED_CURSOR_KEY]
       ?? Object.values(request.cursors).sort((a, b) => Number(a) - Number(b))[0]
