@@ -535,16 +535,22 @@ describe("claim at settle", () => {
           answer = () => resolve(new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 }));
         })
     );
-    // Long enough that the request is answered before its abort timer fires, even on a loaded machine.
-    const updateCheck = check({ now: Date.now, timeoutMs: 1_000, fetch });
+    // The deadline runs on this clock only, so the request's real abort timer (60 s) never fires during the test.
+    let clock = T0;
+    const updateCheck = check({ now: () => clock, timeoutMs: 60_000, fetch });
     const events: string[] = [];
-    const started = performance.now();
+    let started = 0;
     const action = runAction(
       async () => {
         await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1), WAIT);
         // The refresh's claim read stalls.
         fsHooks.stallReads = gate();
         answer();
+        // The successful reply has reached the claim read (the read after the first one), which is held.
+        await vi.waitFor(() => expect(fsHooks.reads).toBeGreaterThanOrEqual(2), WAIT);
+        // 200 ms of the timeout are left when the action ends.
+        clock = T0 + 60_000 - 200;
+        started = performance.now();
         return { exitCode: 3 };
       },
       undefined,
@@ -552,7 +558,8 @@ describe("claim at settle", () => {
     );
 
     expect(await action).toBe(3);
-    expect(performance.now() - started).toBeLessThan(1_000 + 80);
+    // It waited out the remaining 200 ms, not the stalled read (held until below) or the whole timeout.
+    expect(performance.now() - started).toBeLessThan(200 + 1_000);
     expect(events).toEqual([]);
     releaseAll();
     // Settled (past its deadline): its first read, then its claim read and its refresh write's read.
