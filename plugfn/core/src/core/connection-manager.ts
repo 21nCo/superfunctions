@@ -359,23 +359,25 @@ export class ConnectionManager {
     const oauthConfig = provider.auth.config as OAuth2Config;
     // Like connect(): the default owner is the actor's own user in the actor's
     // tenant, and a supplied actor must be able to install for the owner, so
-    // the callback with the same actor accepts the state this issues.
+    // the callback with the same actor accepts the state this issues. The
+    // user is read once, so the checked and the issued identity are the same.
+    const userId = options.userId;
     const actor = options.actor === undefined ? undefined : snapshotActor(options.actor);
     const owner: PlugFnConnectionOwner = options.owner === undefined
       ? {
           kind: 'user',
-          userId: options.userId,
+          userId,
           ...(actor?.tenantId !== undefined ? { tenantId: actor.tenantId } : {}),
         }
       : snapshotConnectionOwner(options.owner, 'owner');
-    if (actor && (actor.userId !== options.userId || !actorCanInstallForOwner(actor, owner))) {
+    if (actor && (actor.userId !== userId || !actorCanInstallForOwner(actor, owner))) {
       throw new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'connection owner mismatch', 403);
     }
     const metadata = buildConnectionStateMetadata(owner, options.returnTo);
     const result = await this.oauthFlowService.start({
       providerId: options.provider,
-      tenantId: owner.tenantId ?? options.userId,
-      userId: options.userId,
+      tenantId: owner.tenantId ?? userId,
+      userId,
       redirectUri: options.redirectUri,
       scopes: options.scopes ?? oauthConfig.scopes,
       prompt: options.prompt,
@@ -390,7 +392,7 @@ export class ConnectionManager {
       );
     }
 
-    this.logger.info(`Generated auth URL for ${options.provider}`, { userId: options.userId });
+    this.logger.info(`Generated auth URL for ${options.provider}`, { userId });
     return result.authorizationUrl;
   }
 

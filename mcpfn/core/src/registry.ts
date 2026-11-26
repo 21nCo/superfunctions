@@ -302,27 +302,39 @@ function collectionError(schemas: object[], custom: boolean): unknown {
     return undefined;
   } catch (error) {
     if (!custom) return error ?? new Error("schema collection is invalid");
+    if (schemas.some(hasDynamicReference)) {
+      return new Error("dynamic references cannot be checked for closure");
+    }
     validateSchemaReferences(schemas);
     return undefined;
   }
 }
 
-// Validators a custom compiler returned during registrations that failed, per
-// compiler and by schema text. Such a compiler may keep state the registry
-// cannot roll back (an Ajv instance holding each compiled $id), and every
-// registry derived from one (a clone, or a declaration's copy) shares it, so
-// an exact retry of the same schema on any of them reuses that compile instead
-// of compiling it again. They are never listed, and are used for nothing but
-// the identical schema text.
-const abandonedCompiles = new WeakMap<McpFnSchemaCompiler, Map<string, CompiledSchema>>();
+// Every validator a custom compiler returned, per compiler and by schema text.
+// Such a compiler may keep state the registry cannot roll back (an Ajv
+// instance holding each compiled $id), and every registry using it (a clone,
+// a declaration's copy, or a retry after a failed registration or
+// declaration) shares that state, so the identical schema text is compiled
+// once and its validator reused. A cached validator is never listed: only a
+// registration that succeeds lists its schemas.
+const customCompiles = new WeakMap<McpFnSchemaCompiler, Map<string, CompiledSchema>>();
 
-function abandonedFor(compiler: McpFnSchemaCompiler): Map<string, CompiledSchema> {
-  let abandoned = abandonedCompiles.get(compiler);
-  if (!abandoned) {
-    abandoned = new Map();
-    abandonedCompiles.set(compiler, abandoned);
+function compilesFor(compiler: McpFnSchemaCompiler): Map<string, CompiledSchema> {
+  let compiles = customCompiles.get(compiler);
+  if (!compiles) {
+    compiles = new Map();
+    customCompiles.set(compiler, compiles);
   }
-  return abandoned;
+  return compiles;
+}
+
+// Dynamic references resolve at evaluation time, so the reference-only
+// closure check cannot prove them; a collection holding one is not closed.
+function hasDynamicReference(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasDynamicReference);
+  if (!isObject(value)) return false;
+  return Object.entries(value).some(([key, item]) =>
+    key === "$dynamicRef" || key === "$recursiveRef" || hasDynamicReference(item));
 }
 
 /** A registry-issued tool or prompt view and the caller definition behind it. */
@@ -1033,9 +1045,8 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // Failed registrations' compiles, shared by every registry using the same
-  // custom compiler (see abandonedCompiles).
-  private readonly abandoned: Map<string, CompiledSchema> | undefined;
+  // The custom compiler's validators by schema text (see customCompiles).
+  private readonly compiles: Map<string, CompiledSchema> | undefined;
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -1155,24 +1166,23 @@ export class McpFnRegistry<TContext = undefined> {
     }
     const entry: SchemaEntry = {
       snapshot,
-      validator: this.reuseAbandoned(snapshot) ?? this.compile(snapshot),
+      validator: this.compile(snapshot),
       ...(isObject(source) && source !== snapshot ? { source } : {}),
     };
     pending.push(entry);
     return entry;
   }
 
-  private reuseAbandoned(snapshot: object): CompiledSchema | undefined {
-    if (!this.abandoned || this.abandoned.size === 0) return undefined;
-    const text = snapshotText(snapshot);
-    const validator = this.abandoned.get(text);
-    this.abandoned.delete(text);
-    return validator;
-  }
-
   private compile(schema: object): CompiledSchema {
     this.compileAttempts += 1;
-    return this.customCompile ? this.customCompile(schema) : this.builtIn!.compile(schema);
+    if (!this.customCompile || !this.compiles) return this.builtIn!.compile(schema);
+    const text = snapshotText(schema);
+    let validator = this.compiles.get(text);
+    if (!validator) {
+      validator = this.customCompile(schema);
+      this.compiles.set(text, validator);
+    }
+    return validator;
   }
 
   /** Run one registration body with nested registration on this registry refused. */
@@ -1204,9 +1214,6 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
-        for (const entry of this.abandoned ? pending : []) {
-          this.abandoned!.set(snapshotText(entry.snapshot), entry.validator);
-        }
         throw error;
       } finally {
         this.pending = undefined;
@@ -1247,7 +1254,7 @@ export class McpFnRegistry<TContext = undefined> {
     this.options = { compileSchema };
     if (compileSchema) {
       this.customCompile = adaptSchemaCompiler(compileSchema);
-      this.abandoned = abandonedFor(compileSchema);
+      this.compiles = compilesFor(compileSchema);
     } else {
       this.builtIn = createSchemaCompiler();
     }

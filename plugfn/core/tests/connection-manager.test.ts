@@ -1548,6 +1548,25 @@ describe('ConnectionManager OAuth callback subject precheck', () => {
     });
   });
 
+  it('issues the state for the user it checked, reading the start user once', async () => {
+    const env = createManagerEnvironment(new MemoryAdapter(), createTokenHttpClient());
+    let reads = 0;
+    const options = {
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      actor: { userId: 'user-1', tenantId: 'workspace-1' },
+      get userId() {
+        reads += 1;
+        return reads === 1 ? 'user-1' : 'user-2';
+      },
+    };
+    const authUrl = await env.manager.getAuthUrl(options);
+    const state = new URL(authUrl).searchParams.get('state')!;
+    const stored = await env.oauthDependencies.oauthStateStore.get(state);
+    expect(reads).toBe(1);
+    expect(stored?.subject ?? stored).toMatchObject({ userId: 'user-1' });
+  });
+
   it('refuses to start for an actor that cannot install for the requested owner', async () => {
     const env = createManagerEnvironment(new MemoryAdapter(), createTokenHttpClient());
 

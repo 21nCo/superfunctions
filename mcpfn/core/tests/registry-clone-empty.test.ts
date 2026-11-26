@@ -487,7 +487,9 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with a statef
     expect(replayed.listTools().map((tool) => tool.name)).toEqual(["clone-only", "t"]);
     expect(source.listPrompts().map((entry) => entry.name)).toEqual(["p"]);
     expect(replayed.listPrompts().map((entry) => entry.name)).toEqual(["clone-prompt", "p"]);
-    expect(compiled).toHaveLength(6);
+    // The two later `{ type: "object" }` inputs share one compile: the shared
+    // compiler's validator for identical schema text is reused, never listed.
+    expect(compiled).toHaveLength(5);
     await expectSameAnswers(source);
     await expectSameAnswers(replayed);
   });

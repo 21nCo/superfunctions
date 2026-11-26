@@ -270,3 +270,45 @@ describe("McpFnRegistry custom compiler edge cases", () => {
     }
   });
 });
+
+describe("McpFnRegistry custom compiler declaration retries and dynamic references", () => {
+  it("retries a declaration whose later tool failed after an earlier tool was accepted", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const ajv = new Ajv2020({ strict: false });
+    const registry = new McpFnRegistry({ compileSchema: (schema: object) => ajv.compile(schema) });
+    const tools = (ok: string) => [
+      { name: "a", description: "First.", inputSchema: { $id: "https://test.invalid/first", type: "object" as const }, handler },
+      {
+        name: "b",
+        description: "Second.",
+        inputSchema: { type: "object" as const },
+        outputSchema: { type: "object", properties: { ok: { type: ok } } } as never,
+        handler,
+      },
+    ];
+
+    expect(() => defineMcpFnServer({ info, registry, tools: tools("nonsense") })).toThrow();
+    const declared = defineMcpFnServer({ info, registry, tools: tools("boolean") });
+    expect(declared.registry.listTools().map((tool) => tool.name)).toEqual(["a", "b"]);
+  });
+
+  it("does not treat an unresolved $dynamicRef as closed", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const declared = defineMcpFnServer({
+      info,
+      registry: new McpFnRegistry({ compileSchema: () => Object.assign(() => true, { errors: null }) }),
+      tools: [{
+        name: "t",
+        description: "Dynamic reference.",
+        inputSchema: {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: { a: { $dynamicRef: "#missing" } },
+        } as never,
+        handler,
+      }],
+    });
+
+    expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
+  });
+});
