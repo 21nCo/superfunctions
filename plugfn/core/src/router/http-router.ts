@@ -1184,7 +1184,7 @@ async function webhookReceiptDisposition(
   }
 
   if (
-    attempts.length === 0 &&
+    deliveries.length === 0 &&
     (!scoped || hasWebhookSignatureProof(receipt)) &&
     now - new Date(receipt.createdAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
   ) {

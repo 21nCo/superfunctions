@@ -192,7 +192,37 @@ describe('webhook workflow admission', () => {
     });
     const listener = vi.fn();
     runtime.webhooks.on('test-provider', 'test.event', listener);
-    expect((await send('test-installation-one')).status).toBe(200);
+    const other = startRuntime(database);
+    const otherListener = vi.fn();
+    other.runtime.webhooks.on('test-provider', 'test.event', otherListener);
+    const createDelivery = webhooks.createDelivery;
+    let notifyClaimed!: () => void;
+    let releaseClaim!: () => void;
+    const claimReached = new Promise<void>((resolve) => { notifyClaimed = resolve; });
+    const holdClaim = new Promise<void>((resolve) => { releaseClaim = resolve; });
+    vi.spyOn(webhooks, 'createDelivery').mockImplementationOnce(async (attempt) => {
+      await database.create({
+        model: deliveryModel,
+        data: {
+          id: 'test-stale-attempt', receiptId: attempt.receiptId, status: 'success',
+          workflowScoped: true, createdAt: new Date(0), updatedAt: new Date(0), attempts: 1,
+        },
+      });
+      notifyClaimed();
+      await holdClaim;
+      return createDelivery(attempt);
+    });
+
+    const first = send('test-installation-one');
+    await claimReached;
+    try {
+      const second = await other.send('test-installation-one');
+      await expect(second.json()).resolves.toMatchObject({ data: { duplicate: true, receiptId: 'test-stale-receipt' } });
+      expect(otherListener).not.toHaveBeenCalled();
+    } finally {
+      releaseClaim();
+    }
+    expect((await first).status).toBe(200);
     expect(listener).toHaveBeenCalledOnce();
     await expect(webhooks.getReceipt('test-stale-receipt')).resolves.toMatchObject({
       workflowTenantId: firstBinding.tenantId, connectionId: firstBinding.connectionId, signatureVerified: true,
@@ -718,11 +748,16 @@ describe('webhook workflow admission', () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const before = startRuntime(database);
     expect((await before.send('test-installation-one')).status).toBe(200);
-    const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
+    const [delivery] = await database.findMany<PlugFnWebhookDelivery>({ model: deliveryModel });
     await database.update({
       model: deliveryModel,
       where: [{ field: 'id', operator: 'eq', value: delivery.id }],
       data: { signatureVerified: null },
+    });
+    await database.update({
+      model: receiptModel,
+      where: [{ field: 'id', operator: 'eq', value: delivery.receiptId }],
+      data: { createdAt: new Date(0) },
     });
 
     const after = startRuntime(database);
