@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalJson,
   createRequestIdempotency,
@@ -64,6 +64,27 @@ class FakeOrderDatabase {
     this.orders.push(item);
     this.receiptsByKey.set(commit.storeKey, { ...commit, response });
     return response;
+  }
+}
+
+/** Atomic store that runs a hook just before the first compare-and-set against a chosen version. */
+class HookedStore extends FakeAtomicStore {
+  constructor(private readonly hook: { version?: string; run?: () => Promise<void> } = {}) {
+    super();
+  }
+
+  arm(version: string, run: () => Promise<void>) {
+    this.hook.version = version;
+    this.hook.run = run;
+  }
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const { run } = this.hook;
+    if (run && expectedVersion === this.hook.version) {
+      this.hook.run = undefined;
+      await run();
+    }
+    return super.compareAndSet(storeKey, expectedVersion, next);
   }
 }
 
@@ -382,7 +403,7 @@ describe("createRequestIdempotency", () => {
     expect(() => createRequestIdempotency({ store: {} as IdempotencyStore })).toThrow(/compareAndSet/);
   });
 
-  it("uses Web Crypto defaults for fingerprints and versions", async () => {
+  it("uses portable SHA-256 and Web Crypto versions by default", async () => {
     const store = new FakeAtomicStore();
     const idempotency = createRequestIdempotency({ store });
     const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
@@ -631,6 +652,7 @@ describe("createRequestIdempotency receipt reconciliation", () => {
       { status: 42, headers: {} },
       { status: 200, headers: { "x-a": "a\r\nb" } },
       { status: 200, headers: { "Bad Name": "a" } },
+      { status: 200, headers: {}, body: "kept", omitted: ["body"] },
     ]) {
       store.records.set(token.storeKey, { ...base, response } as unknown as IdempotencyRecord);
       await expect(idempotency.claim(orderRequest())).rejects.toThrow(/malformed record/);
@@ -703,5 +725,105 @@ describe("normalizeIdempotentResponse", () => {
       headers: {},
       omitted: ["body", "headers"],
     });
+  });
+});
+
+describe("createRequestIdempotency round-3 regressions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["expired", "evicted"] as const)(
+    "keeps a retained receipt authoritative for a request without receipt recovery after the record is %s",
+    async (loss) => {
+      const { idempotency, database, clock, store } = setup();
+      const holder = acquired(await idempotency.claim(orderRequest()));
+      await idempotency.settle(holder, await database.createOrder(holder, "book"));
+      clock.advance(60_001);
+      if (loss === "evicted") store.records.clear();
+      const writes = store.writes;
+
+      // Neither acquires (no second effect) nor exposes the committed response.
+      expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+      expect(await idempotency.recover(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+      expect(store.writes).toBe(writes);
+      expect(database.orders).toEqual(["book"]);
+      expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt", response: { status: 201 } });
+    },
+  );
+
+  it("resolves a committed receipt before validating the holder's response", async () => {
+    const { idempotency, database, clock } = setup();
+    const slow = acquired(await idempotency.claim(orderRequest()));
+    clock.advance(1_001);
+    const current = acquired(await idempotency.claim(orderRequest()));
+    await database.createOrder(slow, "book");
+
+    // An invalid response is never used when commit evidence decides the result.
+    const invalid = { status: 0 } as IdempotentResponse;
+    expect(await idempotency.settle(current, invalid)).toMatchObject({ outcome: "committed", response: { status: 201 } });
+    expect(await idempotency.settle(slow, invalid)).toMatchObject({ outcome: "settled", response: { status: 201 } });
+    // Without a receipt the response is still validated.
+    const { idempotency: other } = setup();
+    const token = acquired(await other.claim(orderRequest({ recovery: "none" })));
+    await expect(other.settle(token, invalid)).rejects.toThrow(/status/);
+  });
+
+  it.each(["settle", "release"] as const)(
+    "reports a commit that lands during the holder's final %s write instead of its fallback",
+    async (action) => {
+      const store = new HookedStore();
+      const { idempotency, database, clock } = setup({ store });
+      const slow = acquired(await idempotency.claim(orderRequest()));
+      clock.advance(1_001);
+      const current = acquired(await idempotency.claim(orderRequest()));
+      // The receipt lookup has already found nothing when the old holder commits.
+      store.arm(current.version, async () => {
+        await database.createOrder(slow, "book");
+      });
+
+      const result =
+        action === "settle" ? await idempotency.settle(current, { status: 503, body: "retry" }) : await idempotency.release(current);
+      expect(result).toMatchObject({ outcome: "committed", response: { status: 201 } });
+      expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", response: { status: 201 } });
+      expect(database.orders).toEqual(["book"]);
+    },
+  );
+
+  it("returns the holder's own response unchanged on its own commit and strips credentials from another holder's", async () => {
+    const { idempotency, database, clock } = setup();
+    const own = acquired(await idempotency.claim(orderRequest()));
+    const committed = await database.createOrder(own, "book");
+    const sent = { ...committed, headers: { ...committed.headers, "Set-Cookie": "session=test-session-value" } };
+    expect(await idempotency.settle(own, sent)).toEqual({ outcome: "settled", response: sent });
+
+    const slow = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
+    clock.advance(1_001);
+    const current = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
+    database.receiptsByKey.set(slow.storeKey, {
+      storeKey: slow.storeKey,
+      fingerprint: slow.fingerprint,
+      generation: slow.generation,
+      response: { status: 201, headers: { "set-cookie": "session=test-session-value", "content-type": "text/plain" }, body: "ok" },
+    });
+    const result = await idempotency.settle(current, { status: 409 });
+    expect(result).toEqual({ outcome: "committed", response: { status: 201, headers: { "content-type": "text/plain" }, body: "ok" } });
+  });
+
+  it("derives store keys and default fingerprints without ambient Web Crypto", async () => {
+    vi.stubGlobal("crypto", undefined);
+    expect((globalThis as { crypto?: unknown }).crypto).toBeUndefined();
+    const store = new FakeAtomicStore();
+    const database = new FakeOrderDatabase();
+    const idempotency = createRequestIdempotency({ store, receipts: database.receipts, nonce: testNonce });
+
+    const token = acquired(await idempotency.claim(orderRequest()));
+    expect(token.storeKey).toMatch(/^[0-9a-f]{64}$/);
+    await idempotency.settle(token, await database.createOrder(token, "book"));
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", response: { status: 201 } });
+    for (const input of ["", "abc", "é".repeat(100), "x".repeat(55), "x".repeat(64)]) {
+      expect(await sha256Fingerprint(input)).toBe(createHash("sha256").update(input).digest("hex"));
+    }
+    expect(() => createRequestIdempotency({ store })).toThrow(/options\.nonce/);
   });
 });
