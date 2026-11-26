@@ -1579,8 +1579,8 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
     const components = document.components;
     if (!isObject(components)) return;
     const copiedComponents = ownValue(copy, "components");
-    const schemes = isPlainRecord(components) ? components.securitySchemes : undefined;
-    if (!isPlainRecord(components) || (isObject(schemes) && !isPlainRecord(schemes))) {
+    const schemes = clonesUnchanged(components) ? components.securitySchemes : undefined;
+    if (!clonesUnchanged(components) || (isObject(schemes) && !clonesUnchanged(schemes))) {
       // No scheme of a section that is not a plain object resolves.
       if (isObject(copiedComponents)) setOwn(copiedComponents, "securitySchemes", {});
       return;
@@ -1589,7 +1589,7 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
     const copiedSchemes = ownValue(copiedComponents, "securitySchemes");
     if (!isObject(copiedSchemes)) return;
     for (const [name, scheme] of Object.entries(schemes)) {
-      if (isObject(scheme) && !isPlainRecord(scheme)) setOwn(copiedSchemes, name, null);
+      if (isObject(scheme) && !clonesUnchanged(scheme)) setOwn(copiedSchemes, name, null);
     }
   } catch (error) {
     throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
@@ -1598,10 +1598,28 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
   }
 }
 
+/**
+ * An object structuredClone copies without changing what it reads as: a
+ * plain object of this or another realm (a document may be built in a vm
+ * context), whose prototype is `null` or that realm's `Object.prototype`.
+ */
+function clonesUnchanged(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return true;
+  if (typeof prototype !== "object" || Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    typeof constructor === "function" &&
+    Object.getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
+    Function.prototype.toString.call(constructor) === "function Object() { [native code] }"
+  );
+}
+
 function markLevel(level: unknown, copied: unknown): void {
   if (!Array.isArray(level) || !Array.isArray(copied)) return;
   for (const [index, requirement] of level.entries()) {
-    if (isObject(requirement) && !isPlainRecord(requirement) && index < copied.length) copied[index] = null;
+    if (isObject(requirement) && !clonesUnchanged(requirement) && index < copied.length) copied[index] = null;
   }
 }
 

@@ -1928,6 +1928,29 @@ describe("httpExecutor security objects structuredClone would flatten", () => {
   });
 });
 
+describe("httpExecutor security of a document built in another realm", () => {
+  it("reads another realm's plain objects as plain, so their security resolves as before cloning", () => {
+    const realmDocument = runInNewContext(`({
+      openapi: "3.1.0",
+      info: { title: "realm", version: "1.0.0" },
+      components: { securitySchemes: { headerKey: { type: "apiKey", in: "header", name: "X-Api-Key" } } },
+      paths: {
+        "/realm": {
+          get: {
+            operationId: "realm",
+            security: [{ headerKey: [] }],
+            parameters: [{ name: "X-Api-Key", in: "header", schema: { type: "string" } }],
+            responses: { "200": { description: "OK" } },
+          },
+        },
+      },
+    })`) as object;
+    const { tools, skipped } = fromOpenAPI(realmDocument, { executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }) });
+    expect(skipped).toEqual([]);
+    expect(tools.map((tool) => [tool.name, Object.keys((tool.inputSchema.properties ?? {}) as object)])).toEqual([["realm", []]]);
+  });
+});
+
 describe("httpExecutor error and text bodies judged as returned", () => {
   const reply = (body: BodyInit, status: number, contentType = "application/json") =>
     stubFetch(() => new Response(body, { status, headers: { "content-type": contentType } })).fetch;
