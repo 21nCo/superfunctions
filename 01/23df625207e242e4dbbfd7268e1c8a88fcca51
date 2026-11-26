@@ -1,0 +1,41 @@
+plugfn/core/src/schema.ts
+  s_cff285c8033656::t_f5229c44bbf065 214
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_f5229c44bbf065 879,1105-1109,1114-1117
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_cff285c8033656::t_c0087cc7bbd096 24-28,421-429
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_cff285c8033656::t_c0087cc7bbd096 14-17,32,40,44,77,79-80
+  s_cff285c8033656::t_66614919b92412 55-57,61
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_f5229c44bbf065 92
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_c0087cc7bbd096 244,249,264-280
+  s_cff285c8033656::t_5ddc263f1dd67d 281-282
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_cff285c8033656::t_2e6f69801b7216 256
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_f5229c44bbf065 557-559,561-562,571,583
+  s_cff285c8033656::t_31c75e2fe5b1b8 555-556,563-569,573-581,585-588,591
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_f5229c44bbf065 268-269,276
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_c0087cc7bbd096 471,473-475
+  s_cff285c8033656::t_f5229c44bbf065 32-37,130,154-155,285,351,448,453
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0123df625207e242e4dbbfd7268e1c8a88fcca51",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
