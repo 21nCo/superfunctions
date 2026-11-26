@@ -853,15 +853,15 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   /** Whether two receipts are the same commit: the same claim and body. */
   const sameCommit = (a: ParsedReceipt, b: ParsedReceipt): boolean => a.claimId === b.claimId && a.fingerprint === b.fingerprint;
 
-  /** Writes a receipt's response as the completed result, if `expectedVersion` still holds; returns the new version. */
+  /** Writes a receipt's response as the completed result under `version`, if `expectedVersion` still holds. */
   const writeFromReceipt = async (
     storeKey: string,
     expectedVersion: string | null,
     generation: number,
     receipt: ParsedReceipt,
-  ): Promise<string | undefined> => {
-    const version = nextVersion();
-    const written = await store.compareAndSet(storeKey, expectedVersion, {
+    version: string = nextVersion(),
+  ): Promise<boolean> =>
+    store.compareAndSet(storeKey, expectedVersion, {
       state: "completed",
       version,
       generation: Math.max(generation, receipt.generation, 1),
@@ -872,41 +872,77 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       fromReceipt: true,
       receiptClaimId: receipt.claimId,
     });
-    return written ? version : undefined;
+
+  /**
+   * How recording a receipt ended: `recorded` (written), `lost` (a newer
+   * writer holds the key), `failed` (a fenced write threw; the receipt still
+   * decides) or `gone` (no receipt is left for the key: decide again).
+   */
+  type Recorded = { kind: "recorded" | "lost" | "failed"; receipt: ParsedReceipt } | { kind: "gone" };
+
+  /** Deletes a copy this step wrote over an absence, and only that version; a failure leaves it to expire. */
+  const retireQuietly = async (storeKey: string, version: string): Promise<void> => {
+    try {
+      await store.compareAndSet(storeKey, version, null);
+    } catch {
+      // A failed delete leaves the copy to the next read, which checks it against the live receipt.
+    }
   };
 
   /**
    * Records a receipt's response as the completed result, if `expectedVersion`
    * still holds. The record names the receipt's claim, so a later step knows
    * which commit it holds. A write over an absence (`null`) cannot tell the
-   * absence its caller saw from a later one, after a newer claim committed
-   * and its record was evicted, so the receipt is read again after such a
-   * write and a newer commit replaces the copy just written. Returns whether
-   * the record was written and the latest receipt seen, which decides.
+   * absence its caller saw from a later one (a newer claim committed and its
+   * record was evicted, or the receipt expired), so whatever the write did,
+   * the receipt is read again and the latest one decides: a newer commit
+   * replaces the copy just written, and no receipt retires it. Only the
+   * version this step wrote is ever replaced or deleted. When that lookup
+   * fails, the copy is retired and the error is thrown: an unverified receipt
+   * never decides.
    */
   const completeFromReceipt = async (
     storeKey: string,
     expectedVersion: string | null,
     generation: number,
     receipt: ParsedReceipt,
-  ): Promise<{ written: boolean; receipt: ParsedReceipt }> => {
-    const version = await writeFromReceipt(storeKey, expectedVersion, generation, receipt);
-    if (version === undefined || expectedVersion !== null) return { written: version !== undefined, receipt };
+  ): Promise<Recorded> => {
+    if (expectedVersion !== null) {
+      try {
+        const written = await writeFromReceipt(storeKey, expectedVersion, generation, receipt);
+        return { kind: written ? "recorded" : "lost", receipt };
+      } catch {
+        return { kind: "failed", receipt };
+      }
+    }
+    const version = nextVersion();
+    // A lost acknowledgement leaves the write unknown (`undefined`): it may hold this version.
+    let written: boolean | undefined;
+    try {
+      written = await writeFromReceipt(storeKey, null, generation, receipt, version);
+    } catch {
+      written = undefined;
+    }
+    const attempted = written === false ? undefined : version;
     let latest: ParsedReceipt | undefined;
     try {
       latest = await findReceipt(storeKey);
-    } catch {
-      // The receipt in hand still decides; every read of a receipt-backed record checks it against the live receipt.
-      return { written: true, receipt };
+    } catch (error) {
+      if (attempted !== undefined) await retireQuietly(storeKey, attempted);
+      throw error;
     }
-    if (!latest || sameCommit(latest, receipt)) return { written: true, receipt };
-    try {
-      // Over the version just written: a newer writer is never overwritten.
-      await writeFromReceipt(storeKey, version, generation, latest);
-    } catch {
-      // The newer receipt still decides; a later step records it.
+    if (latest && sameCommit(latest, receipt)) return { kind: written ? "recorded" : "lost", receipt };
+    if (attempted !== undefined) {
+      if (!latest) await retireQuietly(storeKey, attempted);
+      else {
+        try {
+          await writeFromReceipt(storeKey, attempted, generation, latest);
+        } catch {
+          // The newer receipt still decides; a later step records it.
+        }
+      }
     }
-    return { written: true, receipt: latest };
+    return latest ? { kind: written ? "recorded" : "lost", receipt: latest } : { kind: "gone" };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.
@@ -960,8 +996,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   /**
    * Records a receipt over the live record if that record is unchanged, and
    * reports it: a replay for the same body, a conflict for another body. The
-   * receipt decides the outcome whether or not the write wins; a lost write
-   * leaves the newer record untouched, and a later step records the receipt.
+   * latest receipt decides the outcome whether or not the write wins; a lost
+   * write leaves the newer record untouched, and a later step records the
+   * receipt. Undefined when no receipt is left after a write over an absence.
    */
   const applyReceipt = async (
     storeKey: string,
@@ -969,13 +1006,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     generation: number,
     receipt: ParsedReceipt,
     fingerprint: string,
-  ): Promise<ReceiptOutcome> => {
-    let decides = receipt;
-    try {
-      decides = (await completeFromReceipt(storeKey, expectedVersion, generation, receipt)).receipt;
-    } catch {
-      // A failed cache write never hides the durable receipt; a later step records it.
-    }
+  ): Promise<ReceiptOutcome | undefined> => {
+    // A failed fenced write never hides the durable receipt; a later step records it.
+    const recorded = await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
+    // No receipt is left for the key: the caller's step decides again.
+    if (recorded.kind === "gone") return undefined;
+    const decides = recorded.receipt;
     return decides.fingerprint === fingerprint
       ? { outcome: "replay", response: fullReceiptResponse(decides), source: "receipt" }
       : { outcome: "conflict" };
@@ -995,7 +1031,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   const inspect = async (
     prepared: Prepared,
     at: number,
-  ): Promise<{ done: ReceiptOutcome } | { live: Live; receipt?: ParsedReceipt }> => {
+  ): Promise<{ done: ReceiptOutcome | undefined } | { live: Live; receipt?: ParsedReceipt }> => {
     const { storeKey, fingerprint, recovery } = prepared;
     const live = await readLive(storeKey, at);
     const record = live.kind === "present" ? live.record : undefined;
@@ -1197,15 +1233,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (holdsReceipt(live, receipt)) break;
       const [expected, generation] =
         live.kind === "present" ? [live.record.version, live.record.generation] : [live.expectedVersion, live.previousGeneration];
-      try {
-        const recorded = await completeFromReceipt(token.storeKey, expected, generation, receipt);
-        // A newer commit found after a write over an absence decides instead.
-        receipt = recorded.receipt;
-        if (recorded.written) break;
-      } catch {
-        // A failed cache write never hides the validated receipt; a later step records it.
-        break;
+      const recorded = await completeFromReceipt(token.storeKey, expected, generation, receipt);
+      if (recorded.kind === "gone") {
+        // The receipt read over an absence is gone: never let it decide; read the key again.
+        receipt = undefined;
+        continue;
       }
+      // A newer commit found after a write over an absence decides instead.
+      receipt = recorded.receipt;
+      // A failed cache write never hides the validated receipt; a later step records it.
+      if (recorded.kind !== "lost") break;
     }
     if (receipt === undefined) return undefined;
     // Persistent contention leaves the cache write to the next step; the durable receipt still decides.

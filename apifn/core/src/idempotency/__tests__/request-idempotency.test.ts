@@ -8,6 +8,7 @@ import {
   type IdempotencyCommit,
   type IdempotencyDiagnostic,
   type IdempotencyReceipt,
+  type IdempotencyReceiptSource,
   type IdempotencyRecord,
   type IdempotencyRequest,
   type IdempotencyStore,
@@ -1715,6 +1716,7 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     idempotency: ReturnType<typeof createRequestIdempotency>,
     database: FakeOrderDatabase,
     store: FakeAtomicStore,
+    evict = true,
   ) {
     const newer: { response?: IdempotentResponse; claimId?: string } = {};
     const run = async () => {
@@ -1723,7 +1725,7 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
       newer.claimId = token.claimId;
       newer.response = await database.createOrder(token, "pen");
       await idempotency.settle(token, newer.response);
-      store.records.clear();
+      if (evict) store.records.clear();
     };
     return { newer, run };
   }
@@ -1787,5 +1789,73 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     expect(await idempotency.claim(orderRequest({ body: otherBody }))).toEqual({ outcome: "replay", response: laterResponse, source: "receipt" });
     expect([...store.records.values()][0]).toMatchObject({ receiptClaimId: later.claimId });
     expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "conflict" });
+  });
+
+  /** A first commit (receipt A) whose record was evicted while its receipt is retained. */
+  async function evictedFirstCommit(store: FakeAtomicStore, wrap?: (database: FakeOrderDatabase) => IdempotencyReceiptSource) {
+    const database = new FakeOrderDatabase();
+    const paused = pausingReceipts(database);
+    const { idempotency } = setup({ store, receipts: wrap ? wrap(database) : paused.receipts });
+    const first = acquired(await idempotency.claim(orderRequest()));
+    await idempotency.settle(first, await database.createOrder(first, "book"));
+    store.records.clear();
+    return { database, paused, idempotency };
+  }
+
+  it("retires a copy written over an absence when the receipt expired meanwhile, so the key can be reused", async () => {
+    const store = new FakeAtomicStore();
+    const { database, paused, idempotency } = await evictedFirstCommit(store);
+    paused.pauseNext(async () => database.receiptsByKey.clear());
+
+    const result = await idempotency.claim(orderRequest());
+    expect(result.outcome).toBe("acquired");
+    expect([...store.records.values()]).toEqual([expect.objectContaining({ state: "pending" })]);
+  });
+
+  it("lets the newer commit decide when the write over an absence loses its acknowledgement", async () => {
+    class LostAckReceiptStore extends FakeAtomicStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        const written = await super.compareAndSet(storeKey, expectedVersion, next);
+        if (expectedVersion === null && next?.state === "completed" && next.receiptClaimId === "test-claim-a") {
+          throw new Error("store acknowledgement lost");
+        }
+        return written;
+      }
+    }
+    const store = new LostAckReceiptStore();
+    const { database, paused, idempotency } = await evictedFirstCommit(store);
+    const [key, receiptA] = [...database.receiptsByKey.entries()][0]!;
+    database.receiptsByKey.set(key, { ...receiptA, claimId: "test-claim-a" });
+    const { newer, run } = newerEpoch(idempotency, database, store);
+    paused.pauseNext(run);
+
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "conflict" });
+    await expectNewerWins(idempotency, store, newer);
+  });
+
+  it("lets the newer commit decide when a write over an absence loses to the newer record", async () => {
+    const store = new FakeAtomicStore();
+    const { database, paused, idempotency } = await evictedFirstCommit(store);
+    const { newer, run } = newerEpoch(idempotency, database, store, false);
+    paused.pauseNext(run);
+
+    expect(await idempotency.claim(orderRequest({ body: otherBody }))).toMatchObject({ outcome: "replay", response: newer.response });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "conflict" });
+    expect([...store.records.values()][0]).toMatchObject({ receiptClaimId: newer.claimId });
+  });
+
+  it("fails closed and retires its copy when the receipt cannot be read again after a write over an absence", async () => {
+    const store = new FakeAtomicStore();
+    let finds: number | undefined;
+    const { idempotency } = await evictedFirstCommit(store, (database) => ({
+      find: async (storeKey: string) => {
+        if (finds !== undefined && (finds += 1) === 2) throw new Error("receipt lookup failed");
+        return database.receipts.find(storeKey);
+      },
+    }));
+    // Lookup 1 is the claim's read over the evicted key; lookup 2 is the re-read after its write over that absence.
+    finds = 0;
+    await expect(idempotency.claim(orderRequest())).rejects.toThrow("receipt lookup failed");
+    expect(store.records.size).toBe(0);
   });
 });
