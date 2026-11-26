@@ -9,7 +9,7 @@ import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnS
 // authoritative tenant source rather than caller-controlled workflow metadata.
 // Version 6 added job-scoped claim tokens to sync jobs. Any legacy claim token on a
 // connection represented a different ownership domain, so migration must not copy it.
-export const PLUGFN_SCHEMA_VERSION = 7;
+export const PLUGFN_SCHEMA_VERSION = 8;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;
@@ -226,7 +226,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           resource: { type: 'string', required: true, fieldName: 'resource' },
           mode: { type: 'string', required: true, fieldName: 'mode' },
           status: { type: 'string', required: true, fieldName: 'status' },
-          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 64 },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 768 },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
           cursor: { type: 'string', required: false, fieldName: 'cursor' },
