@@ -17,10 +17,10 @@ import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
-import { hasWebhookSignatureProof } from '../webhooks/webhook-handler.js';
 
 export const claimFirstSignedWebhookDelivery = Symbol('plugfn.claimFirstSignedWebhookDelivery');
 export const webhookRuntimeReplayContext = Symbol('plugfn.webhookRuntimeReplayContext');
+export const webhookSignatureProof = Symbol('plugfn.webhookSignatureProof');
 
 export interface CreateProviderInstallationInput {
   provider: string;
@@ -37,6 +37,7 @@ export interface CreateConnectionGrantInput {
 }
 
 export interface CreateWebhookReceiptInput {
+  [webhookSignatureProof]?: boolean;
   provider: string;
   event: string;
   payloadHash: string;
@@ -51,6 +52,7 @@ export interface CreateWebhookReceiptInput {
 
 export interface CreateWebhookDeliveryInput {
   [webhookRuntimeReplayContext]?: PlugFnWebhookReplayContext;
+  [webhookSignatureProof]?: boolean;
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
@@ -203,6 +205,7 @@ export class AdapterRuntimeStorage {
       headersRedacted: input.headersRedacted,
       payloadHash: input.payloadHash,
       verificationStatus: input.verificationStatus ?? 'not-required',
+      ...(input[webhookSignatureProof] ? { signatureVerified: true } : {}),
       receivedAt: now,
       createdAt: now,
       metadata: webhookReceiptMetadata(input),
@@ -254,7 +257,7 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
-    const normalizedUpdates = { ...updates };
+    const { signatureVerified: _proof, ...normalizedUpdates } = updates;
     if (updates.metadata !== undefined) {
       const metadata: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(updates.metadata ?? {})) {
@@ -293,7 +296,8 @@ export class AdapterRuntimeStorage {
   private async persistWebhookDelivery(input: CreateWebhookDeliveryInput, id: string): Promise<PlugFnWebhookDelivery> {
     const workflowScoped = await this.workflowDeliveryScope(input.receiptId);
     const now = new Date();
-    const runtimeReplayContext = !workflowScoped && hasWebhookSignatureProof(input)
+    const signatureVerified = input[webhookSignatureProof] === true;
+    const runtimeReplayContext = !workflowScoped && signatureVerified
       ? input[webhookRuntimeReplayContext]
       : undefined;
     return this.adapter.createWebhookDelivery({
@@ -302,6 +306,7 @@ export class AdapterRuntimeStorage {
       sinkId: input.sinkId,
       handlerName: input.handlerName,
       ...(workflowScoped ? { workflowScoped } : {}),
+      ...(signatureVerified ? { signatureVerified: true } : {}),
       ...(runtimeReplayContext ? { runtimeReplayContext } : {}),
       status: input.status ?? 'pending',
       attempts: 0,
@@ -316,7 +321,7 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
-    const { workflowScoped: _scope, runtimeReplayContext, ...fields } = updates;
+    const { workflowScoped: _scope, signatureVerified: _proof, runtimeReplayContext, ...fields } = updates;
     const data = {
       ...fields,
       ...(runtimeReplayContext === null ? { runtimeReplayContext } : {}),

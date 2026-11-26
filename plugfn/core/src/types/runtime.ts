@@ -79,6 +79,8 @@ export interface PlugFnWebhookReceipt {
   headersRedacted?: Record<string, string>;
   payloadHash: string;
   verificationStatus: 'verified' | 'failed' | 'not-required';
+  /** Set by runtime ingress only after the provider verifier succeeds. */
+  signatureVerified?: true | null;
   receivedAt: Date;
   createdAt: Date;
   metadata?: Record<string, unknown>;
@@ -95,6 +97,7 @@ export interface PlugFnWebhookDelivery {
   sinkId?: string;
   handlerName?: string;
   workflowScoped?: true | null;
+  signatureVerified?: true | null;
   /** Runtime-owned context for retrying a signature-verified standalone delivery. */
   runtimeReplayContext?: PlugFnWebhookReplayContext | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead-lettered';

@@ -175,9 +175,13 @@ workflow execution remains available. When a provider has a resolver, a
 verified delivery without a workflow subject can still reach an explicitly
 registered server-side listener for its event.
 
-When enabling workflow bindings, a prior successful standalone delivery can
-suppress listener redelivery if it recorded the same canonical trigger key.
-Listeners may run again on redelivery of older records that stored only a route.
+An in-flight delivery may run its listener twice when you enable tenant binding.
+Signed, bound deliveries use a separate receipt history for each verified signing
+authority. Make listener effects idempotent with a durable key for the provider
+and relevant tenant or connection. Use an event ID from the verified payload or a
+stable business operation key. Enforce uniqueness in the transaction that applies
+a local effect, or pass the key to the downstream service when it accepts an
+idempotency key.
 
 Use a new workflow ID when moving a bound workflow to a different tenant or
 connection. This keeps execution history with the workflow's original tenant.

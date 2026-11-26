@@ -620,8 +620,8 @@ export function assertWebhookReceiptScope(
   }
 }
 
-export function hasWebhookSignatureProof(record: { metadata?: Record<string, unknown> }): boolean {
-  return record.metadata?.signatureVerified === true;
+export function hasWebhookSignatureProof(record: { signatureVerified?: true | null }): boolean {
+  return record.signatureVerified === true;
 }
 
 export function withoutWebhookReplayData(

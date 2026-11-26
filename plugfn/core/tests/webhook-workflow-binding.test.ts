@@ -510,7 +510,7 @@ describe('webhook workflow admission', () => {
     const before = startRuntime(database);
     expect((await before.send('test-installation-one')).status).toBe(200);
     const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
-    await database.updateWebhookDelivery(delivery.id, { metadata: {} });
+    await database.updateWebhookDelivery(delivery.id, { signatureVerified: null });
 
     const after = startRuntime(database);
     const listener = vi.fn();
@@ -534,7 +534,7 @@ describe('webhook workflow admission', () => {
     const receipt = await before.runtime.runtime.webhooks.findReceiptByIdempotencyKey('test-provider', 'test-delivery');
     expect(receipt?.verificationStatus).toBe(options.withVerifier ? 'not-required' : 'verified');
     const [originalDelivery] = await before.runtime.runtime.webhooks.listDeliveries(receipt!.id);
-    expect(originalDelivery.metadata).not.toHaveProperty('signatureVerified');
+    expect(originalDelivery.signatureVerified).not.toBe(true);
 
     const after = startRuntime(database, { verifySignatures: true, verifySignature });
     after.runtime.webhooks.on('test-provider', 'test.event', listener);
@@ -545,7 +545,7 @@ describe('webhook workflow admission', () => {
     expect(after.action).toHaveBeenCalledOnce();
     expect(await database.findMany({ model: deliveryModel })).toContainEqual(expect.objectContaining({
       status: 'success',
-      metadata: expect.objectContaining({ signatureVerified: true }),
+      signatureVerified: true,
     }));
     const duplicate = await after.send('test-installation-one', 'test-delivery', signedHeaders);
     await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
@@ -586,7 +586,7 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the signed attempt headers when retrying after an unsigned completion', async () => {
+  it.each(['success', 'dead-lettered'] as const)('uses and clears signed replay context on %s after an unsigned completion', async (status) => {
     const before = startRuntime(database, { withResolver: false, withVerifier: false });
     before.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
     expect((await before.send(undefined, 'test-delivery', { 'x-test-topic': 'test-unsigned-topic' })).status).toBe(200);
@@ -604,18 +604,21 @@ describe('webhook workflow admission', () => {
       headers: { 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' },
     });
     const applicationHeaders = { 'x-test-topic': 'test-application-topic' };
-    await database.updateWebhookDelivery(failed.id, {
+    await runtime.runtime.webhooks.updateDelivery(failed.id, {
       nextAttemptAt: new Date(0),
-      metadata: { ...failed.metadata, event: 'test.other-event', replayHeaders: applicationHeaders },
+      signatureVerified: null,
+      metadata: { event: 'test.other-event', replayHeaders: applicationHeaders },
     });
-    const retryHandler = vi.fn();
-    const result = await runtime.runtime.webhooks.processDueDeliveries(retryHandler);
-    expect(result).toMatchObject({ processed: 1, succeeded: 1 });
+    const retryHandler = vi.fn(async () => {
+      if (status === 'dead-lettered') throw new Error('test retry failed');
+    });
+    const result = await runtime.runtime.webhooks.processDueDeliveries(retryHandler, { maxAttempts: 1 });
+    expect(result.processed).toBe(1);
     expect(retryHandler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       event: 'test.event',
       headers: expect.objectContaining({ 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' }),
     }));
-    expect(result.deliveries[0]?.metadata).toMatchObject({ signatureVerified: true, replayHeaders: applicationHeaders });
+    expect(result.deliveries[0]).toMatchObject({ status, signatureVerified: true, metadata: { replayHeaders: applicationHeaders } });
     expect(result.deliveries[0]?.runtimeReplayContext).toBeNull();
   });
 
@@ -626,7 +629,9 @@ describe('webhook workflow admission', () => {
       provider: 'test-provider', event: 'test.receipt-event', payloadHash: 'test-payload-hash',
       headersRedacted: { 'x-test-topic': 'test-receipt-topic' },
     });
-    const metadata = { event: 'test.app-event', replayHeaders: { 'x-test-topic': 'test-app-topic' } };
+    const metadata = {
+      event: 'test.app-event', signatureVerified: true, replayHeaders: { 'x-test-topic': 'test-app-topic' },
+    };
     await webhooks.createDelivery({ receiptId: receipt.id, status: 'pending', metadata });
     const handler = vi.fn(async () => {
       if (status === 'dead-lettered') throw new Error('test retry failed');

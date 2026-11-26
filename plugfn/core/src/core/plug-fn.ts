@@ -850,13 +850,14 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           ...updates,
           claimToken: undefined,
         });
+      const terminalReplayUpdates = withoutWebhookReplayData(delivery);
       const receipt = await runtimeStorage.getWebhookReceipt(delivery.receiptId);
       if (!receipt) {
         const deadLetter = await updateClaimed({
           status: 'dead-lettered',
           attempts: attempt,
           error: 'webhook receipt not found',
-          ...withoutWebhookReplayData(delivery),
+          ...terminalReplayUpdates,
         });
         if (deadLetter) {
           deliveries.push(deadLetter);
@@ -872,7 +873,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           status: 'failed',
           workflowScoped: true,
           error: 'scoped webhook retries require verified ingress',
-          ...withoutWebhookReplayData(delivery),
+          ...terminalReplayUpdates,
         });
         if (excluded) deliveries.push(excluded);
         failed += 1;
@@ -895,7 +896,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           attempts: attempt,
           error: 'webhook receipt was already delivered successfully',
           nextAttemptAt: undefined,
-          ...withoutWebhookReplayData(delivery),
+          ...terminalReplayUpdates,
         });
         if (superseded) {
           deliveries.push(superseded);
@@ -946,7 +947,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         const updated = await finishClaim({
           status: 'success',
           attempts: attempt,
-          ...withoutWebhookReplayData(delivery),
+          ...terminalReplayUpdates,
         });
         if (updated) {
           deliveries.push(updated);
@@ -969,7 +970,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           attempts: attempt,
           error: errorMessage,
           nextAttemptAt,
-          ...(status === 'dead-lettered' ? withoutWebhookReplayData(delivery) : {}),
+          ...(status === 'dead-lettered' ? terminalReplayUpdates : {}),
         });
         if (updated) {
           deliveries.push(updated);

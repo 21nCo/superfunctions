@@ -12,6 +12,7 @@ import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
 import {
   claimFirstSignedWebhookDelivery,
   webhookRuntimeReplayContext,
+  webhookSignatureProof,
   type CreateWebhookDeliveryInput,
 } from '../storage/runtime-storage.js';
 import {
@@ -1040,10 +1041,10 @@ export async function deliverWebhook(
       connectionId: admission.binding?.connectionId,
       headersRedacted,
       verificationStatus,
+      [webhookSignatureProof]: signatureVerified,
       metadata: {
         contentType: headers['content-type'],
         userAgent: headers['user-agent'],
-        ...(signatureVerified ? { signatureVerified } : {}),
         ...(admission.binding ? { tenantId: admission.binding.tenantId } : {}),
         ...(receiptClaimToken ? { receiptClaimToken } : {}),
       },
@@ -1069,6 +1070,7 @@ export async function deliverWebhook(
       receiptId: receipt.id,
       handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
+      [webhookSignatureProof]: signatureVerified,
       [webhookRuntimeReplayContext]: signatureVerified && !admission.binding
         ? { event: resolvedEvent, headers: headersRedacted }
         : undefined,
@@ -1077,7 +1079,6 @@ export async function deliverWebhook(
         event: resolvedEvent,
         payloadHash: admittedPayloadHash,
         idempotencyKey,
-        ...(signatureVerified ? { signatureVerified } : {}),
         ...(!admission.binding ? {
           rawBodyBase64: Buffer.from(rawBody).toString('base64'),
           rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),

@@ -186,6 +186,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           headersRedacted: { type: 'json', required: false, fieldName: 'headers_redacted' },
           payloadHash: { type: 'string', required: true, fieldName: 'payload_hash' },
           verificationStatus: { type: 'string', required: true, fieldName: 'verification_status' },
+          signatureVerified: { type: 'boolean', required: false, fieldName: 'signature_verified' },
           receivedAt: { type: 'date', required: true, fieldName: 'received_at' },
           createdAt: { type: 'date', required: true, fieldName: 'created_at' },
           metadata: { type: 'json', required: false, fieldName: 'metadata' }
@@ -212,6 +213,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           sinkId: { type: 'string', required: false, fieldName: 'sink_id' },
           handlerName: { type: 'string', required: false, fieldName: 'handler_name' },
           workflowScoped: { type: 'boolean', required: false, fieldName: 'workflow_scoped' },
+          signatureVerified: { type: 'boolean', required: false, fieldName: 'signature_verified' },
           runtimeReplayContext: { type: 'json', required: false, fieldName: 'runtime_replay_context' },
           status: { type: 'string', required: true, fieldName: 'status' },
           claimToken: { type: 'string', required: false, fieldName: 'claim_token' },

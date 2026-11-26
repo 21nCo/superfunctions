@@ -25,11 +25,13 @@ function getV8Tables(): TableSchema[] {
       const fields = { ...table.fields };
       delete fields.workflowScoped;
       delete fields.runtimeReplayContext;
+      delete fields.signatureVerified;
       return { ...table, fields };
     }
     if (table.modelName !== RECEIPT_TABLE) return table;
     const fields = { ...table.fields };
     delete fields.workflowIdempotencyKey;
+    delete fields.signatureVerified;
     const indexes = table.indexes?.filter((index) => index.name !== WORKFLOW_RECEIPT_INDEX);
     return { ...table, fields, indexes };
   });
@@ -422,12 +424,13 @@ describe('plugfn schema v9 migration', () => {
       expect(pending?.tableDiffs).toEqual([
         expect.objectContaining({
           tableName: RECEIPT_TABLE,
-          missingColumns: ['workflow_idempotency_key'],
+          missingColumns: ['workflow_idempotency_key', 'signature_verified'],
           missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
           changedIndexes: [],
         }),
         expect.objectContaining({
-          tableName: 'plugfn_webhook_deliveries', missingColumns: ['workflow_scoped', 'runtime_replay_context'],
+          tableName: 'plugfn_webhook_deliveries',
+          missingColumns: ['workflow_scoped', 'signature_verified', 'runtime_replay_context'],
         }),
       ]);
 
@@ -436,6 +439,7 @@ describe('plugfn schema v9 migration', () => {
         ? `.addColumn('workflow_idempotency_key', 'varchar(64)', (col) => col)`
         : `ADD COLUMN workflow_idempotency_key VARCHAR(64);`);
       expect(up).toContain('runtime_replay_context');
+      expect(up.match(/signature_verified/g)).toHaveLength(2);
       expect(up).toContain(`CREATE UNIQUE INDEX ${WORKFLOW_RECEIPT_INDEX} ON ${RECEIPT_TABLE} (workflow_idempotency_key)`);
     },
   );
