@@ -1,0 +1,19 @@
+clifn/core/tests/update-check-delivery.test.ts
+  s_50b2a8a9bf95f8::t_a35adc1ad45f15 204-207,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df2b06e45fd36856d7e98fd01d02a7b1de6e598e",
+  "prompts": {},
+  "sessions": {
+    "s_50b2a8a9bf95f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85074dbd-f50c-4960-a67d-6ace7b39d493",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
