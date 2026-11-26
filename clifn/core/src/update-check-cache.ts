@@ -1,6 +1,5 @@
 // The update check's cache file (CLI-14). Internal: not in the package's exports.
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ensureAppDir } from "./paths.js";
@@ -103,18 +102,6 @@ export async function readCache(file: string): Promise<CacheEntry | null> {
   }
 }
 
-/**
- * The cache entry, read synchronously: the hand-out check reads the small cache file without awaiting, so `notice()`
- * never waits on it. Null for a missing, unreadable or malformed file.
- */
-export function readCacheSync(file: string): CacheEntry | null {
-  try {
-    return parseCacheEntry(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 /** Removes temporary files of interrupted writes that are older than one hour. Best effort. */
 async function removeStaleTemporaryFiles(dir: string): Promise<void> {
   let names: string[];
@@ -173,24 +160,29 @@ export function writeCacheQuietly(dir: string, entry: CacheEntry, now: () => num
 }
 
 /**
- * Records that a notice was delivered at `notifiedAt`, once `after` (this run's own write) has settled. It re-reads the
- * cache and adds the delivery to the entry the file holds, whatever its `checkedAt` (`entry` only when the file is
- * missing or malformed): an error entry or an entry for another version another run wrote meanwhile keeps its content
- * and gains `notifiedAt`, so the delivery is neither rolled back nor forgotten. `notifiedAt` replaces any earlier time, and a time in the future
- * (which counts as no delivery). Serialized with this process's other writes to the directory. Never rejects.
+ * Records that a notice was delivered at `notifiedAt`. Called at hand-out time, so the record joins this process's
+ * queue for the directory right then: behind this run's own refresh write (queued when the check settled) and behind
+ * every delivery handed out earlier. It re-reads the cache and adds the delivery to the entry the file holds, whatever
+ * its `checkedAt` (`entry` only when the file is missing or malformed): an error entry or an entry for another version
+ * another run wrote meanwhile keeps its content and gains `notifiedAt`, so the delivery is neither rolled back nor
+ * forgotten. The later of the file's `notifiedAt` and this one is kept, so an earlier delivery never replaces a later
+ * one; a time in the future (a clock set back) counts as none. Never rejects.
  */
 export function recordDeliveryQuietly(
   dir: string,
   entry: LatestEntry,
   notifiedAt: number,
-  after: Promise<void>
+  now: () => number
 ): Promise<void> {
-  const record = async (): Promise<void> => {
-    await after;
-    await serialized(dir, async () => {
-      const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-      await writeCache(dir, withNotifiedAt(current ?? entry, notifiedAt));
-    });
-  };
-  return trackCacheWrite(record().catch(() => undefined));
+  const record = serialized(dir, async () => {
+    const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+    let at = notifiedAt;
+    try {
+      at = Math.max(notifiedAt, now());
+    } catch {
+      // The delivery time itself bounds what counts as the future.
+    }
+    await writeCache(dir, withNotifiedAt(current ?? entry, laterDelivery(current?.notifiedAt, notifiedAt, at)));
+  });
+  return trackCacheWrite(record.catch(() => undefined));
 }

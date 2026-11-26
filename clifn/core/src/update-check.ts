@@ -3,7 +3,6 @@ import { appDirResolver } from "./app-dirs.js";
 import { resolveTerminal, type TerminalStream } from "./terminal.js";
 import {
   readCache,
-  readCacheSync,
   recordDeliveryQuietly,
   UPDATE_CHECK_FILE,
   writeCacheQuietly,
@@ -67,11 +66,15 @@ export interface UpdateCheck {
    * the check's timeout: a result that is not ready by then is dropped, and every later call resolves `null` too.
    * Resolving with the notice counts as delivering it: only the first call that resolves with it gets it (later calls on
    * the same handle resolve `null`), and the time is recorded in the cache in the background (added to whatever entry
-   * is there, so a newer entry another run wrote is kept). Right before handing the notice out the cache file is read
-   * again, synchronously, and the notice is dropped when it records a delivery within `intervalMs`, so no run gives it
-   * once another run's delivery is recorded; within one process only one handle per app gives it. Two processes
-   * handing it out at the same moment, before either delivery is written, may both give it: the last-rename-wins
-   * boundary of concurrent instances.
+   * is there, so a newer entry another run wrote is kept, and an earlier delivery never replaces a later one). The
+   * notice is dropped when the cache records a delivery within `intervalMs`: the cache is read when the check settles
+   * (that read must finish before the timeout for the result to count) and, while time remains, read again at hand-out,
+   * asynchronously and bounded by the remaining time (a read that does not finish in time drops the notice). When no
+   * time remains, as after an action longer than the timeout, the notice is handed out on the read made when the check
+   * settled, without any file access. So no run gives it once another run's delivery is recorded before its last read;
+   * within one process only one handle per app gives it. Two processes that both read the cache before either delivery
+   * is written (the window between a run's last read and its hand-out) may both give it: the last-rename-wins boundary
+   * of concurrent instances.
    */
   notice(): Promise<string | null>;
 }
@@ -263,15 +266,20 @@ interface CheckResult {
   notice: string | null;
   /** The entry the notice came from, to record its delivery; null when there is no notice. */
   entry: LatestEntry | null;
-  /** The cache write this run started, if any; settles (never rejects) when it is done. */
-  written: Promise<void>;
 }
 
-function resultFor(plan: CheckPlan, entry: CacheEntry, now: number, written: Promise<void>): CheckResult {
-  const notice = recentlyNotified(entry, now, plan.intervalMs)
+function resultFor(
+  plan: CheckPlan,
+  entry: CacheEntry,
+  now: number,
+  shared: CacheEntry | null = null
+): CheckResult {
+  const notified =
+    recentlyNotified(entry, now, plan.intervalMs) || (shared !== null && recentlyNotified(shared, now, plan.intervalMs));
+  const notice = notified
     ? null
     : noticeFor(entry, plan.current, plan.currentText, plan.name);
-  return { notice, entry: notice !== null && "latest" in entry ? entry : null, written };
+  return { notice, entry: notice !== null && "latest" in entry ? entry : null };
 }
 
 /** Settles as soon as the entry is known; the cache write it starts continues in the background. */
@@ -280,13 +288,32 @@ async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   const cached = await readCache(file);
   const now = plan.now();
   if (cached && isRecent(cached.checkedAt, now, plan.intervalMs)) {
-    return resultFor(plan, cached, now, Promise.resolve());
+    return resultFor(plan, cached, now);
   }
   const fetched = await requestLatest(plan);
   // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
   // within the interval; the write also keeps a later delivery another run recorded during the request.
   const entry: CacheEntry = cached?.notifiedAt === undefined ? fetched : { ...fetched, notifiedAt: cached.notifiedAt };
-  return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry, plan.now));
+  void writeCacheQuietly(plan.stateDir, entry, plan.now);
+  // The claim read: a delivery another run recorded during the request. The result counts only when this read, too,
+  // finishes before the timeout.
+  const shared = await readCache(file);
+  return resultFor(plan, entry, plan.now(), shared);
+}
+
+const LATE = Symbol("late");
+/** The longest delay `setTimeout` takes as given; a longer one would fire at once. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** The read's entry, or LATE when it does not finish within `ms`. */
+function readWithin(file: string, ms: number): Promise<CacheEntry | null | typeof LATE> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(LATE), Math.min(ms, MAX_TIMER_MS));
+    void readCache(file).then((entry) => {
+      clearTimeout(timer);
+      resolve(entry);
+    });
+  });
 }
 
 function monotonicNow(): number {
@@ -402,9 +429,10 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     });
 
   // The notice of an on-time result, the first time it is asked for, unless a delivery within the interval is known:
-  // handed out by another handle in this process, or recorded in the cache by another run since this check settled.
-  // The cache file is read synchronously, so this never waits. Records the delivery after this run's own write.
-  const deliver = (): string | null => {
+  // handed out by another handle in this process, or recorded in the cache by another run. While time remains the cache
+  // is read again, bounded by the remaining time; once none remains the read made when the check settled stands, with
+  // no file access. The delivery is queued for recording at hand-out, after this run's own write.
+  const deliver = async (): Promise<string | null> => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
       return null;
@@ -419,23 +447,35 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     if (notifiedAt === undefined || !Number.isFinite(notifiedAt)) {
       return checked.notice;
     }
-    const local = handedOutAt.get(checkPlan.stateDir);
-    if (local !== undefined && isRecent(local, notifiedAt, checkPlan.intervalMs)) {
+    const dir = checkPlan.stateDir;
+    const previous = handedOutAt.get(dir);
+    if (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) {
       return null;
     }
-    const shared = readCacheSync(join(checkPlan.stateDir, UPDATE_CHECK_FILE));
-    if (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs)) {
-      return null;
+    // Claimed before the read, so no other handle in this process hands it out meanwhile; released if it is dropped.
+    handedOutAt.set(dir, notifiedAt);
+    const left = remaining();
+    if (left > 0) {
+      const shared = await readWithin(join(dir, UPDATE_CHECK_FILE), left);
+      if (shared === LATE || (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs))) {
+        if (handedOutAt.get(dir) === notifiedAt) {
+          if (previous === undefined) {
+            handedOutAt.delete(dir);
+          } else {
+            handedOutAt.set(dir, previous);
+          }
+        }
+        return null;
+      }
     }
-    handedOutAt.set(checkPlan.stateDir, notifiedAt);
-    void recordDeliveryQuietly(checkPlan.stateDir, checked.entry, notifiedAt, checked.written);
+    void recordDeliveryQuietly(dir, checked.entry, notifiedAt, checkPlan.now);
     return checked.notice;
   };
 
   return {
     notice() {
       if (outcome !== "pending") {
-        return Promise.resolve(deliver());
+        return deliver();
       }
       const left = remaining();
       if (!(left > 0)) {
