@@ -109,15 +109,19 @@ function isThenable(value: unknown): boolean {
 const ignore = (): undefined => undefined;
 
 /**
- * Mark a native promise's rejection as handled. Any other thenable's then() is
- * never called: foreign then() code could create a new rejected promise on
- * every call, so the registry only fails closed on it.
+ * Mark a genuine native promise's rejection as handled, whichever realm created
+ * it (a vm-context promise fails `instanceof Promise`). The intrinsic
+ * Promise.prototype.then brand-checks its receiver before running any code, so
+ * any other thenable (including a Proxy around a promise) throws a TypeError
+ * here and its own then() is never called: foreign then() code could create a
+ * new rejected promise on every call, so the registry only fails closed on it.
  */
 function ignoreRejection(value: unknown): void {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return;
   try {
-    if (value instanceof Promise) Promise.prototype.then.call(value, undefined, ignore);
+    Promise.prototype.then.call(value, undefined, ignore);
   } catch {
-    // An object that only looks like a native promise cannot make the caller throw.
+    // Not a native promise of any realm: nothing of ours can reject unhandled.
   }
 }
 

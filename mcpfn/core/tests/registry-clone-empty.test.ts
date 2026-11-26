@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requestExtra } from "./openapi-helpers.js";
@@ -517,6 +519,64 @@ describe("McpFnRegistry custom compileSchema thenable results", () => {
       expect(registry.has("t")).toBe(false);
       expect(first.then).not.toHaveBeenCalled();
       expect(second.then).not.toHaveBeenCalled();
+    });
+  });
+
+  // A promise from another realm (vm context, iframe) fails `instanceof Promise`
+  // but is still a genuine native promise whose rejection must be handled.
+  function crossRealmRejection(message: string): Promise<never> {
+    const promise = runInNewContext(`Promise.reject(new Error(${JSON.stringify(message)}))`) as Promise<never>;
+    expect(promise instanceof Promise).toBe(false);
+    return promise;
+  }
+
+  it("contains a rejected promise from another realm returned by a validator", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const handler = vi.fn(async () => ({ content: [] }));
+      const registry = new McpFnRegistry({
+        compileSchema: () => (() => crossRealmRejection("cross-realm validator")) as never,
+      }).register({ name: "t", description: "Cross-realm validator.", inputSchema: { type: "object" }, handler });
+      await expect(registry.callTool("t", {}, undefined, requestExtra())).rejects.toMatchObject({
+        message: "Invalid arguments for t",
+        details: { issues: [expect.objectContaining({ message: "compileSchema validators must be synchronous" })] },
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  it("contains a rejected promise from another realm returned by the compiler", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const registry = new McpFnRegistry({ compileSchema: () => crossRealmRejection("cross-realm compiler") as never });
+      let thrown: unknown;
+      try {
+        registry.register({ name: "t", description: "Cross-realm compiler.", inputSchema: { type: "object" }, handler: async () => ({ content: [] }) });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        message: "Tool t contains an invalid JSON Schema",
+        details: { cause: "compileSchema must return a validator function" },
+      });
+      expect(registry.has("t")).toBe(false);
+    });
+  });
+
+  it("never calls then() on a Proxy that wraps a native promise", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const then = vi.fn(() => Promise.reject(new Error("rejected from proxy then()")));
+      const target = Promise.resolve(true);
+      const lookalike = new Proxy(target, { get: (object, key) => (key === "then" ? then : Reflect.get(object, key)) });
+      const registry = new McpFnRegistry({
+        compileSchema: () => (() => lookalike) as never,
+      }).register({ name: "t", description: "Proxy validator.", inputSchema: { type: "object" }, handler: async () => ({ content: [] }) });
+      await expect(registry.callTool("t", {}, undefined, requestExtra())).rejects.toMatchObject({
+        message: "Invalid arguments for t",
+        details: { issues: [expect.objectContaining({ message: "compileSchema validators must be synchronous" })] },
+      });
+      expect(then).not.toHaveBeenCalled();
     });
   });
 
