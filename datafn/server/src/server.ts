@@ -505,27 +505,64 @@ async function readBodyBytes(body: ReadableStream<Uint8Array>, guard?: ReadBackG
 }
 
 /**
- * The JSON envelope with `capabilities.revisions` set. Leading whitespace and
- * byte order marks are skipped. An envelope that already has a capabilities
- * object gets the flag merged into it (one with a non-object capabilities
- * value is left as it is); any other object gets the key spliced in, without
- * parsing the body again. A body that is not an object is left as it is.
+ * The closing brace of the envelope's top-level `capabilities` object
+ * (opening `{` at `open`); null when that key holds anything other than an
+ * object, undefined when there is no such key.
+ */
+function capabilitiesObjectEnd(text: string, open: number): number | null | undefined {
+  let depth = 0;
+  let inValue = false;
+  let capabilities = false;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      if (depth === 1 && !inValue) {
+        try {
+          capabilities = JSON.parse(text.slice(i, j + 1)) === "capabilities";
+        } catch {
+          capabilities = false;
+        }
+      } else if (depth === 1 && capabilities) {
+        return null;
+      }
+      i = j;
+    } else if (c === "{" || c === "[") {
+      if (depth === 1 && inValue && capabilities && c === "[") return null;
+      depth++;
+    } else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 1 && inValue && capabilities) return i;
+      if (depth === 0) return undefined;
+    } else if (depth === 1 && c === ":") {
+      inValue = true;
+    } else if (depth === 1 && c === ",") {
+      inValue = false;
+      capabilities = false;
+    } else if (depth === 1 && inValue && capabilities && !/\s/.test(c)) {
+      return null;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The JSON envelope with `capabilities.revisions` set, as text: the body is
+ * never parsed and serialized again, so payload values keep their exact
+ * tokens. Leading whitespace and byte order marks are skipped. An envelope
+ * that already has a capabilities object gets the flag added to it (one
+ * with a non-object capabilities value is left as it is); any other object
+ * gets the key spliced in. A body that is not an object is left as it is.
  */
 function spliceRevisionCapability(text: string): string {
   const body = text.trimStart();
   if (!body.startsWith("{")) return text;
-  if (text.includes('"capabilities"')) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = undefined;
-    }
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, "capabilities")) {
-      const existing = (parsed as Record<string, unknown>).capabilities;
-      if (!existing || typeof existing !== "object" || Array.isArray(existing)) return text;
-      return JSON.stringify({ ...parsed, capabilities: { ...existing, revisions: true } });
-    }
+  const close = capabilitiesObjectEnd(body, 0);
+  if (close === null) return text;
+  if (close !== undefined) {
+    const empty = body.slice(0, close).trimEnd().endsWith("{");
+    return `${body.slice(0, close)}${empty ? "" : ","}"revisions":true${body.slice(close)}`;
   }
   return `{"capabilities":{"revisions":true}${/^\{\s*\}/.test(body) ? "" : ","}${body.slice(1)}`;
 }
@@ -586,13 +623,23 @@ function withRevisionCapability<A extends unknown[]>(
   return async (...args: A) => {
     const response = await handler(...args);
     const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+    const guard = readBackGuard?.(...args);
     if (
       !response.body || !response.headers.get("content-type")?.includes("application/json") ||
       (encoding && encoding !== "identity")
     ) {
-      return response;
+      if (!guard || !response.body) return response;
+      // A read-back body passed through as it is still ends at the deadline.
+      const passThrough = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          if (guardExpired(guard)) controller.error(readBackExpiredError());
+          else controller.enqueue(chunk);
+        },
+      });
+      return new Response(response.body.pipeThrough(passThrough, { signal: guard.signal }), {
+        status: response.status, statusText: response.statusText, headers: response.headers,
+      });
     }
-    const guard = readBackGuard?.(...args);
     const bytes = await readBodyBytes(response.body, guard);
     let text: string | undefined;
     try {

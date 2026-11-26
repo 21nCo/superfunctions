@@ -3413,7 +3413,7 @@ describe("DATA-41 revisions: PR review round 4", () => {
       afterResponse: async ({ action, response }: { action: string; response: Response }) => {
         if (action !== "query") return response;
         const body = await response.json() as Json;
-        if (mode === "merge") return json({ ...body, capabilities: { custom: true } });
+        if (mode === "merge") return json(JSON.stringify(body).replace(/^\{/, '{"capabilities":{"custom":true},"big":9007199254740993,'));
         gzipped = new Uint8Array(await new Response(new Blob([JSON.stringify(body)]).stream()
           .pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
         return new Response(gzipped, { status: 200, headers: { "content-type": "application/json", "content-encoding": "gzip" } });
@@ -3427,6 +3427,7 @@ describe("DATA-41 revisions: PR review round 4", () => {
     const merged = await (await queryRoute(served, { version: 1, resource: "task", withRevisions: true })).text();
     expect(merged.match(/"capabilities"/g)).toHaveLength(1);
     expect(JSON.parse(merged).capabilities).toEqual({ custom: true, revisions: true });
+    expect(merged).toContain('"big":9007199254740993');
     // Control: an authorized push row equals the caller's /query row.
     const res = await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
     const read = await served.send("query", { version: 1, resource: "task", withRevisions: true, filters: { id: "task:1" } });
@@ -3524,6 +3525,16 @@ describe("DATA-41 revisions: PR review round 4", () => {
     expect(await bumpPresent(stale, NS, "task", "task:1")).toBeUndefined();
     expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
 
+    // A re-insert that loses the swap to that tombstone still raises it live.
+    const again = snapshotView(served.database);
+    await again.internal.findOne("__datafn_revisions", ledger("task:1"));
+    await bumpRevision(served.database, NS, "task", "task:1", true);
+    await served.database.create({ model: "task", data: { id: "task:1", title: "again" }, namespace: NS } as any);
+    const reinsert: any[] = [{ resource: "task", id: "task:1", op: "insert", record: { id: "task:1", title: "again" } }];
+    await assignWriteRevisions(again, NS, reinsert, () => true, schema);
+    expect(reinsert[0]).toMatchObject({ rev: 4, revUncertified: true });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 4, deleted: false });
+
     // A bump recovered after a swap miss records no snapshot row at its revision.
     const later = snapshotView(served.database);
     await later.internal.findOne("__datafn_revisions", ledger("task:2"));
@@ -3558,5 +3569,49 @@ describe("DATA-41 revisions: PR review round 4", () => {
     expect(byId.get("task:keep")).toMatchObject({ $rev: 1 });
     expect(byId.get("task:trim")).not.toHaveProperty("$rev");
     expect(byId.get("task:made-up")).not.toHaveProperty("$rev");
+  });
+
+  it("rechecks afterQuery output without modifying it, and only on versioned queries", async () => {
+    const hooks = {
+      name: "frozen",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, query: Json, result: Json) => !Array.isArray(result?.data) ? result : Object.freeze({
+        ...result,
+        data: Object.freeze(result.data.map((row: Json) =>
+          Object.freeze(query.withRevisions ? { ...row, title: "redacted" } : { ...row, $rev: "app" }))),
+      }),
+    };
+    const served = await serve({ config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const versioned = await served.send("query", { version: 1, resource: "task", withRevisions: true });
+    expect(versioned.status).toBe(200);
+    expect(versioned.body.result.data[0]).toEqual(expect.objectContaining({ id: "task:1", title: "redacted" }));
+    expect(versioned.body.result.data[0]).not.toHaveProperty("$rev");
+    const plain = await served.send("query", { version: 1, resource: "task" });
+    expect(plain.body.result.data[0]).toMatchObject({ id: "task:1", $rev: "app" });
+  });
+
+  it("bounds an encoded read-back body that router middleware reads by the deadline", async () => {
+    let cancelled = 0;
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: ({ action, response }: { action: string; response: Response }) => action !== "query" ? response
+        : new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(new Uint8Array([31, 139])); },
+          cancel() { cancelled += 1; },
+        }), { status: 200, headers: { "content-type": "application/json", "content-encoding": "gzip" } }),
+    } } });
+    let middleware: "pending" | "settled" = "pending";
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      await response.arrayBuffer().catch(() => undefined);
+      middleware = "settled";
+      return response;
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(middleware).toBe("settled");
+    expect(cancelled).toBe(1);
   });
 });

@@ -1064,34 +1064,41 @@ export function createQueryHandler(
           let result = isBatch ? results : results[0];
 
           // DATA-41: a `$rev` belongs to the exact row it was certified with.
-          // After the afterQuery hooks, a row they changed or added keeps no
-          // `$rev`; an unchanged row (even a copy) keeps it.
-          const revisedRows = (value: unknown) => {
+          // After the afterQuery hooks, a row of a versioned query that they
+          // changed or added keeps no `$rev`; an unchanged row (even a copy)
+          // keeps it. Hook output is not modified: changed results are copied.
+          const versioned = transformedQueries.map((q) => isVersionedQuery(q as Record<string, unknown>, validatedSchema));
+          const rowsWithRevision = (value: unknown) => {
             const rows = (value as { data?: unknown } | null)?.data;
-            return Array.isArray(rows)
-              ? (rows as unknown[]).filter((row): row is Record<string, unknown> =>
-                Boolean(row) && typeof row === "object" && REVISION_FIELD in (row as object))
-              : [];
+            return Array.isArray(rows) ? rows : [];
           };
-          const certifiedBefore = (isBatch ? results : [results[0]]).map(
-            (value) => new Set(revisedRows(value).map(canonicalRow)),
-          );
+          const hasRevision = (row: unknown): row is Record<string, unknown> =>
+            Boolean(row) && typeof row === "object" && REVISION_FIELD in (row as object);
+          const certifiedBefore = (isBatch ? results : [results[0]]).map((value, index) =>
+            new Set(versioned[index] ? rowsWithRevision(value).filter(hasRevision).map(canonicalRow) : []));
 
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
 
-          const afterHooks = isBatch ? (Array.isArray(result) ? result : []) : [result];
-          afterHooks.forEach((value, index) => {
-            const rows = (value as { data?: unknown[] } | null)?.data;
-            const queried = transformedQueries[index] as { resource?: unknown } | undefined;
-            if (!Array.isArray(rows) || !issuesRevisions(validatedSchema, String(queried?.resource))) return;
-            rows.forEach((row, position) => {
-              if (!row || typeof row !== "object" || !(REVISION_FIELD in row)) return;
-              if (certifiedBefore[index]?.has(canonicalRow(row as Record<string, unknown>))) return;
-              const { [REVISION_FIELD]: _uncertified, ...rest } = row as Record<string, unknown>;
-              rows[position] = rest;
+          const recheck = (value: unknown, index: number): unknown => {
+            const rows = rowsWithRevision(value);
+            if (!versioned[index] || !rows.some(hasRevision)) return value;
+            const certified = certifiedBefore[index];
+            let changed = false;
+            const kept = rows.map((row) => {
+              if (!hasRevision(row) || certified?.has(canonicalRow(row))) return row;
+              changed = true;
+              const { [REVISION_FIELD]: _uncertified, ...rest } = row;
+              return rest;
             });
-          });
+            return changed ? { ...(value as Record<string, unknown>), data: kept } : value;
+          };
+          if (isBatch && Array.isArray(result)) {
+            const checked = result.map(recheck);
+            if (checked.some((value, index) => value !== (result as unknown[])[index])) result = checked;
+          } else if (!isBatch) {
+            result = recheck(result, 0);
+          }
 
           if (timingEmitter && timer) {
             timingEmitter(timer.build("/datafn/query", resource, "query"));

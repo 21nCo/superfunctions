@@ -325,13 +325,16 @@ export async function bumpPresent(
   resource: string,
   recordId: string,
   outcome?: BumpOutcome,
+  writesRow = false,
 ): Promise<number | undefined> {
   // After a swap miss where reads are a snapshot, the record row read may be
-  // older than the write that won; the revision row (just written, so read
-  // current) decides instead: a tombstone committed since means this write
-  // changed nothing and must not turn it live.
+  // older than the write that won. A write that certainly wrote the row
+  // (`writesRow`: an insert, replace, upsert or KV merge that succeeded) reads
+  // its own row, which is current. For any other write the revision row (just
+  // written, so read current) decides: a tombstone committed since means the
+  // write matched no row and must not turn it live.
   return raiseRevision(db, namespace, resource, recordId, false, outcome, async (row, recovered) =>
-    recovered && row !== null ? isTombstone(row) : (await db.findOne({
+    recovered && row !== null && !writesRow ? isTombstone(row) : (await db.findOne({
       model: resource,
       where: [{ field: "id", operator: "eq", value: recordId }],
       namespace,
@@ -684,7 +687,8 @@ export async function assignWriteRevisions(
       const outcome: BumpOutcome = {};
       entry.rev = deleted
         ? await bumpTombstone(db, namespace, entry.resource, entry.id, outcome)
-        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome);
+        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome, entry.op === "insert" ||
+          entry.op === "replace" || entry.op === "upsert" || (entry.op === "merge" && isKvResource(entry.resource)));
       if (outcome.staleView) entry.revUncertified = true;
       write.bumped.add(entry);
     }
