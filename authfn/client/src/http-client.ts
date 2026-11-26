@@ -6,7 +6,19 @@ interface RequestOptions {
   path: string;
   body?: unknown;
   csrf?: boolean;
+  /**
+   * The body carries one-time secrets (a handoff code and verifier). A
+   * transport failure then reports a fixed name and message to
+   * `onRequestMetric` and in the envelope: a fetch error can repeat the
+   * request body, so its own text and stack are never passed on.
+   */
+  sensitiveBody?: boolean;
 }
+
+const SENSITIVE_TRANSPORT_ERROR = {
+  name: 'AuthFnTransportError',
+  message: 'AuthFn request failed before a response was received'
+} as const;
 
 export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const fetchImpl = options.fetch ?? fetch;
@@ -23,17 +35,18 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       : options.bearerToken;
     return token?.trim() || undefined;
   };
-  const buildTransportError = (error: unknown): AuthFnErrorEnvelope => ({
+  const buildTransportError = (error: unknown, sensitiveBody: boolean): AuthFnErrorEnvelope => ({
     ok: false,
     error: {
       code: 'AUTHFN_NETWORK_ERROR',
       message:
-        error instanceof Error
+        error instanceof Error && !sensitiveBody
           ? error.message
-          : 'AuthFn request failed before a response was received',
+          : SENSITIVE_TRANSPORT_ERROR.message,
       retryable: true,
-      details:
-        error instanceof Error
+      details: sensitiveBody
+        ? { name: SENSITIVE_TRANSPORT_ERROR.name }
+        : error instanceof Error
           ? {
               name: error.name,
               stack: error.stack
@@ -82,16 +95,9 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
           url,
           ok: false,
           durationMs: now() - startedAt,
-          error: error instanceof Error
-            ? {
-                name: error.name,
-                message: error.message
-              }
-            : {
-                message: String(error)
-              }
+          error: transportMetricError(error, request.sensitiveBody === true)
         });
-        return buildTransportError(error);
+        return buildTransportError(error, request.sensitiveBody === true);
       }
 
       options.onRequestMetric?.({
@@ -188,6 +194,15 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       }
     }
   };
+}
+
+function transportMetricError(error: unknown, sensitiveBody: boolean): { name?: string; message: string } {
+  if (sensitiveBody) {
+    return { ...SENSITIVE_TRANSPORT_ERROR };
+  }
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : { message: String(error) };
 }
 
 function now(): number {

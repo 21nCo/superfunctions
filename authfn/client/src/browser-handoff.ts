@@ -231,8 +231,10 @@ const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const VERIFIER_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const REGION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
-const CHALLENGE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
-const METHOD_PATTERN = /^[a-z0-9_-]{1,64}$/;
+/** The server's canonical challenge id spelling (`CANONICAL_CHALLENGE_ID`). */
+const CHALLENGE_ID_PATTERN = /^[a-z0-9_-]{1,255}$/;
+/** The social callback names a social sign-in method (`oauth-google`, `oauth-apple`, `oauth-github`). */
+const METHOD_PATTERN = /^oauth-[a-z0-9-]{1,58}$/;
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const USED_RECORD_KEYS = ['expiresAt', 'id', 'state', 'v'].join();
@@ -284,19 +286,49 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
     return { status: 'failed', reason, ...extra };
   };
 
+  /**
+   * Removes a record this helper will not use, if it still holds `raw`. When
+   * the store cannot compare-and-set, the record is deleted anyway, so a
+   * verifier never outlives the decision to retire it.
+   */
+  const retireRecord = async (key: string, raw: string): Promise<boolean> => {
+    try {
+      return await store.compareAndSet(key, raw, null);
+    } catch {
+      await retire(() => store.delete(key));
+      return true;
+    }
+  };
+
   const prune = async (): Promise<number> => {
-    const current = now();
     let removed = 0;
     for (const key of Array.from(await store.keys())) {
-      if (!key.startsWith(keyPrefix)) {
+      if (typeof key !== 'string' || !key.startsWith(keyPrefix)) {
         continue;
       }
-      const raw = await store.get(key);
+      let raw: unknown;
+      try {
+        raw = await store.get(key);
+      } catch {
+        // Left for complete(), which retires what it cannot read.
+        continue;
+      }
+      if (raw === null || raw === undefined) {
+        continue;
+      }
       if (typeof raw !== 'string') {
+        // Not written by this helper (which stores strings), and possibly
+        // holding a verifier: remove it.
+        await retire(() => store.delete(key));
+        removed += 1;
         continue;
       }
+      // The clock is read after the record, so a record another window
+      // began while this prune was enumerating is judged by a time no
+      // earlier than its own begin.
+      const current = now();
       const record = parseRecord(raw, key.slice(keyPrefix.length), current);
-      if ((!record || record.expiresAt <= current) && await store.compareAndSet(key, raw, null)) {
+      if ((!record || record.expiresAt <= current) && await retireRecord(key, raw)) {
         removed += 1;
       }
     }
@@ -402,14 +434,14 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       }
       const record = parseRecord(raw, handoffId, now());
       if (!record) {
-        await retire(() => store.compareAndSet(key, raw, null));
+        await retireRecord(key, raw);
         return fail('malformed-state', { handoffId, cleanUrl });
       }
       if (record.state === 'used') {
         return fail('already-used', { handoffId, cleanUrl });
       }
       if (record.expiresAt <= now()) {
-        await retire(() => store.compareAndSet(key, raw, null));
+        await retireRecord(key, raw);
         return fail('expired', { handoffId, cleanUrl });
       }
 
@@ -608,7 +640,8 @@ export function createRegionalHandoffExchange(
       return regionalClient.exchangeSocialHandoff(input);
     }
     const response = await clientFor(context.regionId).exchangeSocialHandoff(input);
-    if (response.ok) {
+    // Moves the page only for a response complete() accepts as a session.
+    if (response?.ok === true && response.data?.session && typeof response.data.handoff?.token === 'string') {
       regionalClient.setCurrentRegionId(context.regionId);
     }
     return response;

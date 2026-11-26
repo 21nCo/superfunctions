@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createAuthFnClient,
+  createAuthFnRegionalClient,
   createBrowserHandoff,
   createIndexedDbHandoffStore,
   createMemoryHandoffStore,
@@ -12,6 +14,7 @@ import {
   type AuthFnBrowserHandoffOptions,
   type AuthFnBrowserHandoffResult,
   type AuthFnBrowserHandoffStore,
+  type AuthFnClientRequestMetric,
   type AuthFnSocialHandoffClient
 } from '../index.js';
 
@@ -419,6 +422,8 @@ describe('createBrowserHandoff', () => {
   it.each([
     ['without a challenge id', (url: URL) => url.searchParams.delete('challengeId')],
     ['with another code', (url: URL) => url.searchParams.set('authfnCode', 'AUTHFN_OTHER')],
+    ['with a non-canonical challenge id', (url: URL) => url.searchParams.set('challengeId', 'Signin:2FA.Test')],
+    ['with a method the social callback never sends', (url: URL) => url.searchParams.set('primaryMethod', 'password')],
     ['with a handoff code too', (url: URL) => {
       url.hash = `${url.hash.slice(1)}&token=test-handoff-code-1&handoff=code`;
     }]
@@ -464,6 +469,75 @@ describe('createBrowserHandoff', () => {
       }
     }).complete(server.callbackFor(await make().begin({ returnTo: RETURN_TO })));
     expect(JSON.stringify(thrown)).not.toContain('request');
+  });
+
+  it.each([
+    ['the client', 'direct'],
+    ['the regional client without a stored region', 'regional-current'],
+    ['the regional adapter with a stored region', 'regional-bound']
+  ] as const)('keeps the verifier and code out of request metrics and envelopes when fetch fails through %s', async (_label, path) => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const envelopes: unknown[] = [];
+    // A fetch whose failure repeats the request body, as some adapters do.
+    const clientOptions = {
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit) => {
+        throw new TypeError(`fetch failed for body ${String(init?.body)}`);
+      },
+      onRequestMetric: (metric: AuthFnClientRequestMetric) => metrics.push(metric)
+    };
+    const resolveBaseUrl = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+    let exchange: AuthFnBrowserHandoffExchange;
+    if (path === 'direct') {
+      exchange = createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).exchangeSocialHandoff;
+    } else {
+      const regionalClient = createAuthFnRegionalClient({
+        defaultRegionId: 'us',
+        resolveBaseUrl,
+        storage: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+        clientOptions
+      });
+      exchange = createRegionalHandoffExchange({ regionalClient, resolveBaseUrl, clientOptions });
+    }
+    const { make, server, store } = setup({
+      exchange: async (input, context) => {
+        const envelope = await exchange(input, context);
+        envelopes.push(envelope);
+        return envelope;
+      }
+    });
+    const begun = await make().begin({ returnTo: RETURN_TO, ...(path === 'regional-bound' ? { regionId: 'eu' } : {}) });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const callback = server.callbackFor(begun);
+    const code = new URL(callback).hash.match(/token=([^&]+)/)![1]!;
+
+    const result = failed(await make().complete(callback));
+
+    expect(result.reason).toBe('exchange-canceled');
+    expect(metrics).toEqual([expect.objectContaining({
+      path: '/social/handoff/exchange',
+      ok: false,
+      error: { name: 'AuthFnTransportError', message: 'AuthFn request failed before a response was received' }
+    })]);
+    expect(envelopes).toEqual([expect.objectContaining({ ok: false })]);
+    const observed = JSON.stringify({ metrics, envelopes, result });
+    expect(observed).not.toContain(verifier);
+    expect(observed).not.toContain(code);
+    expect(observed).not.toContain('fetch failed for body');
+  });
+
+  it('still reports the fetch error of requests without one-time secrets', async () => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => {
+        throw new TypeError('network down');
+      },
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+    const envelope = await client.getSession();
+
+    expect(envelope).toMatchObject({ ok: false, error: { code: 'AUTHFN_NETWORK_ERROR', message: 'network down' } });
+    expect(metrics[0]?.error).toEqual({ name: 'TypeError', message: 'network down' });
   });
 
   it.each([
@@ -548,6 +622,94 @@ describe('createBrowserHandoff', () => {
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
     expect(await store.get(key)).toBeNull();
     expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a malformed', 'malformed-state', async (store: AuthFnBrowserHandoffStore, key: string) => {
+      await store.set(key, '{"v":1,');
+    }],
+    ['an expired', 'expired', async (_store: AuthFnBrowserHandoffStore, _key: string, clock: ReturnType<typeof createClock>) => {
+      clock.advance(10 * 60 * 1000);
+    }],
+    ['an over-horizon', 'malformed-state', async (store: AuthFnBrowserHandoffStore, key: string) => {
+      const record = JSON.parse(String(await store.get(key)));
+      await store.set(key, JSON.stringify({ ...record, expiresAt: T0 + 60 * 60 * 1000 + 1 }));
+    }]
+  ] as const)('removes %s record even when the store cannot compare-and-set', async (_label, reason, prepare) => {
+    const { make, server, store, clock } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const callback = server.callbackFor(begun);
+    await prepare(store, key, clock);
+    const broken: AuthFnBrowserHandoffStore = {
+      ...store,
+      compareAndSet: () => Promise.reject(new Error('storage unavailable'))
+    };
+
+    expect(failed(await make({ store: broken }).complete(callback)).reason).toBe(reason);
+    expect(await store.get(key)).toBeNull();
+    // A later return over a working store finds nothing to claim.
+    expect(failed(await make().complete(callback)).reason).toBe('unknown-handoff');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('prunes a record under the prefix that is not a string, even one holding a verifier', async () => {
+    const { factory, window } = createSharedIndexedDb();
+    const store = window();
+    const { make, server } = setup({ store });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const record = JSON.parse(String(await store.get(key)));
+    // Written by something other than this helper: an object, not a string.
+    await new Promise<void>((resolve, reject) => {
+      const open = factory.open('authfn-handoff', 1);
+      open.onsuccess = () => {
+        const transaction = open.result.transaction('records', 'readwrite');
+        transaction.objectStore('records').put(record, key);
+        transaction.objectStore('records').put({ note: 'unrelated' }, 'unrelated-object');
+        transaction.oncomplete = () => {
+          open.result.close();
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+      open.onerror = () => reject(open.error);
+    });
+
+    expect(await make().prune()).toBe(1);
+    expect(await store.get(key)).toBeNull();
+    expect(await store.get('unrelated-object')).toEqual({ note: 'unrelated' });
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('unknown-handoff');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('keeps a handoff another window begins while a prune is enumerating', async () => {
+    const { make, server, store, clock } = setup({ ttlMs: 60 * 60 * 1000 });
+    let releaseKeys!: () => void;
+    const keysPaused = new Promise<void>((resolve) => {
+      releaseKeys = resolve;
+    });
+    let enumerating!: () => void;
+    const enumerationStarted = new Promise<void>((resolve) => {
+      enumerating = resolve;
+    });
+    const pausedStore: AuthFnBrowserHandoffStore = {
+      ...store,
+      keys: async () => {
+        enumerating();
+        await keysPaused;
+        return store.keys();
+      }
+    };
+    const pruning = make({ store: pausedStore }).prune();
+    await enumerationStarted;
+    // Time moves on and another window begins with the longest TTL.
+    clock.advance(5 * 60 * 1000);
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    releaseKeys();
+
+    expect(await pruning).toBe(0);
+    expect((await make().complete(server.callbackFor(begun))).status).toBe('completed');
   });
 
   it('never discloses the verifier through results, events, logs or the store after any outcome', async () => {
@@ -637,7 +799,11 @@ describe('createBrowserHandoff', () => {
 });
 
 describe('createRegionalHandoffExchange', () => {
-  const okEnvelope = (label: string) => ({ ok: true as const, requestId: label, data: { label } }) as never;
+  const okEnvelope = (label: string) => ({
+    ok: true as const,
+    requestId: label,
+    data: { session: { id: `session-${label}` }, handoff: { type: 'session-token', token: `test-session-token-${label}` } }
+  }) as never;
   const failedEnvelope = (label: string) => ({
     ok: false as const,
     requestId: label,
@@ -698,6 +864,24 @@ describe('createRegionalHandoffExchange', () => {
     // Only the successful exchange selects its region; the failure changes nothing.
     expect(selections).toEqual(['ap']);
     expect(current()).toBe('ap');
+  });
+
+  it('moves the client only for a response that carries a session', async () => {
+    const selections: string[] = [];
+    const exchange = createRegionalHandoffExchange({
+      regionalClient: {
+        exchangeSocialHandoff: async () => okEnvelope('current'),
+        setCurrentRegionId: (regionId) => selections.push(regionId)
+      },
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      // An ok response without a body: complete() refuses it, so the region must not move.
+      clientOptions: { fetch: async () => new Response(null, { status: 204 }) }
+    });
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'eu' });
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('exchange-rejected');
+    expect(selections).toEqual([]);
   });
 
   it('uses the regional client as it is when the handoff has no region', async () => {
