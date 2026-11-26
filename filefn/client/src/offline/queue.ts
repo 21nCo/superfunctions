@@ -130,10 +130,11 @@ export interface OfflineQueueHooks {
   publish?: {
     /**
      * Publishes a verified generation. Resolve with nothing, or with a plain
-     * object whose `result` is exact JSON: any other value (false, null, a
-     * primitive, a Date, Map or class instance, a result that does not survive
-     * a JSON round trip unchanged) confirms nothing and leaves the publication
-     * unconfirmed, like a throw.
+     * object whose only keys are `result` (exact JSON) and, optionally,
+     * `published: true`: any other value (false, null, a primitive, a Date,
+     * Map or class instance, `{ published: false }`, another key, a result
+     * that does not survive a JSON round trip unchanged) confirms nothing and
+     * leaves the publication unconfirmed, like a throw.
      */
     run(context: OfflineQueueOperationContext): Promise<{ result?: unknown } | void>;
     /**
@@ -141,7 +142,7 @@ export interface OfflineQueueHooks {
      * effect. Called before any retry of `run`, never while a `run` this
      * queue started is still running in a live tab. `published: false` must
      * mean the attempt cannot take effect later. A check that is not a plain
-     * object confirms nothing.
+     * `{ published: true, result? }` or `{ published: false }` confirms nothing.
      */
     reconcile?(context: OfflineQueueOperationContext): Promise<OfflineQueuePublicationCheck>;
     /**
@@ -842,16 +843,36 @@ function isPlainEnvelope(value: unknown): value is Record<string, unknown> {
   return true;
 }
 
+/** Whether a plain envelope has no own key outside `allowed`. */
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
 /**
  * What a publication hook's resolved value confirms: published with its
  * JSON result, or nothing (NOT_JSON) for any value outside the contract.
+ * Only `undefined` or a plain `{ result? }` envelope confirms; an optional
+ * `published` flag must be `true`. Any other key (`{ published: false }`,
+ * `{ ok: false }`, ...) confirms nothing, so the attempt stays provisional.
  */
 function publicationResult(value: unknown): { result?: unknown } | typeof NOT_JSON {
   if (value === undefined) return {};
-  if (!isPlainEnvelope(value)) return NOT_JSON;
+  if (!isPlainEnvelope(value) || !hasOnlyKeys(value, ['result', 'published'])) return NOT_JSON;
+  if ('published' in value && value.published !== true) return NOT_JSON;
   const result = strictJson(value.result);
   if (result === NOT_JSON) return NOT_JSON;
   return result === undefined ? {} : { result };
+}
+
+/**
+ * Whether a plain envelope is a publication check: `{ published: true,
+ * result? }` or `{ published: false }`, plus `extra` keys. Any other key, or
+ * a `result` on an unpublished check, makes it no check at all.
+ */
+function isPublicationCheck(value: Record<string, unknown>, extra: readonly string[] = []): boolean {
+  if (value.published === true) return hasOnlyKeys(value, ['published', 'result', ...extra]);
+  if (value.published === false) return hasOnlyKeys(value, ['published', ...extra]);
+  return false;
 }
 
 /** A caller's key prefix: it must reach the server unchanged in a header. */
@@ -946,6 +967,7 @@ export class OfflineQueue {
   private readonly waiters = new Map<string, Waiter[]>();
   private readonly listeners = new Set<(event: OfflineQueueEvent) => void>();
   private readonly workListeners = new Set<() => void>();
+  private readonly disposeListeners = new Set<() => void>();
   /** The fence of the transaction this instance is running (the partition lock serializes them). */
   private txFence: Fence | undefined;
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
@@ -1024,6 +1046,15 @@ export class OfflineQueue {
     this.waiters.clear();
     this.listeners.clear();
     this.workListeners.clear();
+    const disposeListeners = [...this.disposeListeners];
+    this.disposeListeners.clear();
+    for (const listener of disposeListeners) {
+      try {
+        listener();
+      } catch {
+        // A listener error does not affect the disposal.
+      }
+    }
     for (const { url } of this.objectUrls.values()) {
       if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
     }
@@ -1048,6 +1079,20 @@ export class OfflineQueue {
    * tab, and when another tab's queue is disposed while driving entries.
    * `OfflineSync` uses it to start a pass at once.
    */
+  /**
+   * Called once when this queue is disposed (at once, synchronously, if it
+   * already is). `OfflineSync` uses it to dispose itself together with the
+   * queue it drives: its online listener and timers go at once.
+   */
+  onDispose(listener: () => void): () => void {
+    if (this.disposed) {
+      listener();
+      return () => {};
+    }
+    this.disposeListeners.add(listener);
+    return () => this.disposeListeners.delete(listener);
+  }
+
   onWork(listener: () => void): () => void {
     this.assertUsable();
     this.workListeners.add(listener);
@@ -1210,10 +1255,10 @@ export class OfflineQueue {
     if (
       publication !== undefined &&
       (!isPlainEnvelope(publication) ||
-        typeof publication.published !== 'boolean' ||
+        !isPublicationCheck(publication, ['attemptId']) ||
         typeof publication.attemptId !== 'string')
     ) {
-      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication must be a plain object with published (true or false) and attemptId', {
+      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication must be a plain object of published (true or false), attemptId and, when published, result only', {
         field: 'publication',
       });
     }
@@ -1267,6 +1312,9 @@ export class OfflineQueue {
     if (outcome.changed && outcome.record.current.phase === 'published') await this.emitFor(outcome.record);
     else if (outcome.changed) this.notifyWork();
     await this.observeFenced(outcome.record);
+    // A listener or work listener above may have switched the account: the
+    // journal keeps the outcome for its owner, the caller gets no entry.
+    await this.discloseFence();
     return snapshot(outcome.record);
   }
 
@@ -1603,15 +1651,53 @@ export class OfflineQueue {
     }
   }
 
-  /** Whether the credentials in use act for this partition's principal right now. */
+  /**
+   * Whether the credentials in use act for this partition's principal right
+   * now. Every principal check of the queue goes through here, so the first
+   * one that fails (any fence, `principalIsCurrent`, an event or waiter
+   * delivery) revokes every preview URL this instance issued: a switched tab
+   * keeps no `blob:` URL that still serves the old principal's bytes.
+   */
   private async principalMatches(signal: AbortSignal): Promise<boolean> {
+    let matches: boolean;
     try {
       const principal = await this.options.currentPrincipal(signal);
-      if (!principal) return false;
-      return partitionIdentity(normalizeOfflineQueuePartition({ serviceId: this.partition.serviceId, principal })) === this.identity;
+      matches =
+        Boolean(principal) &&
+        partitionIdentity(normalizeOfflineQueuePartition({ serviceId: this.partition.serviceId, principal: principal! })) === this.identity;
     } catch {
-      return false;
+      matches = false;
     }
+    if (!matches) this.revokeAllObjectUrls();
+    return matches;
+  }
+
+  /**
+   * The fence a public result carrying entry data passes after the last
+   * callback (listener, work listener, waiter) its call ran: throws
+   * FILEFN_QUEUE_DISPOSED, an AbortError once `signal` aborted, or
+   * FILEFN_QUEUE_PRINCIPAL_MISMATCH, so a callback that switched the account
+   * or stopped the call gets no entry of the old principal returned.
+   */
+  private async discloseFence(signal?: AbortSignal): Promise<void> {
+    this.assertUsable();
+    if (signal?.aborted) throw abortError();
+    await this.assertPrincipal(signal ?? this.lifetime.signal);
+    this.assertUsable();
+    if (signal?.aborted) throw abortError();
+  }
+
+  /** `discloseFence` for a pass result: one with entry data becomes `stopped` when the fence fails. */
+  private async disclosePass(result: OfflineQueueProcessResult, signal: AbortSignal | undefined): Promise<OfflineQueueProcessResult> {
+    if (!('entry' in result)) return result;
+    try {
+      await this.discloseFence(signal);
+    } catch (error) {
+      const stopped = this.stoppedResult(error);
+      if (stopped) return stopped;
+      throw error;
+    }
+    return result;
   }
 
   private async assertPrincipal(signal: AbortSignal): Promise<void> {
@@ -1955,14 +2041,38 @@ export class OfflineQueue {
       outcome = await this.transact(async (root) => {
         let partitionDir: OfflineQueueDirectoryHandle | undefined;
         let result: Awaited<ReturnType<OfflineQueue['stageIn']>>;
+        const quotaRefusal = async () => {
+          const usage = partitionDir ? await this.measure(partitionDir) : { entries: 0, bytes: 0 };
+          return { status: 'refused', reason: 'capacity', limit: 'quota', usage, limits: this.limits } as const;
+        };
         try {
           partitionDir = await this.partitionDir(root);
           result = await this.stageIn(partitionDir, input, bytes, localSource, migration);
         } catch (error) {
-          // Out of storage anywhere in the staging, reclamation included: a typed refusal.
           if (!isQuotaError(error)) throw error;
-          const usage = partitionDir ? await this.measure(partitionDir) : { entries: 0, bytes: 0 };
-          result = { status: 'refused', reason: 'capacity', limit: 'quota', usage, limits: this.limits } as const;
+          // Out of storage: the same safe reclamation as for the configured
+          // limits (published data and orphans of this partition, never
+          // pending or provisional data, nor the entry being staged), then
+          // one more admission. Refused (typed) only when that makes no room.
+          let freed = false;
+          if (partitionDir) {
+            try {
+              const reclaimed = await this.reclaimIn(partitionDir, true, await this.entryKey(input.entryId));
+              freed = reclaimed.removedEntries + reclaimed.removedFiles > 0;
+            } catch (reclaimError) {
+              if (!isQuotaError(reclaimError)) throw reclaimError;
+            }
+          }
+          if (!freed) {
+            result = await quotaRefusal();
+          } else {
+            try {
+              result = await this.stageIn(partitionDir!, input, bytes, localSource, migration);
+            } catch (retryError) {
+              if (!isQuotaError(retryError)) throw retryError;
+              result = await quotaRefusal();
+            }
+          }
         }
         // Whatever is returned, observed or settled passes the fence after the
         // staging's last storage step (the old data's removal included): after
@@ -1981,6 +2091,14 @@ export class OfflineQueue {
     this.revokeObjectUrl(input.entryId);
     this.observe(outcome.record, outcome.tombstones);
     this.notifyWork();
+    // A work listener above may have switched the account: the staging stays
+    // committed for its principal, and this caller gets no entry of it.
+    try {
+      await this.discloseFence();
+    } catch (error) {
+      if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' };
+      throw error;
+    }
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
   }
 
@@ -2234,10 +2352,12 @@ export class OfflineQueue {
         if (stopped) return stopped;
         throw error;
       }
-      if (plan.kind === 'done') return plan.result;
+      // A result returns entry data only after the fence that follows the
+      // last listener or waiter its pass ran (see disclosePass).
+      if (plan.kind === 'done') return this.disclosePass(plan.result, signal);
       if (plan.kind === 'continue') continue;
       const outcome = await this.finishStep(entryId, plan, signal);
-      if (outcome) return outcome;
+      if (outcome) return this.disclosePass(outcome, signal);
     }
   }
 
@@ -2530,8 +2650,8 @@ export class OfflineQueue {
         });
       }
       case 'reconcile-publication': {
-        // Only a plain check object counts (see isPlainEnvelope).
-        const check = isPlainEnvelope(value) ? (value as unknown as OfflineQueuePublicationCheck) : undefined;
+        // Only a plain check object of the documented keys counts (see isPublicationCheck).
+        const check = isPlainEnvelope(value) && isPublicationCheck(value) ? (value as unknown as OfflineQueuePublicationCheck) : undefined;
         const checked = check?.published === true ? strictJson(check.result) : undefined;
         if (check?.published === true && checked !== NOT_JSON) {
           return this.commit(entryId, record, signal, (state) => {
@@ -2783,6 +2903,10 @@ export class OfflineQueue {
         });
     }, this.observeIntervalMs);
     (this.observeTimer as { unref?: () => void }).unref?.();
+  }
+
+  private revokeAllObjectUrls(): void {
+    for (const entryId of [...this.objectUrls.keys()]) this.revokeObjectUrl(entryId);
   }
 
   private revokeObjectUrl(entryId: string): void {

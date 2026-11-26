@@ -1901,3 +1901,192 @@ describe('an account switch inside a callback', () => {
     a.dispose();
   });
 });
+
+describe('results returned after a callback switched the account', () => {
+  it.each([
+    ['a published', { publish: { run: async () => ({}) } }, 'published'],
+    ['a provisional (rejected)', { verify: async () => ({ verified: false as const, reason: 'bad' }) }, 'rejected'],
+  ] as const)('process returns no entry when %s listener switches', async (_label, hooks, phase) => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn, hooks: hooks as OfflineQueueHooks });
+    await stage(a);
+    a.subscribe(() => {
+      signedIn = BOB.principal;
+    });
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
+    // The committed outcome stays with its owner.
+    signedIn = ALICE.principal;
+    expect(await a.get(FILE_ID)).toMatchObject({ phase });
+    a.dispose();
+  });
+
+  it('reconcile throws instead of returning the entry when its listener switches', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn, hooks: { publish: { run: async () => { throw new Error('lost'); } } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', entry: { phase: 'publishing' } });
+    const attemptId = (await a.get(FILE_ID))!.publicationAttemptId!;
+    a.subscribe(() => {
+      signedIn = BOB.principal;
+    });
+    await expect(a.reconcile(FILE_ID, 1, { published: true, attemptId })).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    signedIn = ALICE.principal;
+    expect(await a.get(FILE_ID)).toMatchObject({ state: 'published' });
+    a.dispose();
+  });
+
+  it('stage refuses instead of returning the entry when a work listener switches', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    a.onWork(() => {
+      signedIn = BOB.principal;
+    });
+    expect(await a.stage({ policy: 'p', file: new Blob(['v1']), fileId: FILE_ID })).toEqual({ status: 'refused', reason: 'principal-mismatch' });
+    signedIn = ALICE.principal;
+    expect(await a.list()).toMatchObject([{ entryId: FILE_ID, state: 'provisional' }]);
+    a.dispose();
+  });
+});
+
+describe('preview URLs after an account switch', () => {
+  it('revokes every issued preview once any queue call sees another principal', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const revoked: string[] = [];
+    let created = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:preview-${++created}`, revokeObjectURL: (url: string) => revoked.push(url) });
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    await stage(a);
+    expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ source: { url: 'blob:preview-1' } });
+    // Switched in another tab: this tab only finds out on its next call.
+    signedIn = BOB.principal;
+    await expect(a.list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    expect(revoked).toEqual(['blob:preview-1']);
+    a.dispose();
+  });
+});
+
+describe('publication envelopes outside the documented keys', () => {
+  it.each([
+    ['published: false', { published: false }],
+    ['ok: false with a null result', { ok: false, result: null }],
+    ['an extra key', { result: { id: 'r1' }, extra: 1 }],
+  ])('never confirms a run resolved with %s, and cleans nothing up', async (_label, value) => {
+    const a = tab('a', { hooks: { publish: { run: async () => value as never } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    expect(dataFiles()).toHaveLength(1);
+  });
+
+  it('still confirms a run resolved with published: true and a result', async () => {
+    const a = tab('a', { hooks: { publish: { run: async () => ({ published: true, result: { id: 'r1' } }) as never } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published', entry: { publication: { result: { id: 'r1' } } } });
+  });
+
+  it('refuses a reconcile check or manual outcome with unknown keys', async () => {
+    const reconcile = vi.fn(async () => ({ published: false, result: { id: 'r1' } }) as never);
+    const a = tab('a', { hooks: { publish: { run: async () => { throw new Error('lost'); }, reconcile } } });
+    await stage(a);
+    await a.process(FILE_ID);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    expect(reconcile).toHaveBeenCalled();
+    const attemptId = (await a.get(FILE_ID))!.publicationAttemptId!;
+    await expect(a.reconcile(FILE_ID, 1, { published: true, attemptId, ok: false } as never)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_INVALID_INPUT' });
+    await expect(a.reconcile(FILE_ID, 1, { published: false, attemptId, result: 1 } as never)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_INVALID_INPUT' });
+    expect((await a.get(FILE_ID))!.phase).toBe('publishing');
+    expect(dataFiles()).toHaveLength(1);
+  });
+});
+
+describe('physical quota during staging', () => {
+  it('reclaims orphaned data and admits the staging once more', async () => {
+    const a = tab('a');
+    await stage(a, 'first', { entryId: 'first' });
+    // A staging that crashed before its journal committed left its data.
+    const orphan = await (await partitionDir()).getDirectoryHandle('orphan', { create: true });
+    await writeCommitted(orphan, 'g1.bin', 'orphaned bytes');
+    let thrown = false;
+    storage.storage.fault = (path, step) => {
+      if (!thrown && path.endsWith('.bin') && step === 'write') {
+        thrown = true;
+        throw quotaExceeded();
+      }
+    };
+    expect(await a.stage({ policy: 'p', file: new Blob(['second']), entryId: 'second', fileId: 'file_00000000entry02' })).toMatchObject({ status: 'staged' });
+    storage.storage.fault = undefined;
+    expect(thrown).toBe(true);
+    expect((await partitionDir()).entries.has('orphan')).toBe(false);
+    expect((await a.list()).map((e) => e.entryId).sort()).toEqual(['first', 'second']);
+  });
+
+  it('reclaims data a published generation left behind, but never pending data', async () => {
+    const a = tab('a');
+    await stage(a, 'pending', { entryId: 'pending', fileId: 'file_00000000entry02' });
+    await stage(a, 'done', { entryId: 'done' });
+    expect(await a.process('done')).toMatchObject({ status: 'published' });
+    // An interrupted cleanup left data beside the published journal.
+    const doneDir = [...(await partitionDir()).entries.values()].find(
+      (entry) => entry instanceof MemoryDirectory && entry.entries.has('journal.json') && journalOf('done').path.startsWith(`${entry.path}/`),
+    ) as MemoryDirectory;
+    await writeCommitted(doneDir, 'g1.bin', 'published bytes');
+    expect(dataFiles()).toHaveLength(2);
+    let thrown = false;
+    storage.storage.fault = (path, step) => {
+      if (!thrown && path.endsWith('.bin') && step === 'write') {
+        thrown = true;
+        throw quotaExceeded();
+      }
+    };
+    expect(await a.stage({ policy: 'p', file: new Blob(['next']), entryId: 'next', fileId: 'file_00000000entry03' })).toMatchObject({ status: 'staged' });
+    storage.storage.fault = undefined;
+    expect(await a.get('pending')).toMatchObject({ state: 'provisional', phase: 'staged' });
+    expect(dataFiles()).toHaveLength(2);
+  });
+});
+
+describe('a sync and its queue’s disposal', () => {
+  function trackingChecker() {
+    const registered = new Set<() => void>();
+    return {
+      registered,
+      checker: {
+        isOnline: () => true,
+        onOnline: (callback: () => void) => {
+          registered.add(callback);
+          return () => registered.delete(callback);
+        },
+        onOffline: () => () => {},
+      },
+    };
+  }
+
+  it('starting against a disposed queue registers nothing', () => {
+    const a = tab('a');
+    a.dispose();
+    const sync = new OfflineSync({ queue: a });
+    const { registered, checker } = trackingChecker();
+    sync.setConnectivityChecker(checker);
+    expect(() => sync.start()).toThrow();
+    expect(registered.size).toBe(0);
+    expect(sync.isDisposed).toBe(true);
+  });
+
+  it('disposing the queue under an idle started sync drops its listener and timers at once', async () => {
+    vi.useFakeTimers();
+    try {
+      const a = tab('a');
+      const sync = new OfflineSync({ queue: a, idlePollMs: 1000 });
+      const { registered, checker } = trackingChecker();
+      sync.setConnectivityChecker(checker);
+      sync.start();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(registered.size).toBe(1);
+      a.dispose();
+      expect(sync.isDisposed).toBe(true);
+      expect(registered.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -358,6 +358,11 @@ export class UploadManager {
       return this.reconcileCompletedSession(initResponse, prepared.fileId, signal);
     }
     if (initResponse.status === "aborted" || initResponse.status === "expired") {
+      // Only a well-formed answer confirms the end (and retires the key): a
+      // malformed one stays ambiguous under the recorded key.
+      if (!isWellFormedId(uploadSessionId)) {
+        throw new Error("Upload session replay returned a malformed session ID; the session's state is unknown");
+      }
       throw createClientError(
         UPLOAD_SESSION_ENDED_ERROR,
         `Upload session ${uploadSessionId} is ${initResponse.status}; start again with a new idempotency key`,

@@ -445,3 +445,25 @@ describe('error handling', () => {
     await expect(client.uploadFile({ policy: 'invalid', file }).done()).rejects.toThrow('HTTP 404');
   });
 });
+
+describe('replayed session end', () => {
+  it.each([
+    ['a numeric session ID', 42],
+    ['a session ID with a path separator', 'ups/../x'],
+  ])('keeps an expired answer with %s ambiguous instead of confirming the end', async (_label, uploadSessionId) => {
+    const { UPLOAD_SESSION_ENDED_ERROR } = await import('../upload-manager.js');
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId, status: 'expired', totalParts: 1, chunkSizeBytes: 100 } }));
+    const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { code?: string }).code).not.toBe(UPLOAD_SESSION_ENDED_ERROR);
+  });
+
+  it('confirms the end of a well-formed expired session', async () => {
+    const { UPLOAD_SESSION_ENDED_ERROR } = await import('../upload-manager.js');
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId: 'ups_1', status: 'expired', totalParts: 1, chunkSizeBytes: 100 } }));
+    const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
+    expect((error as { code?: string }).code).toBe(UPLOAD_SESSION_ENDED_ERROR);
+  });
+});

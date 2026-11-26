@@ -75,6 +75,7 @@ export class OfflineSync {
   private settledResultTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private stopOnlineListener?: () => void;
   private stopWorkListener?: () => void;
+  private stopQueueDisposeListener?: () => void;
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private cancelledUploads: Set<string> = new Set();
   private activeSyncControllers: Map<string, AbortController> = new Map();
@@ -96,6 +97,9 @@ export class OfflineSync {
 
     // Default connectivity checker using browser APIs
     this.connectivityChecker = this.createDefaultConnectivityChecker();
+    // The queue's disposal disposes this sync at once: its online listener,
+    // idle poll and retry timers go with it, without waiting for an event.
+    this.stopQueueDisposeListener = config.queue?.onDispose(() => this.dispose());
   }
 
   /**
@@ -116,6 +120,8 @@ export class OfflineSync {
     if (this.disposed) return;
     this.disposed = true;
     this.lifetime.abort();
+    this.stopQueueDisposeListener?.();
+    this.stopQueueDisposeListener = undefined;
     this.stopAutoSync();
     for (const uploadSessionId of [...this.retryTimers.keys()]) this.clearRetry(uploadSessionId);
     for (const controller of this.activeSyncControllers.values()) controller.abort();
@@ -129,16 +135,24 @@ export class OfflineSync {
    * Start listening for online events and automatically sync when online.
    */
   startAutoSync(): void {
-    if (this.disposed) {
+    // A disposed queue disposes this sync (stopped()) before anything is registered.
+    if (this.stopped()) {
       throw new Error('OfflineSync was disposed');
     }
     this.stopAutoSync();
+    try {
+      // Work this tab makes runnable (a staging, a released hold) starts a pass at once.
+      this.stopWorkListener = this.config.queue?.onWork(() => {
+        if (this.connectivityChecker.isOnline()) this.runPass();
+      });
+      this.stopOnlineListener = this.connectivityChecker.onOnline(() => this.runPass());
+    } catch (error) {
+      // Nothing of a failed start stays registered.
+      this.stopAutoSync();
+      if (this.config.queue?.isDisposed) this.dispose();
+      throw error;
+    }
     this.autoSyncing = true;
-    this.stopOnlineListener = this.connectivityChecker.onOnline(() => this.runPass());
-    // Work this tab makes runnable (a staging, a released hold) starts a pass at once.
-    this.stopWorkListener = this.config.queue?.onWork(() => {
-      if (this.connectivityChecker.isOnline()) this.runPass();
-    });
     if (this.connectivityChecker.isOnline()) this.runPass();
   }
 
