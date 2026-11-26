@@ -1,0 +1,33 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_354c90d1ae0cd0::t_30dd2710da0cd3 1490,2733,2846-2926
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_354c90d1ae0cd0::t_e33ba48640b615 615,655,663,667
+filefn/client/src/__tests__/upload.test.ts
+  s_354c90d1ae0cd0::t_911bb5ef7ac816 452,470-489
+filefn/client/src/client.ts
+  s_354c90d1ae0cd0::t_874efa1a9bbde2 60-65,68-77,86-87,111-112,124-126,748,760,772,784,796
+filefn/client/src/index.ts
+  s_354c90d1ae0cd0::t_420bf3da398a27 36,371-375
+filefn/client/src/offline/queue.ts
+  s_354c90d1ae0cd0::t_0e2447871087bc 773-807,1355-1356,1371-1405,1408-1413,1418-1421,2218-2223,2228-2229,2317-2319,3064-3065,3067-3069,3151,3153-3156,3708-3713,3715-3717
+filefn/docs/content/docs/features/offline.md
+  s_354c90d1ae0cd0::t_3e6f928a42325c 35,124
+filefn/docs/content/docs/reference/changelog.md
+  s_354c90d1ae0cd0::t_ed9dd0f25f7266 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c7ce1430d488631bca32c36405defe966c5d5b3",
+  "prompts": {},
+  "sessions": {
+    "s_354c90d1ae0cd0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ac404db-e472-4bb9-8332-1a5c99d10a14",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
