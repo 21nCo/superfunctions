@@ -1,5 +1,5 @@
 import type { OPFSStore } from './opfs-store.js';
-import type { OfflineQueue } from './queue.js';
+import type { OfflineQueue, OfflineQueueProcessAllItem } from './queue.js';
 import { isRetryableError } from '../retry.js';
 
 export interface UploadClient {
@@ -65,6 +65,7 @@ export class OfflineSync {
   private settledResults: Map<string, { fileId: string; versionId: string } | Error> = new Map();
   private settledResultTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private stopOnlineListener?: () => void;
+  private stopWorkListener?: () => void;
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private cancelledUploads: Set<string> = new Set();
   private activeSyncControllers: Map<string, AbortController> = new Map();
@@ -122,12 +123,12 @@ export class OfflineSync {
       throw new Error('OfflineSync was disposed');
     }
     this.stopAutoSync();
-    this.stopOnlineListener = this.connectivityChecker.onOnline(() => {
-      void this.syncAll().catch(() => {});
+    this.stopOnlineListener = this.connectivityChecker.onOnline(() => this.runPass());
+    // Work this tab makes runnable (a staging, a released hold) starts a pass at once.
+    this.stopWorkListener = this.config.queue?.onWork(() => {
+      if (this.connectivityChecker.isOnline()) this.runPass();
     });
-    if (this.connectivityChecker.isOnline()) {
-      void this.syncAll().catch(() => {});
-    }
+    if (this.connectivityChecker.isOnline()) this.runPass();
   }
 
   /**
@@ -136,6 +137,19 @@ export class OfflineSync {
   stopAutoSync(): void {
     this.stopOnlineListener?.();
     this.stopOnlineListener = undefined;
+    this.stopWorkListener?.();
+    this.stopWorkListener = undefined;
+  }
+
+  /** Starts a pass in the background; a pass that fails is reported and, for a queue, tried again later. */
+  private runPass(): void {
+    void this.syncAll().catch((error) => this.passFailed(error));
+  }
+
+  private passFailed(error: unknown): void {
+    if (this.disposed) return;
+    this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), this.config.queue ? '*queue*' : '*sync*');
+    if (this.config.queue && this.isOnline()) this.scheduleQueueRetry();
   }
 
   /**
@@ -251,6 +265,7 @@ export class OfflineSync {
           result.failed.push(uploadSessionId);
           progress.failed += 1;
           this.config.onSyncError(err, uploadSessionId);
+          if (this.disposed) break;
 
           // Check if we should notify listeners of failure (max retries reached)
           const pending = await store.getPendingUpload(uploadSessionId);
@@ -264,66 +279,92 @@ export class OfflineSync {
         }
 
         result.totalProcessed += 1;
+        if (this.disposed) break;
         this.config.onSyncProgress(progress);
       }
 
       progress.current = null;
-      this.config.onSyncComplete(result);
+      if (!this.disposed) this.config.onSyncComplete(result);
 
       return result;
     } finally {
       this.isSyncing = false;
       if (this.rerunRequested && !this.disposed) {
         this.rerunRequested = false;
-        if (this.isOnline()) void this.syncAll().catch(() => {});
+        if (this.isOnline()) this.runPass();
       }
     }
   }
 
   /**
    * One pass over the queue's entries. Published entries succeed; a failed,
-   * rejected or unconfirmed one is reported as failed and stays provisional.
-   * An unconfirmed (ambiguous) one, one another tab was processing (busy) and
-   * one waiting for its principal to come back are tried again after
+   * rejected or unconfirmed one is reported as failed and stays provisional,
+   * as is an entry whose processing threw (the pass goes on to the next).
+   * An unconfirmed (ambiguous) one, one that threw, one another tab was
+   * processing (busy), one waiting for its principal to come back and a held
+   * one (another tab may release it) are looked at again after
    * `retryDelayMs`, doubling up to a minute per retry. A generation replaced
    * during the pass (superseded) gets a follow-up pass at once, so the newer
-   * one is driven even when the tab that staged it has closed.
+   * one is driven even when the tab that staged it has closed. No callback
+   * runs once the sync is disposed, even from inside an earlier callback.
    */
   private async syncQueue(queue: OfflineQueue): Promise<SyncResult> {
     const result: SyncResult = { succeeded: [], failed: [], totalProcessed: 0 };
     const progress: SyncProgress = { totalPending: 0, completed: 0, failed: 0, current: null };
-    let outcomes: Awaited<ReturnType<OfflineQueue['processAll']>>;
+    let outcomes: OfflineQueueProcessAllItem[];
     try {
       outcomes = await queue.processAll({ signal: this.lifetime.signal });
     } catch (error) {
-      if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' || this.disposed) throw error;
+      if (this.disposed) return result;
+      if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_PRINCIPAL_MISMATCH') throw error;
       // Another account is active for now: look again later.
       if (this.isOnline()) this.scheduleQueueRetry();
       return result;
     }
     progress.totalPending = outcomes.length;
     let retry = false;
-    for (const { entryId, result: outcome } of outcomes) {
-      if (outcome.status === 'busy') {
-        // Another tab holds it; if that tab closes, a later pass takes over.
+    for (const item of outcomes) {
+      if (this.disposed) return result;
+      const { entryId } = item;
+      let failure: Error | undefined;
+      if ('error' in item) {
         retry = true;
-        continue;
+        failure = item.error;
+      } else {
+        const outcome = item.result;
+        if (outcome.status === 'busy') {
+          // Another tab holds it; if that tab closes, a later pass takes over.
+          retry = true;
+          continue;
+        }
+        if (outcome.status === 'superseded') {
+          this.rerunRequested = true;
+          continue;
+        }
+        if (outcome.status === 'stopped') {
+          retry ||= outcome.reason === 'principal-mismatch';
+          continue;
+        }
+        if (outcome.status === 'provisional' && outcome.reason === 'held') {
+          retry = true;
+          continue;
+        }
+        if (outcome.status === 'published') {
+          result.succeeded.push(entryId);
+          progress.completed += 1;
+        } else if (outcome.status === 'provisional') {
+          retry ||= outcome.reason === 'ambiguous';
+          const message = outcome.entry.error?.message ?? outcome.entry.pending?.message ?? outcome.reason;
+          failure = Object.assign(new Error(message), { code: outcome.reason });
+        } else {
+          continue;
+        }
       }
-      if (outcome.status === 'superseded') {
-        this.rerunRequested = true;
-        continue;
-      }
-      if (outcome.status === 'published') {
-        result.succeeded.push(entryId);
-        progress.completed += 1;
-      } else if (outcome.status === 'provisional' && outcome.reason !== 'held' && outcome.reason !== 'aborted') {
+      if (failure) {
         result.failed.push(entryId);
         progress.failed += 1;
-        retry ||= outcome.reason === 'ambiguous' || outcome.reason === 'principal-mismatch';
-        const message = outcome.entry.error?.message ?? outcome.entry.pending?.message ?? outcome.reason;
-        this.config.onSyncError(Object.assign(new Error(message), { code: outcome.reason }), entryId);
-      } else {
-        continue;
+        this.config.onSyncError(failure, entryId);
+        if (this.disposed) return result;
       }
       result.totalProcessed += 1;
       progress.current = entryId;
@@ -333,7 +374,7 @@ export class OfflineSync {
     if (this.disposed) return result;
     this.config.onSyncComplete(result);
     if (!retry) this.queueRetries = 0;
-    else if (this.isOnline()) this.scheduleQueueRetry();
+    else if (this.isOnline() && !this.disposed) this.scheduleQueueRetry();
     return result;
   }
 
@@ -344,9 +385,7 @@ export class OfflineSync {
     this.queueRetries += 1;
     const timer = setTimeout(() => {
       this.retryTimers.delete(key);
-      void this.syncAll().catch((error) => {
-        this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), key);
-      });
+      this.runPass();
     }, delay);
     this.retryTimers.set(key, timer);
   }

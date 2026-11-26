@@ -92,6 +92,7 @@ export class MemoryFile implements OfflineQueueFileHandle {
 
   async createWritable() {
     let staged: Uint8Array<ArrayBufferLike> | undefined;
+    let aborted = false;
     return {
       write: async (data: ArrayBuffer | string) => {
         this.storage.fault?.(this.path, 'write');
@@ -100,7 +101,13 @@ export class MemoryFile implements OfflineQueueFileHandle {
       // Like OPFS, the new content replaces the old one only when the writable closes.
       close: async () => {
         this.storage.fault?.(this.path, 'close');
+        if (aborted) throw new TypeError('Writable was aborted');
         if (staged) this.content = staged;
+      },
+      // Like OPFS, an aborted writable never replaces the content.
+      abort: async () => {
+        aborted = true;
+        staged = undefined;
       },
     };
   }

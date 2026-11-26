@@ -228,10 +228,14 @@ describe('offline replay against the FileFn server', () => {
       });
     });
 
+    // The refusal of a request after upload/init leaves the outcome unknown: same key.
+    expect(await app.queue.process('file_00000000ending02')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    // The replay's upload/init confirms the session ended: a fresh key, journaled first.
     expect(await app.queue.process('file_00000000ending02')).toMatchObject({ status: 'published' });
     const keys = app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key);
-    expect(keys).toHaveLength(2);
-    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys).toHaveLength(3);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
     expect(app.journalKey()).toMatchObject({ retiredKeys: [keys[0]] });
     expect(await app.rows('files')).toHaveLength(1);
   });
@@ -259,5 +263,79 @@ describe('offline replay against the FileFn server', () => {
     });
     expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(2);
     expect(app.requests.some((r) => r.method === 'GET')).toBe(false);
+  });
+});
+
+describe('session outcomes a replay settles under the same key', () => {
+  const owner = { principalId: 'user-owner' };
+
+  /** A FileFn whose proxy part writes run `beforeClose` right before they commit. */
+  async function createServer(beforeClose?: () => Promise<void>) {
+    const root = await mkdtemp(join(tmpdir(), 'filefn-offline-outcome-'));
+    roots.push(root);
+    const database = memoryAdapter();
+    const local = createLocalStorageAdapter({ rootDir: root });
+    const storage = Object.assign(Object.create(local), {
+      async openUploadStream(params: Parameters<NonNullable<typeof local.openUploadStream>>[0]) {
+        const inner = (await local.openUploadStream!(params)).getWriter();
+        return new WritableStream<Uint8Array>({
+          write: (chunk) => inner.write(chunk),
+          close: async () => {
+            await beforeClose?.();
+            await inner.close();
+          },
+        });
+      },
+    });
+    const fileFn = createFileFn({ database, storage, policies: [{ name: 'doc', maxSizeBytes: 1024 }] });
+    return {
+      fileFn,
+      database,
+      updateSession: (id: string, data: Record<string, unknown>) =>
+        database.update({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: id }], data }),
+    };
+  }
+
+  function body(bytes: number): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(bytes));
+        controller.close();
+      },
+    });
+  }
+
+  it('reports a session another request completed during a proxy part write as completed, not aborted', async () => {
+    let completeNow: (() => Promise<void>) | undefined;
+    const server = await createServer(async () => completeNow?.());
+    const session = await server.fileFn.createUploadSession({ policy: 'doc', fileName: 'a.bin', size: 4, mimeType: 'application/octet-stream' }, owner);
+    completeNow = async () => {
+      await server.updateSession(session.uploadSessionId, { status: 'completed' });
+    };
+    await expect(server.fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner)).rejects.toMatchObject({
+      code: 'FILEFN_UPLOAD_ALREADY_COMPLETED',
+    });
+  });
+
+  it('waits for a live completion past the session expiry instead of reporting it expired', async () => {
+    const server = await createServer();
+    const session = await server.fileFn.createUploadSession({ policy: 'doc', fileName: 'a.bin', size: 4, mimeType: 'application/octet-stream' }, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner);
+    // Another request holds a fresh completion claim; the session expires meanwhile.
+    await server.updateSession(session.uploadSessionId, {
+      status: 'completing',
+      completionClaim: `${new Date().toISOString()} test-claim-nonce`,
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const completing = server.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    // The holder finishes and records its version.
+    setTimeout(() => {
+      void server.updateSession(session.uploadSessionId, {
+        status: 'completed',
+        fileId: 'file_00000000outcome1',
+        completionVersionId: 'ver_test_0001',
+      });
+    }, 50);
+    await expect(completing).resolves.toMatchObject({ fileId: 'file_00000000outcome1', versionId: 'ver_test_0001' });
   });
 });

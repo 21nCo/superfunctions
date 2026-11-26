@@ -112,6 +112,7 @@ export type {
   OfflineQueuePending,
   OfflineQueuePhase,
   OfflineQueuePrincipal,
+  OfflineQueueProcessAllItem,
   OfflineQueueProcessResult,
   OfflineQueuePublicationCheck,
   OfflineQueuePublicationOutcome,
@@ -370,13 +371,33 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   }
 
   /**
-   * Replays with this client's transport. Every request and retry first
-   * checks that the credentials still act for the partition's principal.
+   * Replays with this client's transport. The auth headers of every request,
+   * retry and part are resolved between two principal checks (or, with
+   * `offline.getAuthHeaders`, for the partition's principal itself), and the
+   * principal is checked again right before each request is sent.
    */
   const builtInUploader: OfflineQueueUploader = {
     upload: (input) => {
+      const offline = config.offline!;
+      const principal = offline.partition!.principal;
+      const authHeaders = async (): Promise<Record<string, string> | undefined> => {
+        await input.assertPrincipal();
+        let headers: Record<string, string> | undefined;
+        if (offline.getAuthHeaders) {
+          const bound = await offline.getAuthHeaders(principal);
+          if (!bound) {
+            throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
+          }
+          headers = bound;
+        } else {
+          headers = config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
+        }
+        // Headers captured while another account was active never pass.
+        await input.assertPrincipal();
+        return headers;
+      };
       // Already prepared when staged: no preprocessors run again.
-      const manager = new UploadManager(createHttpClient(config, { beforeSend: input.assertPrincipal }));
+      const manager = new UploadManager(createHttpClient(config, { beforeSend: input.assertPrincipal, authHeaders }));
       manager.bindAbortSignal(input.signal);
       return manager.startUpload(input);
     },

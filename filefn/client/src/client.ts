@@ -299,6 +299,12 @@ export interface HttpClientOptions {
    * uses it to send nothing once the credentials act for another principal.
    */
   beforeSend?: () => Promise<void>;
+  /**
+   * Resolves the auth headers of each request, retries and part uploads
+   * included, instead of `config.getAuthHeaders`. The offline queue uses it to
+   * bind the credentials a replay sends to its partition's principal.
+   */
+  authHeaders?: () => Promise<Record<string, string> | undefined>;
 }
 
 export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpClientOptions = {}): HttpClient {
@@ -346,6 +352,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
   }
 
   async function readAuthHeaders(): Promise<Record<string, string> | undefined> {
+    if (httpOptions.authHeaders) return httpOptions.authHeaders();
     return config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
   }
 

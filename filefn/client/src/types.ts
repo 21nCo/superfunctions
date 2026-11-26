@@ -2,6 +2,7 @@ import type {
   OfflineQueueCurrentPrincipal,
   OfflineQueueOptions,
   OfflineQueuePartition,
+  OfflineQueuePrincipal,
   OfflineQueueUploader,
 } from './offline/queue.js';
 import type {
@@ -55,6 +56,19 @@ export interface FileFnClientConfig {
      * that shares cookies cannot upload one principal's files as another.
      */
     currentPrincipal?: OfflineQueueCurrentPrincipal;
+    /**
+     * Auth headers that act for exactly `principal`, used by queued replays
+     * of the built-in transport instead of `getAuthHeaders` (return null when
+     * there are none: the replay stays provisional). This binds a replay's
+     * credentials to its partition. Without it, replays resolve
+     * `getAuthHeaders` between two `currentPrincipal` checks and check again
+     * before each request, which cannot see an account that switches away
+     * and back while `getAuthHeaders` runs. Cookies are ambient: they are
+     * only covered by the checks.
+     */
+    getAuthHeaders?: (
+      principal: OfflineQueuePrincipal,
+    ) => Promise<Record<string, string> | null> | Record<string, string> | null;
     /**
      * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
      * `resolveRenderable` start a sync of the queue on their own. Defaults to

@@ -4,6 +4,7 @@ import {
   UPLOAD_SESSION_ENDED_ERROR,
   assertValidExplicitFileId,
   isValidIdempotencyKey,
+  isWellFormedId,
   derivePendingLocalSource,
   generateFileId,
 } from '../upload-manager.js';
@@ -64,7 +65,12 @@ export interface OfflineQueueDirectoryHandle {
 
 export interface OfflineQueueFileHandle {
   getFile(): Promise<Blob>;
-  createWritable(): Promise<{ write(data: ArrayBuffer | string): Promise<void>; close(): Promise<void> }>;
+  createWritable(): Promise<{
+    write(data: ArrayBuffer | string): Promise<void>;
+    close(): Promise<void>;
+    /** Discards the writable without changing the file (OPFS). */
+    abort?(): Promise<void>;
+  }>;
 }
 
 export interface OfflineQueueLimits {
@@ -279,20 +285,23 @@ export type OfflineQueueProcessResult =
   | {
       status: 'provisional';
       entry: OfflineQueueEntry;
-      reason:
-        | 'held'
-        | 'ambiguous'
-        | 'needs-reconcile'
-        | 'rejected'
-        | 'failed'
-        | 'retry-limit'
-        | 'aborted'
-        | 'principal-mismatch'
-        | 'hook-unavailable';
+      reason: 'held' | 'ambiguous' | 'needs-reconcile' | 'rejected' | 'failed' | 'retry-limit' | 'hook-unavailable';
     }
+  /**
+   * The pass stopped before its next effect: the caller's signal aborted
+   * (`aborted`), or the current principal is not the partition's
+   * (`principal-mismatch`). Carries no entry data; the entry stays as it was
+   * journaled, for a live pass of its principal to resume or reconcile.
+   */
+  | { status: 'stopped'; reason: 'aborted' | 'principal-mismatch' }
   | { status: 'superseded' }
   | { status: 'busy' }
   | { status: 'not-found' };
+
+/** One entry of a `processAll` pass: its result, or the error that stopped only that entry. */
+export type OfflineQueueProcessAllItem =
+  | { entryId: string; result: OfflineQueueProcessResult }
+  | { entryId: string; error: Error };
 
 export type OfflineQueueEvent =
   | { type: 'published'; entry: OfflineQueueEntry }
@@ -415,6 +424,8 @@ interface PartitionMeta {
   partitionId: string;
   lastGeneration: number;
   migrated: string[];
+  /** Replay keys migrated legacy uploads took over: each is taken over once. */
+  migratedKeys: string[];
   tombstones: Tombstone[];
 }
 
@@ -431,6 +442,14 @@ type Plan =
   | { kind: 'continue' }
   /** A step started: `running` is its upload or hook, invoked right after its claim was journaled. */
   | { kind: StepKind; record: JournalRecord; controller: AbortController; release: () => void; running: Promise<unknown> };
+
+/**
+ * Checked right before every durable effect of a transaction (a journal,
+ * meta or data file commit, or a removal) and before a read is returned:
+ * throws FILEFN_QUEUE_DISPOSED, an AbortError when the pass's signal aborted,
+ * or FILEFN_QUEUE_PRINCIPAL_MISMATCH.
+ */
+type Fence = () => Promise<void>;
 
 function requireId(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > ID_MAX_LENGTH) {
@@ -528,6 +547,10 @@ function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function abortError(): Error {
+  return new DOMException('Aborted', 'AbortError');
+}
+
 async function getDir(parent: OfflineQueueDirectoryHandle, name: string): Promise<OfflineQueueDirectoryHandle | null> {
   try {
     return await parent.getDirectoryHandle(name);
@@ -546,9 +569,21 @@ async function getFile(dir: OfflineQueueDirectoryHandle, name: string): Promise<
   }
 }
 
-async function writeFile(dir: OfflineQueueDirectoryHandle, name: string, data: ArrayBuffer | string): Promise<void> {
+async function writeFile(
+  dir: OfflineQueueDirectoryHandle,
+  name: string,
+  data: ArrayBuffer | string,
+  fence?: Fence,
+): Promise<void> {
   const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
-  await writable.write(data);
+  try {
+    await writable.write(data);
+    // Checked after every preparatory await: a stopped or switched pass never commits.
+    await fence?.();
+  } catch (error) {
+    await writable.abort?.().catch(() => {});
+    throw error;
+  }
   // OPFS commits a writable atomically on close: readers see the old or the new content.
   await writable.close();
 }
@@ -612,23 +647,30 @@ function errorInfo(error: unknown): { code?: string; message: string } {
 type UploadFailure = { code?: unknown; status?: unknown; retryable?: unknown; details?: { retryable?: unknown } } | undefined;
 
 /**
- * The session of the recorded key ended for good (expired or aborted), at any
- * phase: init replay, sign, part, part completion or completion. Nothing more
- * can be sent under that key; the generation starts again under a fresh one.
+ * The session of the recorded key ended for good: an `upload/init` replay of
+ * the key found it aborted or expired (the server reports a session with a
+ * live completion as in progress). Nothing more can be sent under that key;
+ * the generation starts again under a fresh one.
  */
-const SESSION_ENDED_CODES = new Set([UPLOAD_SESSION_ENDED_ERROR, 'FILEFN_UPLOAD_EXPIRED', 'FILEFN_UPLOAD_ABORTED']);
-
 function isSessionEnded(error: unknown): boolean {
-  const code = (error as UploadFailure)?.code;
-  return typeof code === 'string' && SESSION_ENDED_CODES.has(code);
+  return (error as UploadFailure)?.code === UPLOAD_SESSION_ENDED_ERROR;
 }
 
-/** Another tab completed, or is completing, the same session, or the server lost track of it: a replay under the same key settles it. */
+/**
+ * Outcomes a replay under the same key settles: another tab completed, or is
+ * completing, the same session; the server lost track of it; or a request
+ * other than `upload/init` saw it expired or aborted, which a live completion
+ * or a completion by another request can still overtake. The replay's
+ * `upload/init` reports the session as it is: completed (reconciled), or
+ * ended (then a fresh key is journaled).
+ */
 const REPLAYABLE_CODES = new Set([
   'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
   'FILEFN_UPLOAD_ALREADY_COMPLETED',
   'FILEFN_UPLOAD_INCOMPLETE',
   'FILEFN_SESSION_NOT_FOUND',
+  'FILEFN_UPLOAD_EXPIRED',
+  'FILEFN_UPLOAD_ABORTED',
 ]);
 
 /**
@@ -660,9 +702,10 @@ function isPrincipalMismatch(error: unknown): boolean {
   return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_PRINCIPAL_MISMATCH';
 }
 
-function hasVersion(result: unknown): result is UploadResult {
+/** A success names what it stored: a well-formed fileId and versionId. */
+function hasStoredIdentity(result: unknown): result is UploadResult {
   const value = result as { fileId?: unknown; versionId?: unknown } | null | undefined;
-  return typeof value?.fileId === 'string' && typeof value.versionId === 'string' && value.versionId.length > 0;
+  return isWellFormedId(value?.fileId) && isWellFormedId(value?.versionId);
 }
 
 /** A caller's key prefix: it must reach the server unchanged in a header. */
@@ -677,11 +720,10 @@ function assertQueueKeyPrefix(key: string): void {
 /**
  * The key a new generation sends: unique to it, so no other generation (of
  * this entry or another, before or after a cancel or reclaim) can replay its
- * session. A migrated legacy upload keeps its own key, so a session it already
- * completed is reconciled; it is admitted once per partition.
+ * session. A migrated legacy upload may take over its own key instead (see
+ * `stageBytes`).
  */
-function replayKey(prefix: string | undefined, operationId: string, legacyKey?: string): string {
-  if (legacyKey !== undefined && isValidIdempotencyKey(legacyKey)) return legacyKey;
+function replayKey(prefix: string | undefined, operationId: string): string {
   return prefix ? `${prefix}:${operationId}` : randomId('idem');
 }
 
@@ -755,6 +797,9 @@ export class OfflineQueue {
   private readonly entryControllers = new Map<string, AbortController>();
   private readonly waiters = new Map<string, Waiter[]>();
   private readonly listeners = new Set<(event: OfflineQueueEvent) => void>();
+  private readonly workListeners = new Set<() => void>();
+  /** The fence of the transaction this instance is running (the partition lock serializes them). */
+  private txFence: Fence | undefined;
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   private partitionIdPromise: Promise<string> | undefined;
   private disposed = false;
@@ -813,6 +858,7 @@ export class OfflineQueue {
     }
     this.waiters.clear();
     this.listeners.clear();
+    this.workListeners.clear();
     for (const { url } of this.objectUrls.values()) {
       if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
     }
@@ -823,6 +869,17 @@ export class OfflineQueue {
     this.assertUsable();
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Called when this instance makes work runnable: a generation staged, a
+   * hold released or an entry reconciled. `OfflineSync` uses it to start a
+   * pass at once; work other tabs make runnable is found by its retry passes.
+   */
+  onWork(listener: () => void): () => void {
+    this.assertUsable();
+    this.workListeners.add(listener);
+    return () => this.workListeners.delete(listener);
   }
 
   /**
@@ -886,6 +943,9 @@ export class OfflineQueue {
       record.holds.splice(index, 1);
       await this.writeRecord(dir, record);
       return true;
+    }).then((released) => {
+      if (released) this.notifyWork();
+      return released;
     });
   }
 
@@ -898,8 +958,8 @@ export class OfflineQueue {
     const { records, tombstones } = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
       return { records: await this.readAllIn(partitionDir), tombstones: (await this.loadMeta(partitionDir)).tombstones };
-    });
-    for (const record of records) this.observe(record);
+    }, { disclose: true });
+    for (const record of records) this.observe(record, tombstones);
     this.forgetAbsent(new Set(records.map((record) => record.entryId)), tombstones);
     return records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
@@ -947,7 +1007,7 @@ export class OfflineQueue {
       }
       const partitionDir = await this.partitionDir(root);
       await this.noteRemoval(partitionDir, [record]);
-      await removeEntry(partitionDir, await this.entryKey(entryId), true);
+      await this.removePath(partitionDir, await this.entryKey(entryId), true);
       return true;
     });
     if (removed) {
@@ -1027,6 +1087,7 @@ export class OfflineQueue {
       throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The entry is being processed; reconcile it once that finishes', { entryId, generation });
     }
     if (outcome.changed && outcome.record.current.phase === 'published') this.emitFor(outcome.record);
+    else if (outcome.changed) this.notifyWork();
     this.observe(outcome.record);
     return snapshot(outcome.record);
   }
@@ -1061,20 +1122,37 @@ export class OfflineQueue {
     return result;
   }
 
-  /** Processes every entry of the partition that is not held or final. */
-  async processAll(options: { signal?: AbortSignal } = {}): Promise<Array<{ entryId: string; result: OfflineQueueProcessResult }>> {
+  /**
+   * Processes every entry of the partition that is not held or final, and
+   * finishes the cleanup of published ones. An error in one entry (a storage
+   * failure, say) is returned for that entry and the pass goes on; only
+   * disposal, an abort or a principal mismatch of the listing stops the pass.
+   * Held entries are returned as `held` without being processed.
+   */
+  async processAll(options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessAllItem[]> {
     const entries = await this.list();
-    const results: Array<{ entryId: string; result: OfflineQueueProcessResult }> = [];
+    const results: OfflineQueueProcessAllItem[] = [];
     for (const entry of entries) {
       if (this.disposed || options.signal?.aborted) break;
-      if (entry.phase === 'published') {
-        // Finishes an interrupted cleanup of its data; already reported when it was published.
-        await this.process(entry.entryId, options);
+      if (isTerminalPhase(entry.phase) && entry.phase !== 'published') continue;
+      if (entry.phase !== 'published' && entry.holds.length > 0) {
+        results.push({ entryId: entry.entryId, result: { status: 'provisional', entry, reason: 'held' } });
         continue;
       }
-      if (isTerminalPhase(entry.phase) || entry.holds.length > 0) continue;
-      // An entry at its retry limit is reported (`retry-limit`) without another upload.
-      results.push({ entryId: entry.entryId, result: await this.process(entry.entryId, options) });
+      let result: OfflineQueueProcessResult;
+      try {
+        // An entry at its retry limit is reported (`retry-limit`) without another upload.
+        result = await this.process(entry.entryId, options);
+      } catch (error) {
+        if (this.disposed) throw error;
+        results.push({ entryId: entry.entryId, error: error instanceof Error ? error : new Error(String(error)) });
+        continue;
+      }
+      // A published entry listed here was reported when it was published: only
+      // a newer generation (or one another tab holds) is reported again.
+      const sameCleanup =
+        entry.phase === 'published' && result.status === 'published' && result.entry.generation === entry.generation;
+      if (!sameCleanup) results.push({ entryId: entry.entryId, result });
     }
     return results;
   }
@@ -1095,7 +1173,7 @@ export class OfflineQueue {
   }
 
   async usage(): Promise<OfflineQueueUsage> {
-    return this.transact(async (root) => this.measure(await this.partitionDir(root)));
+    return this.transact(async (root) => this.measure(await this.partitionDir(root)), { disclose: true });
   }
 
   /** A local preview of the newest provisional generation staged for `fileId` in this partition. */
@@ -1110,7 +1188,7 @@ export class OfflineQueue {
       const dir = await getDir(await this.partitionDir(root), await this.entryKey(record.entryId));
       const blob = dir ? await getFile(dir, record.current.dataFile) : null;
       return blob ? { record, data: await blob.arrayBuffer() } : null;
-    });
+    }, { disclose: true });
     if (!found) return null;
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
       const error = new Error('Local preview unavailable') as Error & { code?: string };
@@ -1139,23 +1217,23 @@ export class OfflineQueue {
    * the current principal is the partition's.
    */
   async listLegacyUploads(): Promise<LegacyPendingUploadSummary[]> {
-    this.assertUsable();
-    await this.assertPrincipal(this.lifetime.signal);
     const store = this.legacyStore();
-    const summaries: LegacyPendingUploadSummary[] = [];
-    for (const uploadSessionId of await store.listPendingUploads()) {
-      const upload = await store.getPendingUpload(uploadSessionId);
-      if (!upload) continue;
-      summaries.push({
-        uploadSessionId,
-        ...(upload.fileId ? { fileId: upload.fileId } : {}),
-        fileName: upload.fileName,
-        mimeType: upload.mimeType,
-        size: upload.size,
-        createdAt: upload.createdAt,
-      });
-    }
-    return summaries;
+    return this.transact(async () => {
+      const summaries: LegacyPendingUploadSummary[] = [];
+      for (const uploadSessionId of await store.listPendingUploads()) {
+        const upload = await store.getPendingUpload(uploadSessionId);
+        if (!upload) continue;
+        summaries.push({
+          uploadSessionId,
+          ...(upload.fileId ? { fileId: upload.fileId } : {}),
+          fileName: upload.fileName,
+          mimeType: upload.mimeType,
+          size: upload.size,
+          createdAt: upload.createdAt,
+        });
+      }
+      return summaries;
+    }, { disclose: true });
   }
 
   /**
@@ -1177,7 +1255,8 @@ export class OfflineQueue {
       throw new OfflineQueueError('FILEFN_QUEUE_MIGRATION_UNVERIFIED', 'Migration needs independent ownership evidence', { uploadSessionId });
     }
     const store = this.legacyStore();
-    const legacy = await store.getPendingUpload(uploadSessionId);
+    // Read under the partition lock and the principal check, like every other read.
+    const legacy = await this.transact(() => store.getPendingUpload(uploadSessionId), { disclose: true });
     if (!legacy) {
       throw new OfflineQueueError('FILEFN_QUEUE_NOT_FOUND', 'Legacy upload not found', { uploadSessionId });
     }
@@ -1201,7 +1280,8 @@ export class OfflineQueue {
       { source: uploadSessionId, key: legacy.idempotencyKey },
     );
     if (result.status === 'staged' || (result.status === 'refused' && result.reason === 'already-migrated')) {
-      await store.deletePendingUpload(uploadSessionId);
+      // Removed under the partition lock, behind the principal check.
+      await this.transact(() => store.deletePendingUpload(uploadSessionId));
     }
     return result;
   }
@@ -1256,26 +1336,39 @@ export class OfflineQueue {
   }
 
   /**
-   * Runs `fn` under the partition lock. Throws FILEFN_QUEUE_DISPOSED once
-   * disposed, before or after waiting, and (unless `checkPrincipal` is false)
-   * FILEFN_QUEUE_PRINCIPAL_MISMATCH when the current principal, checked once
-   * the lock is held, is not the partition's.
+   * Runs `fn` under the partition lock, behind a fence (see `Fence`) checked
+   * once the lock is held, right before every file commit or removal `fn`
+   * makes, and, with `disclose`, again before what `fn` read is returned.
+   * Throws FILEFN_QUEUE_DISPOSED once disposed, an AbortError once `signal`
+   * aborts, and FILEFN_QUEUE_PRINCIPAL_MISMATCH when the current principal is
+   * not the partition's.
    */
   private async transact<T>(
     fn: (root: OfflineQueueDirectoryHandle) => Promise<T>,
-    options: { checkPrincipal?: boolean } = {},
+    options: { signal?: AbortSignal; disclose?: boolean } = {},
   ): Promise<T> {
     this.assertUsable();
     const name = await this.partitionLockName();
     const root = await this.getRoot!();
+    const signal = options.signal;
+    const fence: Fence = async () => {
+      this.assertUsable();
+      if (signal?.aborted) throw abortError();
+      await this.assertPrincipal(signal ?? this.lifetime.signal);
+      this.assertUsable();
+      if (signal?.aborted) throw abortError();
+    };
     try {
       return await this.coordinator!.request(name, { signal: this.lifetime.signal }, async () => {
-        this.assertUsable();
-        if (options.checkPrincipal !== false) {
-          await this.assertPrincipal(this.lifetime.signal);
-          this.assertUsable();
+        await fence();
+        this.txFence = fence;
+        try {
+          const value = await fn(root);
+          if (options.disclose) await fence();
+          return value;
+        } finally {
+          this.txFence = undefined;
         }
-        return fn(root);
       });
     } catch (error) {
       if (this.disposed && isAbort(error)) {
@@ -1349,6 +1442,7 @@ export class OfflineQueue {
             partitionId,
             lastGeneration: meta.lastGeneration!,
             migrated: Array.isArray(meta.migrated) ? meta.migrated.filter((id) => typeof id === 'string') : [],
+            migratedKeys: Array.isArray(meta.migratedKeys) ? meta.migratedKeys.filter((key) => typeof key === 'string') : [],
             tombstones: Array.isArray(meta.tombstones) ? meta.tombstones : [],
           };
         }
@@ -1358,11 +1452,29 @@ export class OfflineQueue {
     }
     let lastGeneration = 0;
     for (const record of await this.readAllIn(partitionDir)) lastGeneration = Math.max(lastGeneration, record.current.generation);
-    return { journalVersion: JOURNAL_VERSION, partitionId, lastGeneration, migrated: [], tombstones: [] };
+    // Keys of migrations the lost meta recorded are found in the journals that took them over.
+    return { journalVersion: JOURNAL_VERSION, partitionId, lastGeneration, migrated: [], migratedKeys: [], tombstones: [] };
   }
 
   private async writeMeta(partitionDir: OfflineQueueDirectoryHandle, meta: PartitionMeta): Promise<void> {
-    await writeFile(partitionDir, PARTITION_META_FILE, JSON.stringify(meta));
+    await writeFile(partitionDir, PARTITION_META_FILE, JSON.stringify(meta), this.txFence);
+  }
+
+  /** Removes a file or directory once the transaction's fence passes. */
+  private async removePath(dir: OfflineQueueDirectoryHandle, name: string, recursive = false): Promise<void> {
+    await this.txFence?.();
+    await removeEntry(dir, name, recursive);
+  }
+
+  private notifyWork(): void {
+    if (this.disposed) return;
+    for (const listener of [...this.workListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener error does not affect the queue.
+      }
+    }
   }
 
   /**
@@ -1381,7 +1493,7 @@ export class OfflineQueue {
     const kept = meta.tombstones.filter(
       (tombstone) =>
         now - Date.parse(tombstone.removedAt) < this.terminalRetentionMs &&
-        !published.some((record) => record.entryId === tombstone.entryId),
+        !published.some((record) => record.entryId === tombstone.entryId && record.current.generation === tombstone.generation),
     );
     meta.tombstones = [
       ...kept,
@@ -1423,16 +1535,16 @@ export class OfflineQueue {
   private async writeRecord(dir: OfflineQueueDirectoryHandle, record: JournalRecord): Promise<void> {
     record.revision += 1;
     record.updatedAt = new Date().toISOString();
-    await writeFile(dir, JOURNAL_FILE, JSON.stringify(record));
+    await writeFile(dir, JOURNAL_FILE, JSON.stringify(record), this.txFence);
   }
 
   /** Reads one entry (or its tombstone) and settles its waiters from what it finds. */
   private async lookup(entryId: string): Promise<{ record: JournalRecord | null }> {
     const { record, tombstones } = await this.transact(async (root) => {
       const found = await this.readEntry(root, entryId);
-      return { record: found?.record ?? null, tombstones: found ? [] : (await this.loadMeta(await this.partitionDir(root))).tombstones };
-    });
-    if (record) this.observe(record);
+      return { record: found?.record ?? null, tombstones: (await this.loadMeta(await this.partitionDir(root))).tombstones };
+    }, { disclose: true });
+    if (record) this.observe(record, tombstones);
     else this.settleAbsent(entryId, tombstones);
     return { record };
   }
@@ -1447,100 +1559,13 @@ export class OfflineQueue {
     try {
       outcome = await this.transact(async (root) => {
         const partitionDir = await this.partitionDir(root);
-        const key = await this.entryKey(input.entryId);
-        if (migration) {
-          // Checked in the same transaction as the staging: one admission per legacy upload.
-          const migrated = (await this.readAllIn(partitionDir)).find((record) => record.migratedFrom === migration.source);
-          if (migrated) return { status: 'staged', record: migrated, holdId: undefined } as const;
-          if ((await this.loadMeta(partitionDir)).migrated.includes(migration.source)) {
-            return { status: 'refused', reason: 'already-migrated' } as const;
-          }
-        }
-        let existingDir = await getDir(partitionDir, key);
-        const read = existingDir ? await this.inspectJournal(existingDir) : ({ state: 'missing' } as const);
-        if (read.state === 'foreign' || (read.state === 'ok' && read.record.entryId !== input.entryId)) {
-          // A journal this instance cannot own (newer layout or another binding) is never overwritten.
-          throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'Entry is owned by another journal', { entryId: input.entryId });
-        }
-        if (existingDir && read.state === 'corrupt') {
-          // The remains of a first staging that crashed before its journal committed.
-          await removeEntry(partitionDir, key, true);
-          existingDir = null;
-        }
-        const previous = read.state === 'ok' ? read.record : null;
-        const currentGeneration = previous?.current.generation ?? 0;
-        if (input.expectedGeneration !== undefined && input.expectedGeneration !== currentGeneration) {
-          return { status: 'refused', reason: 'generation-conflict', currentGeneration } as const;
-        }
-        if (previous?.current.phase === 'publishing') {
-          return { status: 'refused', reason: 'publication-pending', currentGeneration } as const;
-        }
-        // A new generation replaces the previous one's data: only bytes actually present are credited.
-        const replacedBytes = previous && existingDir ? ((await getFile(existingDir, previous.current.dataFile))?.size ?? 0) : 0;
-        const refusal = await this.ensureCapacity(partitionDir, existingDir ? 0 : 1, bytes.byteLength - replacedBytes, key);
-        if (refusal) return refusal;
-
-        const quotaRefusal = async () =>
-          ({ status: 'refused', reason: 'capacity', limit: 'quota', usage: await this.measure(partitionDir), limits: this.limits }) as const;
-        const meta = await this.loadMeta(partitionDir);
-        const generation = Math.max(meta.lastGeneration, currentGeneration) + 1;
-        meta.lastGeneration = generation;
         try {
-          // Written before the journal that uses it, so a number is never handed out twice.
-          await this.writeMeta(partitionDir, meta);
+          return await this.stageIn(partitionDir, input, bytes, localSource, migration);
         } catch (error) {
+          // Out of storage anywhere in the staging, reclamation included: a typed refusal.
           if (!isQuotaError(error)) throw error;
-          return quotaRefusal();
+          return { status: 'refused', reason: 'capacity', limit: 'quota', usage: await this.measure(partitionDir), limits: this.limits } as const;
         }
-        const dataFile = `g${generation}.bin`;
-        const dir = existingDir ?? (await partitionDir.getDirectoryHandle(key, { create: true }));
-        const hooks = this.options.hooks;
-        const now = new Date().toISOString();
-        const operationId = randomId('op');
-        const current: GenerationState = {
-          generation,
-          operationId,
-          dataFile,
-          fileId: input.fileId,
-          policy: input.policy,
-          fileName: input.fileName,
-          mimeType: input.mimeType,
-          size: bytes.byteLength,
-          ...(input.metadata !== undefined ? { metadata: toJson(input.metadata) as Record<string, unknown> } : {}),
-          localSource: { ...localSource, opfsDataFile: dataFile },
-          replay: { idempotencyKey: replayKey(input.idempotencyKey, operationId, migration?.key), retiredKeys: [] },
-          requires: { verify: Boolean(hooks?.verify), publish: Boolean(hooks?.publish) },
-          attempts: 0,
-          phase: 'staged',
-        };
-        const holdId = input.hold ? randomId('hold') : undefined;
-        const record: JournalRecord = {
-          journalVersion: JOURNAL_VERSION,
-          binding: { ...this.partition, partitionId: await this.partitionId() },
-          entryId: input.entryId,
-          revision: previous?.revision ?? 0,
-          createdAt: previous?.createdAt ?? now,
-          updatedAt: now,
-          current,
-          // Holds of earlier generations no longer apply.
-          holds: holdId ? [{ holdId, generation, operationId }] : [],
-          ...(migration?.source ?? previous?.migratedFrom ? { migratedFrom: migration?.source ?? previous?.migratedFrom } : {}),
-        };
-        try {
-          // Data first: a crash before the journal write leaves an orphan file, never a journal without data.
-          await writeFile(dir, dataFile, bytes);
-          await this.writeRecord(dir, record);
-        } catch (error) {
-          await removeEntry(dir, dataFile).catch(() => {});
-          if (!existingDir) await removeEntry(partitionDir, key, true).catch(() => {});
-          if (isQuotaError(error)) return quotaRefusal();
-          throw error;
-        }
-        if (previous && previous.current.dataFile !== dataFile) {
-          // Best effort: a leftover file is an orphan the next reclaim removes.
-          await removeEntry(dir, previous.current.dataFile).catch(() => {});
-        }
-        return { status: 'staged', record, holdId } as const;
       });
     } catch (error) {
       if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' };
@@ -1548,8 +1573,127 @@ export class OfflineQueue {
     }
     if (outcome.status !== 'staged') return outcome;
     this.revokeObjectUrl(input.entryId);
-    this.observe(outcome.record);
+    this.observe(outcome.record, outcome.tombstones);
+    this.notifyWork();
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
+  }
+
+  private async stageIn(
+    partitionDir: OfflineQueueDirectoryHandle,
+    input: OfflineQueueStageInput & { entryId: string; fileId: string; fileName: string; mimeType: string },
+    bytes: ArrayBuffer,
+    localSource: PendingLocalSourceMetadata,
+    migration: { source: string; key?: string } | undefined,
+  ): Promise<
+    | Exclude<OfflineQueueStageResult, { status: 'staged' }>
+    | { status: 'staged'; record: JournalRecord; holdId: string | undefined; tombstones: Tombstone[] | undefined }
+  > {
+    const key = await this.entryKey(input.entryId);
+    if (migration) {
+      // Checked in the same transaction as the staging: one admission per legacy upload.
+      const migrated = (await this.readAllIn(partitionDir)).find((record) => record.migratedFrom === migration.source);
+      if (migrated) return { status: 'staged', record: migrated, holdId: undefined, tombstones: undefined };
+      if ((await this.loadMeta(partitionDir)).migrated.includes(migration.source)) {
+        return { status: 'refused', reason: 'already-migrated' };
+      }
+    }
+    let existingDir = await getDir(partitionDir, key);
+    const read = existingDir ? await this.inspectJournal(existingDir) : ({ state: 'missing' } as const);
+    if (read.state === 'foreign' || (read.state === 'ok' && read.record.entryId !== input.entryId)) {
+      // A journal this instance cannot own (newer layout or another binding) is never overwritten.
+      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'Entry is owned by another journal', { entryId: input.entryId });
+    }
+    if (existingDir && read.state === 'corrupt') {
+      // The remains of a first staging that crashed before its journal committed.
+      await this.removePath(partitionDir, key, true);
+      existingDir = null;
+    }
+    const previous = read.state === 'ok' ? read.record : null;
+    const currentGeneration = previous?.current.generation ?? 0;
+    if (input.expectedGeneration !== undefined && input.expectedGeneration !== currentGeneration) {
+      return { status: 'refused', reason: 'generation-conflict', currentGeneration };
+    }
+    if (previous?.current.phase === 'publishing') {
+      return { status: 'refused', reason: 'publication-pending', currentGeneration };
+    }
+    // A new generation replaces the previous one's data: only bytes actually present are credited.
+    const replacedBytes = previous && existingDir ? ((await getFile(existingDir, previous.current.dataFile))?.size ?? 0) : 0;
+    const refusal = await this.ensureCapacity(partitionDir, existingDir ? 0 : 1, bytes.byteLength - replacedBytes, key);
+    if (refusal) return refusal;
+
+    // A replaced published generation keeps reporting published to its waiters, here and in other tabs.
+    if (previous?.current.phase === 'published') await this.noteRemoval(partitionDir, [previous]);
+    const meta = await this.loadMeta(partitionDir);
+    const generation = Math.max(meta.lastGeneration, currentGeneration) + 1;
+    meta.lastGeneration = generation;
+    const operationId = randomId('op');
+    let idempotencyKey = replayKey(input.idempotencyKey, operationId);
+    if (migration?.key !== undefined && isValidIdempotencyKey(migration.key)) {
+      // A legacy upload takes over its own key, so a session it completed is
+      // reconciled rather than uploaded again, but only the first one to
+      // claim that key: another source sharing it gets a fresh key, so it can
+      // never be confirmed with the first one's stored version.
+      const legacyKey = migration.key;
+      const taken =
+        meta.migratedKeys.includes(legacyKey) ||
+        (await this.readAllIn(partitionDir)).some(
+          (record) => record.current.replay.idempotencyKey === legacyKey || record.current.replay.retiredKeys.includes(legacyKey),
+        );
+      if (!taken) {
+        idempotencyKey = legacyKey;
+        meta.migratedKeys = [...meta.migratedKeys, legacyKey];
+      }
+    }
+    // Written before the journal that uses it, so a number or key is never handed out twice.
+    await this.writeMeta(partitionDir, meta);
+    const dataFile = `g${generation}.bin`;
+    const dir = existingDir ?? (await partitionDir.getDirectoryHandle(key, { create: true }));
+    const hooks = this.options.hooks;
+    const now = new Date().toISOString();
+    const current: GenerationState = {
+      generation,
+      operationId,
+      dataFile,
+      fileId: input.fileId,
+      policy: input.policy,
+      fileName: input.fileName,
+      mimeType: input.mimeType,
+      size: bytes.byteLength,
+      ...(input.metadata !== undefined ? { metadata: toJson(input.metadata) as Record<string, unknown> } : {}),
+      localSource: { ...localSource, opfsDataFile: dataFile },
+      replay: { idempotencyKey, retiredKeys: [] },
+      requires: { verify: Boolean(hooks?.verify), publish: Boolean(hooks?.publish) },
+      attempts: 0,
+      phase: 'staged',
+    };
+    const holdId = input.hold ? randomId('hold') : undefined;
+    const record: JournalRecord = {
+      journalVersion: JOURNAL_VERSION,
+      binding: { ...this.partition, partitionId: await this.partitionId() },
+      entryId: input.entryId,
+      revision: previous?.revision ?? 0,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+      current,
+      // Holds of earlier generations no longer apply.
+      holds: holdId ? [{ holdId, generation, operationId }] : [],
+      ...(migration?.source ?? previous?.migratedFrom ? { migratedFrom: migration?.source ?? previous?.migratedFrom } : {}),
+    };
+    try {
+      // Data first: a crash before the journal write leaves an orphan file, never a journal without data.
+      await writeFile(dir, dataFile, bytes, this.txFence);
+      await this.writeRecord(dir, record);
+    } catch (error) {
+      // Best effort: what is left is an orphan the next reclaim removes.
+      await this.removePath(dir, dataFile).catch(() => {});
+      if (!existingDir) await this.removePath(partitionDir, key, true).catch(() => {});
+      throw error;
+    }
+    if (previous && previous.current.dataFile !== dataFile) {
+      // Best effort: a leftover file is an orphan the next reclaim removes.
+      await this.removePath(dir, previous.current.dataFile).catch(() => {});
+    }
+    return { status: 'staged', record, holdId, tombstones: (await this.loadMeta(partitionDir)).tombstones };
   }
 
   /** `target` is the entry being staged: reclamation never removes it, so the new generation keeps its directory. */
@@ -1592,8 +1736,10 @@ export class OfflineQueue {
    * the data of a published generation, and published entries past their
    * retention (any age under `pressure`; a tombstone keeps reporting them
    * published). A journal that never committed (`corrupt`) counts as no
-   * journal. Provisional entries, journals of another binding or layout, and
-   * `protect` are never removed.
+   * journal. Provisional entries and journals of another binding or layout
+   * are never removed. Of `protect` (the entry being staged), only data
+   * files its journal does not name are removed: its journal and current
+   * data stay.
    */
   private async reclaimIn(
     partitionDir: OfflineQueueDirectoryHandle,
@@ -1603,15 +1749,24 @@ export class OfflineQueue {
     const result: OfflineQueueReclaimResult = { removedEntries: 0, removedFiles: 0, freedBytes: 0 };
     const now = Date.now();
     for (const name of await listNames(partitionDir, 'directory')) {
-      if (name === protect) continue;
       const dir = await getDir(partitionDir, name);
       if (!dir) continue;
       const files = await listNames(dir, 'file');
       const dataBytes = async (file: string) => (await getFile(dir, file))?.size ?? 0;
       const read = await this.inspectJournal(dir);
+      if (name === protect) {
+        if (read.state !== 'ok') continue;
+        for (const file of files) {
+          if (file === JOURNAL_FILE || file === read.record.current.dataFile) continue;
+          result.freedBytes += await dataBytes(file);
+          await this.removePath(dir, file);
+          result.removedFiles += 1;
+        }
+        continue;
+      }
       if (read.state === 'missing' || read.state === 'corrupt') {
         for (const file of files) if (file !== JOURNAL_FILE) result.freedBytes += await dataBytes(file);
-        await removeEntry(partitionDir, name, true);
+        await this.removePath(partitionDir, name, true);
         result.removedEntries += 1;
         continue;
       }
@@ -1621,7 +1776,7 @@ export class OfflineQueue {
       if (cur.phase === 'published' && (pressure || now - Date.parse(record.updatedAt) >= this.terminalRetentionMs)) {
         for (const file of files) if (file !== JOURNAL_FILE) result.freedBytes += await dataBytes(file);
         await this.noteRemoval(partitionDir, [record]);
-        await removeEntry(partitionDir, name, true);
+        await this.removePath(partitionDir, name, true);
         result.removedEntries += 1;
         continue;
       }
@@ -1631,7 +1786,7 @@ export class OfflineQueue {
         const keep = file === cur.dataFile && cur.phase !== 'published';
         if (keep) continue;
         result.freedBytes += await dataBytes(file);
-        await removeEntry(dir, file);
+        await this.removePath(dir, file);
         result.removedFiles += 1;
         if (file === cur.dataFile) {
           cur.dataRemoved = true;
@@ -1649,12 +1804,31 @@ export class OfflineQueue {
     started: Promise<unknown>[],
   ): Promise<OfflineQueueProcessResult> {
     for (;;) {
-      const plan = await this.transact((root) => this.planStep(root, entryId, signal, started), { checkPrincipal: false });
+      let plan: Plan;
+      try {
+        plan = await this.transact((root) => this.planStep(root, entryId, signal, started), { signal });
+      } catch (error) {
+        const stopped = this.stoppedResult(error);
+        if (stopped) return stopped;
+        throw error;
+      }
       if (plan.kind === 'done') return plan.result;
       if (plan.kind === 'continue') continue;
       const outcome = await this.finishStep(entryId, plan, signal);
       if (outcome) return outcome;
     }
+  }
+
+  /**
+   * The entry-free result of a pass stopped by its signal or by a principal
+   * mismatch; null for any other error. Throws FILEFN_QUEUE_DISPOSED once
+   * disposed.
+   */
+  private stoppedResult(error: unknown): OfflineQueueProcessResult | null {
+    this.assertUsable();
+    if (isPrincipalMismatch(error)) return { status: 'stopped', reason: 'principal-mismatch' };
+    if (isAbort(error)) return { status: 'stopped', reason: 'aborted' };
+    return null;
   }
 
   /** Aborts when the queue is disposed, the caller's signal aborts or the entry is cancelled; `release` detaches it. */
@@ -1690,10 +1864,13 @@ export class OfflineQueue {
   }
 
   /**
-   * Decides the next step under the partition lock and, for an upload or
-   * hook, journals its claim and starts it in the same turn: nothing is
-   * written once the caller's signal aborts or the queue is disposed, and no
-   * step starts after either. Every claim is written before its request.
+   * Decides the next step under the partition lock, which the transaction
+   * entered only after checking the principal. Every write passes the
+   * transaction's fence right before it commits, and an upload or hook starts
+   * only after the claim it needs is journaled and the fence passed again,
+   * in the same turn as that last check: nothing is written or started once
+   * the caller's signal aborts, the queue is disposed or the principal
+   * changes.
    */
   private async planStep(
     root: OfflineQueueDirectoryHandle,
@@ -1709,33 +1886,25 @@ export class OfflineQueue {
       kind: 'done',
       result: { status: 'provisional', entry: snapshot(record), reason },
     });
+    if (signal?.aborted) return { kind: 'done', result: { status: 'stopped', reason: 'aborted' } };
     this.observe(record);
-    if (signal?.aborted) return provisional('aborted');
     if (record.holds.some((hold) => hold.operationId === cur.operationId) && cur.phase !== 'published') {
       return provisional('held');
     }
-    const principalOk = await this.principalMatches(signal ?? this.lifetime.signal);
-    if (!principalOk) {
-      // Nothing is written, sent or cleaned up for another principal.
-      return cur.phase === 'published' ? { kind: 'done', result: { status: 'published', entry: snapshot(record) } } : provisional('principal-mismatch');
-    }
-    // Checked synchronously right before each write, and again before a step starts.
-    const fenced = (): boolean => {
-      this.assertUsable();
-      return Boolean(signal?.aborted);
-    };
-    const write = async (): Promise<boolean> => {
-      if (fenced()) return false;
-      await this.writeRecord(dir, record);
-      return true;
-    };
-    const start = (kind: StepKind, run: (controller: AbortController) => Promise<unknown>): Plan => {
+    const hooks = this.options.hooks;
+    // This instance's hooks join the generation's requirements with its first
+    // write, so an instance without one of them never skips that step later.
+    cur.requires.verify ||= Boolean(hooks?.verify);
+    cur.requires.publish ||= Boolean(hooks?.publish);
+    const write = (): Promise<void> => this.writeRecord(dir, record);
+    const start = async (kind: StepKind, run: (controller: AbortController) => Promise<unknown>): Promise<Plan> => {
+      await this.txFence!();
+      // Same turn as the check: the work starts only for the partition's principal.
       const { controller, release } = this.stepController(entryId, signal);
       const running = invoke(() => run(controller));
       started.push(running.catch(() => {}));
       return { kind, record: structuredClone(record), controller, release, running };
     };
-    const hooks = this.options.hooks;
     switch (cur.phase) {
       case 'staged':
       case 'uploading': {
@@ -1743,8 +1912,8 @@ export class OfflineQueue {
           if (cur.pending?.reason !== 'retry-limit') {
             // Durable and reported once, so listeners, waiters and other tabs see it.
             cur.pending = { stage: 'upload', reason: 'retry-limit', ...(cur.error ? { message: cur.error.message } : {}) };
-            if (!(await write())) return provisional('aborted');
-            this.emitFor(record);
+            await write();
+            this.emitFor(record, signal);
             this.observe(record);
           }
           return provisional('retry-limit');
@@ -1753,14 +1922,14 @@ export class OfflineQueue {
         if (!blob) {
           cur.phase = 'failed';
           cur.error = { code: 'FILEFN_QUEUE_DATA_MISSING', message: 'Staged data is missing' };
-          if (!(await write())) return provisional('aborted');
-          this.emitFor(record);
+          await write();
+          this.emitFor(record, signal);
           return provisional('failed');
         }
         const file = new File([await blob.arrayBuffer()], cur.fileName, { type: cur.mimeType });
         cur.phase = 'uploading';
         cur.claim = { instanceId: this.instanceId, at: new Date().toISOString() };
-        if (!(await write()) || fenced()) return provisional('aborted');
+        await write();
         return start('upload', (controller) =>
           this.options.uploader.upload({
             policy: cur.policy,
@@ -1771,8 +1940,9 @@ export class OfflineQueue {
             idempotencyKey: cur.replay.idempotencyKey,
             signal: controller.signal,
             assertPrincipal: async () => {
+              if (controller.signal.aborted) throw abortError();
               await this.assertPrincipal(controller.signal);
-              if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+              if (controller.signal.aborted) throw abortError();
             },
           }),
         );
@@ -1780,64 +1950,59 @@ export class OfflineQueue {
       case 'uploaded':
       case 'verifying': {
         // A verification that started (here or in another instance) is always required.
-        const needsVerify = cur.requires.verify || Boolean(hooks?.verify) || cur.phase === 'verifying';
+        const needsVerify = cur.requires.verify || cur.phase === 'verifying';
         if (needsVerify && !hooks?.verify) return provisional('hook-unavailable');
         if (!needsVerify) {
           cur.phase = 'verified';
           cur.verification = { verified: true };
-          if (!(await write())) return provisional('aborted');
+          await write();
           return { kind: 'continue' };
         }
         cur.phase = 'verifying';
         cur.requires.verify = true;
-        if (!(await write()) || fenced()) return provisional('aborted');
+        await write();
         const verify = hooks!.verify!;
         return start('verify', (controller) => verify(this.operationContext(entryId, cur, controller.signal)));
       }
       case 'verified': {
-        const needsPublish = cur.requires.publish || Boolean(hooks?.publish);
-        if (needsPublish && !hooks?.publish) return provisional('hook-unavailable');
-        if (!needsPublish) {
+        if (cur.requires.publish && !hooks?.publish) return provisional('hook-unavailable');
+        if (!cur.requires.publish) {
           cur.phase = 'published';
           cur.publication = {};
-          if (!(await write())) return provisional('aborted');
-          this.emitFor(record);
+          await write();
+          this.emitFor(record, signal);
           return { kind: 'continue' };
         }
         // Recorded before the hook runs, so a crash leaves it unconfirmed rather than unpublished.
         cur.phase = 'publishing';
-        cur.requires.publish = true;
         cur.publicationAttempt = randomId('pub');
         cur.pending = undefined;
-        if (!(await write())) return provisional('aborted');
-        if (this.disposed || signal?.aborted) {
-          // Stopped during the write: the hook never ran, so the claim is withdrawn.
-          cur.phase = 'verified';
-          cur.publicationAttempt = undefined;
-          await this.writeRecord(dir, record);
-          this.assertUsable();
-          return provisional('aborted');
-        }
+        await write();
         const publish = hooks!.publish!;
         return start('publish', (controller) => publish.run(this.operationContext(entryId, cur, controller.signal)));
       }
       case 'publishing': {
         const publish = hooks?.publish;
-        if (publish?.reconcile || publish?.idempotent) {
-          if (fenced()) return provisional('aborted');
-          return publish.reconcile
-            ? start('reconcile-publication', (controller) => publish.reconcile!(this.operationContext(entryId, cur, controller.signal)))
-            : start('publish', (controller) => publish.run(this.operationContext(entryId, cur, controller.signal)));
+        if (publish?.reconcile) {
+          return start('reconcile-publication', (controller) => publish.reconcile!(this.operationContext(entryId, cur, controller.signal)));
+        }
+        if (publish?.idempotent) {
+          // Each run is an attempt of its own (the operation ID stays): an
+          // outcome established for an earlier run never settles this one.
+          cur.publicationAttempt = randomId('pub');
+          cur.pending = undefined;
+          await write();
+          return start('publish', (controller) => publish.run(this.operationContext(entryId, cur, controller.signal)));
         }
         if (cur.pending?.reason !== 'needs-reconcile') {
           cur.pending = { stage: 'publication', reason: 'needs-reconcile' };
-          if (!(await write())) return provisional('aborted');
+          await write();
         }
         return provisional('needs-reconcile');
       }
       case 'published':
-        if (!cur.dataRemoved && !fenced()) {
-          await removeEntry(dir, cur.dataFile);
+        if (!cur.dataRemoved) {
+          await this.removePath(dir, cur.dataFile);
           cur.dataRemoved = true;
           await write();
         }
@@ -1856,17 +2021,12 @@ export class OfflineQueue {
     signal: AbortSignal | undefined,
   ): Promise<OfflineQueueProcessResult | null> {
     const { record, controller } = plan;
-    const stoppedEarly = (error: unknown): OfflineQueueProcessResult | null => {
-      this.assertUsable();
-      if (isPrincipalMismatch(error)) return { status: 'provisional', entry: snapshot(record), reason: 'principal-mismatch' };
-      if (controller.signal.aborted || isAbort(error)) return { status: 'provisional', entry: snapshot(record), reason: 'aborted' };
-      return null;
-    };
     let value: unknown;
     try {
       value = await raceAbort(plan.running, controller.signal);
     } catch (error) {
-      const stopped = stoppedEarly(error);
+      // Stopped, or the principal changed: nothing is recorded or returned.
+      const stopped = this.stoppedResult(controller.signal.aborted && !isPrincipalMismatch(error) ? abortError() : error);
       if (stopped) return stopped;
       return this.recordFailure(entryId, plan, error, signal);
     } finally {
@@ -1875,16 +2035,16 @@ export class OfflineQueue {
     switch (plan.kind) {
       case 'upload': {
         const result = value as UploadResult;
-        if (result?.fileId !== undefined && result.fileId !== record.current.fileId) {
+        if (!hasStoredIdentity(result)) {
+          // A success that does not name what it stored confirms nothing.
+          return this.recordFailure(entryId, plan, new Error('Upload result does not name a stored file and version'), signal);
+        }
+        if (result.fileId !== record.current.fileId) {
           return this.commit(entryId, record, signal, (state) => {
             state.phase = 'failed';
             state.error = { code: 'FILEFN_CLIENT_FILE_ID_MISMATCH', message: 'Server stored a different fileId' };
             state.claim = undefined;
           }, 'failed');
-        }
-        if (!hasVersion(result)) {
-          // A success that does not name its stored version confirms nothing.
-          return this.recordFailure(entryId, plan, new Error('Upload result has no versionId'), signal);
         }
         return this.commit(entryId, record, signal, (state) => {
           state.phase = 'uploaded';
@@ -1989,11 +2149,13 @@ export class OfflineQueue {
 
   /**
    * Applies `mutate` only if the entry is still at the planned generation,
-   * operation, phase and publication attempt, the current principal is the
-   * partition's, and neither the queue nor the caller's pass has stopped. A
-   * newer generation is never touched by an older one's result; a stopped or
-   * switched pass leaves the outcome unrecorded for the next live one to
-   * replay or reconcile. Returns null to continue the pipeline, or the result.
+   * operation, phase and publication attempt, behind the transaction's fence
+   * (the current principal is the partition's, and neither the queue nor the
+   * caller's pass has stopped, right before the write commits). A newer
+   * generation is never touched by an older one's result; a stopped or
+   * switched pass records nothing and returns no entry, leaving the outcome
+   * for the next live pass to replay or reconcile. Returns null to continue
+   * the pipeline, or the result.
    */
   private async commit(
     entryId: string,
@@ -2002,38 +2164,39 @@ export class OfflineQueue {
     mutate: (state: GenerationState) => void,
     stopReason?: 'rejected' | 'failed' | 'ambiguous',
   ): Promise<OfflineQueueProcessResult | null> {
-    const outcome = await this.transact(async (root) => {
-      const found = await this.readEntry(root, entryId);
-      if (!found) return { kind: 'superseded' } as const;
-      const cur = found.record.current;
-      if (
-        cur.generation !== planned.current.generation ||
-        cur.operationId !== planned.current.operationId ||
-        // The step's claim: an outcome recorded meanwhile (an explicit reconcile) is never overwritten.
-        cur.phase !== planned.current.phase ||
-        cur.publicationAttempt !== planned.current.publicationAttempt
-      ) {
-        return { kind: 'superseded' } as const;
-      }
-      if (!(await this.principalMatches(signal ?? this.lifetime.signal))) {
-        return { kind: 'stopped', reason: 'principal-mismatch', record: found.record } as const;
-      }
-      // Checked after every await, right before the write.
-      this.assertUsable();
-      if (signal?.aborted) return { kind: 'stopped', reason: 'aborted', record: found.record } as const;
-      mutate(cur);
-      await this.writeRecord(found.dir, found.record);
-      return { kind: 'written', record: found.record } as const;
-    }, { checkPrincipal: false });
-    if (outcome.kind === 'superseded') return { status: 'superseded' };
-    if (outcome.kind === 'stopped') return { status: 'provisional', entry: snapshot(outcome.record), reason: outcome.reason };
-    this.emitFor(outcome.record);
-    this.observe(outcome.record);
-    return stopReason ? { status: 'provisional', entry: snapshot(outcome.record), reason: stopReason } : null;
+    let written: JournalRecord | null;
+    try {
+      written = await this.transact(async (root) => {
+        const found = await this.readEntry(root, entryId);
+        if (!found) return null;
+        const cur = found.record.current;
+        if (
+          cur.generation !== planned.current.generation ||
+          cur.operationId !== planned.current.operationId ||
+          // The step's claim: an outcome recorded meanwhile (an explicit reconcile) is never overwritten.
+          cur.phase !== planned.current.phase ||
+          cur.publicationAttempt !== planned.current.publicationAttempt
+        ) {
+          return null;
+        }
+        mutate(cur);
+        await this.writeRecord(found.dir, found.record);
+        return found.record;
+      }, { signal });
+    } catch (error) {
+      const stopped = this.stoppedResult(error);
+      if (stopped) return stopped;
+      throw error;
+    }
+    if (!written) return { status: 'superseded' };
+    this.emitFor(written, signal);
+    this.observe(written);
+    return stopReason ? { status: 'provisional', entry: snapshot(written), reason: stopReason } : null;
   }
 
-  private emitFor(record: JournalRecord): void {
-    if (this.disposed) return;
+  /** Reports a journaled state to listeners, unless the queue or the pass that wrote it has stopped. */
+  private emitFor(record: JournalRecord, signal?: AbortSignal): void {
+    if (this.disposed || signal?.aborted) return;
     const entry = snapshot(record);
     const event: OfflineQueueEvent = entry.state === 'published' ? { type: 'published', entry } : { type: 'provisional', entry };
     if (event.type === 'provisional' && !entry.pending && !isTerminalPhase(entry.phase)) return;
@@ -2046,8 +2209,14 @@ export class OfflineQueue {
     }
   }
 
-  /** Settles waiters from an observed journal state, and drops a preview the entry no longer needs. */
-  private observe(record: JournalRecord): void {
+  /**
+   * Settles waiters from an observed journal state, and drops a preview the
+   * entry no longer needs. A waiter of another generation is settled only
+   * with the partition's `tombstones` at hand: it resolves if its generation
+   * was published (and since replaced or removed), else it was superseded.
+   * Without them it stays for a read that has them.
+   */
+  private observe(record: JournalRecord, tombstones?: Tombstone[]): void {
     const cur = record.current;
     if (cur.phase === 'published' || cur.dataRemoved) this.revokeObjectUrl(record.entryId);
     const list = this.waiters.get(record.entryId);
@@ -2055,6 +2224,15 @@ export class OfflineQueue {
     const remaining: Waiter[] = [];
     for (const waiter of list) {
       if (waiter.generation !== cur.generation) {
+        if (!tombstones) {
+          remaining.push(waiter);
+          continue;
+        }
+        const tombstone = tombstones.find((t) => t.entryId === record.entryId && t.generation === waiter.generation);
+        if (tombstone) {
+          waiter.resolve({ ...tombstone.entry });
+          continue;
+        }
         waiter.reject(new OfflineQueueError('FILEFN_QUEUE_SUPERSEDED', 'A newer generation replaced this one', {
           entryId: record.entryId,
           generation: waiter.generation,

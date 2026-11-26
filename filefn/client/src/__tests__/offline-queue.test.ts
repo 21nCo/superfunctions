@@ -681,12 +681,15 @@ describe('lifecycle and principal binding', () => {
     await stage(a);
 
     signedIn = null;
-    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'principal-mismatch', entry: { attempts: 0 } });
+    // No entry data is returned to another principal.
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
     expect(keys).toEqual([]);
     signedIn = ALICE.principal;
     // The outcome returned after the switch is not recorded: the claim stays as journaled.
-    expect(await a.process(FILE_ID)).toMatchObject({ reason: 'principal-mismatch', entry: { phase: 'uploading', attempts: 0 } });
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
     expect(run).not.toHaveBeenCalled();
+    signedIn = ALICE.principal;
+    expect(await a.get(FILE_ID)).toMatchObject({ phase: 'uploading', attempts: 0 });
 
     signedIn = ALICE.principal;
     expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
@@ -873,7 +876,7 @@ describe('principal binding of a live tab', () => {
     };
     const a = tab('a', { uploader, currentPrincipal: () => signedIn });
     await stage(a);
-    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'principal-mismatch' });
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
     signedIn = ALICE.principal;
     expect(await tab('a2').get(FILE_ID)).toMatchObject({ phase: 'uploading', attempts: 0 });
     expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
@@ -889,7 +892,7 @@ describe('fencing a stopped pass', () => {
     const before = journalOf(FILE_ID).content;
     const controller = new AbortController();
     controller.abort();
-    expect(await a.process(FILE_ID, { signal: controller.signal })).toMatchObject({ status: 'provisional', reason: 'aborted' });
+    expect(await a.process(FILE_ID, { signal: controller.signal })).toEqual({ status: 'stopped', reason: 'aborted' });
     expect(journalOf(FILE_ID).content).toBe(before);
     expect(upload).not.toHaveBeenCalled();
   });
@@ -901,9 +904,12 @@ describe('fencing a stopped pass', () => {
     const a = tab('a', {
       hooks: { publish: { run } },
       currentPrincipal: () => {
-        const phase = storage.root.files().some((p) => p.endsWith('journal.json'))
-          ? JSON.parse(new TextDecoder().decode(journalOf(FILE_ID).content)).current.phase
-          : 'none';
+        let phase = 'none';
+        try {
+          phase = JSON.parse(new TextDecoder().decode(journalOf(FILE_ID).content)).current.phase;
+        } catch {
+          // No committed journal yet.
+        }
         if (phase !== 'uploaded' || paused) return ALICE.principal;
         paused = true;
         return gate.promise;
@@ -960,7 +966,7 @@ describe('fencing a stopped pass', () => {
     const running = a.process(FILE_ID, { signal: controller.signal });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     controller.abort();
-    expect(await running).toMatchObject({ status: 'provisional', reason: 'aborted' });
+    expect(await running).toEqual({ status: 'stopped', reason: 'aborted' });
 
     expect(await b.process(FILE_ID)).toEqual({ status: 'busy' });
     await expect(b.reconcile(FILE_ID, entry.generation)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_BUSY' });
@@ -1110,20 +1116,232 @@ describe('sync wakeups', () => {
 
   it.each(['the whole pass', 'one entry'])('retries %s held back by a principal mismatch once the principal is back', async (scope) => {
     let signedIn: OfflineQueuePrincipal | null = ALICE.principal;
-    let checks = 0;
-    // 'one entry': the pass lists the entries as Alice, then the account switches before the entry is planned.
-    const a = tab('a', { currentPrincipal: () => (scope === 'one entry' && ++checks === 2 ? null : signedIn) });
+    const a = tab('a', { currentPrincipal: () => signedIn });
     const { entry } = await stage(a);
     const settled = a.whenSettled(FILE_ID, entry.generation);
-    // Queued behind the waiter's own read, so the count below starts with the pass.
-    await a.get(FILE_ID);
-    checks = 0;
     if (scope === 'the whole pass') signedIn = null;
+    else {
+      // The pass lists the entries as Alice, then the account switches before the entry is planned.
+      const process = a.process.bind(a);
+      vi.spyOn(a, 'process').mockImplementationOnce((...args) => {
+        signedIn = null;
+        return process(...args);
+      });
+    }
     const sync = onlineSync(a, { retryDelayMs: 5 });
     await sync.syncAll();
     expect(await tab('a2').get(FILE_ID)).toMatchObject({ phase: 'staged' });
     signedIn = ALICE.principal;
     await expect(settled).resolves.toMatchObject({ state: 'published' });
     sync.dispose();
+  });
+});
+
+/** The committed phase of FILE_ID's journal, or 'none'. */
+function committedPhase(): string {
+  try {
+    return JSON.parse(new TextDecoder().decode(journalOf(FILE_ID).content)).current.phase;
+  } catch {
+    return 'none';
+  }
+}
+
+describe('principal checked at each effect', () => {
+  it('returns no entry data from processing a held entry once the principal changed', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    await stage(a, 'v1', { hold: true, metadata: { title: 'alice-private' } });
+    signedIn = BOB.principal;
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
+  });
+
+  it('refuses a listing when the principal changes while the journals are read', async () => {
+    let armed = false;
+    let checks = 0;
+    const a = tab('a', { currentPrincipal: () => (armed && ++checks > 1 ? BOB.principal : ALICE.principal) });
+    await stage(a, 'v1', { metadata: { title: 'alice-private' } });
+    armed = true;
+    await expect(a.list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+  });
+
+  it('starts no verification when the principal changes as its claim is written', async () => {
+    let switched = true;
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const a = tab('a', {
+      hooks: { verify },
+      currentPrincipal: () => (switched && committedPhase() === 'verifying' ? BOB.principal : ALICE.principal),
+    });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
+    expect(verify).not.toHaveBeenCalled();
+    switched = false;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('durable step boundaries', () => {
+  it('keeps publication required when the instance that started verification closes', async () => {
+    const pending = deferred<{ verified: true }>();
+    const run = vi.fn(async () => ({}));
+    await stage(tab('bare'));
+    const full = tab('full', { hooks: { verify: () => pending.promise, publish: { run } } });
+    void full.process(FILE_ID).catch(() => {});
+    await vi.waitFor(() => expect(committedPhase()).toBe('verifying'));
+    locks.closeTab('full');
+    full.dispose();
+    const verifier = tab('verifier', { hooks: { verify: async () => ({ verified: true as const }) } });
+    expect(await verifier.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'hook-unavailable', entry: { phase: 'verified' } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('commits no outcome when the pass stops while its journal write is prepared', async () => {
+    const controller = new AbortController();
+    let armed = false;
+    const a = tab('a', {
+      uploader: {
+        async upload(input) {
+          armed = true;
+          return { fileId: input.fileId, versionId: 'ver_1' };
+        },
+      },
+    });
+    await stage(a);
+    storage.storage.fault = (path, step) => {
+      if (armed && path.endsWith('journal.json') && step === 'write') {
+        armed = false;
+        controller.abort();
+      }
+    };
+    expect(await a.process(FILE_ID, { signal: controller.signal })).toEqual({ status: 'stopped', reason: 'aborted' });
+    storage.storage.fault = undefined;
+    expect(await a.get(FILE_ID)).toMatchObject({ phase: 'uploading', state: 'provisional' });
+  });
+
+  it('never confirms an upload result whose version is blank', async () => {
+    const a = tab('a', { uploader: { upload: async (input) => ({ fileId: input.fileId, versionId: '  ' }) } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+  });
+
+  it('gives every idempotent rerun its own attempt, so an outcome of an earlier one never settles it', async () => {
+    const run = vi.fn(async (_ctx: { publicationAttemptId?: string }): Promise<{ result?: unknown }> => {
+      throw new Error('publisher unreachable');
+    });
+    const a = tab('a', { hooks: { publish: { run, idempotent: true } } });
+    const { entry } = await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ reason: 'ambiguous' });
+    const first = (await a.get(FILE_ID))!.publicationAttemptId!;
+    expect(await a.process(FILE_ID)).toMatchObject({ reason: 'ambiguous' });
+    const second = (await a.get(FILE_ID))!.publicationAttemptId!;
+    expect(second).not.toBe(first);
+    expect(run.mock.calls.map(([ctx]) => ctx.publicationAttemptId)).toEqual([first, second]);
+    await expect(a.reconcile(FILE_ID, entry.generation, { attemptId: first, published: false })).rejects.toMatchObject({
+      code: 'FILEFN_QUEUE_STALE_ATTEMPT',
+    });
+  });
+
+  it('resolves a waiter of a published generation that a newer generation replaced', async () => {
+    const a = tab('a', { observeIntervalMs: 0 });
+    const b = tab('b');
+    const { entry } = await stage(b);
+    const settled = a.whenSettled(FILE_ID, entry.generation);
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    await stage(b, 'v2');
+    await a.get(FILE_ID);
+    await expect(settled).resolves.toMatchObject({ generation: entry.generation, state: 'published' });
+  });
+
+  it('gives a second legacy upload sharing a replay key a key of its own', async () => {
+    for (const n of ['4', '5']) {
+      const id = `offline_1731000000000_legacy00${n}`;
+      const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
+      await writeCommitted(legacy, 'data.bin', `bytes ${n}`);
+      await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: `file_00000000legacy0${n}`, policy: 'p', fileName: 'old.txt', size: 7, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: 'test-legacy-key-shared' }));
+    }
+    const uploader = recordingUploader();
+    const a = tab('a', { uploader });
+    for (const n of ['4', '5']) {
+      expect(await a.migrateLegacyUpload(`offline_1731000000000_legacy00${n}`, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    }
+    await a.processAll();
+    expect(uploader.calls).toHaveLength(2);
+    expect(uploader.calls[0].idempotencyKey).toBe('test-legacy-key-shared');
+    expect(uploader.calls[1].idempotencyKey).not.toBe('test-legacy-key-shared');
+  });
+});
+
+describe('capacity boundaries', () => {
+  it('refuses with a typed quota result when reclamation runs out of storage, and keeps the published record', async () => {
+    const a = tab('a', { limits: { maxEntries: 1, maxBytes: 100 } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    storage.storage.fault = (path, step) => {
+      if (path.endsWith('partition.json') && step === 'write') throw quotaExceeded();
+    };
+    expect(await a.stage({ policy: 'p', file: new Blob(['next']), entryId: 'next', fileId: 'file_00000000entry02' })).toMatchObject({
+      status: 'refused',
+      reason: 'capacity',
+      limit: 'quota',
+    });
+    storage.storage.fault = undefined;
+    expect(await a.get(FILE_ID)).toMatchObject({ state: 'published' });
+  });
+
+  it('reclaims unreferenced files beside the restaged entry before refusing for bytes', async () => {
+    const a = tab('a', { limits: { maxEntries: 5, maxBytes: 10 } });
+    await stage(a, 'aaaa');
+    // An interrupted replacement left a file the journal does not name.
+    const entryDir = [...(await partitionDir()).entries.values()].find((entry) => entry instanceof MemoryDirectory) as MemoryDirectory;
+    await writeCommitted(entryDir, 'g99.bin', 'oooooo');
+    expect(await a.stage({ policy: 'p', file: new Blob(['bbbbbbbb']), fileId: FILE_ID })).toMatchObject({ status: 'staged' });
+    expect(await a.usage()).toEqual({ entries: 1, bytes: 8 });
+  });
+});
+
+describe('sync passes', () => {
+  it.each(['this tab', 'another tab'])('drives a generation once a hold is released in %s', async (where) => {
+    const a = tab('a');
+    const { holdId, entry } = await stage(a, 'v1', { hold: true });
+    const sync = onlineSync(a, { retryDelayMs: 5 });
+    sync.start();
+    await vi.waitFor(async () => expect(await a.get(FILE_ID)).toMatchObject({ phase: 'staged' }));
+    expect(await (where === 'this tab' ? a : tab('b')).release(FILE_ID, entry.generation, holdId!)).toBe(true);
+    await vi.waitFor(async () => expect(await a.get(FILE_ID)).toMatchObject({ state: 'published' }), { timeout: 2000 });
+    sync.dispose();
+  });
+
+  it('goes on to the next entry when one entry fails to journal, and reports that entry', async () => {
+    const a = tab('a');
+    await stage(a, 'one', { entryId: 'one', fileId: 'file_00000000entry01' });
+    await stage(a, 'two', { entryId: 'two', fileId: 'file_00000000entry02' });
+    const brokenJournal = journalOf('one').path;
+    storage.storage.fault = (path, step) => {
+      if (path === brokenJournal && step === 'write') throw new Error('disk error');
+    };
+    const onSyncError = vi.fn();
+    const sync = onlineSync(a, { onSyncError, retryDelayMs: 60_000 });
+    expect(await sync.syncAll()).toMatchObject({ succeeded: ['two'], failed: ['one'] });
+    expect(onSyncError).toHaveBeenCalledWith(expect.objectContaining({ message: 'disk error' }), 'one');
+    sync.dispose();
+    storage.storage.fault = undefined;
+  });
+
+  it('delivers no callback once the sync is disposed inside an earlier one', async () => {
+    const a = tab('a');
+    await stage(a, 'one', { entryId: 'one', fileId: 'file_00000000entry01' });
+    await stage(a, 'two', { entryId: 'two', fileId: 'file_00000000entry02' });
+    const progress = vi.fn();
+    const complete = vi.fn();
+    const sync: OfflineSync = onlineSync(a, {
+      onSyncProgress: (p) => {
+        progress(p);
+        sync.dispose();
+      },
+      onSyncComplete: complete,
+    });
+    await sync.syncAll();
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(complete).not.toHaveBeenCalled();
   });
 });

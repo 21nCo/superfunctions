@@ -1966,7 +1966,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (storage.deleteObject) {
           await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
         }
-        throw afterWrite === null ? errors.sessionNotFound() : errors.uploadAborted();
+        // A session another request completed meanwhile is reported as
+        // completed, so a client replays it under the same key and reconciles
+        // the stored version instead of starting over.
+        if (afterWrite === null) throw errors.sessionNotFound();
+        throw afterWrite.status === 'completed' ? errors.uploadAlreadyCompleted() : errors.uploadAborted();
       }
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -2082,7 +2086,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             continue;
           }
         }
-        if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+        // A live completion claim can still publish past the expiry: it is
+        // waited for below, never reported as expired.
+        if (isExpiredAt(session.expiresAt) && !(session.status === 'completing' && !isStaleClaim(session))) {
+          throw errors.uploadExpired();
+        }
 
         let current: UploadSession | null;
         if (session.status === 'completing' && !isStaleClaim(session)) {

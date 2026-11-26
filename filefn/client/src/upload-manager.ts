@@ -42,6 +42,13 @@ const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
 export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
 /** A replayed completed session's file could not be read back to confirm it. */
 export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
+/** A completion response without a well-formed fileId and versionId: its outcome is unknown. */
+export const UPLOAD_RESULT_INVALID_ERROR = 'FILEFN_UPLOAD_RESULT_INVALID';
+
+/** A server-issued identifier: a non-empty string without whitespace or control characters. */
+export function isWellFormedId(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7e]{1,512}$/.test(value);
+}
 
 function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
   code: string;
@@ -368,6 +375,13 @@ export class UploadManager {
       signal,
     );
 
+    if (!isWellFormedId(result?.fileId) || !isWellFormedId(result?.versionId)) {
+      // A success that does not name what it stored confirms nothing: the
+      // outcome is unknown and a replay under the same key settles it.
+      throw createClientError(UPLOAD_RESULT_INVALID_ERROR, 'Upload completion did not name a stored file and version', {
+        uploadSessionId: this.session.uploadSessionId,
+      });
+    }
     if (result.fileId !== prepared.fileId) {
       throw createClientError(
         FILE_ID_MISMATCH_ERROR,
@@ -394,7 +408,7 @@ export class UploadManager {
     signal: AbortSignal,
   ): Promise<UploadResult> {
     const { fileId, versionId } = initResponse;
-    if (!fileId || !versionId) {
+    if (!isWellFormedId(fileId) || !isWellFormedId(versionId)) {
       throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Completed session did not report its stored file', {
         uploadSessionId: initResponse.uploadSessionId,
       });

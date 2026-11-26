@@ -39,7 +39,8 @@ function failure(status: number, code: string, details?: Record<string, unknown>
 function createServer() {
   const inits: Array<{ fileId: string; key: string | null; bodyKey: unknown }> = [];
   const paths: string[] = [];
-  const state: { override?: (path: string) => Response | undefined } = {};
+  // `ended`: keys whose session a replayed upload/init reports with that status.
+  const state: { override?: (path: string) => Response | undefined; ended?: Map<string, 'expired' | 'aborted'> } = {};
   const fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input).slice(BASE.length);
     paths.push(path);
@@ -47,8 +48,17 @@ function createServer() {
     if (overridden) return overridden;
     if (path === '/upload/init') {
       const body = JSON.parse(String(init.body));
-      inits.push({ fileId: body.fileId, key: new Headers(init.headers).get('x-idempotency-key'), bodyKey: body.idempotencyKey });
-      return envelope({ uploadSessionId: `sess_${inits.length}`, uploadMode: 'proxy', chunkSizeBytes: 1024, totalParts: 1, expiresAt: 'x' });
+      const key = new Headers(init.headers).get('x-idempotency-key');
+      inits.push({ fileId: body.fileId, key, bodyKey: body.idempotencyKey });
+      const ended = key ? state.ended?.get(key) : undefined;
+      return envelope({
+        uploadSessionId: `sess_${inits.length}`,
+        uploadMode: 'proxy',
+        chunkSizeBytes: 1024,
+        totalParts: 1,
+        expiresAt: 'x',
+        ...(ended ? { status: ended } : {}),
+      });
     }
     const sign = /^\/upload\/(sess_\d+)\/parts\/1\/sign$/.exec(path);
     if (sign) return envelope({ url: `/upload/${sign[1]}/parts/1`, headers: {}, expiresAt: 'x' });
@@ -283,7 +293,7 @@ describe('replay transport', () => {
       if (path === '/upload/init') signedIn = BOB_PRINCIPAL;
       return undefined;
     };
-    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'provisional', reason: 'principal-mismatch' });
+    expect(await client.getOfflineQueue().process(handle.fileId)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
     expect(server.paths).toEqual(['/upload/init']);
     // Local reads and writes are refused while Bob is signed in.
     await expect(client.getOfflineQueue().list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
@@ -293,6 +303,34 @@ describe('replay transport', () => {
     signedIn = ALICE.principal;
     expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'published' });
     expect(server.inits.map((i) => i.key)).toEqual([server.inits[0].key, server.inits[0].key]);
+  });
+
+  it('sends only credentials bound to the partition, even when the account switches away and back while headers resolve', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const client = createFileFnClient({
+      baseUrl: BASE,
+      fetch: server.fetch,
+      // The shared session flips to Bob and back while its token is read.
+      getAuthHeaders: () => {
+        signedIn = BOB_PRINCIPAL;
+        const headers = { authorization: 'Bearer test-token-bob' };
+        signedIn = ALICE.principal;
+        return headers;
+      },
+      offline: {
+        enabled: true,
+        partition: ALICE,
+        implicitReplay: false,
+        currentPrincipal: () => signedIn,
+        getAuthHeaders: (principal) => (principal.kind === 'user' ? { authorization: `Bearer test-token-${principal.principalId}` } : null),
+        queue: { coordinator: locks.forTab('tab-1') },
+      },
+    });
+    const handle = await stagedOffline(client as ReturnType<typeof offlineClient>);
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'published' });
+    const sent = server.calls.mock.calls.map(([, init]) => new Headers(init?.headers).get('authorization'));
+    expect(sent.length).toBeGreaterThan(0);
+    expect(new Set(sent)).toEqual(new Set(['Bearer test-token-user-alice']));
   });
 
   it('checks the principal before an automatic retry of a request', async () => {
@@ -309,7 +347,7 @@ describe('replay transport', () => {
       signedIn = BOB_PRINCIPAL;
       return failure(503, 'FILEFN_UNAVAILABLE');
     };
-    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ reason: 'principal-mismatch' });
+    expect(await client.getOfflineQueue().process(handle.fileId)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
     expect(server.paths).toEqual(['/upload/init']);
   });
 
@@ -320,6 +358,7 @@ describe('replay transport', () => {
     ['a 410 expiry from completion', '/complete', failure(410, 'FILEFN_UPLOAD_EXPIRED'), 'fresh'],
     ['a 403 from completion', '/complete', failure(403, 'FILEFN_FORBIDDEN'), 'same'],
     ['a status-only 423', '/complete', new Response('locked', { status: 423 }), 'same'],
+    ['a completion that names no file', '/complete', envelope({ versionId: 'ver_x' }), 'same'],
   ] as const)('keeps the generation recoverable after %s', async (_label, suffix, response, key) => {
     const client = offlineClient({ implicitReplay: false });
     const handle = await stagedOffline(client);
@@ -330,16 +369,20 @@ describe('replay transport', () => {
       return response.clone();
     };
     const queue = client.getOfflineQueue();
-    const first = await queue.process(handle.fileId);
+    // A request other than upload/init cannot tell an ended session from one a
+    // live completion still finishes: the outcome stays unknown, same key.
+    expect(await queue.process(handle.fileId)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
     if (key === 'same') {
-      expect(first).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
       expect(await queue.process(handle.fileId)).toMatchObject({ status: 'published' });
+      expect(server.inits).toHaveLength(2);
       expect(server.inits[1].key).toBe(server.inits[0].key);
     } else {
-      // The session ended for good: a fresh key was journaled and used at once.
-      expect(first).toMatchObject({ status: 'published' });
-      expect(server.inits).toHaveLength(2);
-      expect(server.inits[1].key).not.toBe(server.inits[0].key);
+      // The replay's upload/init confirms the session ended: a fresh key is journaled and used at once.
+      server.state.ended = new Map([[server.inits[0].key!, (response.status === 410 && suffix === '/parts/1' ? 'aborted' : 'expired')]]);
+      expect(await queue.process(handle.fileId)).toMatchObject({ status: 'published' });
+      expect(server.inits).toHaveLength(3);
+      expect(server.inits[1].key).toBe(server.inits[0].key);
+      expect(server.inits[2].key).not.toBe(server.inits[0].key);
     }
   });
 

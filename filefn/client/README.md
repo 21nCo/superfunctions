@@ -71,7 +71,7 @@ In a browser, `baseUrl` and the part URL are resolved against the document base 
 
 ### Offline replay
 
-With `offline: { enabled: true, partition, currentPrincipal }`, uploads staged while offline are replayed by the client that runs the sync, using that client's `fetch`, `credentials` and current `getAuthHeaders` result, and only while `currentPrincipal` reports the partition's principal (checked before every request and retry). Auth headers are never written to OPFS, so an upload staged before a page reload is sent with the fresh token of the client created after it.
+With `offline: { enabled: true, partition, currentPrincipal }`, uploads staged while offline are replayed by the client that runs the sync, using that client's `fetch`, `credentials` and current `getAuthHeaders` result (or `offline.getAuthHeaders(principal)`, which binds the headers to the partition's principal), and only while `currentPrincipal` reports the partition's principal (checked before and after resolving the headers of every request, retry and part, and again before sending). Auth headers are never written to OPFS, so an upload staged before a page reload is sent with the fresh token of the client created after it.
 
 ### Offline queue
 
