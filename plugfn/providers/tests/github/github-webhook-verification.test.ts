@@ -1,9 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderRegistry } from 'plugfn';
+import { createPlugFnRouter, MemoryAdapter, NoopLogger, plugFn, ProviderRegistry, WebhookHandler } from 'plugfn';
 import { githubProvider } from '../../src/github/index.js';
-import { WebhookHandler } from 'plugfn';
-import { NoopLogger } from 'plugfn';
 
 const encoder = new TextEncoder();
 
@@ -13,17 +11,38 @@ function sign(rawBody: string, secret: string): string {
 }
 
 describe('github webhook verification', () => {
-  it('emits pull_request.closed only for verified payloads', async () => {
-    const logger = new NoopLogger();
-    const registry = new ProviderRegistry(logger);
-    registry.register(githubProvider);
-
-    const handler = new WebhookHandler(registry, logger);
+  it('resolves the authenticated installation before dispatching pull_request.closed', async () => {
+    const binding = {
+      tenantId: 'test-tenant',
+      connectionId: 'test-connection',
+      revoked: new AbortController().signal,
+    };
+    const secret = 'test-github-webhook-secret';
+    const resolveBinding = vi.fn(() => [binding]);
+    const runtime = plugFn({
+      database: new MemoryAdapter(),
+      auth: { authenticate: () => null },
+      baseUrl: 'https://app.example.test',
+      encryptionKey: Buffer.alloc(32, 1).toString('hex'),
+      integrations: {},
+      logger: new NoopLogger(),
+      webhooks: {
+        workflowBindings: {
+          github: [{
+            id: 'test-github-app',
+            credentialFingerprints: [createHash('sha256').update(secret).digest('hex')],
+            resolve: resolveBinding,
+          }],
+        },
+      },
+    });
+    runtime.providers.register(githubProvider);
     const listener = vi.fn();
-    handler.on('github', 'pull_request.closed', listener);
+    runtime.webhooks.on('github', 'pull_request.closed', listener);
 
     const payload = {
       action: 'closed',
+      installation: { id: 42 },
       pull_request: {
         id: 9,
         number: 42,
@@ -38,22 +57,24 @@ describe('github webhook verification', () => {
         },
       },
     };
-    const secret = 'github-secret';
     const rawBody = JSON.stringify(payload);
 
-    const accepted = await handler.handleWebhook(
-      'github',
-      'pull_request.closed',
-      undefined,
-      { 'x-hub-signature-256': sign(rawBody, secret) },
-      secret,
-      { rawBody: encoder.encode(rawBody) }
-    );
-    expect(accepted.verified).toBe(true);
+    const router = createPlugFnRouter(runtime, { webhookSecret: { github: secret } });
+    const accepted = await router.handle(new Request('https://app.example.test/webhooks/github/pull-request', {
+      method: 'POST',
+      headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sign(rawBody, secret) },
+      body: rawBody,
+    }));
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toMatchObject({
+      data: { event: { event: 'pull_request.closed', verified: true } },
+    });
+    expect(resolveBinding).toHaveBeenCalledWith('42');
     expect(listener).toHaveBeenCalledTimes(1);
+    const resolutionsAfterDispatch = resolveBinding.mock.calls.length;
 
     await expect(
-      handler.handleWebhook(
+      runtime.webhooks.handle(
         'github',
         'pull_request.closed',
         undefined,
@@ -64,7 +85,20 @@ describe('github webhook verification', () => {
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',
     });
+    expect(resolveBinding).toHaveBeenCalledTimes(resolutionsAfterDispatch);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not classify review, review comment, or review thread bodies as pull requests', () => {
+    const classify = githubProvider.triggers?.pull_request.webhookConfig?.getWorkflowEvent;
+    expect(classify).toBeTypeOf('function');
+    for (const payload of [
+      { action: 'edited', pull_request: {}, review: {} },
+      { action: 'edited', pull_request: {}, comment: {} },
+      { action: 'resolved', pull_request: {}, thread: {} },
+    ]) {
+      expect(classify?.(payload, { headers: {} })).toBeUndefined();
+    }
   });
 
   it('emits issue_comment.created only for verified payloads', async () => {

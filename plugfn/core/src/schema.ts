@@ -5,11 +5,13 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
+// Version 9 separates standalone and workflow webhook receipt keys. Existing
+// receipts predate workflow scoping and keep their keys in the standalone namespace.
 // Version 7 adds first-class tenant ownership to workflows. Backfills must use an
 // authoritative tenant source rather than caller-controlled workflow metadata.
 // Version 6 added job-scoped claim tokens to sync jobs. Any legacy claim token on a
 // connection represented a different ownership domain, so migration must not copy it.
-export const PLUGFN_SCHEMA_VERSION = 8;
+export const PLUGFN_SCHEMA_VERSION = 9;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;
@@ -177,6 +179,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           provider: { type: 'string', required: true, fieldName: 'provider' },
           event: { type: 'string', required: true, fieldName: 'event' },
           idempotencyKey: { type: 'string', required: false, fieldName: 'idempotency_key' },
+          workflowIdempotencyKey: { type: 'string', required: false, fieldName: 'workflow_idempotency_key', maxLength: 64 },
           connectionId: { type: 'string', required: false, fieldName: 'connection_id' },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
@@ -192,6 +195,11 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           {
             name: 'idx_plugfn_webhook_receipts_idempotency',
             fields: ['provider', 'idempotencyKey'],
+            unique: true
+          },
+          {
+            name: 'idx_plugfn_webhook_receipts_workflow_idempotency',
+            fields: ['workflowIdempotencyKey'],
             unique: true
           }
         ]

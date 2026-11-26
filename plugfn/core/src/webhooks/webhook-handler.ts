@@ -1,13 +1,55 @@
-import type { WebhookEvent, TriggerHandler } from '../types/trigger.js';
+import { createHash } from 'node:crypto';
+import { deserialize, serialize } from 'node:v8';
+import type {
+  ScopedTriggerHandler,
+  Trigger,
+  TriggerHandler,
+  WebhookEvent,
+  WebhookVerificationContext,
+  WebhookWorkflowBinding,
+  WebhookWorkflowBindingMatch,
+} from '../types/trigger.js';
+import type { WebhookOptions } from '../types/config.js';
+import type { PlugFnWebhookReceipt } from '../types/runtime.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
-import type { WebhookVerificationContext } from '../types/trigger.js';
+
+interface VerifiedWebhook {
+  triggerKey: string;
+  trigger: Trigger;
+  transformedPayload: any;
+  normalizedHeaders: Record<string, string>;
+  signature: string;
+  verified: boolean;
+}
+
+export interface WebhookAdmission {
+  binding?: Readonly<WebhookWorkflowBinding>;
+  idempotencyKey?: string;
+  payloadHash?: string;
+  assertActive?(): void;
+  event(): WebhookEvent;
+  dispatch(options?: { skipListeners?: boolean }): Promise<WebhookEvent>;
+}
+
+interface WebhookDispatchScope {
+  binding: Readonly<WebhookWorkflowBinding>;
+  idempotencyKey: string;
+  bindingIsCurrent(): Promise<boolean>;
+  revoked: AbortSignal;
+}
+
+/** Internal preparation used by the router. Public verification returns inspection data only. */
+export const prepareWebhookDelivery = Symbol.for('plugfn.prepareWebhookDelivery');
 
 export class WebhookHandlerError extends Error {
   readonly code:
     | 'WEBHOOK_SECRET_NOT_FOUND'
     | 'WEBHOOK_SIGNATURE_INVALID'
     | 'WEBHOOK_SIGNATURE_REQUIRED'
+    | 'WEBHOOK_WORKFLOW_BINDING_REQUIRED'
+    | 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
+    | 'WEBHOOK_IDEMPOTENCY_CONFLICT'
     | 'WEBHOOK_HANDLER_FAILED'
     | 'VALIDATION_ERROR';
   readonly status: number;
@@ -19,6 +61,9 @@ export class WebhookHandlerError extends Error {
       | 'WEBHOOK_SECRET_NOT_FOUND'
       | 'WEBHOOK_SIGNATURE_INVALID'
       | 'WEBHOOK_SIGNATURE_REQUIRED'
+      | 'WEBHOOK_WORKFLOW_BINDING_REQUIRED'
+      | 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
+      | 'WEBHOOK_IDEMPOTENCY_CONFLICT'
       | 'WEBHOOK_HANDLER_FAILED'
       | 'VALIDATION_ERROR',
     message: string,
@@ -36,13 +81,14 @@ export class WebhookHandlerError extends Error {
 
 export class WebhookHandler {
   private handlers = new Map<string, Set<TriggerHandler>>();
+  private workflowHandlers = new Map<string, Set<ScopedTriggerHandler>>();
   private processedEventIds = new Map<string, number>();
   private readonly maxProcessedEventIds = 10000;
 
   constructor(
     private providerRegistry: ProviderRegistry,
     private logger: Logger,
-    private options: { verifySignatures?: boolean } = {}
+    private options: Pick<WebhookOptions, 'verifySignatures' | 'workflowBindings'> = {}
   ) {}
 
   async handleWebhook(
@@ -55,12 +101,69 @@ export class WebhookHandler {
       rawBody?: Uint8Array;
     } = {}
   ): Promise<WebhookEvent> {
-    const prepared = await this.verifyWebhook(provider, event, payload, headers, secret, options);
-    const { triggerKey, trigger, transformedPayload, normalizedHeaders, signature, verified } = prepared;
-    const eventId = getEventId(transformedPayload, normalizedHeaders);
-    const idempotencyKey = eventId ? `${provider}:${eventId}` : undefined;
+    const prepared = await this[prepareWebhookDelivery](provider, event, payload, headers, secret, options);
+    const admission = await prepared.admit();
+    if (admission.binding) {
+      throw new WebhookHandlerError(
+        'WEBHOOK_WORKFLOW_BINDING_REQUIRED',
+        'scoped webhook delivery requires PlugFn.webhooks.handle',
+        409
+      );
+    }
+    return admission.dispatch();
+  }
 
-    const webhookEvent: WebhookEvent = {
+  async verifyWebhook(...args: Parameters<WebhookHandler[typeof prepareWebhookDelivery]>): Promise<VerifiedWebhook> {
+    const { admit: _admit, ...verification } = await this[prepareWebhookDelivery](...args);
+    return verification;
+  }
+
+  private async dispatchWebhook(
+    provider: string,
+    prepared: VerifiedWebhook,
+    scope?: WebhookDispatchScope,
+    skipListeners = false
+  ): Promise<WebhookEvent> {
+    const { triggerKey, trigger, transformedPayload, verified } = prepared;
+    if (scope && (!(await scope.bindingIsCurrent()) || scope.revoked.aborted)) {
+      throw webhookBindingRevoked();
+    }
+
+    const webhookEvent = this.createWebhookEvent(provider, prepared, scope);
+    const { deliveryId: eventId, idempotencyKey } = webhookEvent;
+    if (trigger.webhookConfig?.shouldDispatch?.(transformedPayload) === false) {
+      this.logger.info(`Webhook dispatch skipped: ${provider}.${triggerKey}`);
+      return webhookEvent;
+    }
+
+    const processedEventKey = idempotencyKey ?? null;
+    if (processedEventKey && this.processedEventIds.has(processedEventKey)) {
+      this.logger.info(`Webhook duplicate ignored: ${provider}.${triggerKey}`, { eventId });
+      return webhookEvent;
+    }
+
+    const triggerEvent = await trigger.handler(transformedPayload);
+    if (scope?.revoked.aborted) {
+      throw webhookBindingRevoked();
+    }
+    await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners);
+
+    if (processedEventKey) {
+      this.rememberProcessedEvent(processedEventKey);
+    }
+
+    this.logger.info(`Webhook handled: ${provider}.${triggerKey}`, { verified, eventId });
+    return webhookEvent;
+  }
+
+  private createWebhookEvent(provider: string, prepared: VerifiedWebhook, scope?: WebhookDispatchScope): WebhookEvent {
+    const { triggerKey, transformedPayload, normalizedHeaders, signature, verified } = prepared;
+    const eventId = getEventId(transformedPayload, normalizedHeaders);
+    const idempotencyKey = scope
+      ? JSON.stringify([provider, scope.binding.tenantId, scope.binding.connectionId, scope.idempotencyKey])
+      : eventId ? `${provider}:${eventId}` : undefined;
+
+    return {
       id: this.generateEventId(),
       deliveryId: eventId,
       idempotencyKey,
@@ -74,29 +177,9 @@ export class WebhookHandler {
       headers: normalizedHeaders,
     };
 
-    if (trigger.webhookConfig?.shouldDispatch?.(transformedPayload) === false) {
-      this.logger.info(`Webhook dispatch skipped: ${provider}.${triggerKey}`);
-      return webhookEvent;
-    }
-
-    const processedEventKey = idempotencyKey ?? null;
-    if (processedEventKey && this.processedEventIds.has(processedEventKey)) {
-      this.logger.info(`Webhook duplicate ignored: ${provider}.${triggerKey}`, { eventId });
-      return webhookEvent;
-    }
-
-    const triggerEvent = await trigger.handler(transformedPayload);
-    await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent });
-
-    if (processedEventKey) {
-      this.rememberProcessedEvent(processedEventKey);
-    }
-
-    this.logger.info(`Webhook handled: ${provider}.${triggerKey}`, { verified, eventId });
-    return webhookEvent;
   }
 
-  async verifyWebhook(
+  async [prepareWebhookDelivery](
     provider: string,
     event: string,
     payload: any,
@@ -105,14 +188,7 @@ export class WebhookHandler {
     options: {
       rawBody?: Uint8Array;
     } = {}
-  ): Promise<{
-    triggerKey: string;
-    trigger: any;
-    transformedPayload: any;
-    normalizedHeaders: Record<string, string>;
-    signature: string;
-    verified: boolean;
-  }> {
+  ): Promise<VerifiedWebhook & { admit(): Promise<WebhookAdmission> }> {
     const providerObj = this.providerRegistry.get(provider);
     if (!providerObj) {
       throw new WebhookHandlerError('VALIDATION_ERROR', `Provider ${provider} not found`, 404);
@@ -121,9 +197,14 @@ export class WebhookHandler {
     const { triggerKey, trigger } = this.resolveTrigger(provider, event, providerObj.triggers ?? {});
     const normalizedHeaders = normalizeHeaders(headers);
     const signature = getSignature(provider, normalizedHeaders);
-    const parsedPayload = payload ?? parseWebhookPayload(options.rawBody);
+    const resolvers = this.options.workflowBindings;
+    const requiresBinding = resolvers && Object.hasOwn(resolvers, provider);
+    const authorities = requiresBinding ? resolvers[provider] : undefined;
+    // Scoped delivery must extract and dispatch from the same bytes the verifier sees.
+    const rawBody = requiresBinding && options.rawBody ? Uint8Array.from(options.rawBody) : options.rawBody;
+    const parsedPayload = requiresBinding || payload == null ? parseWebhookPayload(rawBody) : payload;
     const verificationContext: WebhookVerificationContext = {
-      rawBody: options.rawBody,
+      rawBody,
       headers: normalizedHeaders,
     };
 
@@ -159,6 +240,18 @@ export class WebhookHandler {
       }
     }
 
+    const authenticated = Boolean(rawBody?.length && verifier && verified && secret);
+    const subject = requiresBinding && authenticated
+      ? trigger.webhookConfig?.getWorkflowSubject?.(parsedPayload, verificationContext)
+      : undefined;
+    const workflowEvent = isBindingId(subject)
+      ? trigger.webhookConfig?.getWorkflowEvent?.(parsedPayload, verificationContext)
+      : undefined;
+    const authenticatedDeliveryId = isBindingId(subject)
+      ? trigger.webhookConfig?.getAuthenticatedDeliveryId?.(parsedPayload, verificationContext)
+      : undefined;
+    const payloadHash = isBindingId(subject) && rawBody ? sha256(rawBody) : undefined;
+    const credentialFingerprint = requiresBinding && authenticated && secret ? sha256(secret) : undefined;
     const transformedPayload = trigger.webhookConfig?.transformPayload
       ? trigger.webhookConfig.transformPayload(parsedPayload)
       : parsedPayload;
@@ -168,7 +261,7 @@ export class WebhookHandler {
       throw new WebhookHandlerError('VALIDATION_ERROR', 'webhook payload validation failed');
     }
 
-    return {
+    const prepared = {
       triggerKey,
       trigger,
       transformedPayload,
@@ -176,10 +269,88 @@ export class WebhookHandler {
       signature,
       verified,
     };
+    return {
+      ...prepared,
+      admit: async () => {
+        if (!requiresBinding || (
+          authenticated && subject === undefined && this.getHandlerCount(provider, triggerKey) > 0
+        )) {
+          return {
+            dispatch: () => this.dispatchWebhook(provider, prepared),
+            event: () => this.createWebhookEvent(provider, prepared),
+          };
+        }
+        if (!credentialFingerprint || !isBindingId(subject) || !payloadHash) {
+          throw webhookBindingRequired();
+        }
+        if (workflowEvent !== triggerKey) {
+          throw new WebhookHandlerError(
+            'VALIDATION_ERROR',
+            'webhook event does not match the authenticated payload'
+          );
+        }
+        const matchingAuthorities = authorities?.filter(({ credentialFingerprints }) =>
+          credentialFingerprints.includes(credentialFingerprint)
+        );
+        if (matchingAuthorities?.length !== 1 || !isBindingId(matchingAuthorities[0].id)) {
+          throw webhookBindingRequired();
+        }
+        const authority = matchingAuthorities[0];
+        if (authorities?.filter(({ id }) => id === authority.id).length !== 1) {
+          throw webhookBindingRequired();
+        }
+
+        const resolveUniqueBinding = async (): Promise<WebhookWorkflowBindingMatch | undefined> => {
+          let candidates: readonly WebhookWorkflowBindingMatch[];
+          try {
+            candidates = await authority.resolve(subject);
+          } catch {
+            throw new WebhookHandlerError(
+              'WEBHOOK_HANDLER_FAILED',
+              'webhook binding resolution failed',
+              503
+            );
+          }
+          return Array.isArray(candidates) && candidates.length === 1 && isWorkflowBinding(candidates[0])
+            ? candidates[0]
+            : undefined;
+        };
+        const match = await resolveUniqueBinding();
+        if (!match) {
+          throw webhookBindingRequired();
+        }
+        const { tenantId, connectionId, revoked } = match;
+        const binding = Object.freeze({ tenantId, connectionId });
+        const deliveryIdentity = isBindingId(authenticatedDeliveryId)
+          ? ['delivery', authenticatedDeliveryId]
+          : ['payload', workflowEvent, payloadHash];
+        const idempotencyKey = sha256(JSON.stringify([authority.id, subject, ...deliveryIdentity]));
+        const bindingIsCurrent = async () => {
+          const current = await resolveUniqueBinding();
+          return current?.tenantId === tenantId &&
+            current.connectionId === connectionId &&
+            current.revoked === revoked &&
+            !revoked.aborted;
+        };
+        const scope = { binding, idempotencyKey, bindingIsCurrent, revoked };
+        return {
+          binding,
+          idempotencyKey,
+          payloadHash,
+          assertActive: () => {
+            if (revoked.aborted) {
+              throw webhookBindingRevoked();
+            }
+          },
+          dispatch: (options) => this.dispatchWebhook(provider, prepared, scope, options?.skipListeners),
+          event: () => this.createWebhookEvent(provider, prepared, scope),
+        };
+      },
+    };
   }
 
   on(provider: string, event: string, handler: TriggerHandler): void {
-    const key = `${provider}:${event}`;
+    const key = handlerKey(provider, event);
 
     if (!this.handlers.has(key)) {
       this.handlers.set(key, new Set());
@@ -190,7 +361,7 @@ export class WebhookHandler {
   }
 
   off(provider: string, event: string, handler: TriggerHandler): void {
-    const key = `${provider}:${event}`;
+    const key = handlerKey(provider, event);
     const handlers = this.handlers.get(key);
 
     if (handlers) {
@@ -202,14 +373,36 @@ export class WebhookHandler {
     }
   }
 
-  getHandlerCount(provider?: string, event?: string): number {
+  onWorkflow(provider: string, event: string, binding: WebhookWorkflowBinding, handler: ScopedTriggerHandler): void {
+    const key = handlerKey(provider, event, binding);
+    let handlers = this.workflowHandlers.get(key);
+    if (!handlers) {
+      handlers = new Set();
+      this.workflowHandlers.set(key, handlers);
+    }
+    handlers.add(handler);
+  }
+
+  offWorkflow(provider: string, event: string, binding: WebhookWorkflowBinding, handler: ScopedTriggerHandler): void {
+    const key = handlerKey(provider, event, binding);
+    const handlers = this.workflowHandlers.get(key);
+    handlers?.delete(handler);
+    if (handlers?.size === 0) {
+      this.workflowHandlers.delete(key);
+    }
+  }
+
+  getHandlerCount(provider?: string, event?: string, binding?: WebhookWorkflowBinding): number {
     if (provider && event) {
-      const key = `${provider}:${event}`;
-      return this.handlers.get(key)?.size || 0;
+      const key = handlerKey(provider, event, binding);
+      return (binding ? this.workflowHandlers : this.handlers).get(key)?.size ?? 0;
     }
 
     let total = 0;
     for (const handlers of this.handlers.values()) {
+      total += handlers.size;
+    }
+    for (const handlers of this.workflowHandlers.values()) {
       total += handlers.size;
     }
     return total;
@@ -217,6 +410,7 @@ export class WebhookHandler {
 
   clearHandlers(): void {
     this.handlers.clear();
+    this.workflowHandlers.clear();
   }
 
   getProcessedEventCacheSize(): number {
@@ -239,18 +433,42 @@ export class WebhookHandler {
     }
   }
 
-  private async emit(provider: string, event: string, webhookEvent: any): Promise<void> {
-    const key = `${provider}:${event}`;
-    const handlers = this.handlers.get(key);
-
-    if (!handlers || handlers.size === 0) {
+  private async emit(
+    provider: string,
+    event: string,
+    webhookEvent: Parameters<TriggerHandler>[0],
+    scope: WebhookDispatchScope | undefined,
+    skipListeners: boolean
+  ): Promise<void> {
+    const listeners = skipListeners ? undefined : this.handlers.get(handlerKey(provider, event));
+    const workflowHandlers = scope && this.workflowHandlers.get(handlerKey(provider, event, scope.binding));
+    if (!listeners?.size && !workflowHandlers?.size) {
       this.logger.debug(`No handlers registered for ${provider}.${event}`);
       return;
     }
 
-    const results = await Promise.allSettled(
-      [...handlers].map((handler) => Promise.resolve().then(() => handler(webhookEvent)))
-    );
+    if (scope && workflowHandlers) {
+      const snapshot = serialize(webhookEvent);
+      await this.settleHandlers(provider, event, [...workflowHandlers].map((handler) =>
+        Promise.resolve().then(() => {
+          // Deserialized buffers can retain the backing store of the serialized input.
+          const copy = Buffer.alloc(snapshot.length);
+          snapshot.copy(copy);
+          return handler(deserialize(copy), scope);
+        })
+      ));
+    }
+    // A scoped workflow failure must leave listeners untouched for the next attempt.
+    if (scope?.revoked.aborted) {
+      throw webhookBindingRevoked();
+    }
+    await this.settleHandlers(provider, event, [...(listeners ?? [])].map((handler) =>
+      Promise.resolve().then(() => handler({ ...webhookEvent }))
+    ));
+  }
+
+  private async settleHandlers(provider: string, event: string, calls: Promise<void>[]): Promise<void> {
+    const results = await Promise.allSettled(calls);
     const failures = results.filter(
       (result): result is PromiseRejectedResult => result.status === 'rejected'
     );
@@ -259,6 +477,12 @@ export class WebhookHandler {
       this.logger.error(`Handler error for ${provider}.${event}`, { error: failure.reason });
     }
 
+    const revoked = failures.find(({ reason }) =>
+      reason instanceof WebhookHandlerError && reason.code === 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
+    );
+    if (revoked) {
+      throw revoked.reason;
+    }
     if (failures.length > 0) {
       throw new WebhookHandlerError(
         'WEBHOOK_HANDLER_FAILED',
@@ -271,8 +495,8 @@ export class WebhookHandler {
   private resolveTrigger(
     provider: string,
     incomingEvent: string,
-    triggers: Record<string, any>
-  ): { triggerKey: string; trigger: any } {
+    triggers: Record<string, Trigger>
+  ): { triggerKey: string; trigger: Trigger } {
     const canonicalEvent = canonicalizeEvent(incomingEvent);
     const eventMap = new Map<string, string>();
 
@@ -318,6 +542,56 @@ export class WebhookHandler {
   private generateEventId(): string {
     return `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
+}
+
+export function isBindingId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isWorkflowBinding(value: WebhookWorkflowBindingMatch | undefined): value is WebhookWorkflowBindingMatch {
+  return Boolean(value && isBindingId(value.tenantId) && isBindingId(value.connectionId) &&
+    value.revoked instanceof AbortSignal && !value.revoked.aborted);
+}
+
+function handlerKey(provider: string, event: string, binding?: WebhookWorkflowBinding): string {
+  return JSON.stringify([provider, event, binding?.tenantId, binding?.connectionId]);
+}
+
+function webhookBindingRequired(): WebhookHandlerError {
+  return new WebhookHandlerError(
+    'WEBHOOK_WORKFLOW_BINDING_REQUIRED',
+    'webhook has no unique verified workflow binding',
+    403
+  );
+}
+
+export function webhookBindingRevoked(): WebhookHandlerError {
+  return new WebhookHandlerError(
+    'WEBHOOK_WORKFLOW_BINDING_REVOKED',
+    'webhook workflow binding changed before execution',
+    503
+  );
+}
+
+export function assertWebhookReceiptScope(
+  receipt: PlugFnWebhookReceipt,
+  binding: WebhookWorkflowBinding | undefined
+): void {
+  if (
+    Boolean(receipt.workflowIdempotencyKey) !== Boolean(binding) ||
+    (receipt.metadata?.tenantId ?? undefined) !== binding?.tenantId ||
+    (binding && receipt.connectionId !== binding.connectionId)
+  ) {
+    throw new WebhookHandlerError(
+      'WEBHOOK_IDEMPOTENCY_CONFLICT',
+      'webhook idempotency key conflicts with another delivery',
+      409
+    );
+  }
+}
+
+function sha256(value: string | Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function setEventMapping(eventMap: Map<string, string>, canonicalEvent: string, triggerKey: string): void {

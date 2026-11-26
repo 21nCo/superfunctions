@@ -228,10 +228,12 @@ export const plugfn_webhook_receipts = pgTable(
   provider: text('provider').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
   verificationStatus: text('verification_status').notNull(),
+  workflowIdempotencyKey: text('workflow_idempotency_key'),
   },
   (table) => ({
     idx_plugfn_webhook_receipts_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_idempotency').on(table.provider, table.idempotencyKey),
-    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event)
+    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event),
+    idx_plugfn_webhook_receipts_workflow_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_workflow_idempotency').on(table.workflowIdempotencyKey)
   })
 );
 

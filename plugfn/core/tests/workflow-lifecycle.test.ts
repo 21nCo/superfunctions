@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { WorkflowEngine, WorkflowEngineError } from '../src/core/workflow-engine.js';
+import { WorkflowEngine } from '../src/core/workflow-engine.js';
 import { plugFn } from '../src/core/plug-fn.js';
 import { ProviderRegistry } from '../src/core/provider-registry.js';
-import { WebhookHandler } from '../src/webhooks/webhook-handler.js';
+import { WebhookHandler, prepareWebhookDelivery } from '../src/webhooks/webhook-handler.js';
 import type { WorkflowStorage } from '../src/storage/workflow-storage.js';
 import { MemoryAdapter } from '../src/storage/adapters/memory.js';
 import { NoopLogger } from '../src/utils/logger.js';
@@ -15,6 +16,13 @@ import {
   type Workflow,
   type WorkflowExecution,
 } from '../src/types/workflow.js';
+
+const binding = {
+  tenantId: 'test-tenant',
+  connectionId: 'test-connection',
+  revoked: new AbortController().signal,
+};
+const signingCredential = 'test-webhook-secret';
 
 describe('workflow lifecycle trigger handling', () => {
   it('retries startup rehydration after a transient storage failure', async () => {
@@ -40,13 +48,13 @@ describe('workflow lifecycle trigger handling', () => {
     const { engine, storage, webhookHandler } = createHarness();
 
     const workflow = await engine.create(createWorkflowDefinition(WorkflowStatus.Draft));
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(0);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(0);
 
     await engine.enable(workflow.id);
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(1);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(1);
 
     await engine.disable(workflow.id);
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(0);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(0);
     expect((await storage.get(workflow.id))?.status).toBe(WorkflowStatus.Disabled);
   });
 
@@ -54,23 +62,40 @@ describe('workflow lifecycle trigger handling', () => {
     const { engine, storage, webhookHandler } = createHarness();
 
     const workflow = await engine.create(createWorkflowDefinition(WorkflowStatus.Enabled));
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(1);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(1);
 
     await engine.delete(workflow.id);
 
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(0);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(0);
     expect(await storage.get(workflow.id)).toBeNull();
   });
 
-  it('fails closed when unregister would otherwise be a silent no-op', async () => {
-    const { engine, storage } = createHarness();
+  it('disables or deletes a workflow backfilled after legacy registration was skipped', async () => {
+    const { engine, storage, webhookHandler } = createHarness();
+    const definition = createWorkflowDefinition(WorkflowStatus.Enabled);
+    async function backfillLegacyWorkflow() {
+      const workflow = await engine.create({ ...definition, tenantId: undefined });
+      await storage.update(workflow.id, { tenantId: binding.tenantId });
+      return workflow.id;
+    }
 
+    const disableId = await backfillLegacyWorkflow();
+    await engine.disable(disableId);
+    expect((await storage.get(disableId))?.status).toBe(WorkflowStatus.Disabled);
+
+    const deleteId = await backfillLegacyWorkflow();
+    await engine.delete(deleteId);
+    expect(await storage.get(deleteId)).toBeNull();
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(0);
+  });
+
+  it('reports an unexpected missing active registration', async () => {
+    const { engine, storage } = createHarness();
     const workflow = await engine.create(createWorkflowDefinition(WorkflowStatus.Draft));
     await storage.update(workflow.id, { status: WorkflowStatus.Enabled });
-
     await expect(engine.disable(workflow.id)).rejects.toMatchObject({
       code: 'WORKFLOW_TRIGGER_UNREGISTER_FAILED',
-    } satisfies Partial<WorkflowEngineError>);
+    });
   });
 
   it('rejects invalid persisted definitions before enablement or rehydration', async () => {
@@ -100,7 +125,7 @@ describe('workflow lifecycle trigger handling', () => {
       registered: 0,
       failed: 1,
     });
-    expect(webhookHandler.getHandlerCount('github', 'issues.opened')).toBe(0);
+    expect(webhookHandler.getHandlerCount('github', 'issues.opened', binding)).toBe(0);
   });
 
   it('rejects workflow step IDs in the internal parallel checkpoint namespace', async () => {
@@ -133,9 +158,14 @@ describe('workflow lifecycle trigger handling', () => {
     };
     await engine.create(definition);
 
-    await expect(
-      webhookHandler.handleWebhook('github', 'issues.opened', { issue: 1 }, {})
-    ).rejects.toMatchObject({
+    const rawBody = new TextEncoder().encode('{"issue":1}');
+    await expect(webhookHandler.handleWebhook(
+      'github', 'issues.opened', undefined, {}, signingCredential, { rawBody }
+    )).rejects.toMatchObject({ code: 'WEBHOOK_WORKFLOW_BINDING_REQUIRED' });
+    const verified = await webhookHandler[prepareWebhookDelivery](
+      'github', 'issues.opened', undefined, {}, signingCredential, { rawBody }
+    );
+    await expect((await verified.admit()).dispatch()).rejects.toMatchObject({
       code: 'WEBHOOK_HANDLER_FAILED',
       retryable: true,
     });
@@ -177,12 +207,27 @@ function createHarness() {
       displayName: 'Issue opened',
       description: 'Test trigger',
       type: TriggerType.Webhook,
+      webhookConfig: {
+        path: '/webhooks/github/issues.opened',
+        method: 'POST',
+        verifySignature: () => true,
+        getWorkflowSubject: () => 'test-installation',
+        getWorkflowEvent: () => 'issues.opened',
+      },
       schema: z.any(),
       handler: async (payload) => ({ event: 'issues.opened', data: payload }),
     },
   };
   providerRegistry.register(provider);
-  const webhookHandler = new WebhookHandler(providerRegistry, logger);
+  const webhookHandler = new WebhookHandler(providerRegistry, logger, {
+    workflowBindings: {
+      github: [{
+        id: 'test-signing-app',
+        credentialFingerprints: [createHash('sha256').update(signingCredential).digest('hex')],
+        resolve: () => [binding],
+      }],
+    },
+  });
   const engine = new WorkflowEngine(storage, webhookHandler, logger);
 
   return {
@@ -195,12 +240,14 @@ function createHarness() {
 function createWorkflowDefinition(status: WorkflowStatus) {
   return {
     userId: 'user-1',
+    tenantId: binding.tenantId,
     name: `workflow-${status}`,
     status,
     definition: {
       trigger: {
         provider: 'github',
         event: 'issues.opened',
+        connectionId: binding.connectionId,
       },
       steps: [
         {

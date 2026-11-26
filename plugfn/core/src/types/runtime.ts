@@ -65,11 +65,14 @@ export interface PlugFnConnectionGrant {
   expiresAt?: Date;
 }
 
+export type PlugFnWebhookReceiptNamespace = 'standalone' | 'workflow';
+
 export interface PlugFnWebhookReceipt {
   id: string;
   provider: string;
   event: string;
   idempotencyKey?: string;
+  workflowIdempotencyKey?: string;
   connectionId?: string;
   ownerKind?: PlugFnOwnerKind;
   ownerId?: string;

@@ -1,3 +1,4 @@
+import { prepareWebhookDelivery } from '../src/webhooks/webhook-handler.js';
 import { describe, it, expect, vi } from 'vitest';
 import { createPlugFnRouter } from '../src/router/http-router.js';
 import { plugFn } from '../src/core/plug-fn.js';
@@ -782,7 +783,10 @@ function createMockPlugFn(overrides: {
       on: vi.fn(),
       off: vi.fn(),
       handle: handleWebhook,
-      verify: vi.fn(async () => ({ verified: true })),
+      [prepareWebhookDelivery]: vi.fn(async () => ({
+        verified: true,
+        admit: async () => ({ dispatch: handleWebhook }),
+      })),
     },
     runtime: createMockRuntime({
       listSyncJobs: overrides.listSyncJobs,

@@ -9,6 +9,11 @@ import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
+import {
+  assertWebhookReceiptScope,
+  prepareWebhookDelivery,
+  type WebhookAdmission,
+} from '../webhooks/webhook-handler.js';
 
 export interface RouteAuthContext {
   userId: string;
@@ -845,22 +850,19 @@ async function handleWebhookRoute(
     maxWebhookPayloadBytes: number;
   }
 ): Promise<Response> {
-  let deliveryId: string | undefined;
-  let deliveryAttempts = 0;
-  let receiptId: string | undefined;
-  let receiptMetadata: Record<string, unknown> | undefined;
-  let rawBody: Uint8Array | undefined;
+  const { plugFn } = ctx;
+  let deliveryStarted = false;
   let headers: Record<string, string> | undefined;
   let payloadHash: string | undefined;
-  let idempotencyKey: string | undefined;
   let resolvedEvent = event ?? 'event';
-  let verificationStatus: 'verified' | 'not-required';
+  const workflowBindings = plugFn.config.webhooks?.workflowBindings;
+  const requiresBinding = workflowBindings && Object.hasOwn(workflowBindings, provider);
 
   try {
     headers = normalizeHeaders(req.headers);
     await assertWebhookSourceAllowed(
       req,
-      ctx.plugFn.config.webhooks?.allowedIPs,
+      plugFn.config.webhooks?.allowedIPs,
       options.resolveWebhookClientIp
     );
     if (provider.toLowerCase() === 'outlook') {
@@ -872,26 +874,27 @@ async function handleWebhookRoute(
         });
       }
     }
-    rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
-    if (!event || provider.toLowerCase() === 'github') {
+    const rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
+    const github = provider.toLowerCase() === 'github';
+    const requestedEvent = github ? event?.toLowerCase().replaceAll('-', '_') : event;
+    if (!requestedEvent || github) {
       const inferredEvent = inferWebhookEvent(
         provider,
         headers,
         rawBody,
-        ctx.plugFn.providers.get(provider)?.triggers,
-        event
+        plugFn.providers.get(provider)?.triggers,
+        requestedEvent
       );
       resolvedEvent =
-        event && inferredEvent !== event && !inferredEvent.startsWith(`${event}.`)
-          ? event
+        requestedEvent && inferredEvent !== requestedEvent && !inferredEvent.startsWith(`${requestedEvent}.`)
+          ? requestedEvent
           : inferredEvent;
     }
     const secret = await resolveWebhookSecret(provider, req, headers, options.webhookSecret);
-    const currentPayloadHash = createHash('sha256')
-      .update(webhookPayloadForHash(provider, rawBody))
-      .digest('hex');
-    payloadHash = currentPayloadHash;
-    const verification = await ctx.plugFn.webhooks.verify(
+    if (!requiresBinding) {
+      payloadHash = legacyWebhookPayloadHash(provider, rawBody);
+    }
+    const verification = await plugFn.webhooks[prepareWebhookDelivery](
       provider,
       resolvedEvent,
       undefined,
@@ -899,7 +902,6 @@ async function handleWebhookRoute(
       secret,
       { rawBody }
     );
-    verificationStatus = verification.verified === false ? 'not-required' : 'verified';
 
     const slackChallenge = readSlackUrlVerificationChallenge(
       provider,
@@ -909,13 +911,62 @@ async function handleWebhookRoute(
       return Response.json({ challenge: slackChallenge });
     }
 
+    const admission = await verification.admit();
+
+    deliveryStarted = true;
+    return successResponse(await deliverWebhook(plugFn, {
+      provider,
+      event: resolvedEvent,
+      triggerKey: verification.triggerKey,
+      headers,
+      rawBody,
+      legacyPayloadHash: payloadHash,
+      verificationStatus: verification.verified === false ? 'not-required' : 'verified',
+      admission,
+    }));
+  } catch (error) {
+    if (!deliveryStarted && !requiresBinding) {
+      await createFailedWebhookReceipt(plugFn, provider, resolvedEvent, headers, payloadHash, undefined, error);
+    }
+    return errorResponse(toDeterministicError(error));
+  }
+}
+
+/** Shared receipt and delivery lifecycle for HTTP and scoped SDK calls. */
+export async function deliverWebhook(
+  plugFn: PlugFn,
+  options: {
+    provider: string;
+    event: string;
+    triggerKey: string;
+    headers: Record<string, string>;
+    rawBody: Uint8Array;
+    legacyPayloadHash?: string;
+    verificationStatus: 'verified' | 'not-required';
+    admission: WebhookAdmission;
+  }
+) {
+  const { provider, event: resolvedEvent, headers, rawBody, verificationStatus, admission } = options;
+  const idempotencyNamespace = admission.binding ? 'workflow' : 'standalone';
+  const currentPayloadHash = options.legacyPayloadHash ?? legacyWebhookPayloadHash(provider, rawBody);
+  const workflowBindings = plugFn.config.webhooks?.workflowBindings;
+  const requiresBinding = workflowBindings && Object.hasOwn(workflowBindings, provider);
+  let deliveryId: string | undefined;
+  let deliveryAttempts = 0;
+  let receiptId: string | undefined;
+  let receiptMetadata: Record<string, unknown> | undefined;
+  let idempotencyKey: string | undefined;
+
+  try {
     // Only verified payloads may claim a durable idempotency key. In
     // particular, Stripe event ids come from the body and are untrusted until
     // signature verification succeeds.
-    idempotencyKey = readWebhookIdempotencyKey(provider, headers, rawBody);
+    const legacyKey = readWebhookIdempotencyKey(provider, headers, rawBody);
+    idempotencyKey = admission.binding ? admission.idempotencyKey : legacyKey;
+    const admittedPayloadHash = admission.payloadHash ?? currentPayloadHash;
 
     try {
-      await ctx.plugFn.ready;
+      await plugFn.ready;
     } catch (error) {
       throw {
         code: 'PLUGFN_NOT_READY',
@@ -928,13 +979,16 @@ async function handleWebhookRoute(
       };
     }
 
+    admission.assertActive?.();
     if (idempotencyKey) {
-      const existing = await ctx.plugFn.runtime.webhooks.findReceiptByIdempotencyKey(
+      const existing = await plugFn.runtime.webhooks.findReceiptByIdempotencyKey(
         provider,
-        idempotencyKey
+        idempotencyKey,
+        idempotencyNamespace
       );
       if (existing) {
-        if (existing.payloadHash !== currentPayloadHash) {
+        assertWebhookReceiptScope(existing, admission.binding);
+        if (existing.payloadHash !== admittedPayloadHash) {
           throw {
             code: 'WEBHOOK_IDEMPOTENCY_CONFLICT',
             message: 'webhook idempotency key was reused with a different payload',
@@ -949,11 +1003,11 @@ async function handleWebhookRoute(
           existing.verificationStatus === 'verified' ||
           existing.verificationStatus === 'not-required'
         ) {
-          const disposition = await webhookReceiptDisposition(ctx, existing);
+          const disposition = await webhookReceiptDisposition(plugFn, existing);
           if (disposition === 'retry') {
             receiptId = existing.id;
           } else {
-            return successResponse({
+            return {
               duplicate: true,
               receiptId: existing.id,
               event: {
@@ -961,36 +1015,59 @@ async function handleWebhookRoute(
                 event: resolvedEvent,
                 verified: true,
               },
-            });
+            };
           }
         }
       }
     }
 
+    // A completed standalone delivery can suppress repeat listener side effects,
+    // while workflow dispatch still requires its own scoped receipt.
+    const legacyReceipt = admission.binding && legacyKey
+      ? await plugFn.runtime.webhooks.findReceiptByIdempotencyKey(provider, legacyKey)
+      : undefined;
+    const skipListeners = Boolean(
+      legacyReceipt &&
+      legacyReceipt.connectionId == null &&
+      legacyReceipt.metadata?.tenantId == null &&
+      legacyReceipt.verificationStatus === 'verified' &&
+      legacyReceipt.payloadHash === currentPayloadHash &&
+      (await plugFn.runtime.webhooks.listDeliveries(legacyReceipt.id)).some((delivery) =>
+        delivery.status === 'success' &&
+        // Old deliveries that stored only a route cannot identify which listener ran.
+        delivery.metadata?.triggerKey === options.triggerKey
+      )
+    );
+
     const receiptClaimToken = idempotencyKey
       ? `claim_${randomBytes(12).toString('hex')}`
       : undefined;
-    const receipt = await ctx.plugFn.runtime.webhooks.createReceipt({
+    admission.assertActive?.();
+    const receipt = await plugFn.runtime.webhooks.createReceipt({
       provider,
       event: resolvedEvent,
-      payloadHash: currentPayloadHash,
+      payloadHash: admittedPayloadHash,
       idempotencyKey,
+      idempotencyNamespace,
+      connectionId: admission.binding?.connectionId,
       headersRedacted: redactHeaders(headers),
       verificationStatus,
       metadata: {
         contentType: headers['content-type'],
         userAgent: headers['user-agent'],
+        ...(admission.binding ? { tenantId: admission.binding.tenantId } : {}),
         ...(receiptClaimToken ? { receiptClaimToken } : {}),
       },
     });
+    assertWebhookReceiptScope(receipt, admission.binding);
     receiptMetadata = receipt.metadata;
     if (
       receiptClaimToken &&
       receipt.metadata?.receiptClaimToken !== receiptClaimToken &&
       (receipt.verificationStatus === 'verified' || receipt.verificationStatus === 'not-required') &&
-      (await webhookReceiptDisposition(ctx, receipt)) !== 'retry'
+      (await webhookReceiptDisposition(plugFn, receipt)) !== 'retry'
     ) {
-      return successResponse({
+      return {
         duplicate: true,
         receiptId: receipt.id,
         event: {
@@ -998,63 +1075,61 @@ async function handleWebhookRoute(
           event: resolvedEvent,
           verified: true,
         },
-      });
+      };
     }
     receiptId = receipt.id;
     if (receipt.verificationStatus !== verificationStatus) {
-      await ctx.plugFn.runtime.webhooks.updateReceipt(receipt.id, {
+      await plugFn.runtime.webhooks.updateReceipt(receipt.id, {
         verificationStatus,
       });
     }
-    const delivery = await ctx.plugFn.runtime.webhooks.createDelivery({
+    admission.assertActive?.();
+    const delivery = await plugFn.runtime.webhooks.createDelivery({
       receiptId: receipt.id,
       handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
       metadata: {
         provider,
         event: resolvedEvent,
-        payloadHash: currentPayloadHash,
+        payloadHash: admittedPayloadHash,
         idempotencyKey,
-        rawBodyBase64: Buffer.from(rawBody).toString('base64'),
-        rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
+        ...(!admission.binding ? {
+          rawBodyBase64: Buffer.from(rawBody).toString('base64'),
+          rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
+        } : {}),
       },
     });
     deliveryId = delivery.id;
     deliveryAttempts = delivery.attempts;
 
-    const webhookEvent = await ctx.plugFn.webhooks.handle(
-      provider,
-      resolvedEvent,
-      undefined,
-      headers,
-      secret,
-      { rawBody }
-    );
+    const webhookEvent = await admission.dispatch({ skipListeners });
 
-    await ctx.plugFn.runtime.webhooks.updateDelivery(delivery.id, {
+    await plugFn.runtime.webhooks.updateDelivery(delivery.id, {
       status: 'success',
       attempts: delivery.attempts + 1,
-      metadata: withoutWebhookReplayBody(delivery.metadata),
+      metadata: { ...withoutWebhookReplayBody(delivery.metadata), triggerKey: options.triggerKey },
     });
 
-    return successResponse({
+    return {
       event: webhookEvent,
       receiptId: receipt.id,
       deliveryId: delivery.id,
-    });
+    };
   } catch (error) {
     if (!receiptId) {
-      await createFailedWebhookReceipt(
-        ctx,
-        provider,
-        resolvedEvent,
-        headers,
-        payloadHash,
-        idempotencyKey,
-        error
-      );
+      if (!requiresBinding) {
+        await createFailedWebhookReceipt(
+          plugFn,
+          provider,
+          resolvedEvent,
+          headers,
+          currentPayloadHash,
+          idempotencyKey,
+          error
+        );
+      }
     } else if (!deliveryId) {
-      await ctx.plugFn.runtime.webhooks.updateReceipt(receiptId, {
+      await plugFn.runtime.webhooks.updateReceipt(receiptId, {
         verificationStatus: 'failed',
         metadata: {
           ...(receiptMetadata ?? {}),
@@ -1063,22 +1138,22 @@ async function handleWebhookRoute(
       });
     }
     if (deliveryId) {
-      await ctx.plugFn.runtime.webhooks.updateDelivery(deliveryId, {
+      await plugFn.runtime.webhooks.updateDelivery(deliveryId, {
         status: 'failed',
         attempts: deliveryAttempts + 1,
         error: error instanceof Error ? error.message : 'webhook handler failed',
-        nextAttemptAt: new Date(Date.now() + WEBHOOK_INITIAL_RETRY_DELAY_MS),
+        ...(!admission.binding ? { nextAttemptAt: new Date(Date.now() + WEBHOOK_INITIAL_RETRY_DELAY_MS) } : {}),
       });
     }
-    return errorResponse(toDeterministicError(error));
+    throw error;
   }
 }
 
 async function webhookReceiptDisposition(
-  ctx: PlugFnContext,
+  plugFn: PlugFn,
   receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>
 ): Promise<'complete' | 'active' | 'retry'> {
-  const deliveries = await ctx.plugFn.runtime.webhooks.listDeliveries(receipt.id);
+  const deliveries = await plugFn.runtime.webhooks.listDeliveries(receipt.id);
   if (deliveries.some((delivery) => delivery.status === 'success')) {
     return 'complete';
   }
@@ -1127,7 +1202,7 @@ async function assertWebhookSourceAllowed(
 }
 
 async function createFailedWebhookReceipt(
-  ctx: PlugFnContext,
+  plugFn: PlugFn,
   provider: string,
   event: string,
   headers: Record<string, string> | undefined,
@@ -1140,7 +1215,7 @@ async function createFailedWebhookReceipt(
   }
 
   try {
-    await ctx.plugFn.runtime.webhooks.createReceipt({
+    await plugFn.runtime.webhooks.createReceipt({
       provider,
       event,
       payloadHash,
@@ -1252,6 +1327,10 @@ function readSlackUrlVerificationChallenge(
   return value.type === 'url_verification' && typeof value.challenge === 'string'
     ? value.challenge
     : undefined;
+}
+
+function legacyWebhookPayloadHash(provider: string, rawBody: Uint8Array): string {
+  return createHash('sha256').update(webhookPayloadForHash(provider, rawBody)).digest('hex');
 }
 
 function webhookPayloadForHash(provider: string, rawBody: Uint8Array): Uint8Array | string {

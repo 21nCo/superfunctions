@@ -1,3 +1,4 @@
+import { prepareWebhookDelivery } from '../../core/src/webhooks/webhook-handler.js';
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createPlugFnRouter, ProviderRegistry, WebhookHandler, NoopLogger } from 'plugfn';
@@ -78,7 +79,7 @@ describe('raw-body webhook verification', () => {
     const handleWebhook = vi.fn();
     const plug = createRouterPlugMock(handleWebhook);
     plug.ready = new Promise<void>(() => undefined);
-    plug.webhooks.verify = vi.fn(async () => ({
+    plug.webhooks[prepareWebhookDelivery] = vi.fn(async () => ({
       verified: true,
       transformedPayload: { type: 'url_verification', challenge: 'slack-token' },
     }));
@@ -98,7 +99,8 @@ describe('raw-body webhook verification', () => {
 
   it('passes raw bytes from the router to webhook handling before verification', async () => {
     const handleWebhook = vi.fn(async () => ({ id: 'evt_1', verified: true }));
-    const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
+    const plug = createRouterPlugMock(handleWebhook);
+    const router = createPlugFnRouter(plug, {
       webhookSecret: {
         github: 'router-secret',
       },
@@ -118,15 +120,16 @@ describe('raw-body webhook verification', () => {
 
     expect(response.status).toBe(200);
     expect(handleWebhook).toHaveBeenCalledTimes(1);
-    expect(handleWebhook.mock.calls[0]?.[0]).toBe('github');
-    expect(handleWebhook.mock.calls[0]?.[1]).toBe('issues.opened');
-    expect(handleWebhook.mock.calls[0]?.[2]).toBeUndefined();
-    expect(decodeBytes(handleWebhook.mock.calls[0]?.[5]?.rawBody)).toBe(rawBody);
+    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledOnce();
+    const [provider, event, payload, , , options] = plug.webhooks[prepareWebhookDelivery].mock.calls[0];
+    expect([provider, event, payload]).toEqual(['github', 'issues.opened', undefined]);
+    expect(decodeBytes(options?.rawBody)).toBe(rawBody);
   });
 
   it('falls back to a registered GitHub family trigger for unknown actions', async () => {
     const handleWebhook = vi.fn(async () => ({ id: 'evt_family', verified: true }));
-    const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
+    const plug = createRouterPlugMock(handleWebhook);
+    const router = createPlugFnRouter(plug, {
       webhookSecret: { github: 'router-secret' },
     });
     const rawBody = '{"action":"transferred","issue":{"id":1}}';
@@ -143,7 +146,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleWebhook).toHaveBeenCalledWith(
+    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
       'github',
       'issues',
       undefined,
@@ -155,7 +158,8 @@ describe('raw-body webhook verification', () => {
 
   it('infers Gmail Pub/Sub envelopes as the registered mail.update trigger', async () => {
     const handleWebhook = vi.fn(async () => ({ id: 'evt_gmail', verified: true }));
-    const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
+    const plug = createRouterPlugMock(handleWebhook);
+    const router = createPlugFnRouter(plug, {
       webhookSecret: { gmail: 'gmail-verification-config' },
     });
     const rawBody = JSON.stringify({
@@ -175,7 +179,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleWebhook).toHaveBeenCalledWith(
+    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
       'gmail',
       'mail.update',
       undefined,
@@ -200,7 +204,7 @@ describe('raw-body webhook verification', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleWebhook).toHaveBeenCalledWith(
+    expect(plug.webhooks[prepareWebhookDelivery]).toHaveBeenCalledWith(
       'stripe',
       'invoice.paid',
       undefined,
@@ -210,7 +214,8 @@ describe('raw-body webhook verification', () => {
     );
     expect(plug.runtime.webhooks.findReceiptByIdempotencyKey).toHaveBeenCalledWith(
       'stripe',
-      'evt_123'
+      'evt_123',
+      'standalone'
     );
   });
 
@@ -244,6 +249,30 @@ describe('raw-body webhook verification', () => {
       data: { duplicate: true, receiptId: 'receipt_existing' },
     });
     expect(handleWebhook).not.toHaveBeenCalled();
+  });
+
+  it('accepts a nullable connection ID on new and duplicate unscoped SQL receipts', async () => {
+    const dispatch = vi.fn(async () => ({ id: 'test-event', verified: true }));
+    const plug = createRouterPlugMock(dispatch);
+    let receipt: Record<string, unknown> | null = null;
+    const webhooks = plug.runtime.webhooks;
+    webhooks.createReceipt.mockImplementation(async (input: Record<string, unknown>) => {
+      receipt = { ...input, id: 'test-receipt', connectionId: null };
+      return receipt;
+    });
+    webhooks.findReceiptByIdempotencyKey.mockImplementation(async () => receipt);
+    const router = createPlugFnRouter(plug);
+    const send = () => router.handle(new Request('https://app.example.test/webhooks/stripe', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'test-delivery', type: 'invoice.paid' }),
+    }));
+
+    expect((await send()).status).toBe(200);
+    webhooks.listDeliveries.mockResolvedValue([{ status: 'success' }]);
+    const duplicate = await send();
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    expect(dispatch).toHaveBeenCalledOnce();
   });
 
   it('retries an abandoned verified receipt after its delivery lease expires', async () => {
@@ -496,7 +525,10 @@ function createRouterPlugMock(handleWebhook: ReturnType<typeof vi.fn>) {
     webhooks: {
       on: vi.fn(),
       off: vi.fn(),
-      verify: vi.fn(async () => ({ verified: true })),
+      [prepareWebhookDelivery]: vi.fn(async (..._args: Parameters<WebhookHandler['verifyWebhook']>) => ({
+        verified: true,
+        admit: async () => ({ dispatch: handleWebhook }),
+      })),
       handle: handleWebhook,
     },
     runtime: {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NotFoundError, type Adapter as DbAdapter, type WhereClause } from '@superfunctions/db';
 import type {
   PlugFnConnectionGrant,
@@ -9,6 +10,7 @@ import type {
   PlugFnSyncJob,
   PlugFnWebhookDelivery,
   PlugFnWebhookReceipt,
+  PlugFnWebhookReceiptNamespace,
 } from '../types/runtime.js';
 import {
   ensurePlugFnDatabaseAdapter,
@@ -34,6 +36,7 @@ export interface CreateWebhookReceiptInput {
   event: string;
   payloadHash: string;
   idempotencyKey?: string;
+  idempotencyNamespace?: PlugFnWebhookReceiptNamespace;
   connectionId?: string;
   owner?: PlugFnConnectionOwner;
   headersRedacted?: Record<string, string>;
@@ -142,15 +145,20 @@ export class AdapterRuntimeStorage {
   }
 
   async createWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
-    if (!input.idempotencyKey) {
+    const { provider, idempotencyKey, idempotencyNamespace = 'standalone' } = input;
+    if (!idempotencyKey) {
+      if (idempotencyNamespace === 'workflow') {
+        throw new Error('workflow webhook receipts require an idempotency key');
+      }
       return this.persistWebhookReceipt(input);
     }
 
-    const claimKey = `${input.provider}:${input.idempotencyKey}`;
+    const claimKey = JSON.stringify([provider, idempotencyNamespace, idempotencyKey]);
     return this.withWebhookReceiptClaimLock(claimKey, async () => {
-      const existing = await this.adapter.findWebhookReceiptByIdempotencyKey(
-        input.provider,
-        input.idempotencyKey!
+      const existing = await this.findWebhookReceiptByIdempotencyKey(
+        provider,
+        idempotencyKey,
+        idempotencyNamespace
       );
       if (existing) {
         return assertMatchingWebhookReceipt(existing, input.payloadHash);
@@ -159,10 +167,11 @@ export class AdapterRuntimeStorage {
       try {
         return await this.persistWebhookReceipt(input);
       } catch (error) {
-        // A unique provider/idempotency index arbitrates claims across runtime instances.
-        const concurrentlyCreated = await this.adapter.findWebhookReceiptByIdempotencyKey(
-          input.provider,
-          input.idempotencyKey!
+        // The unique index arbitrates claims in this namespace across runtime instances.
+        const concurrentlyCreated = await this.findWebhookReceiptByIdempotencyKey(
+          provider,
+          idempotencyKey,
+          idempotencyNamespace
         );
         if (concurrentlyCreated) {
           return assertMatchingWebhookReceipt(concurrentlyCreated, input.payloadHash);
@@ -174,11 +183,15 @@ export class AdapterRuntimeStorage {
 
   private persistWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
     const now = new Date();
+    const { idempotencyKey } = input;
+    const receiptKey = input.idempotencyNamespace === 'workflow' && idempotencyKey
+      ? { workflowIdempotencyKey: workflowReceiptKey(input.provider, idempotencyKey) }
+      : { idempotencyKey };
     return this.adapter.createWebhookReceipt({
-      id: generateId('whrec'),
+      id: receiptKey.workflowIdempotencyKey ? `whrec_${receiptKey.workflowIdempotencyKey}` : generateId('whrec'),
       provider: input.provider,
       event: input.event,
-      idempotencyKey: input.idempotencyKey,
+      ...receiptKey,
       connectionId: input.connectionId,
       ...ownerFields(input.owner),
       headersRedacted: input.headersRedacted,
@@ -216,9 +229,19 @@ export class AdapterRuntimeStorage {
 
   findWebhookReceiptByIdempotencyKey(
     provider: string,
-    idempotencyKey: string
+    idempotencyKey: string,
+    namespace: PlugFnWebhookReceiptNamespace = 'standalone'
   ): Promise<PlugFnWebhookReceipt | null> {
-    return this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+    if (namespace === 'standalone') {
+      return this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+    }
+    return this.adapter.database.findOne<PlugFnWebhookReceipt>({
+      model: this.adapter.models.webhookReceipts,
+      where: [
+        { field: 'provider', operator: 'eq', value: provider },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: workflowReceiptKey(provider, idempotencyKey) },
+      ],
+    });
   }
 
   async updateWebhookReceipt(
@@ -561,12 +584,18 @@ function syncJobClaimLost(id: string): Error {
   return error;
 }
 
+function workflowReceiptKey(provider: string, idempotencyKey: string): string {
+  return createHash('sha256').update(JSON.stringify([provider, idempotencyKey])).digest('hex');
+}
+
 function assertMatchingWebhookReceipt(
   receipt: PlugFnWebhookReceipt,
   payloadHash: string
 ): PlugFnWebhookReceipt {
   if (receipt.payloadHash !== payloadHash) {
-    throw new Error('webhook idempotency key was reused with a different payload');
+    throw Object.assign(new Error('webhook idempotency key was reused with a different payload'), {
+      code: 'WEBHOOK_IDEMPOTENCY_CONFLICT', status: 409, retryable: false,
+    });
   }
   return receipt;
 }
