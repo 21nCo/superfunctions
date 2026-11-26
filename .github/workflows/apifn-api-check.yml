@@ -470,7 +470,9 @@ jobs:
             exit 1
           fi
           # The workspace CLI build installed the repository root with scripts off; with allow_install_scripts: true the
-          # root is installed again below, with them on.
+          # root is installed again below, with them on. allow_install_scripts governs this caller install, not that
+          # build: cli_source: workspace runs only in 21nCo/superfunctions, whose own CI installs the same root lockfile
+          # with scripts on.
           if [ "$CLI_SOURCE" == "workspace" ] && [ "$ALLOW_INSTALL_SCRIPTS" != "true" ] &&
             [ "$(pwd -P)" == "$(cd "$GITHUB_WORKSPACE" && pwd -P)" ]; then
             echo "The workspace CLI build already installed the repository root."
@@ -500,34 +502,49 @@ jobs:
           fi
           if [ "$ignore_scripts" == "true" ]; then
             # --ignore-scripts does not stop npm from running the prepare script of a git dependency, or of a directory
-            # dependency it installs as a copy (install-links), while packing it. Fail before npm runs anything when
-            # the lockfile has one; such a dependency needs allow_install_scripts: true.
+            # dependency it installs as a copy (install-links), while packing it. Fail before npm runs anything when a
+            # lockfile npm ci may use has one (working_directory's, or a parent's up to the repository root, which npm
+            # uses for a workspace member); such a dependency needs allow_install_scripts: true. Only package paths
+            # are printed: a resolved git URL can carry a credential.
             node - <<'NODE'
           const fs = require("node:fs");
-          const lockfile = ["npm-shrinkwrap.json", "package-lock.json"].find((file) => fs.existsSync(file));
-          if (lockfile === undefined) process.exit(0); // npm ci reports the missing lockfile
-          const lock = JSON.parse(fs.readFileSync(lockfile, "utf8"));
+          const path = require("node:path");
+          const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+          const lockfiles = [];
+          for (let dir = fs.realpathSync(process.cwd()); ; dir = path.dirname(dir)) {
+            const lockfile = ["npm-shrinkwrap.json", "package-lock.json"].map((file) => path.join(dir, file)).find((file) => fs.existsSync(file));
+            if (lockfile !== undefined) lockfiles.push(lockfile);
+            if (dir === root || path.dirname(dir) === dir) break;
+          }
           const prepared = [];
-          const check = (name, entry) => {
-            if (entry === null || typeof entry !== "object" || entry.link === true) return;
-            const source = [entry.resolved, entry.version].find(
-              (value) => typeof value === "string" && /^(git[+:]|github:|gitlab:|bitbucket:|gist:|file:)/.test(value)
-            );
-            if (source !== undefined && !/\.(tgz|tar\.gz|tar)$/.test(source)) prepared.push(`${name} (${source})`);
-          };
-          const walk = (dependencies, prefix) => {
-            for (const [name, entry] of Object.entries(dependencies ?? {})) {
-              check(prefix + name, entry);
-              walk(entry?.dependencies, `${prefix}${name} > `);
+          for (const lockfile of lockfiles) {
+            const lock = JSON.parse(fs.readFileSync(lockfile, "utf8"));
+            const check = (name, entry) => {
+              if (entry === null || typeof entry !== "object" || entry.link === true) return;
+              for (const source of [entry.resolved, entry.version]) {
+                if (typeof source !== "string") continue;
+                // A local archive is extracted without preparing; a directory or any git source is packed.
+                const local = /^file:/i.test(source);
+                if ((local && !/\.(tgz|tar\.gz|tar)$/i.test(source)) || (!local && /^(git[+:]|github:|gitlab:|bitbucket:|gist:)/i.test(source))) {
+                  prepared.push(`${path.relative(root, lockfile) || lockfile}: ${name}`);
+                  return;
+                }
+              }
+            };
+            const walk = (dependencies, prefix) => {
+              for (const [name, entry] of Object.entries(dependencies ?? {})) {
+                check(prefix + name, entry);
+                walk(entry?.dependencies, `${prefix}${name} > `);
+              }
+            };
+            if (lock.packages) {
+              for (const [key, entry] of Object.entries(lock.packages)) if (key !== "") check(key, entry);
+            } else {
+              walk(lock.dependencies, "");
             }
-          };
-          if (lock.packages) {
-            for (const [key, entry] of Object.entries(lock.packages)) if (key !== "") check(key, entry);
-          } else {
-            walk(lock.dependencies, "");
           }
           if (prepared.length > 0) {
-            console.log(`::error::${lockfile} has dependencies npm prepares by running their scripts even with --ignore-scripts: ${prepared.join(", ")}. Set allow_install_scripts: true to install them.`);
+            console.log(`::error::npm prepares these git or directory dependencies by running their scripts even with --ignore-scripts: ${prepared.join(", ")}. Set allow_install_scripts: true to install them.`);
             process.exit(1);
           }
           NODE
