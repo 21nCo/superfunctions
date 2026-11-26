@@ -37,6 +37,8 @@ import type {
   OpenApiOperationRef,
   OpenApiOperationRequestBody,
   OpenApiParameterLocation,
+  OpenApiParameterQuery,
+  OpenApiSecurityScheme,
   OpenApiServer,
   OpenApiSkippedOperation,
   OpenApiToolInfo,
@@ -249,6 +251,29 @@ function optionalSecurity(requirements: OpenApiOperation["security"]): { securit
   return requirements === undefined ? {} : { security: requirements };
 }
 
+function optionalSchemes(
+  schemes: OpenApiOperation["securitySchemes"],
+): { securitySchemes?: OpenApiOperation["securitySchemes"] } {
+  return schemes === undefined ? {} : { securitySchemes: schemes };
+}
+
+/** What an executor needs of a security scheme object: its type and, for `apiKey` and `http`, where the credential goes. */
+function schemeInfo(raw: JsonObject): OpenApiSecurityScheme | undefined {
+  if (typeof raw.type !== "string") return undefined;
+  const placed = raw.type === "apiKey" && typeof raw.name === "string" && (raw.in === "header" || raw.in === "query" || raw.in === "cookie");
+  return {
+    type: raw.type,
+    ...(placed ? { name: raw.name as string, in: raw.in as "header" | "query" | "cookie" } : {}),
+    ...(raw.type === "http" && typeof raw.scheme === "string" ? { scheme: raw.scheme } : {}),
+  };
+}
+
+/** Whether a parameter is the one an apiKey scheme sends its credential in; header names compare without case. */
+function isCredentialParameter(scheme: OpenApiSecurityScheme, name: string, location: string): boolean {
+  if (scheme.type !== "apiKey" || scheme.in !== location || scheme.name === undefined) return false;
+  return location === "header" ? scheme.name.toLowerCase() === name.toLowerCase() : scheme.name === name;
+}
+
 function isJsonMediaType(key: string): boolean {
   const type = key.split(";")[0]!.trim().toLowerCase();
   return type === "application/json" || /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+\+json$/.test(type);
@@ -318,6 +343,8 @@ class OperationConverter {
     private readonly shareSchemas: boolean,
     /** Whether an output schema must describe every documented success (`OpenApiExecutor.outputSchemaRule`). */
     private readonly everySuccess = false,
+    /** Query and header parameters the executor supplies itself (`OpenApiExecutor.ownsParameter`). */
+    private readonly ownsParameter?: (parameter: OpenApiParameterQuery) => boolean,
   ) {
     this.components = isObject(document.components) ? document.components : {};
     const dialect = document.jsonSchemaDialect;
@@ -447,7 +474,67 @@ class OperationConverter {
       ...(body ? { requestBody: body.info } : {}),
       servers: servers(raw.servers, pathItem.servers, this.document.servers),
       ...optionalSecurity(security(raw.security, this.document.security)),
+      ...optionalSchemes(this.securitySchemes(raw)),
     };
+  }
+
+  /** The resolved schemes named by each security requirement list, by list. */
+  private readonly schemesByLevel = new WeakMap<object, Readonly<Record<string, OpenApiSecurityScheme>> | undefined>();
+  /** Each security scheme name's resolution (null: it does not resolve). */
+  private readonly schemeOutcomes = new Map<string, OpenApiSecurityScheme | null>();
+
+  /**
+   * The schemes the operation's effective security requirements name that
+   * `components.securitySchemes` defines. A requirement list `security()`
+   * refuses names none here: the operation is skipped for it when built.
+   */
+  securitySchemes(raw: JsonObject): Readonly<Record<string, OpenApiSecurityScheme>> | undefined {
+    const level = [raw.security, this.document.security].find(Array.isArray);
+    if (level === undefined) return undefined;
+    if (this.schemesByLevel.has(level)) return this.schemesByLevel.get(level);
+    let requirements: unknown[];
+    try {
+      requirements = documentItems(level, "invalid-operation");
+    } catch (error) {
+      if (error instanceof OpenApiSkip) return undefined;
+      throw error;
+    }
+    const found = new Map<string, OpenApiSecurityScheme>();
+    for (const requirement of requirements) {
+      if (!isObject(requirement)) continue;
+      for (const name of Object.keys(requirement)) {
+        const scheme = found.has(name) ? undefined : this.securityScheme(name);
+        if (scheme) found.set(name, scheme);
+      }
+    }
+    const result = found.size === 0 ? undefined : deepFreeze(Object.fromEntries(found));
+    this.schemesByLevel.set(level, result);
+    return result;
+  }
+
+  /** A security scheme of `components.securitySchemes`, its `$ref` chain followed; a chain that ends nowhere gives none. */
+  private securityScheme(name: string): OpenApiSecurityScheme | undefined {
+    const known = this.schemeOutcomes.get(name);
+    if (known !== undefined) return known ?? undefined;
+    const section = isObject(this.components.securitySchemes) ? this.components.securitySchemes : {};
+    let current: unknown = Object.hasOwn(section, name) ? section[name] : undefined;
+    const visited = new Set([name]);
+    while (isObject(current) && "$ref" in current) {
+      this.schemas.chargeWork(1);
+      let target: string;
+      try {
+        target = parseComponentRef(current.$ref, "securitySchemes");
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        current = undefined;
+        break;
+      }
+      current = !visited.has(target) && Object.hasOwn(section, target) ? section[target] : undefined;
+      visited.add(target);
+    }
+    const scheme = isObject(current) ? schemeInfo(current) : undefined;
+    this.schemeOutcomes.set(name, scheme ?? null);
+    return scheme;
   }
 
   /**
@@ -917,8 +1004,9 @@ class OperationConverter {
 
   private parameters(path: string, pathItem: JsonObject, raw: JsonObject): ResolvedParameter[] {
     const resolved: ResolvedParameter[] = [];
+    const schemes = Object.values(this.securitySchemes(raw) ?? {});
     for (const parameter of this.mergedParameters(pathItem, raw)) {
-      const converted = this.parameter(parameter);
+      const converted = this.parameter(parameter, schemes);
       if (converted) resolved.push(converted);
     }
     const templateNames = templateVariables(path);
@@ -954,9 +1042,11 @@ class OperationConverter {
     return merged.values();
   }
 
-  private parameter(raw: JsonObject): ResolvedParameter | undefined {
+  private parameter(raw: JsonObject, schemes: readonly OpenApiSecurityScheme[]): ResolvedParameter | undefined {
     const name = raw.name as string;
     const location = raw.in as string;
+    // D9: a credential of the operation's own apiKey schemes is the executor's, never an input.
+    if (schemes.some((scheme) => isCredentialParameter(scheme, name, location))) return undefined;
     if (location === "cookie") {
       throw new OpenApiSkip("cookie-parameter", `parameter ${name} is sent in a cookie`);
     }
@@ -964,6 +1054,9 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
+    if (location !== "path" && this.ownsParameter?.({ name, in: location, required: raw.required === true }) === true) {
+      return undefined;
+    }
     // A name every object inherits is never a group property: Ajv reads it
     // through the prototype and @cfworker/json-schema reads own properties only.
     if (isPrototypeName(name)) {
@@ -1301,6 +1394,9 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
   if (options.executor.unsupported !== undefined && typeof options.executor.unsupported !== "function") {
     throw new McpFnValidationError("fromOpenAPI executor.unsupported must be a function");
   }
+  if (options.executor.ownsParameter !== undefined && typeof options.executor.ownsParameter !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.ownsParameter must be a function");
+  }
   if (options.name !== undefined && typeof options.name !== "function") {
     throw new McpFnValidationError("fromOpenAPI name must be a function");
   }
@@ -1347,6 +1443,7 @@ export function fromOpenAPI<TContext>(
     version,
     options.registry === undefined,
     options.executor.outputSchemaRule === "every-success",
+    options.executor.ownsParameter ? (parameter) => options.executor.ownsParameter!(parameter) : undefined,
   );
   const skipped: OpenApiSkippedOperation[] = [];
   const candidates: Candidate[] = [];

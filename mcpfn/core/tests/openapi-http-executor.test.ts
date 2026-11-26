@@ -373,7 +373,6 @@ describe("httpExecutor credentials (D9)", () => {
           "Proxy-Authorization": `Basic ${clientToken}`,
           "Content-Type": "text/plain",
           Connection: "close",
-          "X-Api-Key": "test-client-key",
           "X-Undeclared": "test-undeclared",
         },
       },
@@ -392,15 +391,57 @@ describe("httpExecutor credentials (D9)", () => {
     expect(sent.headers["x-undeclared"]).toBeUndefined();
   });
 
-  it("does not let a header parameter replace an operator header", async () => {
+  it("refuses, sending nothing, a header parameter value for a header the operator's function sets", async () => {
     const { registry } = catalog();
-    await registry.callTool(
+    const before = api.received.length;
+    const result = await registry.callTool(
       "forms",
       { path: { id: "1", ids: [1] }, header: { "X-Api-Key": "test-client-key" }, body: {} },
       context,
       clientExtra(),
     );
+    expect(result).toEqual({
+      isError: true,
+      content: [{ type: "text", text: 'The header parameter "X-Api-Key" is set by the server; leave it out.' }],
+    });
+    expect(api.received.length).toBe(before);
+    await registry.callTool("forms", { path: { id: "1", ids: [1] }, header: { "X-Trace": "trace-1" }, body: {} }, context, clientExtra());
     expect(lastRequest().headers["x-api-key"]).toBe("test-operator-key");
+  });
+
+  it("publishes no input for a header an operator record sets or an optional one fetch manages", async () => {
+    const managed = ["Connection", "Expect", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade"];
+    const { registry, tools } = fromOpenAPI<Context>(
+      {
+        openapi: "3.1.0",
+        info: { title: "owned", version: "1.0.0" },
+        paths: {
+          "/owned": {
+            get: {
+              operationId: "owned",
+              parameters: [
+                { name: "X-Api-Key", in: "header", required: true, schema: { type: "string" } },
+                { name: "X-Trace", in: "header", schema: { type: "string" } },
+                ...managed.map((name) => ({ name, in: "header", schema: { type: "string" } })),
+              ],
+              responses: ok,
+            },
+          },
+        },
+      },
+      { executor: httpExecutor<Context>({ baseUrl: `${api.origin}/v1`, headers: { "X-API-KEY": "test-operator-key" } }) },
+    );
+    const owned = tools[0]!;
+    expect(owned.operation.parameters.map((parameter) => parameter.name)).toEqual(["X-Trace"]);
+    expect(Object.keys((owned.inputSchema.properties as Record<string, { properties: object }>).header!.properties)).toEqual(["X-Trace"]);
+    for (const name of ["X-Api-Key", ...managed]) {
+      await expect(registry.callTool("owned", { header: { [name]: "test-client-value" } }, context, clientExtra())).rejects.toThrow(
+        McpFnValidationError,
+      );
+    }
+    await registry.callTool("owned", { header: { "X-Trace": "trace-2" } }, context, clientExtra());
+    expect(lastRequest().headers["x-api-key"]).toBe("test-operator-key");
+    expect(lastRequest().headers["x-trace"]).toBe("trace-2");
   });
 
   it("redacts credentials echoed in error bodies and withholds success bodies that echo them", async () => {
@@ -509,10 +550,16 @@ describe("httpExecutor responses", () => {
 
   it("times out a stalled response and a stalled body", async () => {
     const { registry } = catalog({ timeoutMs: 200 });
-    for (const name of ["stall", "stallBody"]) {
+    const expected = {
+      stall: "The API did not respond within 200 ms.",
+      // The status arrived, so the call may have taken effect: it must not read as unanswered.
+      stallBody:
+        "The API responded with HTTP 200, so the call reached the API and may have taken effect, but its body did not arrive within 200 ms. Do not repeat the call without checking.",
+    };
+    for (const [name, message] of Object.entries(expected)) {
       const closed = api.closed.length;
       const result = await registry.callTool(name, {}, context, clientExtra());
-      expect(result).toEqual({ isError: true, content: [{ type: "text", text: "The API did not respond within 200 ms." }] });
+      expect(result).toEqual({ isError: true, content: [{ type: "text", text: message }] });
       await expect(api.closed[closed]).resolves.toEqual({ finished: false });
     }
   });
@@ -536,13 +583,19 @@ describe("httpExecutor responses", () => {
           status: 200,
         }),
       );
-    for (const fetch of [neverSettles, stalledBody]) {
+    for (const [fetch, message] of [
+      [neverSettles, "The API did not respond within 100 ms."],
+      [
+        stalledBody,
+        "The API responded with HTTP 200, so the call reached the API and may have taken effect, but its body did not arrive within 100 ms. Do not repeat the call without checking.",
+      ],
+    ] as const) {
       const { registry } = fromOpenAPI<Context>(document, {
         executor: httpExecutor<Context>({ baseUrl: api.origin, timeoutMs: 100, fetch: fetch as typeof globalThis.fetch }),
       });
       await expect(registry.callTool("getItem", { path: { id: "1" } }, context, clientExtra())).resolves.toEqual({
         isError: true,
-        content: [{ type: "text", text: "The API did not respond within 100 ms." }],
+        content: [{ type: "text", text: message }],
       });
     }
   });
@@ -1035,7 +1088,15 @@ describe("httpExecutor edge cases", () => {
   });
 
   it("returns a body whose numbers JSON parsing would change unstructured", async () => {
-    for (const body of ['{"id":9007199254740993}', '{"n":1e-400}', '{"id":"9007199254740993","n":1.5}']) {
+    for (const body of [
+      '{"id":9007199254740993}',
+      '{"id":9007199254740993.0}',
+      '{"id":9.007199254740993e15}',
+      // An underflow written longer than any fixed window.
+      `{"n":0.${"0".repeat(1200)}1}`,
+      '{"n":1e-400}',
+      '{"id":"9007199254740993","n":1.5}',
+    ]) {
       const { fetch } = stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } }));
       const executor = httpExecutor<Context>({ baseUrl: api.origin, fetch });
       const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema: true });
@@ -1171,6 +1232,42 @@ describe("httpExecutor edge cases", () => {
     expect(urls).toEqual([]);
   });
 
+  it("keeps a large number whose shortest spelling is the value written, however it is written", async () => {
+    const body = '{"a":1e23,"b":100000000000000000000000,"c":9007199254740992.0,"d":-9.007199254740992e15}';
+    const { fetch } = stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } }));
+    const executor = httpExecutor<Context>({ baseUrl: api.origin, fetch });
+    const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema: true });
+    expect(result.structuredContent).toEqual({ a: 1e23, b: 1e23, c: 9007199254740992, d: -9007199254740992 });
+  });
+
+  it.each([
+    ["undefined", () => undefined],
+    ["null", () => null],
+    ["a promise of undefined", async () => undefined],
+  ])("refuses to send a call whose headers function returns %s", async (_label, headers) => {
+    const { fetch, urls } = stubFetch(() => new Response("{}"));
+    const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: headers as () => Record<string, string>, fetch });
+    const failure = await execute(executor, operationOf("getItem"), { path: { id: "1" } }).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(McpFnError);
+    expect(urls).toEqual([]);
+  });
+
+  it("recognises a cookie value whose percent-encoding holds a byte order mark mid-value", async () => {
+    const wire = ["test", "fake", "cookie"].join("%EF%BB%BF");
+    // As decodeURIComponent, and so cookie parsers, decode it: the U+FEFF is kept.
+    const decoded = decodeURIComponent(wire);
+    expect(decoded).toContain("\uFEFF");
+    for (const [status, hasOutputSchema] of [[200, true], [401, false]] as const) {
+      const { fetch } = stubFetch(() => new Response(JSON.stringify({ seen: decoded }), { status }));
+      const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: { cookie: `session=${wire}` }, fetch });
+      const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).not.toContain(JSON.stringify(decoded).slice(1, -1));
+      expect(text(result)).not.toContain(decoded);
+    }
+  });
+
   it("turns a failing headers function into a server-side error without its details", async () => {
     const executor = httpExecutor<Context>({
       baseUrl: api.origin,
@@ -1213,5 +1310,152 @@ describe("httpExecutor edge cases", () => {
         reason: "fetch cannot send a GET request with a body",
       },
     ]);
+  });
+});
+
+describe("httpExecutor apiKey credentials (D9)", () => {
+  const credentialDocument = {
+    openapi: "3.1.0",
+    info: { title: "credentials", version: "1.0.0" },
+    components: {
+      securitySchemes: {
+        queryKey: { type: "apiKey", in: "query", name: "api_key" },
+        headerKey: { $ref: "#/components/securitySchemes/headerKeyTarget" },
+        headerKeyTarget: { type: "apiKey", in: "header", name: "X-Api-Key" },
+        cookieKey: { type: "apiKey", in: "cookie", name: "session" },
+        bearer: { type: "http", scheme: "bearer" },
+      },
+    },
+    // Inherited by every operation that declares no security of its own.
+    security: [{ headerKey: [] }],
+    paths: {
+      "/query-only": {
+        get: {
+          operationId: "queryOnly",
+          security: [{ queryKey: [] }],
+          parameters: [{ name: "api_key", in: "query", required: true, schema: { type: "string" } }],
+          responses: ok,
+        },
+      },
+      "/query-or-bearer": {
+        get: {
+          operationId: "queryOrBearer",
+          security: [{ queryKey: [] }, { bearer: [] }],
+          parameters: [
+            { name: "api_key", in: "query", required: true, schema: { type: "string" } },
+            { name: "q", in: "query", schema: { type: "string" } },
+          ],
+          responses: ok,
+        },
+      },
+      "/header-key": {
+        get: {
+          operationId: "headerKey",
+          parameters: [
+            { name: "x-api-key", in: "header", required: true, schema: { type: "string" } },
+            { name: "X-Trace", in: "header", schema: { type: "string" } },
+          ],
+          responses: ok,
+        },
+      },
+      "/cookie-key": {
+        get: {
+          operationId: "cookieKey",
+          security: [{ cookieKey: [] }],
+          parameters: [{ name: "session", in: "cookie", required: true, schema: { type: "string" } }],
+          responses: ok,
+        },
+      },
+    },
+  };
+
+  // The operator authenticates with a bearer token only: it sets no X-Api-Key.
+  function credentialCatalog() {
+    return fromOpenAPI<Context>(credentialDocument, {
+      executor: httpExecutor<Context>({ baseUrl: `${api.origin}/v1`, headers: (trusted) => ({ authorization: `Bearer ${trusted.apiToken}` }) }),
+    });
+  }
+
+  it("skips an operation whose only credential goes in the query, which operator headers cannot supply", () => {
+    const { tools, skipped } = credentialCatalog();
+    expect(tools.map((tool) => tool.name)).not.toContain("queryOnly");
+    expect(skipped).toEqual([
+      {
+        operation: { method: "GET", path: "/query-only", operationId: "queryOnly" },
+        code: "unsupported-by-executor",
+        reason: 'the operation needs the query credential "api_key", which operator headers cannot supply',
+      },
+    ]);
+  });
+
+  it("never takes an apiKey parameter as an input, and gives the executor the schemes", () => {
+    const { tools } = credentialCatalog();
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    expect(byName.get("queryOrBearer")!.operation.parameters.map((parameter) => parameter.name)).toEqual(["q"]);
+    expect(byName.get("headerKey")!.operation.parameters.map((parameter) => parameter.name)).toEqual(["X-Trace"]);
+    // A cookie credential is dropped rather than making the operation unsupported.
+    expect(byName.get("cookieKey")!.operation.parameters).toEqual([]);
+    expect(byName.get("headerKey")!.operation.securitySchemes).toEqual({ headerKey: { type: "apiKey", in: "header", name: "X-Api-Key" } });
+    expect(byName.get("queryOrBearer")!.operation.securitySchemes).toEqual({
+      queryKey: { type: "apiKey", in: "query", name: "api_key" },
+      bearer: { type: "http", scheme: "bearer" },
+    });
+    expect(byName.get("queryOrBearer")!.inputSchema.properties).toMatchObject({ query: { properties: { q: { type: "string" } } } });
+    expect(JSON.stringify(byName.get("queryOrBearer")!.inputSchema)).not.toContain("api_key");
+    expect(JSON.stringify(byName.get("headerKey")!.inputSchema).toLowerCase()).not.toContain("x-api-key");
+  });
+
+  it("drops the same parameters for any executor, so no catalog takes a credential from the caller", () => {
+    const { tools } = fromOpenAPI(credentialDocument, { executor: { execute: () => ({ content: [] }) } });
+    expect(tools.find((tool) => tool.name === "queryOnly")!.operation.parameters).toEqual([]);
+    expect(tools.find((tool) => tool.name === "headerKey")!.operation.parameters.map((parameter) => parameter.name)).toEqual(["X-Trace"]);
+  });
+
+  it("rejects a caller's credential by schema and sends none injected past it", async () => {
+    const { registry, tools } = credentialCatalog();
+    await expect(
+      registry.callTool("queryOrBearer", { query: { api_key: "test-client-key", q: "x" } }, context, clientExtra()),
+    ).rejects.toThrow(McpFnValidationError);
+    await expect(
+      registry.callTool("headerKey", { header: { "x-api-key": "test-client-key" } }, context, clientExtra()),
+    ).rejects.toThrow(McpFnValidationError);
+
+    // Operations that still declare the credential, and arguments that bypass the registry.
+    const executor = httpExecutor<Context>({ baseUrl: `${api.origin}/v1`, headers: (trusted) => ({ authorization: `Bearer ${trusted.apiToken}` }) });
+    const declared = (name: string, location: "query" | "header") => ({
+      name,
+      in: location,
+      required: true,
+      style: location === "query" ? ("form" as const) : ("simple" as const),
+      explode: location === "query",
+      shape: "primitive" as const,
+    });
+    const queryOrBearer = tools.find((tool) => tool.name === "queryOrBearer")!.operation;
+    let result = await execute(executor, { ...queryOrBearer, parameters: [...queryOrBearer.parameters, declared("api_key", "query")] }, {
+      query: { api_key: "test-client-key", q: "x" },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(lastRequest().url).toBe("/v1/query-or-bearer?q=x");
+
+    const headerKey = tools.find((tool) => tool.name === "headerKey")!.operation;
+    result = await execute(executor, { ...headerKey, parameters: [...headerKey.parameters, declared("X-API-KEY", "header")] }, {
+      header: { "X-API-KEY": "test-client-key", "X-Trace": "trace-3" },
+    });
+    expect(result.isError).toBeUndefined();
+    const sent = lastRequest();
+    expect(sent.url).toBe("/v1/header-key");
+    expect(sent.headers["x-api-key"]).toBeUndefined();
+    expect(sent.headers["x-trace"]).toBe("trace-3");
+    expect(sent.headers.authorization).toBe(`Bearer ${operatorToken}`);
+  });
+
+  it("supplies the header credential from the operator when it sets one", async () => {
+    const { registry, tools } = fromOpenAPI<Context>(credentialDocument, {
+      executor: httpExecutor<Context>({ baseUrl: `${api.origin}/v1`, headers: { "X-Api-Key": "test-operator-key" } }),
+    });
+    expect(tools.find((tool) => tool.name === "headerKey")!.operation.parameters.map((parameter) => parameter.name)).toEqual(["X-Trace"]);
+    const result = await registry.callTool("headerKey", {}, context, clientExtra());
+    expect(result.isError).toBeUndefined();
+    expect(lastRequest().headers["x-api-key"]).toBe("test-operator-key");
   });
 });

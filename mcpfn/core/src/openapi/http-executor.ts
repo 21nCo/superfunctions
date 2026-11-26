@@ -3,7 +3,13 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 // bundle shares the root entry's classes (see from-openapi.ts).
 import { McpFnValidationError, structuredResult } from "@mcpfn/core";
 import { isForbiddenHeader } from "./headers.js";
-import type { OpenApiExecuteRequest, OpenApiExecutor, OpenApiOperation, OpenApiOperationParameter } from "./types.js";
+import type {
+  OpenApiExecuteRequest,
+  OpenApiExecutor,
+  OpenApiOperation,
+  OpenApiOperationParameter,
+  OpenApiParameterQuery,
+} from "./types.js";
 
 /** Headers the operator adds to every request. */
 export type HttpExecutorHeaders = Readonly<Record<string, string>>;
@@ -24,7 +30,10 @@ export interface HttpExecutorOptions<TContext = unknown> {
   /**
    * Operator headers, such as upstream credentials. Every value is treated
    * as a secret: it never appears in results or errors, it is redacted from
-   * error excerpts, and a success body that echoes it is withheld.
+   * error excerpts, and a success body that echoes it is withheld. With a
+   * record, a header parameter it sets is not a tool input; with a function,
+   * whose names are known only per call, a call that gives such a parameter
+   * a value is refused rather than having the value dropped.
    */
   headers?: HttpExecutorHeaderSource<TContext>;
   /** Cancels a call whose response (headers and body) takes longer. Default 30,000 ms. */
@@ -72,6 +81,7 @@ const HTML_NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '
 const NUMBER_LITERAL = /-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g;
 
 const encoder = new TextEncoder();
+const percentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /** A call the executor refuses before sending anything; the message never holds operator values. */
 class CallRejected extends Error {}
@@ -106,9 +116,11 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
   const fetchImpl = options.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new McpFnValidationError("httpExecutor requires a fetch implementation");
   let source: HttpExecutorHeaderSource<TContext> | undefined;
+  // Header names a record sets, which are never tool inputs.
+  let fixedNames = new Set<string>();
   try {
     source = options.headers;
-    if (source !== undefined && typeof source !== "function") operatorHeaders(source);
+    if (source !== undefined && typeof source !== "function") fixedNames = new Set(operatorHeaders(source).headers.keys());
   } catch (error) {
     throw new McpFnValidationError(headerFailure(error));
   }
@@ -116,6 +128,7 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
   return {
     unsupported: unsupportedReason,
     outputSchemaRule: "every-success",
+    ownsParameter: (parameter: OpenApiParameterQuery) => ownsParameter(parameter, fixedNames),
 
     async execute(request: OpenApiExecuteRequest<TContext>): Promise<CallToolResult> {
       const { operation, args } = request;
@@ -136,8 +149,9 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
       try {
         const refusal = unsupportedReason(operation);
         if (refusal !== undefined) throw new CallRejected(`${refusal[0]!.toUpperCase()}${refusal.slice(1)}.`);
-        url = requestUrl(base, operation, args);
-        headers = requestHeaders(operation, args.header, operator.headers);
+        const credentials = credentialParameters(operation);
+        url = requestUrl(base, operation, args, credentials.query);
+        headers = requestHeaders(operation, args.header, operator.headers, credentials.header);
         if (operation.requestBody && args.body !== undefined) {
           body = JSON.stringify(args.body);
           headers.set("content-type", operation.requestBody.contentType);
@@ -184,10 +198,14 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
         });
       } catch (error) {
         if (stopped === "timeout") {
-          // An error status already received is kept, though its body never finished.
-          return response && !isSuccess(response.status) && !isRedirect(response)
-            ? toolError(`The API responded with HTTP ${response.status}; its body did not arrive within ${timeoutMs} ms.`)
-            : toolError(`The API did not respond within ${timeoutMs} ms.`);
+          // A status already received is kept, though its body never finished:
+          // after a success the call may have taken effect, so it must not read as unanswered.
+          if (response === undefined || isRedirect(response)) return toolError(`The API did not respond within ${timeoutMs} ms.`);
+          return isSuccess(response.status)
+            ? toolError(
+                `The API responded with HTTP ${response.status}, so the call reached the API and may have taken effect, but its body did not arrive within ${timeoutMs} ms. Do not repeat the call without checking.`,
+              )
+            : toolError(`The API responded with HTTP ${response.status}; its body did not arrive within ${timeoutMs} ms.`);
         }
         if (stopped === "cancelled") return cancelled();
         // Fetch errors can name the URL but never hold header values; report none of them.
@@ -208,6 +226,50 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
   };
 }
 
+/**
+ * Whether a query or header parameter is the executor's own: a forbidden
+ * header (D9), an optional header fetch manages (a required one makes the
+ * operation unsupported instead), or a header the operator's record sets.
+ */
+function ownsParameter(parameter: OpenApiParameterQuery, fixedNames: ReadonlySet<string>): boolean {
+  if (parameter.in !== "header") return false;
+  const lower = parameter.name.toLowerCase();
+  return isForbiddenHeader(lower) || fixedNames.has(lower) || (!parameter.required && TRANSPORT_HEADERS.has(lower));
+}
+
+/** The query and header parameters an apiKey scheme of the operation sends its credential in (header names lower case). */
+function credentialParameters(operation: OpenApiOperation): { query: Set<string>; header: Set<string> } {
+  const query = new Set<string>();
+  const header = new Set<string>();
+  for (const scheme of Object.values(operation.securitySchemes ?? {})) {
+    if (scheme.type !== "apiKey" || typeof scheme.name !== "string") continue;
+    if (scheme.in === "query") query.add(scheme.name);
+    else if (scheme.in === "header") header.add(scheme.name.toLowerCase());
+  }
+  return { query, header };
+}
+
+/**
+ * A query apiKey scheme the operation cannot do without: operator headers
+ * cannot carry it, so every call would go unauthenticated. An alternative
+ * requirement without one (another scheme, or `{}` for none) is enough.
+ */
+function queryCredentialOnly(operation: OpenApiOperation): string | undefined {
+  const requirements = operation.security;
+  if (!requirements || requirements.length === 0) return undefined;
+  const schemes = operation.securitySchemes ?? {};
+  let needed: string | undefined;
+  for (const requirement of requirements) {
+    const query = Object.keys(requirement).find((name) => {
+      const scheme = Object.hasOwn(schemes, name) ? schemes[name] : undefined;
+      return scheme?.type === "apiKey" && scheme.in === "query";
+    });
+    if (query === undefined) return undefined;
+    needed ??= schemes[query]!.name;
+  }
+  return needed;
+}
+
 /** Why fetch cannot send an operation: it refuses TRACE, and a body on GET or HEAD. */
 function unsupportedReason(operation: OpenApiOperation): string | undefined {
   if (operation.method === "TRACE") return "fetch cannot send TRACE requests";
@@ -218,6 +280,10 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
     (parameter) => parameter.in === "header" && parameter.required && TRANSPORT_HEADERS.has(parameter.name.toLowerCase()),
   );
   if (managed) return `fetch manages the required header ${JSON.stringify(managed.name)}`;
+  const queryCredential = queryCredentialOnly(operation);
+  if (queryCredential !== undefined) {
+    return `the operation needs the query credential ${JSON.stringify(queryCredential)}, which operator headers cannot supply`;
+  }
   return undefined;
 }
 
@@ -294,13 +360,14 @@ async function resolveHeaders<TContext>(
       const result: unknown = source(context, operation);
       box = { record: result instanceof Promise ? await result : result };
     } else {
-      box = { record: source };
+      box = { record: source ?? {} };
     }
   } catch {
     throw new Error("httpExecutor headers function failed");
   }
   try {
-    return operatorHeaders(box.record ?? {});
+    // A function that returns no record fails closed: nothing is sent without the operator's headers.
+    return operatorHeaders(box.record);
   } catch (error) {
     throw new Error(headerFailure(error));
   }
@@ -382,12 +449,13 @@ function jsonUnescaped(text: string): string {
   );
 }
 
-/** `text` with each run of percent escapes decoded as UTF-8 (invalid bytes become U+FFFD), whether or not the text is a valid URI. */
+/** `text` with each run of percent escapes decoded as UTF-8 (invalid bytes become U+FFFD, a BOM is kept), whether or not the text is a valid URI. */
 function percentDecoded(text: string): string {
   return text.replace(PERCENT_RUN, (run) => {
     const bytes = new Uint8Array(run.length / 3);
     for (let index = 0; index < bytes.length; index += 1) bytes[index] = Number.parseInt(run.slice(index * 3 + 1, index * 3 + 3), 16);
-    return decode(bytes);
+    // A byte order mark is kept, as decodeURIComponent and cookie parsers keep it.
+    return percentDecoder.decode(bytes);
   });
 }
 
@@ -547,11 +615,15 @@ function unstructured(status: number, options: ResultOptions, what: string, text
 }
 
 /**
- * Whether every number in a JSON text parses to exactly the value written:
- * an integer beyond 2^53 or a number that overflows or underflows would be
- * changed, and so would the data the tool returns. Strings are skipped.
+ * Whether every number in a JSON text parses to the value written, as far as
+ * JSON can tell: a number that overflows or underflows, or one at or beyond
+ * 2^53 whose shortest spelling (which serializing produces) denotes another
+ * decimal value, however it was written (`9007199254740993`,
+ * `9007199254740993.0`, `9.007199254740993e15`), would be changed, and so
+ * would the data the tool returns. Strings are skipped.
  */
 function numbersExact(json: string): boolean {
+  const token = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
   for (let index = 0; index < json.length; index += 1) {
     const char = json[index]!;
     if (char === '"') {
@@ -560,18 +632,29 @@ function numbersExact(json: string): boolean {
       continue;
     }
     if (char !== "-" && (char < "0" || char > "9")) continue;
-    const match = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(json.slice(index, index + 1100))!;
-    const token = match[0];
-    index += token.length - 1;
-    const value = Number(token);
+    token.lastIndex = index;
+    const written = token.exec(json)?.[0];
+    if (written === undefined) continue;
+    index += written.length - 1;
+    const value = Number(written);
     if (!Number.isFinite(value)) return false;
-    if (/^-?\d+$/.test(token)) {
-      if (BigInt(token) !== BigInt(value)) return false;
-    } else if (value === 0 && /[1-9]/.test(token.replace(/[eE].*$/, ""))) {
+    if (Math.abs(value) >= 2 ** 53) {
+      if (decimalValue(written) !== decimalValue(String(value))) return false;
+    } else if (value === 0 && /[1-9]/.test(written.replace(/[eE].*$/, ""))) {
       return false;
     }
   }
   return true;
+}
+
+/** The exact decimal value of a number literal, as significant digits and a power of ten. */
+function decimalValue(literal: string): string {
+  const [, sign, whole, fraction = "", exponent = "0"] = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal)!;
+  const digits = `${whole}${fraction}`.replace(/^0+/, "");
+  const significant = digits.replace(/0+$/, "");
+  if (significant === "") return "0";
+  const power = BigInt(exponent) - BigInt(fraction.length) + BigInt(digits.length - significant.length);
+  return `${sign}${significant}e${power}`;
 }
 
 function declaredLength(response: Response): number {
@@ -776,9 +859,14 @@ function boundedNumber(value: unknown, fallback: number, max: number, name: stri
  * template that a URL parser would rewrite (a backslash, a dot segment, a
  * character it encodes) is refused rather than sent somewhere else.
  */
-function requestUrl(base: BaseUrl, operation: OpenApiOperation, args: Record<string, unknown>): string {
+function requestUrl(
+  base: BaseUrl,
+  operation: OpenApiOperation,
+  args: Record<string, unknown>,
+  credentials: ReadonlySet<string>,
+): string {
   const path = base.path + renderPath(operation, args.path);
-  const url = base.origin + path + renderQuery(operation, args.query);
+  const url = base.origin + path + renderQuery(operation, args.query, credentials);
   const parsed = new URL(url);
   if (parsed.origin !== base.origin || parsed.pathname !== path) {
     throw new CallRejected("The operation path cannot be sent as written.");
@@ -845,10 +933,15 @@ function renderPath(operation: OpenApiOperation, group: unknown): string {
     .join("/");
 }
 
-/** `form` style query: arrays repeat the key (`explode: true`); `null` leaves the parameter out. */
-function renderQuery(operation: OpenApiOperation, group: unknown): string {
+/**
+ * `form` style query: arrays repeat the key (`explode: true`); `null` leaves
+ * the parameter out, and so does an apiKey credential's name (D9), which no
+ * caller value may fill.
+ */
+function renderQuery(operation: OpenApiOperation, group: unknown, credentials: ReadonlySet<string>): string {
   const pairs: string[] = [];
   for (const parameter of parametersIn(operation, "query")) {
+    if (credentials.has(parameter.name)) continue;
     const value = argument(group, parameter.name);
     if (value === undefined || value === null) continue;
     const encodeValue = (text: string) => {
@@ -868,19 +961,29 @@ function renderQuery(operation: OpenApiOperation, group: unknown): string {
 
 /**
  * Operator headers, then each declared header parameter that is not forbidden
- * (D9), not a transport header and not one the operator set. Undeclared names
- * in the arguments are never read; `null` leaves the header out.
+ * or an apiKey credential (D9) and not a transport header; a value for one of
+ * those, which validation never accepts, is dropped. A value for a header the
+ * operator set is refused, never dropped silently. Undeclared names in the
+ * arguments are never read; `null` leaves the header out.
  */
-function requestHeaders(operation: OpenApiOperation, group: unknown, operator: Map<string, string>): Headers {
+function requestHeaders(
+  operation: OpenApiOperation,
+  group: unknown,
+  operator: Map<string, string>,
+  credentials: ReadonlySet<string>,
+): Headers {
   const headers = new Headers();
   for (const [name, value] of operator) headers.set(name, value);
   for (const parameter of parametersIn(operation, "header")) {
     const lower = parameter.name.toLowerCase();
-    if (isForbiddenHeader(lower) || TRANSPORT_HEADERS.has(lower) || operator.has(lower) || !HEADER_NAME.test(parameter.name)) {
+    if (isForbiddenHeader(lower) || credentials.has(lower) || TRANSPORT_HEADERS.has(lower) || !HEADER_NAME.test(parameter.name)) {
       continue;
     }
     const value = argument(group, parameter.name);
     if (value === undefined || value === null) continue;
+    if (operator.has(lower)) {
+      throw new CallRejected(`The header parameter ${JSON.stringify(parameter.name)} is set by the server; leave it out.`);
+    }
     const text = primitives(parameter, value).join(",");
     if (!PARAMETER_VALUE.test(text)) {
       throw new CallRejected(`The header parameter ${JSON.stringify(parameter.name)} has a value no HTTP header can carry.`);

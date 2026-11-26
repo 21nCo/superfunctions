@@ -249,6 +249,12 @@ for (const { operation, code, reason } of skipped) {
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.
+- **Security.** `operation.security` is the operation's requirement list,
+  else the document's, and `operation.securitySchemes` holds the schemes it
+  names that `components.securitySchemes` defines (`$ref` followed), each as
+  `{ type, name?, in?, scheme? }`. Credentials are the executor's job (D9):
+  a parameter an `apiKey` scheme of the operation sends its credential in
+  (header, query or cookie) is never a tool input, whatever the executor.
 - **Executor.** `execute` receives `{ operation, args, context, signal,
   hasOutputSchema, checkOutput }`: `context` is the trusted context the
   server's `context` factory built for the call, `hasOutputSchema` says
@@ -256,7 +262,10 @@ for (const { operation, code, reason } of skipped) {
   (with an output schema) says whether a value satisfies it. An executor may
   set `outputSchemaRule` (see Outputs) and implement `unsupported(operation)`,
   returning why it cannot send an operation; such operations are skipped
-  (`unsupported-by-executor`) before any tool name is chosen.
+  (`unsupported-by-executor`) before any tool name is chosen. It may also
+  implement `ownsParameter({ name, in, required })` for query and header
+  parameters: one it supplies itself returns `true` and is left out of the
+  tool input and `operation.parameters`, so no caller value is accepted for it.
 
 ### Sending calls over HTTP
 
@@ -291,14 +300,22 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   type (`application/json` or the selected `*+json` type). Operations fetch
   cannot send (`TRACE`, `GET` or `HEAD` with a request body, or a required
   header fetch manages, such as `Connection`) are skipped by `fromOpenAPI`
-  as `unsupported-by-executor`. It sets `outputSchemaRule: "every-success"`
+  as `unsupported-by-executor`, and so is an operation whose every security
+  requirement needs an `apiKey` credential in the query, which operator
+  headers cannot carry. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
 - **Credentials (D9).** `headers` is a record or a function of the server's
   trusted context (and the operation), called on every call; values are
-  printable ASCII. Header parameters are set after them, except the
-  forbidden ones (`Authorization`, `Cookie`, `Host`, `Content-Length`,
-  `Proxy-*`, `Accept`, `Content-Type`), transport headers (`Connection`,
-  `Transfer-Encoding`, ...) and any header the operator set, so a caller can
+  printable ASCII. The tool input offers only what the executor sends: the
+  forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
+  `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
+  (`Connection`, `Transfer-Encoding`, `Expect`, ...), `apiKey` credential
+  parameters and, with a `headers` record, every header it sets are not
+  inputs; a value injected past validation for one of them is never sent,
+  and an `apiKey` credential the operator does not set goes unsent. With a
+  `headers` function, whose header names are known only per call, a call
+  that gives a header parameter it sets a value is refused with an
+  `isError` result rather than having the value dropped. So a caller can
   neither replace nor add credentials; argument names the operation does not
   declare are never read. Nothing from the MCP client's request, such as its
   `Authorization` header, is forwarded. Every operator header value is
@@ -316,8 +333,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   success body that happens to contain it. These spellings cover an upstream
   that reflects a credential it received; an upstream set on leaking one can
   always disguise it, and is outside what the executor can detect. An
-  invalid header, a record whose properties throw, or a failing `headers`
-  function is a server error (`MCPFN_TOOL_ERROR` for the client) whose
+  invalid header, a record whose properties throw, or a `headers` function
+  that fails or returns no record is a server error (`MCPFN_TOOL_ERROR` for the client) whose
   message names at most the header, never a value or the function's own
   error.
 - **Responses.** Redirects are never followed (`redirect: "manual"`): a 3xx
@@ -325,15 +342,17 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   when the tool has an output schema, else text. A 2xx the output schema
   does not describe (no body, as for `204` or `HEAD`, a body that is not a
   JSON object, one that fails `checkOutput`, or one whose numbers JSON
-  parsing would change, such as an integer beyond 2^53) cannot be
+  parsing would change, such as an integer beyond 2^53 however it is
+  spelled) cannot be
   structured content; it is an `isError` result that says the call
   succeeded and not to repeat it, followed by the body text. Any other
   status is an `isError` result with the status and an excerpt of at most
   4 KiB of its body, which is read whole first. A body over
   `maxResponseBytes` (default 1 MiB), read or declared by `Content-Length`,
   is cancelled and reported with the status and no excerpt. `timeoutMs`
-  (default 30 s) bounds the response and its body (an error status already
-  received is still reported), and the MCP request's abort signal cancels
+  (default 30 s) bounds the response and its body; a status already
+  received is still reported, and after a 2xx the result says the call may
+  have taken effect, so it is not retried as unanswered. The MCP request's abort signal cancels
   the call, also while the `headers` function runs; a response that arrives
   after either has its body cancelled. Network failures are reported
   without details. Pass `fetch` to use another implementation.
