@@ -132,6 +132,9 @@ describe('webhook workflow admission', () => {
       ownerKind: 'organization',
       ownerId: 'test-unverified-owner',
     })).resolves.toEqual(receipt);
+    await expect(update({
+      workflow_tenant_id: 'test-unverified-owner', workflow_idempotency_key: 'test-other-key',
+    } as unknown as Partial<publicPlugFn.PlugFnWebhookReceipt>)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
 
     const duplicate = await send('test-installation-one');
     expect(duplicate.status).toBe(200);
@@ -549,6 +552,10 @@ describe('webhook workflow admission', () => {
     await expect(database.updateWebhookDelivery(scoped.id, { receiptId: undefined })).resolves.toMatchObject({
       receiptId: scoped.receiptId,
     });
+    const physicalPatch = { receipt_id: standalone.id } as unknown as Partial<PlugFnWebhookDelivery>;
+    await expect(database.updateWebhookDelivery(scoped.id, physicalPatch)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
 
     const adapter = createPlugFnDatabaseAdapter({ database });
     const permissiveUpdate = vi.spyOn(adapter, 'updateWebhookDelivery').mockImplementation((id, updates) =>
@@ -557,6 +564,9 @@ describe('webhook workflow admission', () => {
     const custom = new AdapterRuntimeStorage(adapter);
     await expect(custom.updateWebhookDelivery(scoped.id, { receiptId: standalone.id })).rejects.toMatchObject({
       code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT',
+    });
+    await expect(custom.updateWebhookDelivery(scoped.id, physicalPatch)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
     });
     expect(permissiveUpdate).not.toHaveBeenCalled();
     await expect(custom.updateWebhookDelivery(scoped.id, { receiptId: undefined })).resolves.toMatchObject({

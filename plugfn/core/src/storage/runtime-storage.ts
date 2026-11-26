@@ -18,6 +18,7 @@ import {
 } from './adapters/database.js';
 import {
   assertWebhookReceiptProvider,
+  assertWebhookUpdateFields,
   hasWebhookSignatureProof,
   isBindingId,
   webhookBindingRequired,
@@ -302,6 +303,7 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
+    assertWebhookUpdateFields(updates, 'receipt');
     const normalizedUpdates = { ...updates };
     delete normalizedUpdates.signatureVerified;
     delete normalizedUpdates.workflowIdempotencyKey;
@@ -370,6 +372,7 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookDelivery>,
   ): Promise<PlugFnWebhookDelivery> {
+    assertWebhookUpdateFields(updates, 'delivery');
     const fields = { ...updates };
     delete fields.workflowScoped;
     delete fields.signatureVerified;

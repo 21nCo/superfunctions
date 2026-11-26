@@ -12,7 +12,12 @@ import type {
   PlugFnWebhookReceipt,
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
-import { assertWebhookReceiptProvider, webhookDeliveryReassignmentConflict, webhookRetryUpdates } from '../../webhooks/webhook-handler.js';
+import {
+  assertWebhookReceiptProvider,
+  assertWebhookUpdateFields,
+  webhookDeliveryReassignmentConflict,
+  webhookRetryUpdates,
+} from '../../webhooks/webhook-handler.js';
 import type { WebhookRecord } from '../webhook-storage.js';
 
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
@@ -493,6 +498,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
+    assertWebhookUpdateFields(updates, 'receipt');
     const model = this.models.webhookReceipts;
     const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
     const data = cloneRecord(updates);
@@ -540,6 +546,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     id: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
+    assertWebhookUpdateFields(updates, 'delivery');
     const model = this.models.webhookDeliveries;
     const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
     const data = cloneRecord(updates);

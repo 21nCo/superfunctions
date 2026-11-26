@@ -675,6 +675,23 @@ const retryBookkeepingFields = new Set([
   'status', 'attempts', 'claimToken', 'nextAttemptAt', 'error', 'metadata', 'updatedAt',
 ]);
 
+const receiptUpdateFields = new Set([
+  'id', 'provider', 'event', 'idempotencyKey', 'workflowIdempotencyKey', 'workflowTenantId',
+  'connectionId', 'ownerKind', 'ownerId', 'headersRedacted', 'payloadHash', 'verificationStatus',
+  'signatureVerified', 'receivedAt', 'createdAt', 'metadata',
+]);
+const deliveryUpdateFields = new Set([
+  'id', 'receiptId', 'sinkId', 'handlerName', 'workflowScoped', 'signatureVerified', 'createdAt',
+  ...retryBookkeepingFields,
+]);
+
+export function assertWebhookUpdateFields(updates: object, record: 'receipt' | 'delivery'): void {
+  const allowed = record === 'receipt' ? receiptUpdateFields : deliveryUpdateFields;
+  if (Object.keys(updates).some((field) => !allowed.has(field))) {
+    throw new WebhookHandlerError('VALIDATION_ERROR', `unsupported webhook ${record} update field`, 400);
+  }
+}
+
 export function webhookRetryUpdates(updates: Partial<PlugFnWebhookDelivery>): Partial<PlugFnWebhookDelivery> {
   return Object.fromEntries(Object.entries(updates).filter(([field]) => retryBookkeepingFields.has(field)));
 }
