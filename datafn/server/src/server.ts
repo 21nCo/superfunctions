@@ -1437,16 +1437,17 @@ export async function createDatafnServer<TContext = any>(
           });
         }
 
+        let admittedTicketScopes: readonly string[] | undefined;
         if (multiRegionRuntime?.placement && action !== "status") {
           try {
-            await validateDatafnPlacement({
+            ({ scopes: admittedTicketScopes } = (await validateDatafnPlacement({
               namespace: await extractNamespace(enrichedCtx),
               regionId: multiRegionRuntime.regionId,
               runtime: multiRegionRuntime.placement,
               request: placementRequest,
               scope: action,
               trustedInternal: origin === "executor",
-            });
+            })).ticket ?? {});
           } catch (error) {
             if (error instanceof DatafnRoutingError) {
               return completeDatafnResponse({
@@ -1511,16 +1512,28 @@ export async function createDatafnServer<TContext = any>(
         }
 
         if (action === "push") {
-          // DATA-41: push returns a post-write row only to a caller whom the
-          // plugin and host authorization would also let query the resource
-          // (the REST read payload `{ resource }`); a denial or error omits it.
+          // DATA-41: push returns a post-write row only to a caller whom a
+          // query of the resource would admit: a route ticket with the query
+          // scope where tickets are required, and the plugin and host
+          // authorization of a query request (the REST read payload
+          // `{ resource }`). A denial or error omits the row.
+          const requireQueryTicket = Boolean(multiRegionRuntime?.placement?.routeTickets);
           pushReadAuthorizers.set(enrichedCtx, async (resource) => {
             try {
+              if (requireQueryTicket && !admittedTicketScopes?.includes("query")) return false;
               const readPayload = { resource };
-              if (!(await authorizePlugins({ action: "query", request: req, context: enrichedCtx, payload: readPayload })).ok) {
+              const readUrl = new URL(req.url);
+              if (!readUrl.pathname.endsWith("/push")) return false;
+              readUrl.pathname = `${readUrl.pathname.slice(0, -"/push".length)}/query`;
+              const headers = new Headers(req.headers);
+              headers.delete("content-length");
+              const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
+              const readCtx = createEnrichedContext(ctx);
+              readCtx.parsedBody = readPayload;
+              if (!(await authorizePlugins({ action: "query", request: readRequest, context: readCtx, payload: readPayload })).ok) {
                 return false;
               }
-              return config.authorize ? Boolean(await config.authorize(enrichedCtx, "query", readPayload)) : true;
+              return config.authorize ? Boolean(await config.authorize(readCtx, "query", readPayload)) : true;
             } catch {
               return false;
             }

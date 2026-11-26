@@ -20,6 +20,10 @@ import { executePull } from "../src/execution/sync/pull.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { INTERNAL_TABLE_SCHEMAS } from "../src/execution/internal-tables.js";
 import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
+import { createMemoryIndexedDirectoryStore } from "@superfunctions/db/adapters";
+import { datafnMultiRegionPlugin } from "../src/plugins/multi-region.js";
+import { createDatafnHmacRouteTickets } from "../src/regional-tickets.js";
+import { claimDatafnNamespacePlacement, createMemoryDatafnPlacementDirectory } from "../src/multi-region-routing.js";
 
 type Json = Record<string, any>;
 const NS = "datafn";
@@ -2746,5 +2750,62 @@ describe("DATA-41 revisions: PR review round 1", () => {
       expect(reused.body.result.deduped).toBe(true);
       expect(reused.body.result).not.toHaveProperty("rev");
     }
+  });
+
+  it("decides post-write rows from a query-shaped request after the batch, and drops ambiguous mutation ids", async () => {
+    // A plugin that tells reads from writes by the request path.
+    const byPath = { name: "path-policy", runsOn: ["server"], authorize: (input: Json) => !new URL(input.request.url).pathname.endsWith("/query") };
+    const path = await serve({ config: { plugins: [byPath] } });
+    const inserted = await path.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(inserted.body.result.revisions[inserted.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+
+    // A host read rule over application state that an earlier mutation of the same push revokes.
+    const database = memoryAdapter();
+    const readGranted = async () => Boolean(await database.findOne({
+      model: "project", where: [{ field: "id", operator: "eq", value: "project:readers" }], namespace: NS,
+    }));
+    const host = await serve({ database, config: { authorize: async (_ctx: unknown, action: string) => action !== "query" || readGranted() } });
+    await host.push({ resource: "project", operation: "insert", id: "project:readers", record: { name: "r" } });
+    const revoked = await host.send("push", { clientId: "client:a", mutations: [
+      { version: 1, clientId: "client:a", mutationId: "revoke", resource: "project", operation: "delete", id: "project:readers" },
+      { version: 1, clientId: "client:a", mutationId: "later", resource: "task", operation: "insert", id: "task:2", record: { title: "b" } },
+    ] });
+    expect(revoked.body.result.revisions.later).toEqual({ resource: "task", id: "task:2", rev: 1 });
+
+    // One mutation id used for two records in one push.
+    const reused = await host.send("push", { clientId: "client:a", mutations: [
+      { version: 1, clientId: "client:a", mutationId: "twice", resource: "task", operation: "insert", id: "task:3", record: {} },
+      { version: 1, clientId: "client:a", mutationId: "twice", resource: "task", operation: "insert", id: "task:4", record: {} },
+    ] });
+    expect(reused.body.result.applied).toContain("twice");
+    expect(reused.body.result.revisions?.twice).toBeUndefined();
+  });
+
+  it("returns a post-write row only with a route ticket that grants the query scope", async () => {
+    const directory = createMemoryDatafnPlacementDirectory();
+    const placement = await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
+    const tickets = createDatafnHmacRouteTickets({ activeKeyId: "test", keys: { test: "x".repeat(32) } });
+    const server = await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+      context: () => ({ namespace: "tenant" }),
+      namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
+      plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
+        placement: { directory, routeTickets: { verifier: tickets, issuer: "app", audience: "eu" } } })],
+    } as any);
+    const pushWith = async (scopes: string[], id: string) => {
+      const now = Date.now();
+      const ticket = await tickets.sign({
+        version: 1, issuer: "app", audience: "eu", subject: "subject", namespace: "tenant", regionId: "eu",
+        epoch: placement.placement.epoch, scopes: scopes as any, issuedAt: now, notBefore: now, expiresAt: now + 60_000, ticketId: `ticket-${id}`,
+      });
+      const res = await server.router.handle(new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-datafn-route-ticket": ticket },
+        body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: id, resource: "task", operation: "insert", id, record: { title: "t" } }] }),
+      }));
+      return ((await res.json()) as Json).result?.revisions?.[id];
+    };
+    expect(await pushWith(["push"], "task:1")).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    expect((await pushWith(["push", "query"], "task:2")).record).toMatchObject({ id: "task:2", $rev: 1 });
   });
 });

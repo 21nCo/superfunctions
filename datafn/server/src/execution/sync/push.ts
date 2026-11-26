@@ -471,11 +471,31 @@ export async function executePush(
    * never installs a state a later write of its own batch replaced; a
    * superseded entry keeps only its revision.
    */
-  const settledRevisions = (): Record<string, DatafnPushRevision> => {
+  /**
+   * DATA-41: a mutation id the batch used for more than one record; its
+   * single response slot cannot say which record a revision belongs to,
+   * so it carries none.
+   */
+  const revisionTargets = new Map<string, string>();
+  const ambiguousRevisionIds = new Set<string>();
+  /**
+   * DATA-41: a post-write row is disclosed only for a resource the host and
+   * plugin read authorization admits, decided after every write of the push
+   * (so no write of the batch can make the decision stale) and outside any
+   * write transaction.
+   */
+  const settledRevisions = async (): Promise<Record<string, DatafnPushRevision>> => {
     const settled: Record<string, DatafnPushRevision> = Object.create(null);
+    const readable = new Map<string, boolean>();
     for (const [mutationId, revision] of Object.entries(revisions)) {
+      if (ambiguousRevisionIds.has(mutationId)) continue;
       const latest = batchRevisions.get(revisionKey(revision.resource, revision.id)) ?? revision.rev;
-      settled[mutationId] = latest > revision.rev
+      let mayRead = true;
+      if (revision.record && authorizeRead) {
+        if (!readable.has(revision.resource)) readable.set(revision.resource, await authorizeRead(revision.resource));
+        mayRead = readable.get(revision.resource) === true;
+      }
+      settled[mutationId] = latest > revision.rev || !mayRead
         ? { resource: revision.resource, id: revision.id, rev: revision.rev }
         : revision;
     }
@@ -507,7 +527,7 @@ export async function executePush(
       where: [{ field: "id", operator: "eq", value: mut.id }],
       namespace,
     })) as Record<string, unknown> | null;
-    if (!row || !canReadEveryField(schema, mut.resource, row) || !readableResources.has(mut.resource)) return base;
+    if (!row || !canReadEveryField(schema, mut.resource, row)) return base;
     // Record-level access was checked before the write; a grant revoked
     // since then must not let the reply disclose the row, so it is checked
     // again in the write's transaction.
@@ -1151,17 +1171,6 @@ export async function executePush(
     batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, true);
   }
 
-  /**
-   * DATA-41: resources whose post-write rows the caller may receive: the
-   * host and plugin authorization would let the caller query them. Decided
-   * before any write transaction opens, once per resource.
-   */
-  const readableResources = new Set<string>();
-  for (const resource of new Set(request.mutations.map((mutation: any) => mutation?.resource))) {
-    if (typeof resource !== "string" || !issuesRevisions(schema, resource)) continue;
-    if (!authorizeRead || (await authorizeRead(resource))) readableResources.add(resource);
-  }
-
   // ---- Process each mutation ----
   for (const mutation of request.mutations) {
     const mut = mutation as any;
@@ -1232,6 +1241,9 @@ export async function executePush(
     }
 
     const batchKey = `${mut.clientId}:${mut.mutationId}`;
+    const target = revisionKey(String(mut.resource), String(mut.id));
+    if ((revisionTargets.get(mut.mutationId) ?? target) !== target) ambiguousRevisionIds.add(mut.mutationId);
+    revisionTargets.set(mut.mutationId, target);
 
     // Intra-batch dedup
     if (batchLocalSeen.has(batchKey)) {
@@ -1547,6 +1559,6 @@ export async function executePush(
     cursor: String(latestSeq),
     cursorBefore: String(cursorBeforeSeq),
     cursors,
-    ...(Object.keys(revisions).length > 0 ? { revisions: settledRevisions() } : {}),
+    ...(Object.keys(revisions).length > 0 ? { revisions: await settledRevisions() } : {}),
   };
 }
