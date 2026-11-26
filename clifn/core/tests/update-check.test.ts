@@ -11,6 +11,24 @@ import {
 } from "../src/update-check.js";
 import { recordDeliveryQuietly, settleCacheWrites } from "../src/update-check-cache.js";
 
+// Reads of the cache file that have finished: a check goes on from a finished read in microtasks only, so once the
+// next macrotask runs after its last read, it has settled. Every other file operation is passed through unchanged.
+const cacheReads = vi.hoisted(() => ({ file: "", done: 0 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const readFile = (async (file: unknown, ...rest: unknown[]) => {
+    try {
+      return await (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+    } finally {
+      if (file === cacheReads.file) {
+        cacheReads.done += 1;
+      }
+    }
+  }) as typeof actual.readFile;
+  return { ...actual, readFile, default: { ...actual, readFile } };
+});
+
 const tty = { isTTY: true };
 const pipe = { isTTY: false };
 const terminal = { stdin: tty, stdout: tty, stderr: tty };
@@ -30,6 +48,8 @@ beforeEach(async () => {
   env = { XDG_STATE_HOME: root, LOCALAPPDATA: root };
   stateDir = resolveAppPaths(APP, { env }).state;
   cacheFile = path.join(stateDir, "update-check.json");
+  cacheReads.file = cacheFile;
+  cacheReads.done = 0;
 });
 
 afterEach(async () => {
@@ -99,6 +119,12 @@ async function untilCached(condition: (cached: Record<string, unknown>) => boole
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/** Waits until `count` reads of the cache file have finished, then one macrotask more (see `cacheReads`). */
+async function untilReadsDone(count: number): Promise<void> {
+  await until(() => cacheReads.done >= count);
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 /** Lets real I/O progress while fake timers hold `setTimeout`, failing after five seconds of real time. */
@@ -285,12 +311,15 @@ describe("startUpdateCheck: request and notice", () => {
 
     clock += 1_501;
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
-    // The late result is in the cache: notice() is first called after it arrived. Past the deadline, the handle's
-    // outcome no longer depends on when its claim read finishes.
-    await until(() => exists(cacheFile));
+    // Settled past the deadline before notice() is first called: its first read, then its claim read and its refresh
+    // write's read have finished.
+    await untilReadsDone(3);
 
     await expect(handle.notice()).resolves.toBeNull();
     await expect(handle.notice()).resolves.toBeNull();
+    const cached = (await readCacheJson()) as Record<string, unknown>;
+    expect(cached).toMatchObject({ latest: "1.3.0" });
+    expect(cached).not.toHaveProperty("notifiedAt");
   });
 
   it("keeps a notice dropped by the timeout dropped and does not count it as delivered", async () => {
@@ -303,8 +332,8 @@ describe("startUpdateCheck: request and notice", () => {
     clock += 1_500;
     await expect(handle.notice()).resolves.toBeNull();
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
-    // The late result is in the cache. The deadline expired the handle before it settled, so it never claims.
-    await until(() => exists(cacheFile));
+    // Settled after the deadline expired it: its first read, then its claim read and its refresh write's read.
+    await untilReadsDone(3);
     // The result settled after the deadline: a later call does not return it either.
     await expect(handle.notice()).resolves.toBeNull();
     const cached = (await readCacheJson()) as Record<string, unknown>;
