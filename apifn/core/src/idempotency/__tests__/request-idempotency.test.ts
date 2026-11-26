@@ -1687,3 +1687,105 @@ describe("createRequestIdempotency round-9 regressions", () => {
     expect(store.writes).toBe(1);
   });
 });
+
+/** Receipt source whose next lookup reads the receipt, then pauses on a hook before it returns. */
+function pausingReceipts(database: FakeOrderDatabase) {
+  let hook: (() => Promise<void>) | undefined;
+  return {
+    receipts: {
+      find: async (storeKey: string) => {
+        const found = await database.receipts.find(storeKey);
+        const run = hook;
+        hook = undefined;
+        if (run) await run();
+        return found;
+      },
+    },
+    pauseNext(run: () => Promise<void>) {
+      hook = run;
+    },
+  };
+}
+
+describe("createRequestIdempotency PR round-1 regressions", () => {
+  const otherBody = { item: "pen", quantity: 2 };
+
+  /** Inside a paused lookup: receipt A expires, a newer claim of another body commits and settles, and its record is evicted. */
+  function newerEpoch(
+    idempotency: ReturnType<typeof createRequestIdempotency>,
+    database: FakeOrderDatabase,
+    store: FakeAtomicStore,
+  ) {
+    const newer: { response?: IdempotentResponse; claimId?: string } = {};
+    const run = async () => {
+      database.receiptsByKey.clear();
+      const token = acquired(await idempotency.claim(orderRequest({ body: otherBody })));
+      newer.claimId = token.claimId;
+      newer.response = await database.createOrder(token, "pen");
+      await idempotency.settle(token, newer.response);
+      store.records.clear();
+    };
+    return { newer, run };
+  }
+
+  async function expectNewerWins(
+    idempotency: ReturnType<typeof createRequestIdempotency>,
+    store: FakeAtomicStore,
+    newer: { response?: IdempotentResponse; claimId?: string },
+  ) {
+    expect([...store.records.values()][0]).toMatchObject({ state: "completed", fromReceipt: true, receiptClaimId: newer.claimId });
+    expect(await idempotency.claim(orderRequest({ body: otherBody }))).toMatchObject({ outcome: "replay", response: newer.response });
+    expect(await idempotency.recover(orderRequest({ body: otherBody }))).toMatchObject({ outcome: "replay", response: newer.response });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "conflict" });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "conflict" });
+  }
+
+  it("never caches a receipt read over an evicted key once a newer claim committed and was evicted", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new FakeAtomicStore();
+    const paused = pausingReceipts(database);
+    const { idempotency } = setup({ store, receipts: paused.receipts });
+    const first = acquired(await idempotency.claim(orderRequest()));
+    await idempotency.settle(first, await database.createOrder(first, "book"));
+    store.records.clear();
+    const { newer, run } = newerEpoch(idempotency, database, store);
+    paused.pauseNext(run);
+
+    // The paused lookup returns receipt A after receipt B committed: B decides, never A.
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "conflict" });
+    await expectNewerWins(idempotency, store, newer);
+  });
+
+  it.each(["settle", "release"] as const)("never leaves an older receipt cached over a newer commit on %s", async (action) => {
+    const database = new FakeOrderDatabase();
+    const store = new FakeAtomicStore();
+    const paused = pausingReceipts(database);
+    const { idempotency } = setup({ store, receipts: paused.receipts });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(holder, "book");
+    store.records.clear();
+    const { newer, run } = newerEpoch(idempotency, database, store);
+    paused.pauseNext(run);
+
+    const result = action === "settle" ? await idempotency.settle(holder, response) : await idempotency.release(holder);
+    expect(result).toEqual({ outcome: "conflict" });
+    await expectNewerWins(idempotency, store, newer);
+  });
+
+  it("replays a newer durable receipt over a record cached from an older one", async () => {
+    const { idempotency, database, store, clock } = setup();
+    const first = acquired(await idempotency.claim(orderRequest()));
+    await idempotency.settle(first, await database.createOrder(first, "book"));
+    // A copy cached from receipt A survives (its writer stopped before any recheck) while receipt B commits.
+    database.receiptsByKey.clear();
+    const other = createRequestIdempotency({ store: new FakeAtomicStore(), receipts: database.receipts, clock, nonce: testNonce });
+    const later = acquired(await other.claim(orderRequest({ body: otherBody })));
+    const laterResponse = await database.createOrder(later, "pen");
+    expect([...store.records.values()][0]).toMatchObject({ receiptClaimId: first.claimId });
+
+    // The first read records receipt B over the cached copy and replays it from the receipt.
+    expect(await idempotency.claim(orderRequest({ body: otherBody }))).toEqual({ outcome: "replay", response: laterResponse, source: "receipt" });
+    expect([...store.records.values()][0]).toMatchObject({ receiptClaimId: later.claimId });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "conflict" });
+  });
+});

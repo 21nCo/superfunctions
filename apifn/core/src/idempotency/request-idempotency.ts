@@ -850,30 +850,63 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { storeKey, fingerprint, claimId, generation: generation as number, response };
   };
 
+  /** Whether two receipts are the same commit: the same claim and body. */
+  const sameCommit = (a: ParsedReceipt, b: ParsedReceipt): boolean => a.claimId === b.claimId && a.fingerprint === b.fingerprint;
+
+  /** Writes a receipt's response as the completed result, if `expectedVersion` still holds; returns the new version. */
+  const writeFromReceipt = async (
+    storeKey: string,
+    expectedVersion: string | null,
+    generation: number,
+    receipt: ParsedReceipt,
+  ): Promise<string | undefined> => {
+    const version = nextVersion();
+    const written = await store.compareAndSet(storeKey, expectedVersion, {
+      state: "completed",
+      version,
+      generation: Math.max(generation, receipt.generation, 1),
+      fingerprint: receipt.fingerprint,
+      recovery: "receipt",
+      response: boundSnapshot(receipt.response, maxResponseBytes, extraCredentials),
+      expiresAt: now() + retentionMs,
+      fromReceipt: true,
+      receiptClaimId: receipt.claimId,
+    });
+    return written ? version : undefined;
+  };
+
   /**
    * Records a receipt's response as the completed result, if `expectedVersion`
    * still holds. The record names the receipt's claim, so a later step knows
-   * which commit it holds.
+   * which commit it holds. A write over an absence (`null`) cannot tell the
+   * absence its caller saw from a later one, after a newer claim committed
+   * and its record was evicted, so the receipt is read again after such a
+   * write and a newer commit replaces the copy just written. Returns whether
+   * the record was written and the latest receipt seen, which decides.
    */
   const completeFromReceipt = async (
     storeKey: string,
     expectedVersion: string | null,
     generation: number,
     receipt: ParsedReceipt,
-  ): Promise<StoredIdempotentResponse | undefined> => {
-    const response = boundSnapshot(receipt.response, maxResponseBytes, extraCredentials);
-    const written = await store.compareAndSet(storeKey, expectedVersion, {
-      state: "completed",
-      version: nextVersion(),
-      generation: Math.max(generation, receipt.generation, 1),
-      fingerprint: receipt.fingerprint,
-      recovery: "receipt",
-      response,
-      expiresAt: now() + retentionMs,
-      fromReceipt: true,
-      receiptClaimId: receipt.claimId,
-    });
-    return written ? response : undefined;
+  ): Promise<{ written: boolean; receipt: ParsedReceipt }> => {
+    const version = await writeFromReceipt(storeKey, expectedVersion, generation, receipt);
+    if (version === undefined || expectedVersion !== null) return { written: version !== undefined, receipt };
+    let latest: ParsedReceipt | undefined;
+    try {
+      latest = await findReceipt(storeKey);
+    } catch {
+      // The receipt in hand still decides; every read of a receipt-backed record checks it against the live receipt.
+      return { written: true, receipt };
+    }
+    if (!latest || sameCommit(latest, receipt)) return { written: true, receipt };
+    try {
+      // Over the version just written: a newer writer is never overwritten.
+      await writeFromReceipt(storeKey, version, generation, latest);
+    } catch {
+      // The newer receipt still decides; a later step records it.
+    }
+    return { written: true, receipt: latest };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.
@@ -904,18 +937,23 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   /**
    * Replays a completed record. A copy recorded from a receipt whose parts
-   * were dropped for size is served in full from the receipt itself.
+   * were dropped for size is served in full from that receipt, which
+   * `inspect` already matched to the record's commit.
    */
-  const replayOf = async (storeKey: string, record: CompletedIdempotencyRecord): Promise<IdempotencyReplay> => {
-    if (record.recovery === "receipt" && record.fromReceipt === true && record.response.omitted !== undefined && receipts) {
-      const receipt = await findReceipt(storeKey);
-      // Only the commit this record was recorded from: a later epoch's receipt is never served for it.
-      if (receipt && receipt.claimId === record.receiptClaimId && receipt.fingerprint === record.fingerprint) {
-        return { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" };
-      }
+  const replayOf = (record: CompletedIdempotencyRecord, receipt: ParsedReceipt | undefined): IdempotencyReplay => {
+    if (record.fromReceipt === true && record.response.omitted !== undefined && receipt) {
+      return { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" };
     }
     return { outcome: "replay", response: replayable(record.response, extraCredentials), source: "store" };
   };
+
+  /** Whether the live record already holds this exact commit: the receipt's claim, not only its body. */
+  const holdsReceipt = (live: Live, receipt: ParsedReceipt): boolean =>
+    live.kind === "present" &&
+    live.record.state === "completed" &&
+    live.record.fromReceipt === true &&
+    live.record.receiptClaimId === receipt.claimId &&
+    live.record.fingerprint === receipt.fingerprint;
 
   type ReceiptOutcome = IdempotencyReplay | { outcome: "conflict" };
 
@@ -932,13 +970,14 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     receipt: ParsedReceipt,
     fingerprint: string,
   ): Promise<ReceiptOutcome> => {
+    let decides = receipt;
     try {
-      await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
+      decides = (await completeFromReceipt(storeKey, expectedVersion, generation, receipt)).receipt;
     } catch {
       // A failed cache write never hides the durable receipt; a later step records it.
     }
-    return receipt.fingerprint === fingerprint
-      ? { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" }
+    return decides.fingerprint === fingerprint
+      ? { outcome: "replay", response: fullReceiptResponse(decides), source: "receipt" }
       : { outcome: "conflict" };
   };
 
@@ -948,12 +987,15 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * receipt is checked for every mode: a `"none"` request over it is a
    * conflict, so a handler outside the receipt contract never re-runs a
    * committed key and never sees the receipt's response. For a receipt-mode
-   * request a receipt wins over any record not already recorded from it.
+   * request the receipt is always read, also for a record recorded from a
+   * receipt, and wins over any record that does not hold that exact commit:
+   * a cached copy never masks a newer durable receipt. The matched receipt
+   * is returned for the replay.
    */
   const inspect = async (
     prepared: Prepared,
     at: number,
-  ): Promise<{ done: ReceiptOutcome } | { live: Live }> => {
+  ): Promise<{ done: ReceiptOutcome } | { live: Live; receipt?: ParsedReceipt }> => {
     const { storeKey, fingerprint, recovery } = prepared;
     const live = await readLive(storeKey, at);
     const record = live.kind === "present" ? live.record : undefined;
@@ -964,18 +1006,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (!record && (await findReceipt(storeKey))) return { done: { outcome: "conflict" } };
       return { live };
     }
-    const recordedFromReceipt = record?.state === "completed" && record.fromReceipt === true;
-    if (!recordedFromReceipt) {
-      const receipt = await findReceipt(storeKey);
-      if (receipt) {
-        const [expected, generation] =
-          live.kind === "present"
-            ? [live.record.version, live.record.generation]
-            : [live.expectedVersion, live.previousGeneration];
-        return { done: await applyReceipt(storeKey, expected, generation, receipt, fingerprint) };
-      }
-    }
-    return { live };
+    const receipt = await findReceipt(storeKey);
+    if (!receipt) return { live };
+    if (holdsReceipt(live, receipt)) return { live, receipt };
+    const [expected, generation] =
+      live.kind === "present" ? [live.record.version, live.record.generation] : [live.expectedVersion, live.previousGeneration];
+    return { done: await applyReceipt(storeKey, expected, generation, receipt, fingerprint) };
   };
 
   /** An acquired claim before its final lease check. */
@@ -990,13 +1026,13 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const at = now();
     const inspected = await inspect(prepared, at);
     if ("done" in inspected) return inspected.done;
-    const { live } = inspected;
+    const { live, receipt } = inspected;
     if (live.kind === "absent") {
       return acquire(prepared.storeKey, live.expectedVersion, live.previousGeneration + 1, prepared);
     }
     const { record } = live;
     if (record.fingerprint !== prepared.fingerprint) return { outcome: "conflict" };
-    if (record.state === "completed") return replayOf(prepared.storeKey, record);
+    if (record.state === "completed") return replayOf(record, receipt);
     if (at < record.leaseExpiresAt) return { outcome: "in_progress", retryAfterMs: retryAfter(record.leaseExpiresAt, at) };
     // The lease expired and the receipt source shows no commit: take the key over.
     if (record.recovery === "receipt") return acquire(prepared.storeKey, record.version, record.generation + 1, prepared);
@@ -1130,14 +1166,6 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   type Reconciled = { outcome: "receipt"; receipt: ParsedReceipt; own: boolean } | { outcome: "conflict" };
 
-  /** Whether the live record already holds this exact commit: the receipt's claim, not only its body. */
-  const holdsReceipt = (live: Live, receipt: ParsedReceipt): boolean =>
-    live.kind === "present" &&
-    live.record.state === "completed" &&
-    live.record.fromReceipt === true &&
-    live.record.receiptClaimId === receipt.claimId &&
-    live.record.fingerprint === receipt.fingerprint;
-
   /**
    * The one reconcile step for settle and release. For a receipt-mode token
    * whose key has a receipt, records the receipt over the live record unless
@@ -1170,7 +1198,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       const [expected, generation] =
         live.kind === "present" ? [live.record.version, live.record.generation] : [live.expectedVersion, live.previousGeneration];
       try {
-        if (await completeFromReceipt(token.storeKey, expected, generation, receipt)) break;
+        const recorded = await completeFromReceipt(token.storeKey, expected, generation, receipt);
+        // A newer commit found after a write over an absence decides instead.
+        receipt = recorded.receipt;
+        if (recorded.written) break;
       } catch {
         // A failed cache write never hides the validated receipt; a later step records it.
         break;
@@ -1311,11 +1342,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const at = now();
     const inspected = await inspect(prepared, at);
     if ("done" in inspected) return inspected.done;
-    const { live } = inspected;
+    const { live, receipt } = inspected;
     if (live.kind === "absent") return { outcome: "absent" };
     const { record } = live;
     if (record.fingerprint !== prepared.fingerprint) return { outcome: "conflict" };
-    if (record.state === "completed") return replayOf(prepared.storeKey, record);
+    if (record.state === "completed") return replayOf(record, receipt);
     if (at < record.leaseExpiresAt) return { outcome: "in_progress", retryAfterMs: retryAfter(record.leaseExpiresAt, at) };
     return record.recovery === "receipt"
       ? { outcome: "not_committed" }
