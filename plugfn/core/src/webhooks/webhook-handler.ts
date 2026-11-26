@@ -11,7 +11,7 @@ import type {
   WebhookWorkflowBindingMatch,
 } from '../types/trigger.js';
 import type { WebhookOptions } from '../types/config.js';
-import type { PlugFnWebhookReceipt } from '../types/runtime.js';
+import type { PlugFnWebhookDelivery, PlugFnWebhookReceipt } from '../types/runtime.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
 
@@ -41,6 +41,7 @@ export interface WebhookAdmission {
 interface WebhookDispatchScope {
   binding: Readonly<WebhookWorkflowBinding>;
   idempotencyKey: string;
+  authenticatedDeliveryId?: string;
   bindingIsCurrent(): Promise<boolean>;
   revoked: AbortSignal;
 }
@@ -193,7 +194,7 @@ export class WebhookHandler {
 
   private createWebhookEvent(provider: string, prepared: VerifiedWebhook, scope?: WebhookDispatchScope): WebhookEvent {
     const { triggerKey, transformedPayload, normalizedHeaders, signature, verified } = prepared;
-    const eventId = getEventId(transformedPayload, normalizedHeaders);
+    const eventId = scope ? scope.authenticatedDeliveryId : getEventId(transformedPayload, normalizedHeaders);
     const idempotencyKey = scope
       ? JSON.stringify([provider, scope.binding.tenantId, scope.binding.connectionId, scope.idempotencyKey])
       : eventId ? `${provider}:${eventId}` : undefined;
@@ -389,7 +390,7 @@ export class WebhookHandler {
             current.revoked === revoked &&
             !revoked.aborted;
         };
-        const scope = { binding, idempotencyKey, bindingIsCurrent, revoked };
+        const scope = { binding, idempotencyKey, authenticatedDeliveryId: deliveryId, bindingIsCurrent, revoked };
         return {
           signatureVerified,
           binding,
@@ -667,6 +668,14 @@ export function assertWebhookReceiptProvider(
 
 export function hasWebhookSignatureProof(record: { signatureVerified?: true | null }): boolean {
   return record.signatureVerified === true;
+}
+
+const retryBookkeepingFields = new Set([
+  'status', 'attempts', 'claimToken', 'nextAttemptAt', 'error', 'metadata', 'updatedAt',
+]);
+
+export function webhookRetryUpdates(updates: Partial<PlugFnWebhookDelivery>): Partial<PlugFnWebhookDelivery> {
+  return Object.fromEntries(Object.entries(updates).filter(([field]) => retryBookkeepingFields.has(field)));
 }
 
 function sha256(value: string | Uint8Array): string {

@@ -12,7 +12,7 @@ import type {
   PlugFnWebhookReceipt,
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
-import { assertWebhookReceiptProvider } from '../../webhooks/webhook-handler.js';
+import { assertWebhookReceiptProvider, webhookRetryUpdates } from '../../webhooks/webhook-handler.js';
 import type { WebhookRecord } from '../webhook-storage.js';
 
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
@@ -502,7 +502,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     delete data.workflowTenantId;
     delete data.signatureVerified;
     let existing: PlugFnWebhookReceipt | null = null;
-    if (provider !== undefined || 'connectionId' in data || 'event' in data || 'idempotencyKey' in data || 'payloadHash' in data) {
+    if (provider !== undefined || 'connectionId' in data || 'event' in data || 'idempotencyKey' in data ||
+        'payloadHash' in data || 'id' in data) {
       existing = await this.getWebhookReceipt(id);
       if (!existing) throw new NotFoundError(model, where);
       assertWebhookReceiptProvider(existing, provider);
@@ -511,6 +512,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
         delete data.event;
         delete data.idempotencyKey;
         delete data.payloadHash;
+        delete data.id;
       } else if (provider !== undefined && provider !== existing.provider) {
         data.provider = provider;
         // A provider change may only update a row that is still standalone.
@@ -569,16 +571,20 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     claimToken: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery | null> {
+    const model = this.models.webhookDeliveries;
+    const where: WhereClause[] = [
+      { field: 'id', operator: 'eq', value: id },
+      { field: 'status', operator: 'eq', value: 'running' },
+      { field: 'claimToken', operator: 'eq', value: claimToken },
+      { field: 'workflowScoped', operator: 'eq', value: null },
+    ];
+    const data = webhookRetryUpdates(updates);
+    if (Object.keys(data).length === 0) return this.database.findOne<PlugFnWebhookDelivery>({ model, where });
     try {
       return await this.database.update<PlugFnWebhookDelivery>({
-        model: this.models.webhookDeliveries,
-        where: [
-          { field: 'id', operator: 'eq', value: id },
-          { field: 'status', operator: 'eq', value: 'running' },
-          { field: 'claimToken', operator: 'eq', value: claimToken },
-          { field: 'workflowScoped', operator: 'eq', value: null },
-        ],
-        data: cloneRecord(updates),
+        model,
+        where,
+        data: cloneRecord(data),
       });
     } catch (error) {
       if (error instanceof NotFoundError) {

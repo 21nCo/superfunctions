@@ -867,12 +867,15 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       // The standalone retry callback never receives scoped deliveries, even with a custom adapter.
       if (receipt.workflowIdempotencyKey) {
         const excluded = await updateClaimed({
-          status: 'failed',
-          workflowScoped: true,
+          status: 'dead-lettered',
           error: 'scoped webhook retries require verified ingress',
         });
-        if (excluded) deliveries.push(excluded);
-        failed += 1;
+        if (excluded) {
+          deliveries.push(excluded);
+          deadLettered += 1;
+        } else {
+          failed += 1;
+        }
         continue;
       }
 

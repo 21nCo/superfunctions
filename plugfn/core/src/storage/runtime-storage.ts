@@ -16,7 +16,7 @@ import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
-import { assertWebhookReceiptProvider, WebhookHandlerError } from '../webhooks/webhook-handler.js';
+import { assertWebhookReceiptProvider, WebhookHandlerError, webhookRetryUpdates } from '../webhooks/webhook-handler.js';
 
 export const webhookSignatureProof = Symbol('plugfn.webhookSignatureProof');
 export const webhookReceiptTenantId = Symbol('plugfn.webhookReceiptTenantId');
@@ -264,13 +264,17 @@ export class AdapterRuntimeStorage {
     delete normalizedUpdates.workflowTenantId;
     let existing: PlugFnWebhookReceipt | null = null;
     if (normalizedUpdates.provider === undefined) delete normalizedUpdates.provider;
-    if ('provider' in normalizedUpdates || 'connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates) {
+    if ('provider' in normalizedUpdates || 'connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates ||
+        'id' in normalizedUpdates || 'event' in normalizedUpdates || 'payloadHash' in normalizedUpdates) {
       existing = await this.adapter.getWebhookReceipt(id);
       if (existing) assertWebhookReceiptProvider(existing, normalizedUpdates.provider);
       if (existing?.workflowIdempotencyKey) {
         delete normalizedUpdates.provider;
         delete normalizedUpdates.connectionId;
         delete normalizedUpdates.idempotencyKey;
+        delete normalizedUpdates.id;
+        delete normalizedUpdates.event;
+        delete normalizedUpdates.payloadHash;
       }
     }
     if (updates.metadata !== undefined) {
@@ -336,7 +340,7 @@ export class AdapterRuntimeStorage {
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery | null> {
     return this.adapter.updateClaimedWebhookDelivery(id, claimToken, {
-      ...updates,
+      ...webhookRetryUpdates(updates),
       updatedAt: new Date(),
     });
   }

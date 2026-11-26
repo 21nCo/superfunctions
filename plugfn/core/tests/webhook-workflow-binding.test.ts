@@ -112,7 +112,7 @@ describe('webhook workflow admission', () => {
     expect(action).toHaveBeenCalledOnce();
   });
 
-  it.each(['public API', 'storage adapter'] as const)('rejects scoped receipt provider changes through the %s', async (surface) => {
+  it.each(['public API', 'storage adapter'] as const)('keeps scoped receipt identity immutable through the %s', async (surface) => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { runtime, send, action } = startRuntime(database);
     expect((await send('test-installation-one')).status).toBe(200);
@@ -125,6 +125,11 @@ describe('webhook workflow admission', () => {
     });
     await expect(runtime.runtime.webhooks.getReceipt(receipt.id)).resolves.toEqual(receipt);
     await expect(update({ provider: receipt.provider, workflowIdempotencyKey: undefined })).resolves.toEqual(receipt);
+    await expect(update({
+      id: 'test-other-receipt',
+      event: 'test.other-event',
+      payloadHash: 'test-other-payload',
+    })).resolves.toEqual(receipt);
 
     const duplicate = await send('test-installation-one');
     expect(duplicate.status).toBe(200);
@@ -141,6 +146,37 @@ describe('webhook workflow admission', () => {
     await expect(webhooks.updateReceipt(receipt.id, { provider: 'test-other-provider' })).resolves.toMatchObject({
       provider: 'test-other-provider',
     });
+  });
+
+  it('does not let a claimed standalone update manufacture a scoped success', async () => {
+    const { runtime, send } = startRuntime(database);
+    expect((await send('test-installation-one')).status).toBe(200);
+    const [scoped] = await database.findMany<publicPlugFn.PlugFnWebhookReceipt>({ model: receiptModel });
+    const webhooks = runtime.runtime.webhooks;
+    const standalone = await webhooks.createReceipt({
+      provider: 'test-provider', event: 'test.event', payloadHash: 'test-standalone-body',
+    });
+    const delivery = await webhooks.createDelivery({ receiptId: standalone.id });
+    const [claimed] = await database.claimWebhookDeliveriesForRetry(new Date(), 1, 'test-worker');
+    expect(claimed.id).toBe(delivery.id);
+    const result = await database.updateClaimedWebhookDelivery(delivery.id, claimed.claimToken!, {
+      receiptId: scoped.id, status: 'success', workflowScoped: true, signatureVerified: true,
+    });
+    expect(result).toMatchObject({ receiptId: standalone.id, status: 'success' });
+    expect(result?.workflowScoped).not.toBe(true);
+    expect(result?.signatureVerified).not.toBe(true);
+  });
+
+  it.each([false, true])('uses only an authenticated delivery ID for scoped ingress (%s has ID)', async (authenticateDeliveryId) => {
+    const { runtime, send } = startRuntime(database, { authenticateDeliveryId });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const response = await send('test-installation-one', 'test-unsigned-id', {
+      'x-test-signed-delivery': 'test-authenticated-id',
+    });
+    expect(response.status).toBe(200);
+    const event = listener.mock.calls[0]?.[0];
+    expect(event?.deliveryId).toBe(authenticateDeliveryId ? 'test-authenticated-id' : undefined);
   });
 
   it('keeps scoped receipts out of the standalone receipt key space', async () => {

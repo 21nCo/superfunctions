@@ -147,7 +147,9 @@ from being admitted under a different binding through either HTTP or the
 
 GitHub App webhooks use the numeric `installation.id` from the HMAC-verified
 body as the subject, passed to the resolver as a string. The verified body also
-identifies the event. Configure the GitHub App's server-held webhook secret in
+identifies the event. Scoped GitHub ingress rejects actions outside the known
+payload families so an unfamiliar event cannot enter an existing workflow.
+Configure the GitHub App's server-held webhook secret in
 the router. Custom providers can expose the authenticated subject and event
 through `getWorkflowSubject` and `getWorkflowEvent`. When the verifier also
 authenticates a unique delivery ID, the trigger can expose it through

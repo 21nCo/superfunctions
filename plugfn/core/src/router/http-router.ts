@@ -883,19 +883,10 @@ async function handleWebhookRoute(
       }
     }
     rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
-    if (!event || provider.toLowerCase() === 'github') {
-      const inferredEvent = inferWebhookEvent(
-        provider,
-        headers,
-        rawBody,
-        ctx.plugFn.providers.get(provider)?.triggers,
-        event
-      );
-      resolvedEvent =
-        event && inferredEvent !== event && !inferredEvent.startsWith(`${event}.`)
-          ? event
-          : inferredEvent;
-    }
+    const triggers = !event || provider.toLowerCase() === 'github'
+      ? ctx.plugFn.providers.get(provider)?.triggers
+      : undefined;
+    resolvedEvent = resolveWebhookRouteEvent(provider, event, headers, rawBody, triggers);
     const secret = await resolveWebhookSecret(provider, req, headers, options.webhookSecret);
     const currentPayloadHash = createHash('sha256')
       .update(webhookPayloadForHash(provider, rawBody))
@@ -907,7 +898,7 @@ async function handleWebhookRoute(
         ctx.plugFn.webhooks,
         provider,
         provider.toLowerCase() === 'github'
-          ? resolveWebhookRouteEvent(provider, event?.toLowerCase().replaceAll('-', '_'), headers, rawBody, ctx.plugFn.providers.get(provider)?.triggers)
+          ? resolveWebhookRouteEvent(provider, event?.toLowerCase().replaceAll('-', '_'), headers, rawBody, triggers)
           : resolvedEvent,
         undefined,
         headers,

@@ -200,13 +200,14 @@ describe('github webhook verification', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('does not classify review, review comment, or review thread bodies as pull requests', () => {
+  it('does not classify review, review thread, or unknown-action bodies as pull requests', () => {
     const classify = githubProvider.triggers?.pull_request.webhookConfig?.getWorkflowEvent;
     expect(classify).toBeTypeOf('function');
     for (const payload of [
       { action: 'edited', pull_request: {}, review: {} },
       { action: 'edited', pull_request: {}, comment: {} },
       { action: 'resolved', pull_request: {}, thread: {} },
+      { action: 'test-unknown-action', pull_request: {} },
     ]) {
       expect(classify?.(payload, { headers: {} })).toBeUndefined();
     }
