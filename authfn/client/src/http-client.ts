@@ -1,6 +1,6 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import { isRegionId } from './region-id.js';
-import { collectBodyStrings, repeatsSecret, safeText, type TextCheck } from './secret-text.js';
+import { collectBodyStrings, repeatsSecret, safeLabel, safeText, type TextCheck } from './secret-text.js';
 import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
@@ -303,6 +303,8 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
  * any other result becomes an error envelope with a code that matches the
  * error code pattern, a fixed message, `details: { status }` and a safe
  * request id, plus the few details `KEPT_ERROR_DETAILS` lists for its code.
+ * An error code or detail equal to one of the client's fixed public labels
+ * (`safeLabel`) is that label, not a reflection of the body.
  * A success envelope with any string (other than its request id) that
  * repeats the body is not passed on: it becomes that error envelope too.
  * A request that failed before
@@ -354,7 +356,7 @@ const redactSensitive = {
     const error = candidate.ok !== true && typeof candidate.error === 'object' && candidate.error !== null
       ? candidate.error
       : {};
-    const code = safeText(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR';
+    const code = safeLabel(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR';
     return {
       ok: false,
       error: {
@@ -379,7 +381,7 @@ function keptDetails(code: string, details: unknown, secrets: readonly string[])
     const value = details && typeof details === 'object' && Object.hasOwn(details, field)
       ? (details as Record<string, unknown>)[field]
       : undefined;
-    const keep = check === 'boolean' ? typeof value === 'boolean' : safeText(value, check, secrets) !== undefined;
+    const keep = check === 'boolean' ? typeof value === 'boolean' : safeLabel(value, check, secrets) !== undefined;
     if (keep) {
       kept[field] = value;
     }

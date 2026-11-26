@@ -18,6 +18,33 @@ export function safeText(value: unknown, check: TextCheck, secrets: readonly str
 }
 
 /**
+ * The client's own fixed public labels: the error codes it builds itself,
+ * the codes the social handoff exchange documents and the request fields that
+ * exchange names in a validation error. A value equal to one of them is that
+ * label, not a reflection of a secret.
+ */
+const PUBLIC_LABELS: ReadonlySet<string> = new Set([
+  'AUTHFN_NETWORK_ERROR',
+  'AUTHFN_INTERNAL_ERROR',
+  'AUTHFN_OAUTH_STATE_INVALID',
+  'AUTHFN_OAUTH_STATE_REPLAYED',
+  'AUTHFN_OAUTH_CALLBACK_INVALID',
+  'AUTHFN_REGION_MISMATCH',
+  'AUTHFN_RATE_LIMITED',
+  'AUTHFN_VALIDATION_ERROR',
+  'code',
+  'verifier',
+  'userId'
+]);
+
+/** `safeText`, except that a value equal to one of `PUBLIC_LABELS` passes `check` alone. */
+export function safeLabel(value: unknown, check: TextCheck, secrets: readonly string[]): string | undefined {
+  return typeof value === 'string' && PUBLIC_LABELS.has(value)
+    ? safeText(value, check, [])
+    : safeText(value, check, secrets);
+}
+
+/**
  * Whether `value` contains `secret`, or any run of `SECRET_WINDOW` of its
  * characters, as written or percent-decoded up to `DECODE_PASSES` times.
  */

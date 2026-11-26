@@ -1,6 +1,6 @@
 import { createAuthFnClient } from './client.js';
 import { isRegionId } from './region-id.js';
-import { repeatsSecret, safeText } from './secret-text.js';
+import { repeatsSecret, safeLabel, safeText } from './secret-text.js';
 import type {
   AuthFnClientOptions,
   AuthFnErrorEnvelope,
@@ -657,7 +657,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       }
       const requestId = safeText((envelope as { requestId?: unknown }).requestId, REQUEST_ID_PATTERN, secrets);
       if (envelope.ok !== true) {
-        const errorCode = safeText((envelope as AuthFnErrorEnvelope).error?.code, ERROR_CODE_PATTERN, secrets)
+        const errorCode = safeLabel((envelope as AuthFnErrorEnvelope).error?.code, ERROR_CODE_PATTERN, secrets)
           ?? INTERNAL_ERROR_CODE;
         const reason: AuthFnBrowserHandoffFailureReason = errorCode === REPLAYED_CODE
           ? 'already-used'
@@ -927,10 +927,11 @@ function acceptedHandoffSession(envelope: unknown, secrets: readonly string[]): 
     || !isNonBlank(session.id)
     || session.type !== 'session'
     || !isNonBlank(session.actorId)
-    || typeof session.actorType !== 'string'
+    // The social exchange issues only user sessions.
+    || session.actorType !== 'user'
     || !isRecord(session.subject)
     || session.subject.actorId !== session.actorId
-    || session.subject.actorType !== session.actorType
+    || session.subject.actorType !== 'user'
     || !Array.isArray(session.resourceIds)
     || !Array.isArray(session.methods)
     || handoff.type !== 'session-token'

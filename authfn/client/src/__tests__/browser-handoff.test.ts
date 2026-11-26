@@ -65,6 +65,14 @@ const refusedSessionData: ReadonlyArray<readonly [string, unknown]> = ([
   ['a subject that is not the actor', (data) => { data.session.subject = { actorId: 'user-2', actorType: 'user' }; }],
   ['a handoff given as an array', (data) => { data.handoff = Object.assign([], data.handoff); }],
   ['an API key session', (data) => { data.session.type = 'api-key'; }],
+  ['an API key actor', (data) => {
+    data.session.actorType = 'api-key';
+    data.session.subject = { actorId: 'user-1', actorType: 'api-key' };
+  }],
+  ['an unknown actor type', (data) => {
+    data.session.actorType = 'robot';
+    data.session.subject = { actorId: 'user-1', actorType: 'robot' };
+  }],
   ['a handoff region that is not a string or null', (data) => { data.handoff.regionId = 7; }]
 ] as Array<[string, (data: { session: Record<string, unknown>; handoff: Record<string, unknown> }) => void]>)
   .map(([label, defect]) => {
@@ -666,6 +674,25 @@ describe('createBrowserHandoff', () => {
     expect(JSON.stringify(thrown)).not.toContain('request');
   });
 
+  it('ends as exchange-canceled when fetch fails for a code equal to the network error code', async () => {
+    const exchange = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => {
+        throw new TypeError('fetch failed');
+      }
+    }).exchangeSocialHandoff;
+    const { make, server } = setup({ exchange });
+    const callback = new URL(server.callbackFor(await make().begin({ returnTo: RETURN_TO })));
+    const fragment = new URLSearchParams(callback.hash.slice(1));
+    fragment.set('token', 'AUTHFN_NETWORK_ERROR');
+    callback.hash = fragment.toString();
+
+    expect(failed(await make().complete(callback.href))).toMatchObject({
+      reason: 'exchange-canceled',
+      error: { code: 'AUTHFN_NETWORK_ERROR' }
+    });
+  });
+
   it.each([
     ['the client', 'direct'],
     ['the regional client without a stored region', 'regional-current'],
@@ -1157,12 +1184,34 @@ describe('createBrowserHandoff', () => {
   it.each([
     ['a field the exchange does not have', { field: 'email' }, plainInput],
     ['a field with different case', { field: 'Verifier' }, plainInput],
-    ['a field that is not a string', { field: 7 }, plainInput],
-    ['a field that is the code', { field: 'userId' }, { code: 'userId', verifier: plainInput.verifier }],
-    ['a field that repeats 8 characters of the verifier', { field: 'verifier' }, detailsInput]
+    ['a field that is not a string', { field: 7 }, plainInput]
   ] as const)('drops a validation-error field that is %s', async (_label, details, input) => {
     expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, { ...details, issue: 'required', path: ['body'] }, input))
       .toEqual({ status: 400 });
+  });
+
+  // A field name is one of the client's fixed labels, not a reflection of the request.
+  it.each([
+    ['equal to the code', 'verifier', { code: 'verifier', verifier: plainInput.verifier }],
+    ['equal to the code', 'userId', { code: 'userId', verifier: plainInput.verifier }],
+    ['inside the verifier', 'verifier', detailsInput]
+  ] as const)('keeps a validation-error field %s when the field is %s', async (_label, field, input) => {
+    expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, { field }, input)).toEqual({ status: 400, field });
+  });
+
+  it('keeps an error code equal to the request code only when it is one of the client\'s fixed codes', async () => {
+    const errorFor = async (code: string) => {
+      const client = createAuthFnClient({
+        baseUrl: `${APP}/auth`,
+        fetch: async () => Response.json(
+          { ok: false, requestId: 'req-reflected', error: { code, message: 'Rejected', retryable: false } },
+          { status: 400 }
+        )
+      });
+      return ((await client.exchangeSocialHandoff({ code, verifier: plainInput.verifier })) as { error: { code: string } }).error.code;
+    };
+    expect(await errorFor('AUTHFN_OAUTH_STATE_INVALID')).toBe('AUTHFN_OAUTH_STATE_INVALID');
+    expect(await errorFor('AUTHFN_REFLECTED_CODE')).toBe('AUTHFN_INTERNAL_ERROR');
   });
 
   it('keeps only the field of a validation error', async () => {
