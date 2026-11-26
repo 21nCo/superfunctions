@@ -84,11 +84,11 @@ async function exists(file: string): Promise<boolean> {
   );
 }
 
-/** Gives a check whose cache file was just written time to settle (real timers). */
-async function settled(): Promise<void> {
-  await settleCacheWrites();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-}
+/**
+ * A timeout that cannot run down on a fixed injected clock: `notice()` then resolves only once the check has settled
+ * (never by its deadline within a test), so a `null` it gives is the settled check's answer.
+ */
+const SETTLE_ONLY_MS = 60_000;
 
 /** Waits (real timers) until the cache file satisfies `condition`, failing after five seconds. */
 async function untilCached(condition: (cached: Record<string, unknown>) => boolean): Promise<void> {
@@ -101,15 +101,15 @@ async function untilCached(condition: (cached: Record<string, unknown>) => boole
   }
 }
 
-/** Lets real I/O progress while fake timers hold `setTimeout`. */
+/** Lets real I/O progress while fake timers hold `setTimeout`, failing after five seconds of real time. */
 async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 2000; attempt += 1) {
-    if (await condition()) {
-      return;
+  const deadline = performance.now() + 5_000;
+  while (!(await condition())) {
+    if (performance.now() > deadline) {
+      throw new Error("condition not reached");
     }
     await new Promise((resolve) => setImmediate(resolve));
   }
-  throw new Error("condition not reached");
 }
 
 describe("startUpdateCheck: request and notice", () => {
@@ -285,8 +285,9 @@ describe("startUpdateCheck: request and notice", () => {
 
     clock += 1_501;
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
+    // The late result is in the cache: notice() is first called after it arrived. Past the deadline, the handle's
+    // outcome no longer depends on when its claim read finishes.
     await until(() => exists(cacheFile));
-    await settled();
 
     await expect(handle.notice()).resolves.toBeNull();
     await expect(handle.notice()).resolves.toBeNull();
@@ -302,8 +303,8 @@ describe("startUpdateCheck: request and notice", () => {
     clock += 1_500;
     await expect(handle.notice()).resolves.toBeNull();
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
+    // The late result is in the cache. The deadline expired the handle before it settled, so it never claims.
     await until(() => exists(cacheFile));
-    await settled();
     // The result settled after the deadline: a later call does not return it either.
     await expect(handle.notice()).resolves.toBeNull();
     const cached = (await readCacheJson()) as Record<string, unknown>;
@@ -333,7 +334,8 @@ describe("startUpdateCheck: request and notice", () => {
 
   it("gives a ready notice to one notice() call per handle", async () => {
     const handle = check();
-    await settled();
+    // Ready: the claim made when the check settled is on disk.
+    await untilCached((cached) => cached.notifiedAt === T0);
     await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
     await expect(handle.notice()).resolves.toBeNull();
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
@@ -511,8 +513,8 @@ describe("startUpdateCheck: cache interval", () => {
     const first = check({ fetch, now: () => T0 + 1 });
     // `first` must settle (and claim) before `second` starts: the two reads finish in no fixed order otherwise.
     await untilCached((cached) => cached.notifiedAt === T0 + 1);
-    const second = check({ fetch, now: () => T0 + 2 });
-    await settled();
+    // On its fixed clock, second.notice() resolves only once second's check has settled.
+    const second = check({ fetch, now: () => T0 + 2, timeoutMs: SETTLE_ONLY_MS });
 
     await expect(first.notice()).resolves.toBe(NOTICE_1_3_0);
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 1 });
@@ -524,8 +526,9 @@ describe("startUpdateCheck: cache interval", () => {
   it("gives the notice to one of several handles asking in the same turn", async () => {
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const fetch = registry({ latest: "1.3.0" });
-    const handles = [check({ fetch }), check({ fetch }), check({ fetch })];
-    await settled();
+    const handles = [0, 1, 2].map(() => check({ fetch, timeoutMs: SETTLE_ONLY_MS }));
+    // One check has claimed; notice() waits for the others to settle (their timeouts cannot run down on this clock).
+    await untilCached((cached) => cached.notifiedAt === T0);
 
     // Whichever handle's check settles first claims it; the reads finish in no fixed order.
     const notices = await Promise.all(handles.map((handle) => handle.notice()));
@@ -553,8 +556,13 @@ describe("startUpdateCheck: cache interval", () => {
   it("never loses a delivery to a refresh written by the same process at the same time", async () => {
     await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY + 1, latest: "1.3.0" }));
     const delivering = check({ now: () => T0 });
-    await settled();
-    const refreshing = check({ fetch: registry("down", 500), now: () => T0 + 1, intervalMs: DAY - 2 });
+    await untilCached((cached) => cached.notifiedAt === T0);
+    const refreshing = check({
+      fetch: registry("down", 500),
+      now: () => T0 + 1,
+      intervalMs: DAY - 2,
+      timeoutMs: SETTLE_ONLY_MS,
+    });
     await expect(delivering.notice()).resolves.toBe(NOTICE_1_3_0);
     await expect(refreshing.notice()).resolves.toBeNull();
     const cached = (await readCacheJson()) as Record<string, unknown>;
@@ -568,8 +576,8 @@ describe("startUpdateCheck: cache interval", () => {
   ])("gives no notice once another run recorded a delivery on %s before this check settled", async (_label, other) => {
     await writeCacheText(JSON.stringify(other));
     const fetch = registry({ latest: "1.3.0" });
-    const handle = check({ fetch, now: () => T0 + 2 });
-    await settled();
+    // On its fixed clock, notice() resolves only once the check has settled: the null is its answer.
+    const handle = check({ fetch, now: () => T0 + 2, timeoutMs: SETTLE_ONLY_MS });
 
     await expect(handle.notice()).resolves.toBeNull();
     await expect(readCacheJson()).resolves.toEqual(other);
@@ -581,7 +589,7 @@ describe("startUpdateCheck: cache interval", () => {
     // handle no longer reads the file.
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const handle = check({ now: () => T0 + 2 });
-    await settled();
+    await untilCached((cached) => cached.notifiedAt === T0 + 2);
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 2 });
 
     await writeCacheText(JSON.stringify({ checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 }));
@@ -592,7 +600,7 @@ describe("startUpdateCheck: cache interval", () => {
     const hour = 60 * 60 * 1000;
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const delivering = check({ now: () => T0 + hour });
-    await settled();
+    await untilCached((cached) => cached.notifiedAt === T0 + hour);
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + hour });
 
     // An overlapping run refreshes the stale entry and the registry fails; it lands between the claim and hand-out.

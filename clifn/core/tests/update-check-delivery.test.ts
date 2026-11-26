@@ -16,6 +16,8 @@ const fsHooks = vi.hoisted(() => ({
   syncReads: 0,
   /** Asynchronous reads of the cache file. */
   reads: 0,
+  /** Asynchronous reads of the cache file that have finished (resolved or rejected). */
+  readsDone: 0,
   /** Reads of the cache file let through before a stall applies. */
   passReads: 0,
   stallReads: null as Promise<void> | null,
@@ -52,7 +54,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         await fsHooks.stallReads;
       }
     }
-    return (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+    try {
+      return await (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+    } finally {
+      if (file === fsHooks.cacheFile) {
+        fsHooks.readsDone += 1;
+      }
+    }
   }) as typeof actual.readFile;
   const rename = (async (from: Parameters<typeof actual.rename>[0], to: Parameters<typeof actual.rename>[1]) => {
     if (to === fsHooks.cacheFile && fsHooks.holdRenames) {
@@ -99,6 +107,7 @@ beforeEach(async () => {
   fsHooks.cacheFile = path.join(stateDir, "update-check.json");
   fsHooks.syncReads = 0;
   fsHooks.reads = 0;
+  fsHooks.readsDone = 0;
   fsHooks.passReads = 0;
   fsHooks.stallOnly = null;
 });
@@ -131,9 +140,26 @@ async function writeCacheJson(value: unknown): Promise<void> {
   await writeFile(fsHooks.cacheFile, `${JSON.stringify(value)}\n`);
 }
 
-/** Real time for the background check to settle (its reads are real file reads). */
-function settle(ms = 50): Promise<void> {
+/** Real time passing (an observation window or an action's length), never a wait for a check to settle. */
+function elapse(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const WAIT = { timeout: 5_000, interval: 5 };
+
+/**
+ * Waits until `count` reads of the cache file have finished. A check goes on from a finished read in microtasks
+ * only (to its claim, or its next read or request), so once the next macrotask runs, a check whose last read was one
+ * of them has settled.
+ */
+async function untilReadsDone(count: number): Promise<void> {
+  await vi.waitFor(() => expect(fsHooks.readsDone).toBeGreaterThanOrEqual(count), WAIT);
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Waits until the cache file records the delivery `notifiedAt` (a claim is on disk). */
+async function untilNotifiedAt(notifiedAt: number): Promise<void> {
+  await vi.waitFor(async () => expect(await cachedNotifiedAt()).toBe(notifiedAt), WAIT);
 }
 
 /** The notice, or "hung" when it is not there within `ms`. */
@@ -153,13 +179,15 @@ describe("delivery records", () => {
     fsHooks.holdRenames = gate();
 
     const first = check({ now, intervalMs: 10, timeoutMs: 60_000 });
-    await settle();
+    // Settled at T0 + 1000: its first read, then its claim read and its refresh write's read (the rename is held).
+    await untilReadsDone(3);
     clock = T0 + 1005;
     expect(await first.notice()).toBe(NOTICE_1_3_0);
 
     clock = T0 + 1031;
     const second = check({ now, intervalMs: 10, timeoutMs: 60_000, fetch: registry("9.9.9") });
-    await settle();
+    // A cache hit: settled once its one read has finished.
+    await untilReadsDone(4);
     expect(await second.notice()).toBe(NOTICE_1_3_0);
 
     releaseAll();
@@ -203,13 +231,14 @@ async function cachedNotifiedAt(): Promise<number | undefined> {
 describe("claim at settle", () => {
   it("writes the notice after an action that blocks synchronously past the timeout, then no run gives it again", async () => {
     await writeCacheJson({ checkedAt: Date.now(), latest: "1.3.0" });
-    const updateCheck = check({ now: Date.now, timeoutMs: 100 });
+    const updateCheck = check({ now: Date.now, timeoutMs: 1_000 });
     const events: string[] = [];
 
     const exitCode = await runAction(
       async () => {
-        // The check settles first (a cache hit), then the action blocks the event loop.
-        await settle(50);
+        // The check settles first (a cache hit; its claim is on disk), then the action blocks the event loop past the
+        // timeout.
+        await vi.waitFor(async () => expect(await cachedNotifiedAt()).toEqual(expect.any(Number)), WAIT);
         blockSynchronously(1_200);
         return { exitCode: 3 };
       },
@@ -245,12 +274,11 @@ describe("claim at settle", () => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
     let clock = T0;
     const handle = check({ now: () => clock, timeoutMs: 100 });
-    await settle();
-    await settleCacheWrites();
+    await untilNotifiedAt(T0);
     const reads = fsHooks.reads;
     // Any read of the cache file would now stall.
     fsHooks.stallReads = gate();
-    await settle(1_200);
+    await elapse(1_200);
     clock = T0 + 5_000;
 
     const { notice } = await noticeWithin(handle, 1_000);
@@ -274,12 +302,13 @@ describe("claim at settle", () => {
         const { resolveAppPaths } = await import(pathsUrl);
         const { runAction } = await import(runnerUrl);
         const { execFileSync } = await import("node:child_process");
-        const { mkdir, rm, writeFile } = await import("node:fs/promises");
+        const { mkdir, readFile, rm, writeFile } = await import("node:fs/promises");
         const path = await import("node:path");
         const env = { XDG_STATE_HOME: dir, LOCALAPPDATA: dir };
         const tty = { isTTY: true };
-        const options = (appName) => ({ name: "my-cli", currentVersion: "1.2.0", appName, env, timeoutMs: 100,
-          terminal: { stdin: tty, stdout: tty, stderr: tty }, fetch: async () => { throw new Error("offline"); } });
+        const options = (appName) => ({ name: "my-cli", currentVersion: "1.2.0", appName, env,
+          timeoutMs: 2_000, terminal: { stdin: tty, stdout: tty, stderr: tty },
+          fetch: async () => { throw new Error("offline"); } });
         const results = [];
         for (const [appName, quiet] of [["shown-cli", false], ["quiet-cli", true], ["unasked-cli", null]]) {
           const state = resolveAppPaths(appName, { env }).state;
@@ -287,12 +316,17 @@ describe("claim at settle", () => {
           const file = path.join(state, "update-check.json");
           await writeFile(file, JSON.stringify({ checkedAt: Date.now(), latest: "1.3.0" }));
           const handle = startUpdateCheck(options(appName));
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // The check has settled once its claim is on disk (every handle claims; a quiet run discards later).
+          const deadline = Date.now() + 5_000;
+          while (JSON.parse(await readFile(file, "utf8")).notifiedAt === undefined) {
+            if (Date.now() > deadline) throw new Error(appName + ": no claim");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
           await rm(file);
           execFileSync("mkfifo", [file]);
           if (quiet !== null) {
             const errors = [];
-            await runAction(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); return { exitCode: 0 }; },
+            await runAction(async () => ({ exitCode: 0 }),
               undefined, { color: false, quiet, stdout: () => undefined, stderr: (text) => errors.push(text), updateCheck: handle });
             results.push(appName + ":" + errors.length);
           } else {
@@ -323,16 +357,18 @@ describe("claim at settle", () => {
   ])("claims nothing for a %s run, so a later text run within the interval gives the notice", async (_label, mode) => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
     const events: string[] = [];
+    // On its fixed clock the timeout cannot run down: notice() resolves only once the check has settled.
+    const updateCheck = check({ now: () => T0 + 1, timeoutMs: 60_000 });
     const exitCode = await runAction(() => ({ exitCode: 0 }), undefined, {
       color: false,
       ...mode,
       stdout: () => undefined,
       stderr: (text) => events.push(text),
-      updateCheck: check({ now: () => T0 + 1 }),
+      updateCheck,
     });
     expect(exitCode).toBe(0);
     expect(events).toEqual([]);
-    await settle();
+    expect(await updateCheck.notice()).toBeNull();
     expect(await cachedNotifiedAt()).toBeUndefined();
 
     await runAction(() => ({ exitCode: 0 }), undefined, {
@@ -348,7 +384,7 @@ describe("claim at settle", () => {
   it("keeps a claim made before discard() and gives no notice after it", async () => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
     const handle = check({ now: () => T0 + 1 });
-    await settle();
+    await untilNotifiedAt(T0 + 1);
     handle.discard?.();
 
     expect(await handle.notice()).toBeNull();
@@ -359,9 +395,9 @@ describe("claim at settle", () => {
   it("gives the claim to the handle whose check settled first, whichever handle asks first", async () => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
     const first = check({ now: () => T0 + 1 });
-    await settle();
-    const second = check({ now: () => T0 + 2 });
-    await settle();
+    await untilNotifiedAt(T0 + 1);
+    // On its fixed clock, second.notice() resolves only once second's check has settled.
+    const second = check({ now: () => T0 + 2, timeoutMs: 60_000 });
 
     expect(await second.notice()).toBeNull();
     expect(await first.notice()).toBe(NOTICE_1_3_0);
@@ -372,10 +408,10 @@ describe("claim at settle", () => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
     let clock = T0;
     const first = check({ now: () => clock, intervalMs: 500 });
-    await settle();
+    await untilNotifiedAt(T0);
     clock = T0 + 600;
     const second = check({ now: () => clock, intervalMs: 500 });
-    await settle();
+    await untilNotifiedAt(T0 + 600);
 
     expect(await second.notice()).toBe(NOTICE_1_3_0);
     expect(await first.notice()).toBeNull();
@@ -386,7 +422,9 @@ describe("claim at settle", () => {
     await writeCacheJson({ checkedAt: T0 - 1, latest: "1.3.0" });
     let clock = T0;
     const handles = [check({ now: () => clock, intervalMs: 0 }), check({ now: () => clock, intervalMs: 0 })];
-    await settle();
+    // Both claimed at T0: two first reads, then per handle its claim read, its refresh write's read and the read its
+    // claim record merges with (which starts only after the claim).
+    await untilReadsDone(8);
     clock = T0 + DAY;
 
     expect(await handles[0].notice()).toBe(NOTICE_1_3_0);
@@ -400,7 +438,9 @@ describe("claim at settle", () => {
     fsHooks.stallOnly = 2;
     fsHooks.stallReads = gate();
     const handle = check({ fetch: registry("1.4.0"), timeoutMs: 60_000 });
-    await settle();
+    // Its first read and its refresh write's read have finished (the claim read stalls); the refresh write was queued
+    // before the claim read started, so it is among the writes to settle.
+    await untilReadsDone(2);
     await settleCacheWrites();
 
     expect(JSON.parse(await readFile(fsHooks.cacheFile, "utf8"))).toEqual({ checkedAt: T0, latest: "1.4.0" });
@@ -422,7 +462,7 @@ describe("claim at settle", () => {
       updateCheck,
     });
     // An unhandled rejection would fail this test run.
-    await settle(20);
+    await elapse(20);
     expect(exitCode).toBe(4);
   });
 
@@ -436,12 +476,12 @@ describe("claim at settle", () => {
         })
     );
     const handle = check({ now: () => clock, timeoutMs: 1_000, fetch, intervalMs: DAY });
-    await settle(20);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1), WAIT);
     // Another run delivers the notice while this one waits on the registry.
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
     answer();
-    await settle();
+    // Settled at T0: its first read, then its claim read and its refresh write's read.
+    await untilReadsDone(3);
     clock = T0 + 5_000;
 
     const { notice } = await noticeWithin(handle, 1_000);
@@ -460,19 +500,22 @@ describe("claim at settle", () => {
         })
     );
     const late = check({ now: () => clock, timeoutMs: 60_000, intervalMs: 10, fetch });
-    await settle(20);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1), WAIT);
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 95 });
     // Still within the interval when the refresh settles: no claim, even though it has expired by hand-out time.
     clock = T0 + 101;
     answer();
-    await settle();
+    // Settled at T0 + 101: its first read, then its claim read and its refresh write's read; the refresh write lands
+    // before the file is rewritten below.
+    await untilReadsDone(3);
+    await settleCacheWrites();
     clock = T0 + 200;
     expect(await late.notice()).toBeNull();
 
     // A delivery that expired by the time the check settles does not hold the notice back.
     await writeCacheJson({ checkedAt: T0 + 200, latest: "1.3.0", notifiedAt: T0 + 150 });
     const due = check({ now: () => clock, intervalMs: 10 });
-    await settle();
+    await untilNotifiedAt(T0 + 200);
     expect(await due.notice()).toBe(NOTICE_1_3_0);
     expect(await cachedNotifiedAt()).toBe(T0 + 200);
   });
@@ -490,7 +533,7 @@ describe("claim at settle", () => {
     const started = performance.now();
     const action = runAction(
       async () => {
-        await settle(100);
+        await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1), WAIT);
         // The refresh's claim read stalls.
         fsHooks.stallReads = gate();
         answer();
@@ -504,7 +547,8 @@ describe("claim at settle", () => {
     expect(performance.now() - started).toBeLessThan(200 + 80);
     expect(events).toEqual([]);
     releaseAll();
-    await settle();
+    // Settled (past its deadline): its first read, then its claim read and its refresh write's read.
+    await untilReadsDone(3);
     expect(await cachedNotifiedAt()).toBeUndefined();
     expect(await updateCheck.notice()).toBeNull();
   });
@@ -521,8 +565,10 @@ describe("claim at settle", () => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 - DAY - 10 });
     let clock: () => number = () => T0;
     const handle = check({ now: () => clock(), timeoutMs: 60_000 });
+    // Asked before the clock breaks, notice() resolves only once the check has settled (on the broken clock).
+    const asked = handle.notice();
     clock = broken;
-    await settle();
+    expect(await asked).toBeNull();
     clock = () => T0;
 
     expect(await handle.notice()).toBeNull();
@@ -540,7 +586,8 @@ describe("claim at settle", () => {
     fsHooks.passReads = pass;
     fsHooks.stallReads = gate();
     const handle = check({ now: () => clock(), timeoutMs: 60_000 });
-    await settle();
+    // Settled (and claimed at T0 + 20) once the reads let through have finished; the claim read is the last of them.
+    await untilReadsDone(pass);
     clock = () => Number.NaN;
     releaseAll();
     await settleCacheWrites();
