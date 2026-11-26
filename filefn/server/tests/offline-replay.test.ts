@@ -241,6 +241,36 @@ describe('offline replay against the FileFn server', () => {
     expect(await app.rows('files')).toHaveLength(1);
   });
 
+  it('starts again under a fresh key, not the same key in a loop, when a completion crashed past the session expiry', async () => {
+    const app = await createApp();
+    await app.stage('file_00000000ending03', 'test-replay-key-0007');
+    // After the part is written, a completion claims the session and crashes
+    // (its claim goes stale), and the session expires.
+    app.afterFirst((path) => path.endsWith('/parts/1'), async () => {
+      const [session] = await app.rows('uploadSessions');
+      await app.database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+        data: {
+          status: 'completing',
+          completionClaim: '2000-01-01T00:00:00.000Z test-claim-nonce',
+          expiresAt: new Date(Date.now() - 1000).toISOString(),
+        },
+      });
+    });
+
+    // The refused completion leaves the outcome unknown to the client: same key.
+    expect(await app.queue.process('file_00000000ending03')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    // The replay's upload/init reports the end the refusal recorded: a fresh key.
+    expect(await app.queue.process('file_00000000ending03')).toMatchObject({ status: 'published' });
+    const keys = app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key);
+    expect(keys).toHaveLength(3);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [keys[0]] });
+    expect(await app.rows('files')).toHaveLength(1);
+  });
+
   it('keeps a replay provisional when the completed session never recorded its own version', async () => {
     const app = await createApp();
     await app.stage('file_00000000legacy02', 'test-replay-key-0007');
@@ -378,6 +408,47 @@ describe('session outcomes a replay settles under the same key', () => {
 
     resume();
     await expect(completing).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
+    expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(0);
+  });
+
+  it('ends a session whose completion crashed past its expiry, so the replay and a completion agree on expired', async () => {
+    const server = await createServer();
+    // The completion holding each session crashed long ago (its claim is stale)
+    // and the session has since expired.
+    const crashed = {
+      status: 'completing',
+      completionClaim: '2000-01-01T00:00:00.000Z test-claim-nonce',
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    };
+
+    // The replay comes first: it ends the session, and completion agrees.
+    const replayKey = 'test-replay-key-0111';
+    const first = await server.fileFn.createUploadSession({ ...init, idempotencyKey: replayKey }, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(first.uploadSessionId, 1, body(4), 4, owner);
+    await server.updateSession(first.uploadSessionId, crashed);
+    expect(await server.fileFn.createUploadSession({ ...init, idempotencyKey: replayKey }, owner)).toMatchObject({
+      uploadSessionId: first.uploadSessionId,
+      status: 'expired',
+    });
+    expect((await server.session(first.uploadSessionId)).status).toBe('expired');
+    await expect(server.fileFn.completeUploadSession({ uploadSessionId: first.uploadSessionId }, owner)).rejects.toMatchObject({
+      code: 'FILEFN_UPLOAD_EXPIRED',
+    });
+
+    // Completion comes first: its 410 is recorded, so the replay of the key
+    // reports the same end instead of in_progress (no same-key loop).
+    const completeKey = 'test-replay-key-0112';
+    const second = await server.fileFn.createUploadSession({ ...init, idempotencyKey: completeKey }, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(second.uploadSessionId, 1, body(4), 4, owner);
+    await server.updateSession(second.uploadSessionId, crashed);
+    await expect(server.fileFn.completeUploadSession({ uploadSessionId: second.uploadSessionId }, owner)).rejects.toMatchObject({
+      code: 'FILEFN_UPLOAD_EXPIRED',
+    });
+    expect((await server.session(second.uploadSessionId)).status).toBe('expired');
+    expect(await server.fileFn.createUploadSession({ ...init, idempotencyKey: completeKey }, owner)).toMatchObject({
+      uploadSessionId: second.uploadSessionId,
+      status: 'expired',
+    });
     expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(0);
   });
 

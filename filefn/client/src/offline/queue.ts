@@ -129,17 +129,19 @@ export interface OfflineQueueHooks {
   verify?(context: OfflineQueueOperationContext): Promise<OfflineQueueVerification>;
   publish?: {
     /**
-     * Publishes a verified generation. Resolve with nothing, or with an object
-     * whose `result` is JSON: any other value (false, null, a primitive, a
-     * result that does not survive JSON) confirms nothing and leaves the
-     * publication unconfirmed, like a throw.
+     * Publishes a verified generation. Resolve with nothing, or with a plain
+     * object whose `result` is exact JSON: any other value (false, null, a
+     * primitive, a Date, Map or class instance, a result that does not survive
+     * a JSON round trip unchanged) confirms nothing and leaves the publication
+     * unconfirmed, like a throw.
      */
     run(context: OfflineQueueOperationContext): Promise<{ result?: unknown } | void>;
     /**
      * Reports whether an earlier, unconfirmed `run` for this operation took
      * effect. Called before any retry of `run`, never while a `run` this
      * queue started is still running in a live tab. `published: false` must
-     * mean the attempt cannot take effect later.
+     * mean the attempt cannot take effect later. A check that is not a plain
+     * object confirms nothing.
      */
     reconcile?(context: OfflineQueueOperationContext): Promise<OfflineQueuePublicationCheck>;
     /**
@@ -399,9 +401,9 @@ interface GenerationState {
   localSource: PendingLocalSourceMetadata;
   replay: { idempotencyKey: string; retiredKeys: string[] };
   /**
-   * Hooks this generation needs: recorded when it is staged, and set before a
-   * verification or publication starts, so no instance skips a step another
-   * one began.
+   * Hooks this generation needs: recorded when it is staged, and joined by
+   * the writing instance's hooks with every write while it is not final (see
+   * writeRecord), so no instance skips a step another one requires.
    */
   requires: { verify: boolean; publish: boolean };
   /** Set with each move to `publishing`; manual outcomes must name it. */
@@ -775,12 +777,13 @@ const NOT_JSON: unique symbol = Symbol('not-json');
  * Whether `value` is JSON data that a JSON round trip keeps exactly: null,
  * booleans, strings, finite numbers, dense arrays and plain objects of such
  * values. Anything JSON.stringify would drop, convert or call (undefined
- * members, functions, symbols and symbol keys, NaN and Infinity, a toJSON
+ * members, functions, symbols and symbol keys, NaN, Infinity and -0, a toJSON
  * method, class instances such as Date or Map, accessors, cycles) is not.
  */
 function isExactJson(value: unknown, seen: Set<object>): boolean {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
+  // -0 would come back as 0.
+  if (typeof value === 'number') return Number.isFinite(value) && !Object.is(value, -0);
   if (typeof value !== 'object') return false;
   if (seen.has(value)) return false;
   seen.add(value);
@@ -821,14 +824,32 @@ function strictJson(value: unknown): unknown {
 }
 
 /**
+ * Whether an outcome envelope (a publication hook's resolved value, a
+ * reconcile hook's check, a manual publication outcome) is a plain object of
+ * own, enumerable data properties with string keys. A Date, Map, array, class
+ * instance or an object with accessors or symbol keys is not, so it confirms
+ * nothing.
+ */
+function isPlainEnvelope(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (!descriptor.enumerable || !('value' in descriptor)) return false;
+  }
+  return true;
+}
+
+/**
  * What a publication hook's resolved value confirms: published with its
  * JSON result, or nothing (NOT_JSON) for any value outside the contract.
  */
 function publicationResult(value: unknown): { result?: unknown } | typeof NOT_JSON {
   if (value === undefined) return {};
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return NOT_JSON;
-  const raw = (value as { result?: unknown }).result;
-  const result = strictJson(raw);
+  if (!isPlainEnvelope(value)) return NOT_JSON;
+  const result = strictJson(value.result);
   if (result === NOT_JSON) return NOT_JSON;
   return result === undefined ? {} : { result };
 }
@@ -1171,12 +1192,11 @@ export class OfflineQueue {
   ): Promise<OfflineQueueEntry> {
     if (
       publication !== undefined &&
-      (publication === null ||
-        typeof publication !== 'object' ||
+      (!isPlainEnvelope(publication) ||
         typeof publication.published !== 'boolean' ||
         typeof publication.attemptId !== 'string')
     ) {
-      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication needs published (true or false) and attemptId', {
+      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication must be a plain object with published (true or false) and attemptId', {
         field: 'publication',
       });
     }
@@ -1829,6 +1849,15 @@ export class OfflineQueue {
   }
 
   private async writeRecord(dir: OfflineQueueDirectoryHandle, record: JournalRecord): Promise<void> {
+    // Every write of a generation that is not final journals this instance's
+    // hooks as requirements in the same write (steps, manual reconcile, holds,
+    // cleanup alike), so no path that moves or reopens it lets a later
+    // instance without one of those hooks skip its step.
+    const hooks = this.options.hooks;
+    if (!isTerminalPhase(record.current.phase)) {
+      record.current.requires.verify ||= Boolean(hooks?.verify);
+      record.current.requires.publish ||= Boolean(hooks?.publish);
+    }
     record.revision += 1;
     record.updatedAt = new Date().toISOString();
     await writeFile(dir, JOURNAL_FILE, JSON.stringify(record), this.txFence);
@@ -2431,7 +2460,8 @@ export class OfflineQueue {
         });
       }
       case 'reconcile-publication': {
-        const check = value as OfflineQueuePublicationCheck;
+        // Only a plain check object counts (see isPlainEnvelope).
+        const check = isPlainEnvelope(value) ? (value as unknown as OfflineQueuePublicationCheck) : undefined;
         const checked = check?.published === true ? strictJson(check.result) : undefined;
         if (check?.published === true && checked !== NOT_JSON) {
           return this.commit(entryId, record, signal, (state) => {

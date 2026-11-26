@@ -771,9 +771,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
       if (isAbortedStatus(session.status)) return { status: 'aborted' };
       if (session.status === 'expired') return { status: 'expired' };
-      // 'completing' and 'publishing' hold a completion that is still running;
-      // the session can finish even past its expiry.
-      if (session.status === 'completing' || session.status === 'publishing') return { status: 'in_progress' };
+      // 'publishing' and a live 'completing' claim hold a completion that is
+      // still running; the session can finish even past its expiry. A stale
+      // claim past the expiry is ended like any unfinished session below, so
+      // the replay reaches a durable answer (a completion call agrees, see
+      // expireSession).
+      if (session.status === 'publishing' || (session.status === 'completing' && !isStaleClaim(session))) {
+        return { status: 'in_progress' };
+      }
       if (!isExpiredAt(session.expiresAt)) return { status: session.status === 'pending' ? 'pending' : 'in_progress' };
       let adopted: UploadSession | null | undefined;
       try {
@@ -785,16 +790,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         session = adopted;
         continue;
       }
-      const ended = await updateSessionIf(
-        session.uploadSessionId,
-        { status: session.status, completionClaim: session.completionClaim ?? null },
-        { status: 'expired' },
-        (row) => row.status === 'expired',
-      );
+      const ended = await expireSession(session);
       if (ended.applied) return { status: 'expired' };
       session = ended.current;
     }
     return { status: 'in_progress' };
+  }
+
+  // Records an unfinished session past its expiry (pending, in_progress, or
+  // completing under a stale claim) as 'expired', conditional on its status
+  // and claim, so no completion claim can follow (claimCompletion refuses an
+  // expired row, and a stale holder's move to 'publishing' is conditional on
+  // its claim). Only an applied move may be reported as expired; otherwise
+  // the caller decides again from the row as it is now.
+  function expireSession(session: UploadSession) {
+    return updateSessionIf(
+      session.uploadSessionId,
+      { status: session.status, completionClaim: session.completionClaim ?? null },
+      { status: 'expired' },
+      (row) => row.status === 'expired',
+    );
   }
 
   // The result a completed session recorded.
@@ -2127,9 +2142,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
         }
         // A live completion claim can still publish past the expiry: it is
-        // waited for below, never reported as expired.
+        // waited for below, never reported as expired. Anything else past it
+        // is recorded as expired first (as an init replay would), so the
+        // answer is durable and a replay of the key agrees with it.
         if (isExpiredAt(session.expiresAt) && !(session.status === 'completing' && !isStaleClaim(session))) {
-          throw errors.uploadExpired();
+          const ended = await expireSession(session);
+          if (ended.applied) throw errors.uploadExpired();
+          if (!ended.current) throw errors.sessionNotFound();
+          session = ended.current;
+          continue;
         }
 
         let current: UploadSession | null;

@@ -1561,6 +1561,25 @@ describe('a verifier required after publication started', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('journals the requirements of an instance that only reconciles, so a later publisher-only instance cannot publish unverified', async () => {
+    const first = tab('first', { hooks: { publish: { run: async () => { throw new Error('network lost'); } } } });
+    await stage(first);
+    expect(await first.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    // B holds a verifier but never processes: it only settles the attempt by hand.
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const b = tab('b', { hooks: { verify, publish: { run: async () => ({}) } } });
+    const attemptId = (await b.get(FILE_ID))!.publicationAttemptId!;
+    expect(await b.reconcile(FILE_ID, 1, { published: false, attemptId })).toMatchObject({ phase: 'verified' });
+    const run = vi.fn(async () => ({}));
+    expect(await tab('publisher', { hooks: { publish: { run } } }).process(FILE_ID)).toMatchObject({
+      status: 'provisional',
+      reason: 'hook-unavailable',
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+
   it('runs that verifier after a reconciliation hook reopens the publication, before publishing again', async () => {
     const first = tab('first', { hooks: { publish: { run: async () => { throw new Error('network lost'); } } } });
     await stage(first);
@@ -1618,6 +1637,38 @@ describe('publication results a JSON round trip would change', () => {
     const a = tab('a', { hooks: { publish: { run: async () => value as never } } });
     await stage(a);
     expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+  });
+
+  class Outcome {
+    result = { id: 'r1' };
+    published = true;
+  }
+  it.each([
+    ['a Date envelope', new Date(0)],
+    ['a Map envelope', new Map([['result', { id: 'r1' }]])],
+    ['a class instance envelope', new Outcome()],
+    ['an accessor result', Object.defineProperty({}, 'result', { enumerable: true, get: () => ({ id: 'r1' }) })],
+    ['-0 in the result', { result: { n: -0 } }],
+  ])('never confirms a publication resolved with %s', async (_label, value) => {
+    const a = tab('a', { hooks: { publish: { run: async () => value as never } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+  });
+
+  it('refuses a reconciliation check or manual outcome that is not a plain object', async () => {
+    const reconcile = vi.fn(async () => new Outcome() as never);
+    const a = tab('a', { hooks: { publish: { run: async () => { throw new Error('lost'); }, reconcile } } });
+    await stage(a);
+    await a.process(FILE_ID);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    expect(reconcile).toHaveBeenCalled();
+    const attemptId = (await a.get(FILE_ID))!.publicationAttemptId!;
+    const manual = Object.assign(new Outcome(), { attemptId });
+    await expect(a.reconcile(FILE_ID, 1, manual as never)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_INVALID_INPUT' });
+    await expect(a.reconcile(FILE_ID, 1, { published: true, attemptId, result: { n: -0 } })).rejects.toMatchObject({
+      code: 'FILEFN_QUEUE_INVALID_INPUT',
+    });
+    expect((await a.get(FILE_ID))!.phase).toBe('publishing');
   });
 
   it('confirms exact JSON unchanged, and refuses a lossy manual or hook reconciliation', async () => {
