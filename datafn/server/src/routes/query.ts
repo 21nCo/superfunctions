@@ -1080,20 +1080,19 @@ export function createQueryHandler(
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
 
+          // A result that needs a revision removed is rebuilt from its wire
+          // form, so every serializer (toJSON) of the hook output is applied first.
           const recheck = (value: unknown, index: number): unknown => {
-            const rows = rowsWithRevision(value);
-            if (!versioned[index] || !rows.some(hasRevision)) return value;
+            if (!versioned[index] || !rowsWithRevision(value).some(hasRevision)) return value;
+            const wire = JSON.parse(JSON.stringify(value) ?? "null") as unknown;
             const certified = certifiedBefore[index];
             let changed = false;
-            const kept = rows.map((row) => {
-              if (!hasRevision(row) || certified?.has(canonicalRow(row))) return row;
+            for (const row of rowsWithRevision(wire)) {
+              if (!hasRevision(row) || certified?.has(canonicalRow(row))) continue;
               changed = true;
-              // The row as it goes on the wire (a hook's toJSON applied), without `$rev`.
-              const wire = JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
-              delete wire[REVISION_FIELD];
-              return wire;
-            });
-            return changed ? { ...(value as Record<string, unknown>), data: kept } : value;
+              delete row[REVISION_FIELD];
+            }
+            return changed ? wire : value;
           };
           if (isBatch && Array.isArray(result)) {
             const checked = result.map(recheck);

@@ -3600,6 +3600,26 @@ describe("DATA-41 revisions: PR review round 4", () => {
     expect(plain.body.result.data[0]).toMatchObject({ id: "task:1", $rev: "app" });
   });
 
+  it("applies a hook result's own serializers before removing a revision", async () => {
+    const hooks = {
+      name: "serializers",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: Json) => !Array.isArray(result?.data) ? result : {
+        ...result,
+        data: [
+          { ...result.data[0], toJSON: () => null },
+          { id: "task:made-up", $rev: 9 },
+        ],
+        toJSON() { return { data: this.data.map((row: Json) => row.toJSON ? row.toJSON() : { id: row.id, $rev: row.$rev }) }; },
+      },
+    };
+    const served = await serve({ config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "secret" } });
+    const read = await served.send("query", { version: 1, resource: "task", withRevisions: true });
+    expect(read.status).toBe(200);
+    expect(read.body.result).toEqual({ data: [null, { id: "task:made-up" }] });
+  });
+
   it("bounds an encoded read-back body that router middleware reads by the deadline", async () => {
     let cancelled = 0;
     const served = await serve({ config: { routeHooks: {
