@@ -1,0 +1,21 @@
+apifn/core/src/integrations/__tests__/watchfn-middleware.test.ts
+  s_f010997b9d148b::t_ea0f9a6a54b3c6 9,222-290
+apifn/core/src/integrations/watchfn.ts
+  s_f010997b9d148b::t_3f9446c50ed62e 198-210,246,249-254,292-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d3238fb024efe8ca1b214c14245a51b620acf2f",
+  "prompts": {},
+  "sessions": {
+    "s_f010997b9d148b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cc70a40-c0b1-441b-9d3b-d96fb2697542",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
