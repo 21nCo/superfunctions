@@ -148,7 +148,8 @@ for (const { operation, code, reason } of skipped) {
   has no body. When the executor sets `outputSchemaRule: "every-success"`
   (as `httpExecutor` does), neither does an operation whose documented 2xx
   responses do not all offer only JSON content with that same schema (such
-  as a `200` with a body beside a `204`, `201` and `202` with different
+  as a `200` with a body beside a `204`, a `2XX` range, which also covers
+  the bodyless `204` and `205`, `201` and `202` with different
   bodies, or a JSON body beside `text/plain`), since a call could succeed
   with a body the schema does not describe. Otherwise the schema becomes
   the output schema when it accepts objects and nothing else (also through a 3.1 `$ref` with sibling
@@ -303,16 +304,21 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   as `unsupported-by-executor`, and so is an operation whose every security
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
-  names a scheme that does not resolve (missing, an external `$ref`, a
-  cycle) or an `apiKey` scheme without a usable `name` and `in`, since the
-  parameter that carries its credential is then unknown. It sets `outputSchemaRule: "every-success"`
+  is malformed (a level that is not a list, a requirement that is not an
+  object, scopes that are not a list of strings; `fromOpenAPI` reports it
+  to any executor as `operation.securityUnresolved`) or names a scheme that
+  does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
+  does not define such as `api-key`) or an `apiKey` scheme without a usable
+  `name` and `in`, since the parameter that carries its credential is then
+  unknown. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
 - **Credentials (D9).** `headers` is a plain object (prototype
   `Object.prototype` or `null`) or a function of the server's trusted
   context (and the operation), called on every call, returning one or a
   promise of one; values are printable ASCII. A `Map`, a `Headers` or
-  another realm's object is refused rather than read as empty, so only an
-  explicit `{}` sends no operator headers. The tool input offers only what the executor sends: the
+  another realm's object is refused rather than read as empty, and so is a
+  record with a symbol or non-enumerable key: every own key is sent or
+  refused, so only an explicit `{}` sends no operator headers. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, ...), `apiKey` credential
@@ -331,8 +337,14 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   looks for each value as sent (trimmed), the credential after a scheme such
   as `Bearer`, and each value of a `Cookie` header, also percent-decoded as
   UTF-8 (a cookie parser's reading); and for echoes of these spelled with
-  JSON escapes, percent escapes (also with `+` for a space), HTML character
-  references (one or two of these, in either order), or as a JSON number.
+  JSON escapes, percent escapes (also with `+` for a space) or HTML character
+  references (one or two of these, in either order). A body is checked in
+  the encoding it marks or declares (a UTF-16 or UTF-8 byte order mark,
+  else the `Content-Type` charset, else UTF-8), also with any NUL
+  characters removed; one whose declared charset cannot be decoded is
+  withheld. Structured content is checked as it is returned, so a JSON
+  number that serializes as a credential is caught; text is returned as
+  written, so a number spelled inside a string or text is left alone.
   An error excerpt shows literal echoes (overlapping ones merged) as
   `[REDACTED]`, never cut inside one, and is withheld when the body reveals a
   credential any other way. A success body that reveals one is withheld with

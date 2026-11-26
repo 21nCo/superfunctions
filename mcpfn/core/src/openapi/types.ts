@@ -69,6 +69,14 @@ export interface OpenApiOperation {
   /** Effective security requirements: operation level, else document level. */
   readonly security?: readonly Readonly<Record<string, readonly string[]>>[];
   /**
+   * Present when the effective security requirements are malformed (a level
+   * that is not a list, a requirement that is not an object, scopes that are
+   * not a list of strings): why. `security` then lists only the well-formed
+   * requirements, so an executor that sends credentials should refuse the
+   * operation (`httpExecutor` does).
+   */
+  readonly securityUnresolved?: string;
+  /**
    * The security schemes `security` names that `components.securitySchemes`
    * defines, by name (`$ref` followed). Present when at least one resolves.
    */
@@ -185,7 +193,8 @@ export interface OpenApiExecutor<TContext = unknown> {
    * Which response schema becomes a tool's output schema. `first-success`
    * (the default): the first 2xx JSON schema. `every-success`: that schema
    * only when every documented 2xx response offers only JSON content with
-   * the same schema, so no documented success falls outside it.
+   * the same schema, so no documented success falls outside it (a `2XX`
+   * range, which covers the bodyless `204` and `205`, gives none).
    */
   readonly outputSchemaRule?: "first-success" | "every-success";
 }

@@ -1133,6 +1133,7 @@ describe("httpExecutor edge cases", () => {
 
   it("never reads a then property of a header record", async () => {
     // A plain record with a then getter that is not enumerable, so only thenable handling would read it.
+    // A non-enumerable key is refused (it is neither sent nor skipped) without its getter being read.
     const record = Object.defineProperty({ authorization: `Bearer ${operatorToken}` }, "then", {
       get(): unknown {
         throw new Error(`then read for ${operatorToken}`);
@@ -1140,11 +1141,11 @@ describe("httpExecutor edge cases", () => {
       enumerable: false,
     }) as Record<string, string>;
     const { fetch, urls } = stubFetch(() => new Response("ok"));
-    for (const headers of [record, () => record]) {
-      const executor = httpExecutor<Context>({ baseUrl: api.origin, headers, fetch });
-      await expect(execute(executor, operationOf("getItem"), { path: { id: "1" } })).resolves.toEqual({ content: [{ type: "text", text: "ok" }] });
-    }
-    expect(urls).toHaveLength(2);
+    const refused = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers: () => record, fetch }), operationOf("getItem"), { path: { id: "1" } }).catch(
+      (error: Error) => error,
+    );
+    expect((refused as Error).message).toBe('httpExecutor headers entry "then" is not enumerable');
+    expect(urls).toHaveLength(0);
     const thenable = { get then(): unknown { throw new Error(`then read for ${operatorToken}`); } };
     const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: () => thenable as unknown as Record<string, string>, fetch });
     const failure = await execute(executor, operationOf("getItem"), { path: { id: "1" } }).catch((error: Error) => error);
@@ -1501,9 +1502,9 @@ describe("httpExecutor security schemes it cannot rely on", () => {
     );
     expect(tools.map((tool) => tool.name)).toEqual(["transportOrBearer"]);
     expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
-      ["missing", "unsupported-by-executor", 'the security scheme "missing" does not resolve, so the parameter that carries its credential is unknown'],
-      ["external", "unsupported-by-executor", 'the security scheme "external" does not resolve, so the parameter that carries its credential is unknown'],
-      ["cycle", "unsupported-by-executor", 'the security scheme "cycleA" does not resolve, so the parameter that carries its credential is unknown'],
+      ["missing", "unsupported-by-executor", 'the security scheme "missing" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown'],
+      ["external", "unsupported-by-executor", 'the security scheme "external" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown'],
+      ["cycle", "unsupported-by-executor", 'the security scheme "cycleA" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown'],
       ["nameless", "unsupported-by-executor", 'the apiKey security scheme "nameless" has no usable name and location'],
       ["transport", "unsupported-by-executor", 'the operation needs the credential header "Connection", which fetch manages'],
     ]);
@@ -1582,5 +1583,188 @@ describe("httpExecutor credentials beginning with a byte order mark", () => {
     const executor = httpExecutor<Context>({ baseUrl: api.origin, fetch });
     const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema: true });
     expect(result.structuredContent).toEqual({ ok: true });
+  });
+});
+
+describe("httpExecutor security it cannot read strictly", () => {
+  const document = {
+    openapi: "3.1.0",
+    info: { title: "strict security", version: "1.0.0" },
+    components: {
+      securitySchemes: {
+        headerKey: { type: "apiKey", in: "header", name: "X-Api-Key" },
+        typoKey: { type: "api-key", in: "header", name: "X-Api-Key" },
+        bearer: { type: "http", scheme: "bearer" },
+      },
+    },
+    // Inherited by every operation that declares no security of its own.
+    security: [{ headerKey: [] }],
+    paths: {
+      // A bare name is not a requirement: reading the rest as [] would replace the inherited apiKey requirement.
+      "/bare-name": { get: { operationId: "bareName", security: ["headerKey"], parameters: [{ name: "X-Api-Key", in: "header", schema: { type: "string" } }], responses: ok } },
+      "/typo-type": { get: { operationId: "typoType", security: [{ typoKey: [] }], parameters: [{ name: "X-Api-Key", in: "header", schema: { type: "string" } }], responses: ok } },
+      "/scope-string": { get: { operationId: "scopeString", security: [{ bearer: "read" }], responses: ok } },
+      "/not-a-list": { get: { operationId: "notAList", security: { headerKey: [] }, responses: ok } },
+      "/open": { get: { operationId: "open", security: [], responses: ok } },
+    },
+  };
+
+  it("skips an operation whose security is malformed or names a scheme of an unknown type, and still sends one with none", async () => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const { registry, tools, skipped } = fromOpenAPI<Context>(document, {
+      executor: httpExecutor<Context>({ baseUrl: api.origin, headers: { authorization: `Bearer ${operatorToken}` }, fetch }),
+    });
+    expect(tools.map((tool) => tool.name)).toEqual(["open"]);
+    expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["bareName", "unsupported-by-executor", "its security cannot be read: the operation's security has a requirement that is not an object"],
+      [
+        "typoType",
+        "unsupported-by-executor",
+        'the security scheme "typoKey" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+      ],
+      ["scopeString", "unsupported-by-executor", 'its security cannot be read: the scopes of the security scheme "bearer" are not a list of strings'],
+      ["notAList", "unsupported-by-executor", "its security cannot be read: the operation's security is not a list of requirements"],
+    ]);
+    await expect(registry.callTool("open", {}, undefined, requestExtra())).resolves.toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(urls).toEqual([`${api.origin}/open`]);
+  });
+
+  it("tells any executor that the security is unresolved", () => {
+    const { tools } = fromOpenAPI(document, { executor: { execute: () => ({ content: [] }) } });
+    const byName = new Map(tools.map((tool) => [tool.name, tool.operation]));
+    expect(byName.get("bareName")!.securityUnresolved).toBe("the operation's security has a requirement that is not an object");
+    expect(byName.get("open")!.securityUnresolved).toBeUndefined();
+  });
+});
+
+describe("httpExecutor bodies in other character encodings", () => {
+  const headers = { authorization: `Bearer ${operatorToken}` };
+  const utf16 = (value: string, bom = false) => {
+    const bytes = Buffer.from(value, "utf16le");
+    return bom ? Buffer.concat([Buffer.from([0xff, 0xfe]), bytes]) : bytes;
+  };
+
+  it.each([
+    ["a declared utf-16le charset", utf16(`seen ${operatorToken}`), "text/plain; charset=utf-16le"],
+    ["a quoted declared charset", utf16(`seen ${operatorToken}`), 'text/plain; charset="UTF-16LE"'],
+    ["a UTF-16 byte order mark without a charset", utf16(`seen ${operatorToken}`, true), "text/plain"],
+  ])("checks and redacts a credential echoed in %s", async (_label, body, contentType) => {
+    const { fetch } = stubFetch(() => new Response(body, { status: 200, headers: { "content-type": contentType } }));
+    const success = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch }), operationOf("echo"));
+    expect(success.isError).toBe(true);
+    expect(text(success)).toContain("reveals an operator credential and was withheld");
+    const failing = stubFetch(() => new Response(body, { status: 500, headers: { "content-type": contentType } }));
+    const failure = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: failing.fetch }), operationOf("echo"));
+    expect(text(failure)).toBe("The API responded with HTTP 500.\n\nseen [REDACTED]");
+  });
+
+  it("withholds a credential echo interleaved with NULs, as UTF-16 read without its encoding", async () => {
+    const body = utf16(`seen ${operatorToken}`);
+    for (const status of [200, 500]) {
+      const { fetch } = stubFetch(() => new Response(body, { status, headers: { "content-type": "text/plain" } }));
+      const result = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch }), operationOf("echo"));
+      expect(result.isError).toBe(true);
+      expect(text(result)).toMatch(status === 200 ? /reveals an operator credential and was withheld/ : /\[body withheld: it reveals an operator credential\]$/);
+    }
+  });
+
+  it("withholds a body whose declared charset cannot be decoded", async () => {
+    for (const status of [200, 500]) {
+      const { fetch } = stubFetch(() => new Response("hello", { status, headers: { "content-type": "text/plain; charset=x-unknown-test" } }));
+      const result = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch }), operationOf("echo"));
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe(
+        status === 200
+          ? "The API responded with HTTP 200, so the call succeeded, but its body is in a character encoding that cannot be decoded and was withheld."
+          : "The API responded with HTTP 500.\n[body withheld: its character encoding cannot be decoded]",
+      );
+    }
+  });
+
+  it("parses a JSON success body in its declared encoding", async () => {
+    const { fetch } = stubFetch(() => new Response(utf16('{"ok":true}'), { headers: { "content-type": "application/json; charset=utf-16le" } }));
+    const result = await execute(httpExecutor<Context>({ baseUrl: api.origin, fetch }), operationOf("echo"), {}, { hasOutputSchema: true });
+    expect(result.structuredContent).toEqual({ ok: true });
+  });
+});
+
+describe("httpExecutor header records with keys Object.entries skips", () => {
+  it.each([
+    ["a non-enumerable authorization", () => Object.defineProperty({}, "authorization", { value: `Bearer ${operatorToken}`, enumerable: false }), 'httpExecutor headers entry "authorization" is not enumerable'],
+    ["a symbol key", () => ({ [Symbol("authorization")]: `Bearer ${operatorToken}` }), "httpExecutor headers has a symbol key"],
+  ])("refuses %s, sending nothing, from a function or as the option", async (_label, make, message) => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const failure = await execute(
+      httpExecutor<Context>({ baseUrl: api.origin, headers: () => make() as Record<string, string>, fetch }),
+      operationOf("getItem"),
+      { path: { id: "1" } },
+    ).catch((error: Error) => error);
+    expect(failure).not.toBeInstanceOf(McpFnError);
+    expect((failure as Error).message).toBe(message);
+    expect(() => httpExecutor({ baseUrl: api.origin, headers: make() as Record<string, string>, fetch })).toThrow(message);
+    expect(urls).toEqual([]);
+  });
+});
+
+describe("httpExecutor 2XX ranges", () => {
+  it("publishes no output schema for a 2XX range, so a 204 it covers is a plain success", async () => {
+    const replies: Array<[number, string | null]> = [
+      [204, null],
+      [200, '{"id":"item-1"}'],
+    ];
+    const { registry, tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "ranges", version: "1.0.0" },
+        paths: {
+          "/range": {
+            put: {
+              operationId: "putRange",
+              responses: { "2XX": { description: "Done", content: { "application/json": { schema: { type: "object", properties: { id: { type: "string" } } } } } } },
+            },
+          },
+          "/exact": {
+            put: {
+              operationId: "putExact",
+              responses: { "200": { description: "Done", content: { "application/json": { schema: { type: "object", properties: { id: { type: "string" } } } } } } },
+            },
+          },
+        },
+      },
+      {
+        executor: httpExecutor({
+          baseUrl: api.origin,
+          fetch: (async () => {
+            const [status, body] = replies.shift()!;
+            return new Response(body, { status, headers: body === null ? {} : { "content-type": "application/json" } });
+          }) as typeof globalThis.fetch,
+        }),
+        allowMutations: true,
+      },
+    );
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    expect(byName.get("putRange")!.outputSchema).toBeUndefined();
+    expect(byName.get("putExact")!.outputSchema).toBeDefined();
+    await expect(registry.callTool("putRange", {}, undefined, requestExtra())).resolves.toEqual({
+      content: [{ type: "text", text: "The API responded with HTTP 204 and no body." }],
+    });
+    await expect(registry.callTool("putRange", {}, undefined, requestExtra())).resolves.toEqual({ content: [{ type: "text", text: '{"id":"item-1"}' }] });
+  });
+});
+
+describe("httpExecutor number spellings of a credential", () => {
+  // An all-digit credential, and bodies that spell the same value as a number only inside strings or verbatim text.
+  const headers = { "x-api-key": "12345678901234" };
+
+  it("returns text and strings as written, and withholds only a JSON number it would return canonicalized", async () => {
+    const reply = (body: string, status = 200) => stubFetch(() => new Response(body, { status, headers: { "content-type": "application/json" } })).fetch;
+    const run = (body: string, hasOutputSchema: boolean, status?: number) =>
+      execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply(body, status) }), operationOf("echo"), {}, { hasOutputSchema });
+    await expect(run('{"note":"1.2345678901234e13"}', false)).resolves.toEqual({ content: [{ type: "text", text: '{"note":"1.2345678901234e13"}' }] });
+    await expect(run('{"note":"1.2345678901234e13"}', true)).resolves.toMatchObject({ structuredContent: { note: "1.2345678901234e13" } });
+    expect(text(await run("code 1.2345678901234e13", false, 500))).toBe("The API responded with HTTP 500.\n\ncode 1.2345678901234e13");
+    const structured = await run('{"seen":1.2345678901234e13}', true);
+    expect(structured.isError).toBe(true);
+    expect(text(structured)).toContain("reveals an operator credential and was withheld");
   });
 });

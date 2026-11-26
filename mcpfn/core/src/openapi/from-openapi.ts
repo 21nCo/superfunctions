@@ -212,6 +212,47 @@ function security(...levels: unknown[]): OpenApiOperation["security"] {
   return undefined;
 }
 
+/**
+ * Why the effective security requirements cannot be read strictly: a level
+ * that is present but not a list, a requirement that is not an object, or
+ * one whose scopes are not a list of strings. `security` leaves such a
+ * requirement out, so an executor that sends credentials must refuse the
+ * operation rather than read the rest as the whole requirement.
+ */
+function securityProblem(...levels: unknown[]): string | undefined {
+  for (const [index, level] of levels.entries()) {
+    if (level === undefined) continue;
+    const where = index === 0 ? "the operation's" : "the document's";
+    if (!Array.isArray(level)) return `${where} security is not a list of requirements`;
+    // A shared list (the document's) is read once.
+    let problem = securityProblems.get(level);
+    if (problem === undefined) {
+      problem = requirementsProblem(level) ?? null;
+      securityProblems.set(level, problem);
+    }
+    return problem === null ? undefined : problem.replace("{where}", where);
+  }
+  return undefined;
+}
+
+const securityProblems = new WeakMap<object, string | null>();
+
+function requirementsProblem(level: readonly unknown[]): string | undefined {
+  for (const requirement of level) {
+    if (!isObject(requirement)) return "{where} security has a requirement that is not an object";
+    for (const [name, scopes] of Object.entries(requirement)) {
+      if (!Array.isArray(scopes) || !(scopes as unknown[]).every((scope) => typeof scope === "string")) {
+        return `the scopes of the security scheme ${JSON.stringify(name)} are not a list of strings`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function securityUnresolved(problem: string | undefined): { securityUnresolved?: string } {
+  return problem === undefined ? {} : { securityUnresolved: problem };
+}
+
 /** Server variables, whose `enum` lists reach the executor and the naming callback as arrays. */
 function checkedVariables(variables: JsonObject): OpenApiServer["variables"] {
   checkMetadata(checkedVariableMaps, variables, (variable) => (isObject(variable) ? variable.enum : undefined));
@@ -257,9 +298,12 @@ function optionalSchemes(
   return schemes === undefined ? {} : { securitySchemes: schemes };
 }
 
+const SCHEME_TYPES = new Set(["apiKey", "http", "oauth2", "openIdConnect", "mutualTLS"]);
+
 /** What an executor needs of a security scheme object: its type and, for `apiKey` and `http`, where the credential goes. */
 function schemeInfo(raw: JsonObject): OpenApiSecurityScheme | undefined {
-  if (typeof raw.type !== "string") return undefined;
+  // A type OpenAPI does not define (such as "api-key") does not resolve, so its credential is not guessed.
+  if (typeof raw.type !== "string" || !SCHEME_TYPES.has(raw.type)) return undefined;
   const placed = raw.type === "apiKey" && typeof raw.name === "string" && (raw.in === "header" || raw.in === "query" || raw.in === "cookie");
   return {
     type: raw.type,
@@ -474,6 +518,7 @@ class OperationConverter {
       ...(body ? { requestBody: body.info } : {}),
       servers: servers(raw.servers, pathItem.servers, this.document.servers),
       ...optionalSecurity(security(raw.security, this.document.security)),
+      ...securityUnresolved(securityProblem(raw.security, this.document.security)),
       ...optionalSchemes(this.securitySchemes(raw)),
     };
   }
@@ -485,8 +530,8 @@ class OperationConverter {
 
   /**
    * The schemes the operation's effective security requirements name that
-   * `components.securitySchemes` defines. A name that does not resolve is
-   * left out, so an executor can tell it from `security` and refuse the
+   * `components.securitySchemes` defines. A name that does not resolve
+   * (also one whose `type` OpenAPI does not define) is left out, so an executor can tell it from `security` and refuse the
    * operation (`httpExecutor` does) rather than guess its credential.
    */
   securitySchemes(raw: JsonObject): Readonly<Record<string, OpenApiSecurityScheme>> | undefined {
@@ -847,7 +892,8 @@ class OperationConverter {
 
   /**
    * Whether every documented 2xx response has content, all of it JSON
-   * (`application/json` or `*+json`) declaring `schema`. A response that
+   * (`application/json` or `*+json`) declaring `schema`. A `2XX` range
+   * answers no: it covers `204` and `205`, which have no body. A response that
    * cannot be resolved describes no known body, so it answers no; it never
    * skips the operation.
    */
@@ -855,6 +901,8 @@ class OperationConverter {
     if (!isObject(raw.responses)) return false;
     for (const [status, value] of Object.entries(raw.responses)) {
       if (!SUCCESS_STATUS.test(status)) continue;
+      // A 2XX range also documents 204 and 205, which carry no body.
+      if (/^2XX$/i.test(status)) return false;
       let content: unknown;
       try {
         content = this.resolve(value, "responses").content;

@@ -78,7 +78,6 @@ const JSON_SIMPLE_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/":
 const PERCENT_RUN = /(?:%[0-9a-fA-F]{2})+/g;
 const HTML_REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|lt|gt|quot|apos));/g;
 const HTML_NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-const NUMBER_LITERAL = /-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g;
 
 const encoder = new TextEncoder();
 const percentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -251,6 +250,7 @@ function credentialParameters(operation: OpenApiOperation): { query: Set<string>
 
 /**
  * Why the operation's security cannot be met with operator headers alone.
+ * Malformed security (`securityUnresolved`) is refused, never read in part.
  * A requirement that names a scheme which does not resolve (missing, an
  * external `$ref`, a cycle) or an `apiKey` scheme with no usable placement
  * leaves its credential parameter unknown, so a caller could fill it: the
@@ -260,6 +260,7 @@ function credentialParameters(operation: OpenApiOperation): { query: Set<string>
  * (another scheme, or `{}` for none) is enough.
  */
 function securityRefusal(operation: OpenApiOperation): string | undefined {
+  if (operation.securityUnresolved !== undefined) return `its security cannot be read: ${operation.securityUnresolved}`;
   const requirements = operation.security;
   if (!requirements || requirements.length === 0) return undefined;
   const schemes = operation.securitySchemes ?? {};
@@ -268,7 +269,7 @@ function securityRefusal(operation: OpenApiOperation): string | undefined {
     for (const name of Object.keys(requirement)) {
       const scheme = schemeOf(name);
       if (scheme === undefined) {
-        return `the security scheme ${JSON.stringify(name)} does not resolve, so the parameter that carries its credential is unknown`;
+        return `the security scheme ${JSON.stringify(name)} does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown`;
       }
       if (scheme.type === "apiKey" && (scheme.name === undefined || scheme.in === undefined)) {
         return `the apiKey security scheme ${JSON.stringify(name)} has no usable name and location`;
@@ -433,7 +434,14 @@ function validateHeaders(record: unknown): Map<string, string> {
     throw new HeaderError(`httpExecutor ${option} must be a plain object of header names to string values`);
   }
   const headers = new Map<string, string>();
-  for (const [name, value] of Object.entries(record)) {
+  // Every own key is sent or refused: a symbol or non-enumerable key would otherwise be skipped unseen.
+  for (const key of Reflect.ownKeys(record)) {
+    if (typeof key === "symbol") throw new HeaderError(`httpExecutor ${option} has a symbol key`);
+    const name = key;
+    if (!Object.getOwnPropertyDescriptor(record, name)?.enumerable) {
+      throw new HeaderError(`httpExecutor ${option} entry ${JSON.stringify(name)} is not enumerable`);
+    }
+    const value: unknown = (record as Record<string, unknown>)[name];
     const lower = name.toLowerCase();
     const label = `httpExecutor ${option} entry ${JSON.stringify(name)}`;
     if (!HEADER_NAME.test(name)) throw new HeaderError(`${label} is not a valid header name`);
@@ -532,19 +540,19 @@ function decodedViews(text: string): string[] {
   return views;
 }
 
-/** A number in `text` whose canonical spelling, which JSON parsing produces, holds a credential its own spelling does not. */
-function numberReveals(text: string, secrets: readonly string[]): boolean {
-  for (const [literal] of text.matchAll(NUMBER_LITERAL)) {
-    if (!holdsSecret(literal, secrets) && holdsSecret(String(Number(literal)), secrets)) return true;
-  }
-  return false;
-}
-
-/** Whether `text` reveals a credential to a reader who decodes it, literal echoes included. */
+/**
+ * Whether `text` reveals a credential to a reader who decodes it, literal
+ * echoes included, also with any NUL characters removed (a UTF-16 echo read
+ * as single bytes).
+ */
 function exposes(text: string, secrets: readonly string[]): boolean {
   if (secrets.length === 0) return false;
-  if (holdsSecret(text, secrets)) return true;
-  return [text, ...decodedViews(text)].some((view) => holdsSecret(view, secrets) || numberReveals(view, secrets));
+  return textViews(text).some((view) => holdsSecret(view, secrets) || decodedViews(view).some((decoded) => holdsSecret(decoded, secrets)));
+}
+
+/** `text`, and `text` without NUL characters when it has any. */
+function textViews(text: string): string[] {
+  return text.includes("\u0000") ? [text, text.replaceAll("\u0000", "")] : [text];
 }
 
 function occurrences(text: string, secret: string): number {
@@ -557,19 +565,24 @@ function occurrences(text: string, secret: string): number {
  * Whether `text` reveals a credential other than as a literal echo, judged
  * on the text as received: a decoding that changes how often any credential
  * occurs (so one spelled with escapes, or overlapping a literal one, is
- * found), or a number that spells one. Literal echoes alone never trigger it.
+ * found). Literal echoes alone never trigger it. With NUL characters in
+ * the text, the text without them is judged the same way, so an echo
+ * interleaved with NULs (UTF-16 read as single bytes) is found too.
  */
 function revealsEncoded(text: string, spans: ReadonlyArray<readonly [number, number]>, secrets: readonly string[]): boolean {
   if (secrets.length === 0) return false;
   const literal = secrets.map((secret) => occurrences(text, secret));
-  const changesCount = [text, ...decodedViews(text)].some(
-    (view) =>
-      numberReveals(view, secrets) ||
-      (view !== text && secrets.some((secret, index) => occurrences(view, secret) !== literal[index])),
+  const changesCount = [...textViews(text), ...textViews(text).flatMap(decodedViews)].some(
+    (view) => view !== text && secrets.some((secret, index) => occurrences(view, secret) !== literal[index]),
   );
+  if (changesCount) return true;
   // Also with every literal echo masked by a character no decoding produces or
   // consumes, so an encoded echo elsewhere cannot hide behind an equal count.
-  return changesCount || exposes(maskSpans(text, spans), secrets);
+  const masked = maskSpans(text, spans);
+  if ([masked, ...decodedViews(masked)].some((view) => holdsSecret(view, secrets))) return true;
+  if (!text.includes("\u0000")) return false;
+  const stripped = text.replaceAll("\u0000", "");
+  return revealsEncoded(stripped, credentialSpans(stripped, secrets), secrets);
 }
 
 /** `text` with each span replaced by NUL characters of the same length. */
@@ -613,7 +626,10 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
   const { bytes, complete } = await readBody(response, options.maxResponseBytes, options.signal);
   if (!complete) return tooLarge(status, options.maxResponseBytes);
   if (bytes.byteLength === 0) return unstructured(status, options, "no body");
-  const decoded = decode(bytes);
+  const decoded = decode(bytes, response);
+  if (decoded === undefined) {
+    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body is in a character encoding that cannot be decoded and was withheld.`);
+  }
   // Rewriting a success body could change its data: one that reveals a credential is withheld whole.
   if (exposes(decoded, options.secrets)) {
     return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
@@ -638,6 +654,10 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
     result = structuredResult(value as Record<string, unknown>);
   } catch {
     return unstructured(status, options, "a body that cannot be returned as structured content", text);
+  }
+  // What is returned, as it serializes: a number spelled differently in the body (`1.2345e4`) is checked as returned.
+  if (exposes(JSON.stringify(result.structuredContent), options.secrets)) {
+    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
   }
   if (options.checkOutput && !options.checkOutput(result.structuredContent as Record<string, unknown>)) {
     return unstructured(status, options, "a body the output schema does not describe", text);
@@ -727,10 +747,17 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
   }
   const { bytes, complete } = await readBody(response, options.maxResponseBytes, options.signal);
   if (!complete) return oversized;
-  const text = decode(bytes);
-  const spans = credentialSpans(text, options.secrets);
-  if (revealsEncoded(text, spans, options.secrets)) {
+  const decoded = decode(bytes, response);
+  if (decoded === undefined) return toolError(`${heading}\n[body withheld: its character encoding cannot be decoded]`);
+  let spans = credentialSpans(decoded, options.secrets);
+  if (revealsEncoded(decoded, spans, options.secrets)) {
     return toolError(`${heading}\n[body withheld: it reveals an operator credential]`);
+  }
+  let text = decoded;
+  // A leading byte order mark is dropped after the check, unless a redacted credential begins with it.
+  if (text.startsWith("\uFEFF") && spans[0]?.[0] !== 0) {
+    text = text.slice(1);
+    spans = spans.map(([start, stop]) => [start - 1, stop - 1]);
   }
   const { excerpt, end } = boundedExcerpt(text, spans, text.length, EXCERPT_BYTES);
   return toolError(
@@ -859,9 +886,39 @@ function discard(response: Response): void {
   response.body?.cancel().catch(() => undefined);
 }
 
-/** Decodes a body for credential matching and excerpts, keeping a leading byte order mark a credential may begin with. */
-function decode(bytes: Uint8Array): string {
-  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+/**
+ * Decodes a body for credential matching and excerpts in the encoding it
+ * marks or declares: a UTF-16 or UTF-8 byte order mark, else the
+ * `Content-Type` charset, else UTF-8. A leading byte order mark is kept (a
+ * credential may begin with U+FEFF). Undefined when the declared charset is
+ * one TextDecoder does not know, so the body is withheld rather than
+ * checked in the wrong encoding.
+ */
+function decode(bytes: Uint8Array, response: Response): string | undefined {
+  let label: string | undefined;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) label = "utf-16le";
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) label = "utf-16be";
+  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) label = "utf-8";
+  else label = charset(response.headers.get("content-type")) ?? "utf-8";
+  let decoder: TextDecoder;
+  try {
+    decoder = new TextDecoder(label, { ignoreBOM: true });
+  } catch {
+    return undefined;
+  }
+  return decoder.decode(bytes);
+}
+
+/** The `charset` parameter of a media type, unquoted, if any. */
+function charset(contentType: string | null): string | undefined {
+  if (contentType === null) return undefined;
+  for (const parameter of contentType.split(";").slice(1)) {
+    const at = parameter.indexOf("=");
+    if (at === -1 || parameter.slice(0, at).trim().toLowerCase() !== "charset") continue;
+    const value = parameter.slice(at + 1).trim();
+    return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+  }
+  return undefined;
 }
 
 interface BaseUrl {
