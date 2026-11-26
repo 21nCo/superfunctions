@@ -1856,6 +1856,43 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     // Lookup 1 is the claim's read over the evicted key; lookup 2 is the re-read after its write over that absence.
     finds = 0;
     await expect(idempotency.claim(orderRequest())).rejects.toThrow("receipt lookup failed");
-    expect(store.records.size).toBe(0);
+    expect([...store.records.values()]).toEqual([expect.objectContaining({ state: "released", recovery: "receipt" })]);
+  });
+
+  it("never replays or conflicts on a copy recorded from a receipt that is gone", async () => {
+    const { idempotency, database, store } = setup();
+    const first = acquired(await idempotency.claim(orderRequest()));
+    await idempotency.settle(first, await database.createOrder(first, "book"));
+    // The receipt expired, or the copy's writer stopped before its recheck: the key is free again.
+    database.receiptsByKey.clear();
+
+    expect(await idempotency.recover(orderRequest({ body: otherBody }))).toEqual({ outcome: "absent" });
+    expect([...store.records.values()]).toEqual([expect.objectContaining({ state: "released", recovery: "receipt", generation: 1 })]);
+    expect(acquired(await idempotency.claim(orderRequest({ body: otherBody }))).generation).toBe(2);
+  });
+
+  it("settles from a receipt the recheck confirms after the write over an absence lost its acknowledgement", async () => {
+    class RejectingCopyStore extends FakeAtomicStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (expectedVersion === null && next?.state === "completed") throw new Error("store write failed");
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new RejectingCopyStore();
+    let finds: number | undefined;
+    const database = new FakeOrderDatabase();
+    const receipts = {
+      find: async (storeKey: string) => {
+        if (finds !== undefined && (finds += 1) === 3) throw new Error("receipt lookup failed");
+        return database.receipts.find(storeKey);
+      },
+    };
+    const { idempotency } = setup({ store, receipts });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(holder, "book");
+    store.records.clear();
+    finds = 0;
+
+    expect(await idempotency.settle(holder, response)).toMatchObject({ outcome: "settled", response: { body: response.body } });
   });
 });

@@ -880,12 +880,22 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    */
   type Recorded = { kind: "recorded" | "lost" | "failed"; receipt: ParsedReceipt } | { kind: "gone" };
 
-  /** Deletes a copy this step wrote over an absence, and only that version; a failure leaves it to expire. */
-  const retireQuietly = async (storeKey: string, version: string): Promise<void> => {
+  /** Retires a copy recorded from a receipt, and only that version, with a tombstone that keeps the receipt contract. */
+  const retire = (storeKey: string, version: string, generation: number, fingerprint: string): Promise<boolean> =>
+    store.compareAndSet(storeKey, version, {
+      state: "released",
+      version: nextVersion(),
+      generation,
+      fingerprint,
+      recovery: "receipt",
+      expiresAt: now() + retentionMs,
+    });
+
+  const retireQuietly = async (storeKey: string, version: string, receipt: ParsedReceipt, generation: number): Promise<void> => {
     try {
-      await store.compareAndSet(storeKey, version, null);
+      await retire(storeKey, version, Math.max(generation, receipt.generation, 1), receipt.fingerprint);
     } catch {
-      // A failed delete leaves the copy to the next read, which checks it against the live receipt.
+      // A failed retire leaves the copy to the next read, which checks it against the live receipt.
     }
   };
 
@@ -928,12 +938,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     try {
       latest = await findReceipt(storeKey);
     } catch (error) {
-      if (attempted !== undefined) await retireQuietly(storeKey, attempted);
+      if (attempted !== undefined) await retireQuietly(storeKey, attempted, receipt, generation);
       throw error;
     }
-    if (latest && sameCommit(latest, receipt)) return { kind: written ? "recorded" : "lost", receipt };
+    // A confirmed receipt decides even when the write's acknowledgement was lost.
+    if (latest && sameCommit(latest, receipt)) {
+      if (written === undefined) return { kind: "failed", receipt };
+      return { kind: written ? "recorded" : "lost", receipt };
+    }
     if (attempted !== undefined) {
-      if (!latest) await retireQuietly(storeKey, attempted);
+      if (!latest) await retireQuietly(storeKey, attempted, receipt, generation);
       else {
         try {
           await writeFromReceipt(storeKey, attempted, generation, latest);
@@ -1043,6 +1057,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       return { live };
     }
     const receipt = await findReceipt(storeKey);
+    if (!receipt && record?.state === "completed" && record.fromReceipt === true) {
+      // A copy recorded from a receipt never outlives it (an expired commit, or a writer stopped before its
+      // recheck): retire exactly that version and decide again over the free key.
+      await retire(storeKey, record.version, record.generation, record.fingerprint);
+      return { done: undefined };
+    }
     if (!receipt) return { live };
     if (holdsReceipt(live, receipt)) return { live, receipt };
     const [expected, generation] =
