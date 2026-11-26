@@ -1172,15 +1172,17 @@ githubProvider.actions['pulls.get'] = restAction({ name: 'pulls.get', method: 'G
 githubProvider.actions['issues.comments.create'] = { ...githubProvider.actions['issues.createComment'], name: 'issues.comments.create' };
 githubProvider.actions['pulls.review'] = { ...githubProvider.actions['pulls.createReview'], name: 'pulls.review' };
 
+const githubContractReads = [
+  "repos.list",
+  "issues.list",
+  "issues.get",
+  "issues.comments.list",
+  "pulls.list",
+  "pulls.get"
+];
+
 declareContracts(githubProvider, {
-  "reads": [
-    "repos.list",
-    "issues.list",
-    "issues.get",
-    "issues.comments.list",
-    "pulls.list",
-    "pulls.get"
-  ],
+  "reads": githubContractReads,
   "writes": [
     "issues.create",
     "issues.update",
@@ -1219,3 +1221,11 @@ declareContracts(githubProvider, {
 });
 
 applySelectedResources(githubProvider);
+
+// These reads require no granted scope (readScopes []), so nothing local
+// re-checks access to their data: never serve or store them from the action
+// cache, even when a caller asks for caching. A revoked grant is then seen on
+// the next call instead of after the cache TTL.
+for (const name of githubContractReads) {
+  githubProvider.actions[name]!.cacheable = 'never';
+}

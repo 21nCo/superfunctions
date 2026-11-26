@@ -18,9 +18,11 @@ function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, st
   let credentials: Credentials = { type: 'oauth2', accessToken: 'test-token-before' };
   let scopes = ['read', 'write'];
   const keys: string[] = [];
+  const reads: string[] = [];
   const entries = options.entries ?? new Map<string, string>();
   const store: KVStoreAdapter = {
     async get(key) {
+      reads.push(key);
       return entries.get(key) ?? null;
     },
     async set({ key, value }) {
@@ -58,7 +60,9 @@ function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, st
   });
   return {
     executor,
+    provider,
     keys,
+    reads,
     seen,
     replaceCredentials: (next: Credentials) => { credentials = next; },
     narrowScopes: (next: string[]) => { scopes = next; },
@@ -177,5 +181,48 @@ describe('ActionExecutor credential binding', () => {
 
     const otherKey = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyB), entries });
     expect((await otherKey.executor.execute('test', 'getProfile', read(true))).cached).toBe(false);
+  });
+});
+
+// An action with cacheable: 'never' (no local authorization gate on its data)
+// is never served from or written to the cache, whatever the caller asks for.
+describe('ActionExecutor cacheable: never', () => {
+  const modes = [
+    ['no cache option', undefined],
+    ['cache: true', true],
+    ['cache: { key }', { key: 'profile' }],
+  ] as const;
+
+  it.each(modes)('neither reads nor writes the store with %s', async (_label, cache) => {
+    const entries = new Map<string, string>();
+    const { executor, provider, keys, reads, seen } = setup({ entries });
+    provider.actions.getProfile.cacheable = 'never';
+    const options = { userId: 'user-1', params: { id: 1 }, ...(cache === undefined ? {} : { cache }) };
+
+    const first = await executor.execute<any>('test', 'getProfile', options);
+    const second = await executor.execute<any>('test', 'getProfile', options);
+
+    expect(first.cached).toBe(false);
+    expect(second.cached).toBe(false);
+    expect(seen).toHaveLength(2);
+    expect(reads).toEqual([]);
+    expect(keys).toEqual([]);
+    expect(entries.size).toBe(0);
+  });
+
+  it.each([
+    ['cacheable: true with no cache option', true, undefined],
+    ['an ordinary action with cache: true', undefined, true],
+    ['an ordinary action with cache: { key }', undefined, { key: 'profile' }],
+  ] as const)('still caches %s', async (_label, cacheable, cache) => {
+    const { executor, provider, seen } = setup();
+    if (cacheable !== undefined) provider.actions.getProfile.cacheable = cacheable;
+    const options = { userId: 'user-1', params: { id: 1 }, ...(cache === undefined ? {} : { cache }) };
+
+    await executor.execute<any>('test', 'getProfile', options);
+    const second = await executor.execute<any>('test', 'getProfile', options);
+
+    expect(second.cached).toBe(true);
+    expect(seen).toHaveLength(1);
   });
 });

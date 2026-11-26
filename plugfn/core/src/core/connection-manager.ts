@@ -192,6 +192,29 @@ export class ConnectionNotFoundError extends Error {
   }
 }
 
+/**
+ * The subject oauth-flow derives from a stored OAuth state row (the same
+ * reading its callback applies to the consumed row).
+ */
+function oauthStateSubject(record: OAuthStateRecord): {
+  kind: 'connection' | 'browser-auth';
+  tenantId?: string;
+  userId?: string;
+} {
+  const stored = record.subject;
+  if (stored?.kind === 'browser-auth' || record.intentId) {
+    return {
+      kind: 'browser-auth',
+      tenantId: stored?.kind === 'browser-auth' ? stored.tenantId : record.tenantId,
+    };
+  }
+  return {
+    kind: 'connection',
+    tenantId: stored?.kind === 'connection' ? stored.tenantId : record.tenantId,
+    userId: stored?.kind === 'connection' ? stored.userId : record.userId,
+  };
+}
+
 export class ConnectionManager {
   private readonly tokenStorage: SecureTokenStorage;
   private readonly oauthFlowService: OAuthFlowService;
@@ -313,8 +336,38 @@ export class ConnectionManager {
       state,
       redirectUri,
     });
-    const subjectUserId = callbackResult.subject.userId ?? statePreview.userId;
     const callbackConnectionId = callbackResult.connectionId;
+    // The connection is created only for the exact state that passed the
+    // checks above: the subject oauth-flow reports for the consumed state must
+    // match the preview, and every owner, user and fallback-scope field below
+    // comes from the preview, never from the consumed row.
+    // Limit: a same-user, same-tenant replacement of the state row's owner
+    // metadata or requested scopes between preview and consume is not
+    // detectable here; it needs an oauth-core consume-with-expected-record
+    // (and write access to the OAuth state store).
+    const previewSubject = oauthStateSubject(statePreview);
+    const callbackSubject = callbackResult.subject;
+    if (
+      callbackSubject?.kind !== 'connection' ||
+      previewSubject.kind !== 'connection' ||
+      (callbackSubject.userId !== undefined && callbackSubject.userId !== statePreview.userId) ||
+      callbackSubject.tenantId !== previewSubject.tenantId
+    ) {
+      if (callbackConnectionId) {
+        await this.encryptedTokenVault.deleteByConnection(callbackConnectionId).catch((error: unknown) => {
+          this.logger.warn('Failed to delete the token record of a rejected OAuth callback', {
+            connectionId: callbackConnectionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'OAuth state changed during callback',
+        403
+      );
+    }
+    const subjectUserId = statePreview.userId;
     if (!subjectUserId || !callbackConnectionId) {
       throw new Error('OAuth callback did not resolve a stable connection subject');
     }

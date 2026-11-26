@@ -4,10 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requestExtra } from "./openapi-helpers.js";
 
-// cloneEmpty() (ported from 615d6f44e) returns a self-contained registry: a
-// fresh built-in compiler that received no source compiles, so every `$ref` a
-// copy makes must resolve to a schema registered on the copy and its manifest
-// validates on its own. No registration leaks in either direction.
+// cloneEmpty() (ported from 615d6f44e) returns a registry with no definitions
+// that inherits the schemas the source accepted so far: re-registering them in
+// any order reuses the source snapshot, and a copy of a self-contained source
+// never exposes a collection that does not resolve on its own. No later
+// registration leaks in either direction.
 describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the built-in %s compiler", (engine) => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -17,11 +18,14 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
   async function load() {
     if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
     vi.resetModules();
-    const { McpFnRegistry, McpFnValidationError, structuredResult, createManifest, validateManifest, defineMcpFnServer } =
-      await import("../src/index.js");
+    const {
+      McpFnRegistry, McpFnValidationError, structuredResult, createManifest, validateManifest, defineMcpFnServer, createMcpFnServer,
+    } = await import("../src/index.js");
     const { createSchemaCompiler } = await import("../src/validation.js");
     expect(createSchemaCompiler().engine).toBe(engine);
-    return { McpFnRegistry, McpFnValidationError, structuredResult, createManifest, validateManifest, defineMcpFnServer };
+    return {
+      McpFnRegistry, McpFnValidationError, structuredResult, createManifest, validateManifest, defineMcpFnServer, createMcpFnServer,
+    };
   }
 
   const info = { name: "test", version: "0.0.0" };
@@ -34,8 +38,9 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
   };
   const refTo = (id: string) => ({ type: "object", properties: { item: { $ref: id } }, required: ["item"] });
 
-  it("rejects a $ref to a source $id that was not re-registered on the copy", async () => {
-    const { McpFnRegistry, McpFnValidationError, structuredResult } = await load();
+  it("never exposes a copy whose $ref resolves only to a schema the copy did not register", async () => {
+    const { McpFnRegistry, McpFnValidationError, structuredResult, createManifest, validateManifest, defineMcpFnServer, createMcpFnServer } =
+      await load();
     const handler = async () => structuredResult({ ok: true });
     const source = new McpFnRegistry()
       .register({ name: "a", description: "Owns the shared schema.", inputSchema: sharedSchema, handler })
@@ -48,11 +53,51 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
     expect(empty.promptDefinitions()).toEqual([]);
     expect(empty.schemaDefinitions()).toEqual([]);
 
-    expect(() => empty.register({ name: "b", description: "Refers to the shared schema.", inputSchema: refTo(sharedId), handler }))
-      .toThrow(McpFnValidationError);
-    expect(empty.has("b")).toBe(false);
-    // The failed registration does not reach the source either.
+    // The inherited schema resolves the $ref, but the copy's own collection
+    // would not: every listing, manifest, clone and server refuses it.
+    empty.register({ name: "b", description: "Refers to the shared schema.", inputSchema: refTo(sharedId), handler });
+    const unclosed = [
+      () => empty.definitions(),
+      () => empty.listTools(),
+      () => empty.schemaDefinitions(),
+      () => empty.clone(),
+      () => createManifest(info, empty),
+      () => defineMcpFnServer({ info, registry: empty }),
+      () => createMcpFnServer({ info, registry: empty }),
+    ];
+    for (const expose of unclosed) {
+      expect(expose).toThrow(McpFnValidationError);
+      expect(expose).toThrow("Registry schema collection is not self-contained");
+    }
     expect(source.has("b")).toBe(false);
+
+    // Registering the inherited schema unchanged closes the copy.
+    empty.register({ name: "a", description: "Same schema on the copy.", inputSchema: { ...sharedSchema }, handler });
+    expect(empty.listTools().map((tool) => tool.name)).toEqual(["a", "b"]);
+    expect(() => validateManifest(createManifest(info, empty))).not.toThrow();
+    await expect(empty.callTool("b", { item: { name: "x" } }, undefined, requestExtra()))
+      .resolves.toMatchObject({ structuredContent: { ok: true } });
+    await expect(empty.callTool("b", { item: { name: 1 } }, undefined, requestExtra()))
+      .rejects.toThrow("Invalid arguments for b");
+  });
+
+  it("rejects a different schema under an inherited $id", async () => {
+    const { McpFnRegistry, McpFnValidationError, structuredResult } = await load();
+    const handler = async () => structuredResult({ ok: true });
+    const source = new McpFnRegistry()
+      .register({ name: "a", description: "Owns the shared schema.", inputSchema: sharedSchema, handler });
+    for (const derived of [source.cloneEmpty(), source.clone()]) {
+      let thrown: unknown;
+      try {
+        derived.register({ name: "z", description: "Changed schema.", inputSchema: { ...sharedSchema, required: [] }, handler });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpFnValidationError);
+      expect((thrown as Error).message).toContain(`Schema $id ${sharedId} is inherited`);
+      expect((thrown as Error).message).toContain("new McpFnRegistry()");
+      expect(derived.has("z")).toBe(false);
+    }
   });
 
   it("keeps the 615d6f44e pattern valid: re-registering source definitions gives a valid manifest", async () => {
@@ -166,13 +211,8 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the buil
     // Same object, same $id, edited in place; then the output is fixed.
     inputSchema.title = "Edited";
     definition.outputSchema = { type: "object" };
-    if (engine === "cfworker") {
-      // cfworker keeps the $id from the input's successful compile and rejects
-      // it again (same on dev); there is nothing more to clone.
-      expect(() => source.register(definition)).toThrow("invalid JSON Schema");
-      expect(source.clone().listTools()).toEqual([]);
-      return;
-    }
+    // The failed registration left no compiler residue, so the retry succeeds
+    // on both engines (on dev cfworker rejected the repeated $id).
     source.register(definition);
 
     const replayed = source.clone();
@@ -216,22 +256,31 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the buil
       complete: { unknown: async () => [] },
       get: async () => ({ messages: [] }),
     }), "completer for unknown argument"],
-  ] as const)("fails clone() and declaration loudly for a $ref resolved only by %s", async (_label, registerBroken, message) => {
+  ] as const)("rejects a $ref to the schema of %s at registration", async (_label, registerBroken, message) => {
     const { McpFnRegistry, McpFnValidationError, defineMcpFnServer } = await load();
+    const { createManifest, validateManifest } = await import("../src/index.js");
     const id = "https://test.invalid/residue";
-    const source = new McpFnRegistry();
+    const source = new McpFnRegistry()
+      .register({ name: "base", description: "Plain.", inputSchema: objectWithId("https://test.invalid/base"), handler });
     expect(() => registerBroken(source, id)).toThrow(message);
     expect(source.has("broken")).toBe(false);
     expect(source.listPrompts()).toEqual([]);
-    // The source compiler kept the $id, so the source accepts the $ref.
-    source.register({ name: "uses-residue", description: "Refers to residue.", inputSchema: refTo(id), handler });
-    expect(source.schemaDefinitions()).toEqual([refTo(id)]);
-
-    expect(() => source.clone()).toThrow(McpFnValidationError);
-    expect(() => source.clone()).toThrow("Tool uses-residue contains an invalid JSON Schema");
-    expect(() => defineMcpFnServer({ info, registry: source })).toThrow(McpFnValidationError);
-    expect(() => source.cloneEmpty().register({ name: "uses-residue", description: "Refers to residue.", inputSchema: refTo(id), handler }))
-      .toThrow("invalid JSON Schema");
+    // The failed registration left nothing in the compiler, so a $ref to its
+    // schema does not resolve on the source either (on dev it did).
+    expect(() => source.register({ name: "uses-residue", description: "Refers to residue.", inputSchema: refTo(id), handler }))
+      .toThrow(McpFnValidationError);
+    expect(source.has("uses-residue")).toBe(false);
+    // Earlier registrations still validate, and every copy matches the source.
+    const declaration = defineMcpFnServer({ info, registry: source });
+    for (const registry of [source, source.clone(), declaration.registry]) {
+      expect(registry.listTools().map((tool) => tool.name)).toEqual(["base"]);
+      await expectNameValidates(registry, "base");
+    }
+    expect(() => validateManifest(createManifest(info, source))).not.toThrow();
+    // The same $id registers cleanly afterwards.
+    source.register({ name: "owner", description: "Owns the id now.", inputSchema: objectWithId(id), handler });
+    source.register({ name: "uses", description: "Refers to it.", inputSchema: refTo(id), handler });
+    expect(source.clone().listTools().map((tool) => tool.name)).toEqual(["base", "owner", "uses"]);
   });
 
   it("rejects registration from inside this registry's schema compile without partial state", async () => {
@@ -268,14 +317,16 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the buil
     ];
     for (const [kind, attempt] of attempts) {
       // The compiler propagates the rejection: the outer registration fails.
+      // Each outer schema is new, so the registry compiles it (an equal
+      // accepted schema would be reused without calling the compiler).
       reenter = attempt;
       swallow = false;
-      expect(() => source.register({ name: "outer", description: "Outer.", inputSchema: { type: "object" }, handler }))
+      expect(() => source.register({ name: "outer", description: "Outer.", inputSchema: { type: "object", title: `propagate-${kind}` }, handler }))
         .toThrow("Tool outer contains an invalid JSON Schema");
       // The compiler swallows it: the outer registration succeeds alone.
       reenter = attempt;
       swallow = true;
-      source.register({ name: `outer-${kind}`, description: "Outer.", inputSchema: { type: "object" }, handler });
+      source.register({ name: `outer-${kind}`, description: "Outer.", inputSchema: { type: "object", title: `swallow-${kind}` }, handler });
     }
     expect(inner).toHaveLength(8);
     for (const error of inner) {

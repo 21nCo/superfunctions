@@ -1,7 +1,9 @@
 import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import {
   createSchemaCompiler,
+  validateSchemaCollection,
   type CompiledSchema,
+  type SchemaCompiler,
   type SchemaIssue,
 } from "./validation.js";
 import type {
@@ -16,7 +18,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { McpFnOutputValidationError, McpFnValidationError } from "./errors.js";
-import { compareCodeUnits } from "./canonical.js";
+import { canonicalJson, compareCodeUnits } from "./canonical.js";
 import { formatMcpFnSchemaIssues } from "./validation.js";
 import {
   unsupportedUriTemplateOperator,
@@ -35,15 +37,138 @@ import type {
 } from "./types.js";
 
 interface RegisteredTool<TContext> {
+  /** The caller's definition: handlers and live non-schema fields. */
   definition: McpFnToolDefinition<TContext>;
+  /** What the registry advertises: the definition with its schema snapshots. */
+  view: McpFnToolDefinition<TContext>;
   validateInput: CompiledSchema;
   validateOutput?: CompiledSchema;
 }
 
 interface RegisteredPrompt<TContext> {
   definition: McpFnPromptDefinition<TContext>;
+  view: McpFnPromptDefinition<TContext>;
   validateArguments: CompiledSchema;
 }
+
+/** The deep-frozen schema snapshots one tool registration declares. */
+interface ToolSchemas {
+  inputSchema: McpFnToolDefinition<unknown>["inputSchema"];
+  outputSchema?: McpFnToolDefinition<unknown>["outputSchema"];
+}
+
+/** The deep-frozen argument snapshots one prompt registration declares. */
+interface PromptSchemas {
+  arguments?: McpFnPromptDefinition<unknown>["arguments"];
+  argumentsSchema?: McpFnObjectSchema;
+  /** The arguments JSON Schema the registry compiles and advertises. */
+  schema: object;
+}
+
+/** An accepted schema snapshot and the validator compiled from it. */
+interface SchemaEntry {
+  snapshot: object;
+  validator: CompiledSchema;
+}
+
+interface SchemaKey {
+  key: string;
+  ids: string[];
+}
+
+const schemaKeys = new WeakMap<object, SchemaKey>();
+
+/**
+ * The key two equal schema snapshots share. A schema that declares an `$id`
+ * is keyed by canonical JSON, so an equal schema with another key order
+ * reuses its entry instead of redeclaring the `$id`. Any other schema is keyed
+ * by its exact JSON, which costs far less on large schemas; an equal schema in
+ * another key order is just compiled again, which is harmless without an `$id`.
+ */
+function schemaKey(snapshot: object): SchemaKey {
+  let known = schemaKeys.get(snapshot);
+  if (!known) {
+    const ids = schemaIds(snapshot);
+    known = {
+      key: ids.length ? `c${canonicalJson(snapshot)}` : `j${JSON.stringify(snapshot)}`,
+      ids,
+    };
+    schemaKeys.set(snapshot, known);
+  }
+  return known;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function deepFreeze<T>(value: T): T {
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object" || Object.isFrozen(current)) continue;
+    Object.freeze(current);
+    for (const key of Reflect.ownKeys(current)) {
+      stack.push((current as Record<PropertyKey, unknown>)[key]);
+    }
+  }
+  return value;
+}
+
+/**
+ * A deep-frozen structured clone of caller-owned schema data. The registry
+ * compiles, validates with, advertises and copies only snapshots, so editing
+ * the caller's object after registration changes nothing.
+ */
+function snapshotJson<T>(value: T, label: string): T {
+  if (value === null || typeof value !== "object") return value;
+  let copy: T;
+  try {
+    copy = structuredClone(value);
+  } catch (error) {
+    throw new McpFnValidationError(`${label} must be JSON data`, {
+      cause: errorMessage(error),
+    });
+  }
+  return deepFreeze(copy);
+}
+
+/** Every string `$id` declared anywhere in a schema snapshot. */
+function schemaIds(schema: object): string[] {
+  const ids: string[] = [];
+  const stack: unknown[] = [schema];
+  const seen = new Set<object>();
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    const id = (current as { $id?: unknown }).$id;
+    if (typeof id === "string") ids.push(id);
+    stack.push(...Object.values(current));
+  }
+  return ids;
+}
+
+/**
+ * A view of a caller definition that carries the registry's schema snapshots
+ * in place of the caller's schema fields: a field without a snapshot is left
+ * out, whatever the caller's object holds now. It keeps the prototype.
+ */
+function withSnapshots<T extends object>(
+  definition: T,
+  fields: readonly string[],
+  snapshots: object,
+): T {
+  const view = Object.assign(
+    Object.create(Object.getPrototypeOf(definition) as object | null) as T,
+    definition,
+  ) as Record<string, unknown>;
+  for (const field of fields) delete view[field];
+  return Object.assign(view, snapshots) as T;
+}
+
+// Errors that must reach the caller unwrapped (their message is the contract).
+const passThroughErrors = new WeakSet<object>();
 
 /** One failure reported by a {@link McpFnSchemaValidator}. */
 export interface McpFnSchemaValidationIssue {
@@ -115,6 +240,11 @@ const ignore = (): undefined => undefined;
  * any other thenable (including a Proxy around a promise) throws a TypeError
  * here and its own then() is never called: foreign then() code could create a
  * new rejected promise on every call, so the registry only fails closed on it.
+ *
+ * Limit: the intrinsic then() reads the promise's `constructor` (and its
+ * Symbol.species) before it attaches a reaction. A promise whose constructor or
+ * species getter throws therefore cannot be marked handled by any JavaScript
+ * code; the registry still fails closed on it with the same diagnostic.
  */
 function ignoreRejection(value: unknown): void {
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return;
@@ -137,10 +267,13 @@ function adaptSchemaCompiler(
     const validator = validate as McpFnSchemaValidator;
     const compiled = ((data: unknown): boolean => {
       const result: unknown = validator(data);
+      // Fail closed: only an explicit `true` accepts the value. Any other
+      // result goes to the intrinsic then() once, whatever its own `then`
+      // property says (a genuine promise can shadow it), so no promise of any
+      // realm or supported subclass is left to reject unhandled.
+      if (result !== true) ignoreRejection(result);
       if (isThenable(result)) {
-        // A validator must answer synchronously. Fail closed and never leave
-        // its promise to reject unhandled.
-        ignoreRejection(result);
+        // A validator must answer synchronously.
         compiled.errors = [{
           instancePath: "",
           message: "compileSchema validators must be synchronous",
@@ -148,7 +281,6 @@ function adaptSchemaCompiler(
         }];
         return false;
       }
-      // Fail closed: only an explicit `true` accepts the value.
       const valid = result === true;
       compiled.errors = valid ? null : customSchemaIssues(validator.errors);
       return valid;
@@ -539,7 +671,9 @@ export function schemaPromptArguments(definition: {
   });
 }
 
-function promptSchema<TContext>(definition: McpFnPromptDefinition<TContext>) {
+function promptSchema<TContext>(
+  definition: Pick<McpFnPromptDefinition<TContext>, "arguments" | "argumentsSchema">,
+) {
   if (definition.argumentsSchema) return definition.argumentsSchema;
   const properties = Object.fromEntries(
     (definition.arguments ?? []).map((argument) => [
@@ -561,7 +695,7 @@ function promptSchema<TContext>(definition: McpFnPromptDefinition<TContext>) {
 }
 
 export function promptArguments<TContext>(
-  definition: McpFnPromptDefinition<TContext>,
+  definition: Pick<McpFnPromptDefinition<TContext>, "arguments" | "argumentsSchema">,
 ) {
   return Array.isArray(definition.arguments)
     ? definition.arguments
@@ -594,59 +728,174 @@ function exceedsJsonNodes(value: unknown, limit: number): boolean {
 
 export class McpFnRegistry<TContext = undefined> {
   private readonly options: McpFnRegistryOptions;
-  private readonly compileSchema: (schema: object) => CompiledSchema;
+  private readonly customCompile: ((schema: object) => CompiledSchema) | undefined;
+  // The built-in engine. Its state is exactly the accepted snapshots in
+  // `entries`, in order: a failed registration replaces it (no residue).
+  private builtIn: SchemaCompiler | undefined;
   private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
   private readonly schemas: object[] = [];
+  // Accepted schema snapshots (inherited and own) by canonical JSON, in compile
+  // order. A canonically equal schema reuses the entry and is not compiled.
+  private readonly entries = new Map<string, SchemaEntry>();
+  // Snapshots compiled by the registration in progress, committed on success.
+  private pending: Map<string, SchemaEntry> | undefined;
+  // `$id`s of the schemas a derived registry inherited from its source.
+  private readonly inheritedIds = new Set<string>();
+  // A derived registry whose source collection was closed never exposes an
+  // unclosed collection.
+  private requireClosed = false;
+  private closure: { count: number; error: unknown } | undefined;
   // Set while this registry's compiler runs, so a compiler (or a schema getter
   // it reads) cannot register on this registry in the middle of a registration.
   private compiling = false;
+  private compileAttempts = 0;
 
   /**
    * Clone in successful registration order, preserving cross-definition
    * references. Each successful registration is replayed with its live
-   * definition and every non-compile check. A built-in compiler is a fresh
-   * instance that recompiles each schema. A custom `compileSchema` is shared
-   * as-is and is not called again: the clone reuses the validators the source
-   * registration compiled, so a stateful custom compiler (for example one
-   * that rejects a repeated `$id`) clones like the source.
+   * definition (handlers and every non-compile check) and the schema snapshots
+   * the source accepted, so the clone validates and advertises exactly what
+   * the source does. A built-in compiler is a fresh instance holding the
+   * source's accepted snapshots; a custom `compileSchema` is shared as-is and
+   * is not called again for them (the clone reuses the source validators).
    */
   clone(): McpFnRegistry<TContext> {
-    const target = new McpFnRegistry<TContext>(this.options);
+    this.assertClosed();
+    const target = this.derive();
     for (const register of this.registrations) register(target);
     return target;
   }
 
   /**
-   * An empty, self-contained registry with this registry's options and no
-   * definitions. A custom `compileSchema` is shared as-is. A built-in compiler
-   * is a fresh instance that has compiled nothing, so every `$ref` a later
-   * registration makes must resolve to a schema registered on the copy, and
-   * its manifest stays valid on its own.
+   * An empty registry with this registry's options and no definitions. It
+   * inherits the schemas this registry accepted so far (not later ones):
+   * registering one of them again, in any order, reuses the source snapshot
+   * and validator without compiling, so a `$ref` resolves whichever kind or
+   * name order the copy registers in. A different schema under an inherited
+   * `$id` is rejected. When this registry's schema collection is
+   * self-contained, the copy's listings and clones throw unless its own
+   * collection is self-contained too, so its manifest stays valid on its own.
    */
   cloneEmpty(): McpFnRegistry<TContext> {
-    return new McpFnRegistry<TContext>(this.options);
+    return this.derive();
   }
 
   /** Registered schema resources for catalog projections, including hidden tools and prompts. */
   schemaDefinitions(): object[] {
+    this.assertClosed();
     return [...this.schemas];
   }
 
+  private derive(): McpFnRegistry<TContext> {
+    const target = new McpFnRegistry<TContext>(this.options);
+    target.requireClosed = this.closureError() === undefined;
+    for (const [key, entry] of this.entries) {
+      let validator = entry.validator;
+      for (const id of schemaKey(entry.snapshot).ids) target.inheritedIds.add(id);
+      if (target.builtIn) {
+        try {
+          validator = target.builtIn.compile(entry.snapshot);
+        } catch (error) {
+          throw new McpFnValidationError("Registry schema replay failed", {
+            cause: errorMessage(error),
+          });
+        }
+      }
+      target.entries.set(key, { snapshot: entry.snapshot, validator });
+    }
+    return target;
+  }
+
+  /** Whether this registry's schema collection resolves on its own. */
+  private closureError(): unknown {
+    if (this.closure?.count !== this.registrations.length) {
+      let error: unknown;
+      try {
+        validateSchemaCollection([...new Set(this.schemas)]);
+      } catch (caught) {
+        error = caught ?? new Error("schema collection is invalid");
+      }
+      this.closure = { count: this.registrations.length, error };
+    }
+    return this.closure.error;
+  }
+
+  private assertClosed(): void {
+    if (!this.requireClosed) return;
+    const error = this.closureError();
+    if (error !== undefined) {
+      throw new McpFnValidationError(
+        "Registry schema collection is not self-contained",
+        { cause: errorMessage(error) },
+      );
+    }
+  }
+
   /**
-   * Validators a replayed registration may reuse: only with a shared custom
-   * compiler, whose compiled validators are valid for every registry using it.
+   * The accepted entry for a schema snapshot: an equal accepted (or, within
+   * this registration, pending) snapshot is reused; otherwise it is compiled
+   * and stays pending until the registration succeeds.
    */
-  private reusable<T>(compiled: T): T | undefined {
-    return this.options.compileSchema ? compiled : undefined;
+  private entryFor(snapshot: object): SchemaEntry {
+    const { key, ids } = schemaKey(snapshot);
+    const known = this.entries.get(key) ?? this.pending?.get(key);
+    if (known) return known;
+    for (const id of ids) {
+      if (this.inheritedIds.has(id)) {
+        const error = new McpFnValidationError(
+          `Schema $id ${id} is inherited from the registry this copy was made from with different content; register it unchanged or use new McpFnRegistry()`,
+        );
+        passThroughErrors.add(error);
+        throw error;
+      }
+    }
+    const entry = { snapshot, validator: this.compile(snapshot) };
+    this.pending?.set(key, entry);
+    return entry;
   }
 
   private compile(schema: object): CompiledSchema {
     this.compiling = true;
+    this.compileAttempts += 1;
     try {
-      return this.compileSchema(schema);
+      return this.customCompile ? this.customCompile(schema) : this.builtIn!.compile(schema);
     } finally {
       this.compiling = false;
     }
+  }
+
+  /**
+   * Run one registration: commit the schemas it compiled only when it
+   * succeeds. When it fails after the built-in engine ran, replace the engine
+   * with a fresh one that holds exactly the accepted snapshots, in order.
+   */
+  private transact(kind: string, body: () => void): this {
+    this.assertNotCompiling(kind);
+    const attempts = this.compileAttempts;
+    const pending = new Map<string, SchemaEntry>();
+    this.pending = pending;
+    try {
+      body();
+    } catch (error) {
+      if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
+      throw error;
+    } finally {
+      this.pending = undefined;
+    }
+    for (const [key, entry] of pending) this.entries.set(key, entry);
+    return this;
+  }
+
+  private resetBuiltIn(): void {
+    const compiler = createSchemaCompiler();
+    try {
+      for (const { snapshot } of this.entries.values()) compiler.compile(snapshot);
+    } catch (error) {
+      throw new McpFnValidationError("Registry schema replay failed", {
+        cause: errorMessage(error),
+      });
+    }
+    this.builtIn = compiler;
   }
 
   private assertNotCompiling(kind: string): void {
@@ -675,10 +924,9 @@ export class McpFnRegistry<TContext = undefined> {
     }
     this.options = { compileSchema };
     if (compileSchema) {
-      this.compileSchema = adaptSchemaCompiler(compileSchema);
+      this.customCompile = adaptSchemaCompiler(compileSchema);
     } else {
-      const compiler = createSchemaCompiler();
-      this.compileSchema = (schema) => compiler.compile(schema);
+      this.builtIn = createSchemaCompiler();
     }
   }
 
@@ -690,9 +938,15 @@ export class McpFnRegistry<TContext = undefined> {
 
   private registerTool(
     definition: McpFnToolDefinition<TContext>,
-    reuse: { validateInput: CompiledSchema; validateOutput: CompiledSchema | undefined } | undefined,
+    accepted: ToolSchemas | undefined,
   ): this {
-    this.assertNotCompiling("tool");
+    return this.transact("tool", () => this.addTool(definition, accepted));
+  }
+
+  private addTool(
+    definition: McpFnToolDefinition<TContext>,
+    accepted: ToolSchemas | undefined,
+  ): void {
     assertName("tool", definition.name);
     if (this.tools.has(definition.name)) {
       throw new McpFnValidationError(`Duplicate MCP tool: ${definition.name}`);
@@ -707,17 +961,22 @@ export class McpFnRegistry<TContext = undefined> {
         `Tool ${definition.name} requires a handler function`,
       );
     }
-    if (definition.inputSchema.type !== "object") {
+    const inputSchema = accepted?.inputSchema ??
+      snapshotJson(definition.inputSchema, `Tool ${definition.name} inputSchema`);
+    const outputSchema = accepted ? accepted.outputSchema : definition.outputSchema !== undefined
+      ? snapshotJson(definition.outputSchema, `Tool ${definition.name} outputSchema`)
+      : undefined;
+    if (inputSchema.type !== "object") {
       throw new McpFnValidationError(
         `Tool ${definition.name} inputSchema must be an object schema`,
       );
     }
     if (
-      definition.outputSchema !== undefined &&
-      (definition.outputSchema === null ||
-        typeof definition.outputSchema !== "object" ||
-        Array.isArray(definition.outputSchema) ||
-        definition.outputSchema.type !== "object")
+      outputSchema !== undefined &&
+      (outputSchema === null ||
+        typeof outputSchema !== "object" ||
+        Array.isArray(outputSchema) ||
+        outputSchema.type !== "object")
     ) {
       throw new McpFnValidationError(
         `Tool ${definition.name} outputSchema must be an object schema`,
@@ -743,33 +1002,31 @@ export class McpFnRegistry<TContext = undefined> {
       );
     }
 
-    let validateInput: CompiledSchema;
-    let validateOutput: CompiledSchema | undefined;
+    let input: SchemaEntry;
+    let output: SchemaEntry | undefined;
     try {
-      if (reuse) {
-        ({ validateInput, validateOutput } = reuse);
-      } else {
-        validateInput = this.compile(definition.inputSchema);
-        validateOutput = definition.outputSchema !== undefined
-          ? this.compile(definition.outputSchema)
-          : undefined;
-      }
+      input = this.entryFor(inputSchema);
+      output = outputSchema !== undefined ? this.entryFor(outputSchema) : undefined;
     } catch (error) {
+      if (error instanceof Error && passThroughErrors.has(error)) throw error;
       throw new McpFnValidationError(
         `Tool ${definition.name} contains an invalid JSON Schema`,
-        { cause: error instanceof Error ? error.message : String(error) },
+        { cause: errorMessage(error) },
       );
     }
 
+    const schemas: ToolSchemas = {
+      inputSchema: input.snapshot as ToolSchemas["inputSchema"],
+      ...(output ? { outputSchema: output.snapshot as ToolSchemas["outputSchema"] } : {}),
+    };
     this.tools.set(definition.name, {
       definition,
-      validateInput,
-      validateOutput,
+      view: withSnapshots(definition, ["inputSchema", "outputSchema"], schemas),
+      validateInput: input.validator,
+      validateOutput: output?.validator,
     });
-    this.schemas.push(definition.inputSchema, ...(definition.outputSchema ? [definition.outputSchema] : []));
-    const compiled = this.reusable({ validateInput, validateOutput });
-    this.registrations.push(target => { target.registerTool(definition, compiled); });
-    return this;
+    this.schemas.push(input.snapshot, ...(output ? [output.snapshot] : []));
+    this.registrations.push(target => { target.registerTool(definition, schemas); });
   }
 
   registerAll(definitions: McpFnToolDefinition<TContext>[]): this {
@@ -877,9 +1134,15 @@ export class McpFnRegistry<TContext = undefined> {
 
   private registerPromptDefinition(
     definition: McpFnPromptDefinition<TContext>,
-    reuseArguments: CompiledSchema | undefined,
+    accepted: PromptSchemas | undefined,
   ): this {
-    this.assertNotCompiling("prompt");
+    return this.transact("prompt", () => this.addPrompt(definition, accepted));
+  }
+
+  private addPrompt(
+    definition: McpFnPromptDefinition<TContext>,
+    accepted: PromptSchemas | undefined,
+  ): void {
     assertName("prompt", definition.name);
     if (this.prompts.has(definition.name)) {
       throw new McpFnValidationError(
@@ -891,10 +1154,20 @@ export class McpFnRegistry<TContext = undefined> {
         `Prompt ${definition.name} requires a get handler function`,
       );
     }
+    // Every check, compile and listing below reads these snapshots only.
+    const declared: Pick<McpFnPromptDefinition<TContext>, "arguments" | "argumentsSchema"> = accepted
+      ? { arguments: accepted.arguments, argumentsSchema: accepted.argumentsSchema }
+      : {
+          arguments: snapshotJson(definition.arguments, `Prompt ${definition.name} arguments`),
+          argumentsSchema: snapshotJson(
+            definition.argumentsSchema,
+            `Prompt ${definition.name} argumentsSchema`,
+          ),
+        };
     if (
-      definition.arguments !== undefined &&
-      (!Array.isArray(definition.arguments) ||
-        definition.arguments.some(
+      declared.arguments !== undefined &&
+      (!Array.isArray(declared.arguments) ||
+        declared.arguments.some(
           (argument) =>
             !argument ||
             typeof argument !== "object" ||
@@ -906,7 +1179,7 @@ export class McpFnRegistry<TContext = undefined> {
         `Prompt ${definition.name} arguments must be an array`,
       );
     }
-    for (const argument of definition.arguments ?? []) {
+    for (const argument of declared.arguments ?? []) {
       assertName("prompt argument", argument.name);
       if (
         argument.description !== undefined &&
@@ -926,32 +1199,33 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     if (
-      definition.argumentsSchema !== undefined &&
-      (!definition.argumentsSchema ||
-        typeof definition.argumentsSchema !== "object" ||
-        Array.isArray(definition.argumentsSchema) ||
-        definition.argumentsSchema.type !== "object")
+      declared.argumentsSchema !== undefined &&
+      (!declared.argumentsSchema ||
+        typeof declared.argumentsSchema !== "object" ||
+        Array.isArray(declared.argumentsSchema) ||
+        declared.argumentsSchema.type !== "object")
     ) {
       throw new McpFnValidationError(
         `Prompt ${definition.name} argumentsSchema must be an object schema`,
       );
     }
-    let validateArguments: CompiledSchema;
+    let compiled: SchemaEntry;
     try {
-      validateArguments = reuseArguments ?? this.compile(promptSchema(definition));
+      compiled = this.entryFor(accepted?.schema ?? deepFreeze(promptSchema(declared)));
     } catch (error) {
+      if (error instanceof Error && passThroughErrors.has(error)) throw error;
       throw new McpFnValidationError(
         `Prompt ${definition.name} contains an invalid arguments JSON Schema`,
-        { cause: error instanceof Error ? error.message : String(error) },
+        { cause: errorMessage(error) },
       );
     }
-    if (definition.argumentsSchema) {
+    if (declared.argumentsSchema) {
       assertPromptSchemaSupportsStringValues(
-        definition.argumentsSchema,
+        declared.argumentsSchema,
         `Prompt ${definition.name} argumentsSchema`,
       );
     }
-    const argumentNames = (promptArguments(definition) ?? []).map(
+    const argumentNames = (promptArguments(declared) ?? []).map(
       ({ name }) => name,
     );
     if (new Set(argumentNames).size !== argumentNames.length) {
@@ -959,14 +1233,14 @@ export class McpFnRegistry<TContext = undefined> {
         `Prompt ${definition.name} has duplicate arguments`,
       );
     }
-    if (definition.arguments && definition.argumentsSchema) {
-      const declared = definition.arguments
+    if (declared.arguments && declared.argumentsSchema) {
+      const listed = declared.arguments
         .map(({ name, required }) => ({ name, required: required === true }))
         .sort((left, right) => compareCodeUnits(left.name, right.name));
-      const schemaDeclared = schemaPromptArguments(definition)!.map(
+      const schemaDeclared = schemaPromptArguments(declared)!.map(
         ({ name, required }) => ({ name, required: required === true }),
       );
-      if (JSON.stringify(declared) !== JSON.stringify(schemaDeclared)) {
+      if (JSON.stringify(listed) !== JSON.stringify(schemaDeclared)) {
         throw new McpFnValidationError(
           `Prompt ${definition.name} arguments and argumentsSchema disagree`,
         );
@@ -979,11 +1253,21 @@ export class McpFnRegistry<TContext = undefined> {
         );
       }
     }
-    this.prompts.set(definition.name, { definition, validateArguments });
-    this.schemas.push(promptSchema(definition));
-    const compiledArguments = this.reusable(validateArguments);
-    this.registrations.push(target => { target.registerPromptDefinition(definition, compiledArguments); });
-    return this;
+    const schemas: PromptSchemas = {
+      ...(declared.arguments !== undefined ? { arguments: declared.arguments } : {}),
+      ...(declared.argumentsSchema !== undefined
+        ? { argumentsSchema: compiled.snapshot as McpFnObjectSchema }
+        : {}),
+      schema: compiled.snapshot,
+    };
+    const { schema: _schema, ...viewSchemas } = schemas;
+    this.prompts.set(definition.name, {
+      definition,
+      view: withSnapshots(definition, ["arguments", "argumentsSchema"], viewSchemas),
+      validateArguments: compiled.validator,
+    });
+    this.schemas.push(compiled.snapshot);
+    this.registrations.push(target => { target.registerPromptDefinition(definition, schemas); });
   }
 
   has(name: string): boolean {
@@ -994,9 +1278,18 @@ export class McpFnRegistry<TContext = undefined> {
     return Boolean(this.tools.get(name)?.validateOutput);
   }
 
+  /**
+   * Registered tools by name. Each carries the schema snapshots the registry
+   * validates with, not the caller's (possibly later edited) schema objects.
+   */
   definitions(): McpFnToolDefinition<TContext>[] {
+    this.assertClosed();
+    return this.toolViews();
+  }
+
+  private toolViews(): McpFnToolDefinition<TContext>[] {
     return [...this.tools.values()]
-      .map(({ definition }) => definition)
+      .map(({ view }) => view)
       .sort((left, right) => compareCodeUnits(left.name, right.name));
   }
 
@@ -1012,9 +1305,11 @@ export class McpFnRegistry<TContext = undefined> {
       .sort((left, right) => compareCodeUnits(left.name, right.name));
   }
 
+  /** Registered prompts by name, carrying the registry's argument snapshots. */
   promptDefinitions(): McpFnPromptDefinition<TContext>[] {
+    this.assertClosed();
     return [...this.prompts.values()]
-      .map(({ definition }) => definition)
+      .map(({ view }) => view)
       .sort((left, right) => compareCodeUnits(left.name, right.name));
   }
 
@@ -1042,7 +1337,7 @@ export class McpFnRegistry<TContext = undefined> {
     )
       capabilities.completions = {};
     if (
-      this.definitions().some((definition) => {
+      this.toolViews().some((definition) => {
         const support = definition.execution?.taskSupport;
         return support === "optional" || support === "required";
       })
@@ -1056,8 +1351,8 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   getListedTool(name: string): McpFnListedTool | undefined {
-    const definition = this.tools.get(name)?.definition;
-    return definition ? this.listedTool(definition) : undefined;
+    const view = this.tools.get(name)?.view;
+    return view ? this.listedTool(view) : undefined;
   }
 
   private listedTool(definition: McpFnToolDefinition<TContext>): McpFnListedTool {

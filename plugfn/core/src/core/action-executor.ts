@@ -121,6 +121,7 @@ export class ActionExecutor {
       const validatedParams = actionObj.parameters.parse(options.params);
       const shouldUseCache =
         this.enableCache &&
+        actionObj.cacheable !== 'never' &&
         options.cache !== false &&
         (options.cache !== undefined || actionObj.cacheable === true);
 

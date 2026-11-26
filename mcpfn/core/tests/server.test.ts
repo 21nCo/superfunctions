@@ -237,7 +237,10 @@ describe("McpFnServer", () => {
         return structuredResult({ ok: true });
       },
     });
-    expect(compiledSchemas.at(-1)).toBe(inputSchema);
+    // The registry compiles its own frozen snapshot of the caller's schema.
+    expect(compiledSchemas.at(-1)).toEqual(inputSchema);
+    expect(compiledSchemas.at(-1)).not.toBe(inputSchema);
+    expect(Object.isFrozen(compiledSchemas.at(-1))).toBe(true);
     expect(source.listTools()).toEqual(sourceTools);
 
     const server = createMcpFnServer({ info: { name: "empty", version: "1.0.0" }, registry: empty });

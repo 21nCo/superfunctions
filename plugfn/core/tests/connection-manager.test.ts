@@ -1206,3 +1206,76 @@ describe('ConnectionManager caller input snapshots', () => {
     expect(await adapter.listConnections('user-1', 'linear')).toEqual([]);
   });
 });
+
+// SFNS-107 architecture reset: a connection is created only for the exact
+// OAuth state that passed authorization. If oauth-flow consumes a state whose
+// subject differs from the previewed one, the callback fails before any
+// connection write and the pending token record is removed.
+describe('ConnectionManager OAuth callback subject binding', () => {
+  const owner = {
+    kind: 'delegated',
+    organizationId: 'org-1',
+    delegatedToUserId: 'delegate-a',
+    installedByUserId: 'admin-1',
+    grants: ['read', 'write'],
+    tenantId: 'workspace-1',
+  } as const;
+
+  async function pendingState(replace?: (subject: Record<string, unknown>) => Record<string, unknown>) {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'admin-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { ...owner, grants: [...owner.grants] },
+      scopes: ['scope-a', 'scope-b'],
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+    const flow = (env.manager as any).oauthFlowService;
+    const consumed: { connectionId?: string } = {};
+    const originalCallback = flow.handleCallback.bind(flow);
+    vi.spyOn(flow, 'handleCallback').mockImplementation(async (...args: unknown[]) => {
+      const result = await originalCallback(...args);
+      consumed.connectionId = result.connectionId;
+      // Model a state row that was replaced between the preview and consume.
+      return replace ? { ...result, subject: replace({ ...result.subject }) } : result;
+    });
+    const storage = (env.manager as any).connectionStorage;
+    const create = vi.spyOn(storage, 'create');
+    return { env, adapter, state, consumed, create };
+  }
+
+  it.each([
+    ['another user', (subject: Record<string, unknown>) => ({ ...subject, userId: 'intruder-1' })],
+    ['another tenant', (subject: Record<string, unknown>) => ({ ...subject, tenantId: 'workspace-2' })],
+    ['no tenant', (subject: Record<string, unknown>) => ({ ...subject, tenantId: undefined })],
+    ['a browser-auth subject', (subject: Record<string, unknown>) => ({ ...subject, kind: 'browser-auth' })],
+  ])('rejects a consumed state for %s before any connection write', async (_label, replace) => {
+    const { env, adapter, state, consumed, create } = await pendingState(replace);
+
+    await expect(env.manager.handleCallback({ code: 'auth-code-1', state })).rejects.toMatchObject({
+      code: 'TENANT_ACCESS_DENIED',
+      message: 'OAuth state changed during callback',
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(consumed.connectionId).toBeTruthy();
+    expect(await readTokenEntryByConnection(adapter, consumed.connectionId!)).toBeNull();
+  });
+
+  it('creates a matching callback with the previewed user, owner and fallback scopes', async () => {
+    const { env, adapter, state, consumed, create } = await pendingState();
+
+    const { connection } = await env.manager.handleCallback({ code: 'auth-code-1', state });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(connection).toMatchObject({
+      userId: 'admin-1',
+      ownerKind: 'delegated',
+      organizationId: 'org-1',
+      delegatedToUserId: 'delegate-a',
+      tenantId: 'workspace-1',
+    });
+    expect(await readTokenEntryByConnection(adapter, connection.id)).not.toBeNull();
+    expect(consumed.connectionId).toBeTruthy();
+  });
+});
