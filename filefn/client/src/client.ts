@@ -61,6 +61,8 @@ export interface HttpClient {
       metadata?: Record<string, unknown>;
       fileId?: string;
       idempotencyKey?: string;
+      /** Marks an offline replay: `unpinned`, or the scope pinned by its first init (`x-filefn-replay-scope`). */
+      replayScope?: string;
     },
     signal?: AbortSignal,
   ): Promise<InitUploadResponse>;
@@ -439,14 +441,17 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async initUpload(params, signal) {
       // The key travels in the x-idempotency-key header, the server's contract.
       // (0.4 and earlier sent it in the body, which servers before 0.8 ignored.)
-      const { idempotencyKey, ...body } = params;
+      const { idempotencyKey, replayScope, ...body } = params;
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["x-idempotency-key"] = idempotencyKey;
+      if (replayScope) headers["x-filefn-replay-scope"] = replayScope;
       return request<InitUploadResponse>(
         "POST",
         "/upload/init",
         body,
         signal,
         retryOptions,
-        idempotencyKey ? { "x-idempotency-key": idempotencyKey } : undefined,
+        Object.keys(headers).length > 0 ? headers : undefined,
       );
     },
 

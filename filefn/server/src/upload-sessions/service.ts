@@ -759,12 +759,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
    * from 'pending' or 'in_progress'). A session an earlier FileFn left partly
    * published is adopted and finished as a publication instead. Anything this
    * cannot settle reads 'in_progress': the client replays the same key.
+   * An 'in_progress' session whose completion was already decided (a
+   * 'completing' claim, or a 'publishing' row) adds `completionStarted: true`:
+   * its parts are settled (an adopted earlier publication may have none left),
+   * so the client sends no part and finishes it with the completion call.
    */
   async function replayedSessionState(found: UploadSession): Promise<{
     status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
     fileId?: string;
     versionId?: string;
     versionConfirmed?: boolean;
+    completionStarted?: boolean;
   }> {
     let session: UploadSession | null = found;
     for (let attempt = 0; attempt < 4 && session; attempt += 1) {
@@ -781,9 +786,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // the replay reaches a durable answer (a completion call agrees, see
       // expireSession).
       if (session.status === 'publishing' || (session.status === 'completing' && !isStaleClaim(session))) {
-        return { status: 'in_progress' };
+        return { status: 'in_progress', completionStarted: true };
       }
-      if (!isExpiredAt(session.expiresAt)) return { status: session.status === 'pending' ? 'pending' : 'in_progress' };
+      if (!isExpiredAt(session.expiresAt)) {
+        if (session.status === 'pending') return { status: 'pending' };
+        // A stale claim before the expiry: the next completion call takes it over.
+        return session.status === 'completing' ? { status: 'in_progress', completionStarted: true } : { status: 'in_progress' };
+      }
       let adopted: UploadSession | null | undefined;
       try {
         adopted = await adoptLegacyPublication(session);
@@ -1531,6 +1540,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       fileId?: string;
       versionId?: string;
       versionConfirmed?: boolean;
+      completionStarted?: boolean;
     }> {
       const warnings: string[] = [];
       // The route passes the JSON body through unchanged, so check every field
@@ -1841,6 +1851,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       chunkSizeBytes: number;
       fileSize: number;
       expiresAt: string;
+      completionStarted?: boolean;
     }> {
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
@@ -1875,6 +1886,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         chunkSizeBytes: session.chunkSizeBytes,
         fileSize: session.size,
         expiresAt: session.expiresAt,
+        // Its completion was decided: no part is sent any more, only the completion call.
+        ...(session.status === 'completing' || session.status === 'publishing' ? { completionStarted: true } : {}),
       };
     },
 

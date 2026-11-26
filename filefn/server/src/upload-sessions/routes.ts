@@ -2,7 +2,8 @@ import type { UploadSessionService } from './service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
-import { FileFnError, authRequired, invalidRequest, rateLimited } from '../errors.js';
+import { createHash } from 'crypto';
+import { FileFnError, authRequired, invalidRequest, rateLimited, replayScopeMismatch } from '../errors.js';
 import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 import { readJsonBody } from '../http-body.js';
 
@@ -26,6 +27,28 @@ export interface RouteContext {
   };
   legacyGlobalRateLimit?: boolean;
   clientKey?: RateLimitClientKey;
+}
+
+/**
+ * Marks an `upload/init` as an offline replay: `unpinned` on a generation's
+ * first init, else the `replayScope` that init returned. A marked init is
+ * refused unless a caller is authenticated (401, also where auth is
+ * optional: an anonymous replay would store the bytes outside the owner's
+ * scope, with no idempotency) and, when pinned, unless the caller's scope is
+ * the pinned one (409 FILEFN_REPLAY_SCOPE_MISMATCH). Either way nothing is
+ * created. Unmarked requests, anonymous ones included, are unchanged.
+ */
+export const REPLAY_SCOPE_HEADER = 'x-filefn-replay-scope';
+export const REPLAY_SCOPE_UNPINNED = 'unpinned';
+
+/**
+ * An opaque fingerprint of the caller's owner and tenant (the scope its
+ * idempotency keys live in), returned to a marked `upload/init` as
+ * `replayScope`. It names no identifier.
+ */
+export function replayScopeOf(principal: Pick<FileFnPrincipal, 'principalId' | 'tenantId'>): string {
+  const scope = JSON.stringify(['filefn-replay-scope', principal.principalId, principal.tenantId ?? null]);
+  return `rs_${createHash('sha256').update(scope).digest('hex')}`;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -124,6 +147,13 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
+        const pinnedScope = request.headers.get(REPLAY_SCOPE_HEADER);
+        let replayScope: string | undefined;
+        if (pinnedScope !== null) {
+          if (!principal) throw authRequired();
+          replayScope = replayScopeOf(principal);
+          if (pinnedScope !== REPLAY_SCOPE_UNPINNED && pinnedScope !== replayScope) throw replayScopeMismatch();
+        }
         await checkRateLimit(request, 'upload-init', principal, rateLimits?.uploadInit);
 
         const body = await parseJsonBody<{
@@ -144,7 +174,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         );
         const warnings = fromBody ? [...result.warnings, BODY_IDEMPOTENCY_KEY_DEPRECATED] : result.warnings;
 
-        return successResponse({ ...result, warnings }, requestId, warnings);
+        return successResponse({ ...result, warnings, ...(replayScope ? { replayScope } : {}) }, requestId, warnings);
       } catch (err) {
         if (err instanceof FileFnError) {
           return errorResponse(err, requestId);

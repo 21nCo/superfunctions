@@ -4,7 +4,7 @@ import { createHttpClient } from '../client.js';
 import { OPFSStore, type PendingUpload } from '../offline/opfs-store.js';
 import { OfflineSync } from '../offline/sync.js';
 import { UploadManager, isValidFileId } from '../upload-manager.js';
-import { SharedLockManager } from './helpers/offline-fixtures.js';
+import { SharedLockManager, replayScopeOf } from './helpers/offline-fixtures.js';
 
 // In-memory OPFS. One root per test, shared by every OPFSStore (and so by every
 // client created in the test), which models OPFS surviving a page reload.
@@ -143,6 +143,7 @@ function createServer() {
         chunkSizeBytes: 1024,
         totalParts: 1,
         fileId: body.fileId,
+        ...replayScopeOf(init),
       });
     }
     const sign = /^\/upload\/(sess_\d+)\/parts\/1\/sign$/.exec(path);

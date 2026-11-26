@@ -22,7 +22,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function createApp(options: { writeOnly?: boolean } = {}) {
+async function createApp(options: { writeOnly?: boolean; authOptional?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-offline-replay-'));
   roots.push(root);
   const database = memoryAdapter();
@@ -36,7 +36,7 @@ async function createApp(options: { writeOnly?: boolean } = {}) {
     })(),
     policies: [{ name: 'doc', contentTypes: ['text/plain'], maxSizeBytes: 1024, visibility: 'private' } as any],
     auth: {
-      required: true,
+      required: !options.authOptional,
       resolveSession: async (request) => {
         const user = request.headers.get('x-test-user');
         return user ? { principalId: user } : null;
@@ -44,11 +44,13 @@ async function createApp(options: { writeOnly?: boolean } = {}) {
     },
   });
   const requests: Array<{ method: string; path: string; key: string | null }> = [];
+  // Whom the credentials resolve to (null: an expired or missing credential).
+  let user: string | null = 'user-owner';
   /** Called after the server handled a request; throw to lose its response. */
   let afterResponse: ((path: string) => void | Promise<void>) | undefined;
   const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input instanceof Request ? input : new URL(String(input), BASE), init);
-    request.headers.set('x-test-user', 'user-owner');
+    if (user) request.headers.set('x-test-user', user);
     const body = init?.body;
     if (body instanceof Blob && !request.headers.has('content-length')) request.headers.set('content-length', String(body.size));
     const path = new URL(request.url).pathname;
@@ -95,6 +97,9 @@ async function createApp(options: { writeOnly?: boolean } = {}) {
   };
   return {
     fileFn, database, client, queue, stage, rows, requests, journalKey, fetch,
+    signIn(next: string | null) {
+      user = next;
+    },
     loseResponse(match: (path: string) => boolean) {
       afterResponse = (path) => {
         if (!match(path)) return;
@@ -334,6 +339,116 @@ describe('offline replay against the FileFn server', () => {
     });
     expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(2);
     expect(app.requests.some((r) => r.method === 'GET')).toBe(false);
+  });
+});
+
+describe('offline replays bound to the account of their first upload/init', () => {
+  const FILE = 'file_00000000scope001';
+
+  it('creates nothing for a replay whose credential resolves to no one, even where auth is optional', async () => {
+    const app = await createApp({ authOptional: true });
+    await app.stage(FILE, 'test-replay-key-0201');
+    app.signIn(null);
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await app.rows('uploadSessions')).toHaveLength(0);
+    expect(app.requests.map((r) => r.path)).toEqual(['/upload/init']);
+    // Ordinary anonymous uploads are unchanged.
+    await app.client.uploadFile({ policy: 'doc', file: new File(['anon'], 'b.txt', { type: 'text/plain' }), fileId: 'file_00000000anonym01' }).done();
+    expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['anonymous']);
+
+    app.signIn('user-owner');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });
+    const files = await app.rows('files');
+    expect(files.find((file) => file.fileId === FILE)?.ownerId).toBe('user-owner');
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [], scope: expect.stringMatching(/^rs_/) });
+    expect(new Set(app.requests.filter((r) => r.path === '/upload/init' && r.key).map((r) => r.key))).toEqual(new Set([app.journalKey().idempotencyKey]));
+  });
+
+  it('keeps a replay provisional under the same key while its credential resolves to another owner', async () => {
+    const app = await createApp();
+    await app.stage(FILE, 'test-replay-key-0202');
+    // Lost before completion: no file exists yet that another owner could not write.
+    app.loseResponse((path) => path.endsWith('/parts/1'));
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+
+    app.signIn('user-other');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['user-owner']);
+
+    app.signIn('user-owner');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(await app.rows('files')).toHaveLength(1);
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
+    expect(new Set(app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key))).toEqual(new Set([app.journalKey().idempotencyKey]));
+  });
+
+  it('refuses a marked upload/init with no account (401) or another account (409), and answers its own with the same scope', async () => {
+    const app = await createApp({ authOptional: true });
+    const init = (user: string | null, scope: string) =>
+      app.fileFn.router.handle(
+        new Request(`${BASE}/upload/init`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-idempotency-key': 'test-replay-key-0203',
+            'x-filefn-replay-scope': scope,
+            ...(user ? { 'x-test-user': user } : {}),
+          },
+          body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: FILE }),
+        }),
+      ) as Promise<Response>;
+    const anonymous = await init(null, 'unpinned');
+    expect(anonymous.status).toBe(401);
+    expect(await anonymous.json()).toMatchObject({ error: { code: 'FILEFN_AUTH_REQUIRED' } });
+    const first = await init('user-owner', 'unpinned');
+    const { data } = (await first.json()) as { data: { replayScope: string } };
+    expect(data.replayScope).toMatch(/^rs_[0-9a-f]{64}$/);
+    const other = await init('user-other', data.replayScope);
+    expect(other.status).toBe(409);
+    expect(await other.json()).toMatchObject({ error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' } });
+    const again = await init('user-owner', data.replayScope);
+    expect(((await again.json()) as { data: { replayScope: string } }).data.replayScope).toBe(data.replayScope);
+    expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['user-owner']);
+  });
+});
+
+describe('replays of a session whose completion was already decided', () => {
+  const FILE = 'file_00000000decided1';
+
+  it('finishes an expired session an earlier FileFn left partly published with the completion call, signing no part', async () => {
+    const app = await createApp();
+    await app.stage(FILE, 'test-replay-key-0211');
+    app.loseResponse((path) => path.endsWith('/complete'));
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    // As an earlier FileFn left it: the file points at the version, the session never completed.
+    const [session] = await app.rows('uploadSessions');
+    await app.database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      data: { status: 'in_progress', completionPublication: null, expiresAt: new Date(Date.now() - 1000).toISOString() },
+    });
+    expect(await app.rows('uploadParts')).toHaveLength(0);
+
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
+    expect(await app.rows('files')).toHaveLength(1);
+    expect(await app.rows('fileVersions')).toHaveLength(1);
+  });
+
+  it('reconciles a session that completed between the replay and its status read, without a part or a second completion', async () => {
+    const app = await createApp();
+    await app.stage(FILE, 'test-replay-key-0212');
+    app.loseResponse((path) => path.endsWith('/parts/1'));
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    const [session] = await app.rows('uploadSessions');
+    // Another tab's completion lands right after this replay's upload/init answered in_progress.
+    app.afterFirst((path) => path === '/upload/init', async () => {
+      await app.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, { principalId: 'user-owner' });
+    });
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
+    expect(app.requests.filter((r) => r.path.endsWith('/complete'))).toHaveLength(0);
+    expect(await app.rows('files')).toHaveLength(1);
   });
 });
 

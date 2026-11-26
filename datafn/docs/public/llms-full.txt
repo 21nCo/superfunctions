@@ -22214,7 +22214,7 @@ export function withCors(handle: (request: Request) => Promise<Response>) {
     if (!allowed) return response;
     response.headers.set("access-control-allow-origin", origin);
     response.headers.set("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE");
-    response.headers.set("access-control-allow-headers", "authorization, content-type, x-idempotency-key, x-upload-session-token");
+    response.headers.set("access-control-allow-headers", "authorization, content-type, x-idempotency-key, x-filefn-replay-scope, x-upload-session-token");
     response.headers.set("access-control-max-age", "600");
     return response;
   };

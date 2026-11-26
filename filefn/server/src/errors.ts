@@ -38,6 +38,7 @@ export const ErrorCodes = {
   UPLOAD_ABORTED: 'FILEFN_UPLOAD_ABORTED',
   UPLOAD_ALREADY_COMPLETED: 'FILEFN_UPLOAD_ALREADY_COMPLETED',
   IDEMPOTENCY_CONFLICT: 'FILEFN_IDEMPOTENCY_CONFLICT',
+  REPLAY_SCOPE_MISMATCH: 'FILEFN_REPLAY_SCOPE_MISMATCH',
   PART_CONFLICT: 'FILEFN_PART_CONFLICT',
   UPLOAD_SIZE_MISMATCH: 'FILEFN_UPLOAD_SIZE_MISMATCH',
   PART_TOO_LARGE: 'FILEFN_PART_TOO_LARGE',
@@ -151,6 +152,20 @@ export function uploadAlreadyCompleted(): FileFnError {
 
 export function idempotencyConflict(): FileFnError {
   return new FileFnError(ErrorCodes.IDEMPOTENCY_CONFLICT, 'Idempotency key reuse with different payload', 409);
+}
+
+/**
+ * An offline replay (`x-filefn-replay-scope`) whose credentials resolve to
+ * another owner or tenant than the one its first `upload/init` recorded.
+ * Nothing was created: the client keeps the outcome provisional under the
+ * same key.
+ */
+export function replayScopeMismatch(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.REPLAY_SCOPE_MISMATCH,
+    "The replay's credentials act for another owner or tenant than its first upload/init",
+    409,
+  );
 }
 
 export function noSupportedUploadMode(): FileFnError {

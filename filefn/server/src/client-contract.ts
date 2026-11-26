@@ -217,6 +217,7 @@ export const fileFnClientContract = {
     '/upload/init': {
       post: operation('Initialize an upload session', {
         tags: ['uploads'],
+        parameters: [ref('#/components/parameters/XFileFnReplayScope')],
         includeAuth: true,
         includeIdempotency: true,
         requestBody: {
@@ -540,6 +541,14 @@ export const fileFnClientContract = {
         description: 'Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.',
         schema: { type: 'string', maxLength: 255 },
       },
+      XFileFnReplayScope: {
+        name: 'x-filefn-replay-scope',
+        in: 'header',
+        required: false,
+        description:
+          'Marks an offline replay: unpinned on the first upload/init of an upload, else the replayScope that init returned. A marked request needs an authenticated caller (401 FILEFN_AUTH_REQUIRED otherwise, also where auth is optional) whose owner and tenant match the pinned scope (409 FILEFN_REPLAY_SCOPE_MISMATCH otherwise); nothing is created when refused.',
+        schema: { type: 'string', maxLength: 255 },
+      },
       XUploadSessionToken: {
         name: 'x-upload-session-token',
         in: 'header',
@@ -789,6 +798,16 @@ export const fileFnClientContract = {
             description:
               'Set (true) on a completed replay when the recorded version is still stored under its file. The session owner settles on it without read permission on the file; without it, read the version back.',
           },
+          completionStarted: {
+            type: 'boolean',
+            description:
+              'Set (true) on an in_progress replay whose completion was already decided: send no part, finish it with upload/{uploadSessionId}/complete.',
+          },
+          replayScope: {
+            type: 'string',
+            description:
+              'Returned when the request carried x-filefn-replay-scope: an opaque fingerprint of the caller owner and tenant. Send it in x-filefn-replay-scope on every later replay of the same upload.',
+          },
         },
         required: ['uploadSessionId', 'uploadMode', 'chunkSizeBytes', 'totalParts', 'expiresAt'],
       },
@@ -803,6 +822,10 @@ export const fileFnClientContract = {
           chunkSizeBytes: { type: 'integer' },
           fileSize: { type: 'integer' },
           expiresAt: { type: 'string' },
+          completionStarted: {
+            type: 'boolean',
+            description: 'Set (true) once the completion was decided: send no part, finish it with upload/{uploadSessionId}/complete.',
+          },
         },
         required: ['uploadSessionId', 'status', 'totalParts', 'recordedParts', 'uploadedParts', 'chunkSizeBytes', 'fileSize', 'expiresAt'],
       },

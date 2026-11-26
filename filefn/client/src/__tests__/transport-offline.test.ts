@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFnClient } from '../index.js';
-import { MemoryDirectory, SharedLockManager, createStorage } from './helpers/offline-fixtures.js';
+import { MemoryDirectory, SharedLockManager, createStorage, replayScopeOf } from './helpers/offline-fixtures.js';
 
 // OPFS contents persist across page reloads: one in-memory root and one lock
 // manager are shared by every client created in a test.
@@ -94,7 +94,7 @@ describe('offline replay transport', () => {
       const url = String(input);
       calls.push({ url, method: init.method ?? 'GET', headers: new Headers(init.headers), credentials: init.credentials, body: init.body });
       if (url.endsWith('/upload/init')) {
-        return envelope({ uploadSessionId: 'sess_1', uploadSessionToken: 'upls_1', uploadMode: 'proxy', chunkSizeBytes: 100, totalParts: 1 });
+        return envelope({ uploadSessionId: 'sess_1', uploadSessionToken: 'upls_1', uploadMode: 'proxy', chunkSizeBytes: 100, totalParts: 1, ...replayScopeOf(init) });
       }
       if (url.endsWith('/parts/1/sign')) {
         return envelope({ url: '/upload/sess_1/parts/1', headers: {}, expiresAt: 'x' });
@@ -172,7 +172,7 @@ describe('completed-session replay settlement', () => {
       if (path === '/upload/init') {
         keys.push(new Headers(init.headers).get('x-idempotency-key'));
         await onInit?.();
-        return envelope({ uploadSessionId: 'sess_1', uploadMode: 'proxy', chunkSizeBytes: 1024, totalParts: 1, expiresAt: 'x', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replay });
+        return envelope({ uploadSessionId: 'sess_1', uploadMode: 'proxy', chunkSizeBytes: 1024, totalParts: 1, expiresAt: 'x', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replayScopeOf(init), ...replay });
       }
       if (path === `/${FILE}/versions/ver_1`) {
         return replay.versionConfirmed === true

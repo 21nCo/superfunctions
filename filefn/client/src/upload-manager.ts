@@ -44,6 +44,37 @@ export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
 export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
 /** A completion response without a well-formed fileId and versionId: its outcome is unknown. */
 export const UPLOAD_RESULT_INVALID_ERROR = 'FILEFN_UPLOAD_RESULT_INVALID';
+/**
+ * An offline replay's credentials resolved to another owner or tenant than
+ * the scope its first `upload/init` pinned (the server's 409, or a response
+ * naming another scope). Nothing more is sent: the outcome stays unknown
+ * under the same key until the right account replays it.
+ */
+export const REPLAY_SCOPE_MISMATCH_ERROR = 'FILEFN_REPLAY_SCOPE_MISMATCH';
+/**
+ * A marked offline replay whose `upload/init` response named no scope (a
+ * server before 0.8 ignores the marker, and may have resolved no account at
+ * all): nothing more is sent under it, and the outcome stays unknown.
+ */
+export const REPLAY_SCOPE_UNCONFIRMED_ERROR = 'FILEFN_REPLAY_SCOPE_UNCONFIRMED';
+
+/**
+ * Binds an offline replay's sessions to one account. Every `upload/init`
+ * sends `x-filefn-replay-scope`: `unpinned` until a first init returned the
+ * caller's scope, which `pin` journals before anything else is sent; that
+ * scope afterwards. The server refuses a marked init from an anonymous
+ * caller (401) or another owner or tenant (409), creating nothing.
+ */
+export interface UploadReplayScope {
+  pinned?: string;
+  pin(scope: string): Promise<void>;
+}
+
+const REPLAY_SCOPE_UNPINNED = 'unpinned';
+
+function isReplayScope(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7e]{1,255}$/.test(value) && value !== REPLAY_SCOPE_UNPINNED;
+}
 
 /**
  * A server-issued identifier such as a version ID: 1-256 URL-safe characters
@@ -308,23 +339,26 @@ export class UploadManager {
     return handle;
   }
 
-  async startUpload(input: UploadInput, handle?: UploadHandle): Promise<UploadResult> {
+  async startUpload(input: UploadInput, handle?: UploadHandle, replay?: UploadReplayScope): Promise<UploadResult> {
     const signal = this.abortController.signal;
     const prepared = await prepareUploadInput(input, [...this.preprocessors, ...(input.preprocessors || [])]);
     this.file = prepared.file;
 
-    const rawInit = await this.httpClient.initUpload(
-      {
-        policy: prepared.policy,
-        fileName: prepared.fileName,
-        size: prepared.size,
-        mimeType: prepared.mimeType,
-        metadata: prepared.metadata,
-        fileId: prepared.fileId,
-        idempotencyKey: prepared.idempotencyKey,
-      },
-      signal,
-    );
+    const init = () =>
+      this.httpClient.initUpload(
+        {
+          policy: prepared.policy,
+          fileName: prepared.fileName,
+          size: prepared.size,
+          mimeType: prepared.mimeType,
+          metadata: prepared.metadata,
+          fileId: prepared.fileId,
+          idempotencyKey: prepared.idempotencyKey,
+          ...(replay ? { replayScope: replay.pinned ?? REPLAY_SCOPE_UNPINNED } : {}),
+        },
+        signal,
+      );
+    const rawInit = await init();
 
     // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } }
     const initResponse = (
@@ -339,6 +373,7 @@ export class UploadManager {
         "Failed to create upload session: no session ID returned. Ensure the server returns { ok: true, data: { uploadSessionId, totalParts, chunkSizeBytes, ... } } or { uploadSessionId, ... }.",
       );
     }
+    if (replay) await this.checkReplayScope(initResponse, replay);
 
     this.session = {
       uploadSessionId,
@@ -369,14 +404,36 @@ export class UploadManager {
         { uploadSessionId, status: initResponse.status },
       );
     }
-    if (initResponse.status === "in_progress") {
+    // A session whose completion was already decided gets no part again
+    // (an adopted earlier publication may have no part records left): the
+    // completion call finishes it.
+    let completionStarted = initResponse.status === "in_progress" && initResponse.completionStarted === true;
+    if (initResponse.status === "in_progress" && !completionStarted) {
       // Skip the parts the server already recorded.
       const status = await this.httpClient.getUploadStatus(uploadSessionId, this.uploadSessionToken, signal);
+      if (status.status === "completed") {
+        // Completed since the init answered: the same key's replay reports
+        // the recorded version, which is reconciled (no part is sent).
+        const again = await init();
+        const replayed = (
+          again && typeof again === "object" && "uploadSessionId" in again ? again : (again as { data?: Partial<InitUploadResponse> })?.data
+        ) as Partial<InitUploadResponse>;
+        if (replay) await this.checkReplayScope(replayed, replay);
+        if (replayed?.uploadSessionId === uploadSessionId && replayed.status === "completed") {
+          return this.reconcileCompletedSession(replayed, prepared.fileId, signal);
+        }
+        throw new Error("Upload session completed meanwhile, but its replay did not report it; the outcome is unknown");
+      }
+      if (status.status === "aborted" || status.status === "expired") {
+        // Only an upload/init replay confirms an end (and retires the key).
+        throw new Error(`Upload session ${uploadSessionId} reads ${status.status}; its replay settles it`);
+      }
+      completionStarted = status.completionStarted === true;
       this.completedParts = new Set(status.recordedParts || status.uploadedParts || []);
       this.bytesUploaded = this.calculateUploadedBytes(status);
     }
 
-    await this.uploadAllParts(signal);
+    if (!completionStarted) await this.uploadAllParts(signal);
 
     const result = await this.httpClient.completeUpload(
       this.session.uploadSessionId,
@@ -403,6 +460,32 @@ export class UploadManager {
     }
 
     return result;
+  }
+
+  /**
+   * The scope check of a marked offline replay: the response must name the
+   * caller's scope; a pinned scope must match it, and a first one is
+   * journaled (`pin`) before anything else is sent under it.
+   */
+  private async checkReplayScope(initResponse: Partial<InitUploadResponse>, replay: UploadReplayScope): Promise<void> {
+    const scope = initResponse?.replayScope;
+    if (!isReplayScope(scope)) {
+      throw createClientError(
+        REPLAY_SCOPE_UNCONFIRMED_ERROR,
+        "The server did not confirm the account of this offline replay (x-filefn-replay-scope needs @filefn/server 0.8 or later)",
+        { uploadSessionId: initResponse?.uploadSessionId },
+      );
+    }
+    if (replay.pinned !== undefined) {
+      if (scope !== replay.pinned) {
+        throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than its first upload/init", {
+          uploadSessionId: initResponse.uploadSessionId,
+        });
+      }
+      return;
+    }
+    await replay.pin(scope);
+    replay.pinned = scope;
   }
 
   /**

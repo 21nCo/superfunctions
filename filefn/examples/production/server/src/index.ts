@@ -127,6 +127,8 @@ app.use(
       "x-request-id",
       // Sent by keyed uploads and every offline replay (@filefn/client).
       "x-idempotency-key",
+      // Sent by every offline replay: binds it to the account of its first upload/init.
+      "x-filefn-replay-scope",
       "x-upload-session-token",
     ],
   }),

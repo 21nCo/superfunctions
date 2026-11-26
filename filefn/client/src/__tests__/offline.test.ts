@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFnClient } from '../index.js';
 import type { FileFnClientConfig } from '../types.js';
 import type { OfflineQueuePartition, OfflineQueuePrincipal } from '../offline/queue.js';
-import { SharedLockManager, createStorage } from './helpers/offline-fixtures.js';
+import { SharedLockManager, createStorage, replayScopeOf } from './helpers/offline-fixtures.js';
 
 const BASE = 'https://files.example.com/api/files';
 const ALICE: OfflineQueuePartition = { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-alice' } };
@@ -58,6 +58,7 @@ function createServer() {
         totalParts: 1,
         expiresAt: 'x',
         ...(ended ? { status: ended } : {}),
+        ...replayScopeOf(init),
       });
     }
     const sign = /^\/upload\/(sess_\d+)\/parts\/1\/sign$/.exec(path);

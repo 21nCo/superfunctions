@@ -11,8 +11,12 @@ import type {
  * `navigator.locks` that, like a browser, releases a tab's locks when it closes.
  */
 
-/** Called before each directory creation, write and commit; throw to inject a fault (a crash or a full disk). */
-export type StorageFault = (path: string, step: 'mkdir' | 'write' | 'close') => void;
+/**
+ * Called before each directory creation, write, commit and content read
+ * (`read`: a blob's text() or arrayBuffer()); throw to inject a fault (a
+ * crash, a full disk, a transient NotReadableError).
+ */
+export type StorageFault = (path: string, step: 'mkdir' | 'write' | 'close' | 'read') => void;
 
 interface Storage {
   fault?: StorageFault;
@@ -89,7 +93,15 @@ export class MemoryFile implements OfflineQueueFileHandle {
   ) {}
 
   async getFile(): Promise<Blob> {
-    return new File([this.content.slice()], this.name);
+    const file = new File([this.content.slice()], this.name);
+    const read = <T>(inner: () => Promise<T>) => async (): Promise<T> => {
+      this.storage.fault?.(this.path, 'read');
+      return inner();
+    };
+    return Object.assign(file, {
+      text: read(() => File.prototype.text.call(file)),
+      arrayBuffer: read(() => File.prototype.arrayBuffer.call(file)),
+    });
   }
 
   async createWritable() {
@@ -247,4 +259,12 @@ export class ChannelBus {
       },
     };
   };
+}
+
+/**
+ * What a FileFn 0.8+ server adds to an offline replay's `upload/init` (one
+ * carrying `x-filefn-replay-scope`): the caller's account scope, here fixed.
+ */
+export function replayScopeOf(init: RequestInit | undefined, scope = 'rs_test-scope-user-owner'): { replayScope?: string } {
+  return new Headers(init?.headers).has('x-filefn-replay-scope') ? { replayScope: scope } : {};
 }

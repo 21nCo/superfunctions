@@ -258,12 +258,26 @@ export interface InitUploadResponse {
    * permission needed); otherwise it reads the version back.
    */
   versionConfirmed?: boolean;
+  /**
+   * `true` on an `in_progress` replay whose completion was already decided:
+   * no part is sent again, the completion call finishes it.
+   */
+  completionStarted?: boolean;
+  /**
+   * Returned to an offline replay (`x-filefn-replay-scope`): an opaque
+   * fingerprint of the owner and tenant the credentials resolved to. The
+   * queue pins it to the generation and sends it on every later replay, so
+   * the server refuses a replay under another (or no) account.
+   */
+  replayScope?: string;
 }
 
 export interface UploadStatusResponse {
   uploadSessionId?: string;
   fileId?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'aborted';
+  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  /** `true` once the completion was decided: no part is sent, the completion call finishes it. */
+  completionStarted?: boolean;
   recordedParts: number[];
   uploadedParts?: number[];
   totalParts: number;

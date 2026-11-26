@@ -354,7 +354,9 @@ function replayUploader(
       // Already prepared when staged: no preprocessors run again.
       const manager = new UploadManager(createHttpClient(transport, { beforeSend: input.assertPrincipal, authHeaders: headers }));
       manager.bindAbortSignal(input.signal);
-      return manager.startUpload(input);
+      // Every init is marked as a replay and bound to the account scope its
+      // first init pinned: the server refuses one with no account or another.
+      return manager.startUpload(input, undefined, { pinned: input.replayScope, pin: input.pinReplayScope });
     },
   };
 }

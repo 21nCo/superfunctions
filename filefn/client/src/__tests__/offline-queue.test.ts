@@ -2235,3 +2235,222 @@ describe('round 9: completed reads, previews and envelopes', () => {
     a.dispose();
   });
 });
+
+describe('round 10: outermost fences, admissions, observations and read errors', () => {
+  /** `tab`'s coordinator, holding back the return of the next request whose lock name matches `armed` until released. */
+  function gatedCoordinator(name: string) {
+    const inner = locks.forTab(name);
+    const control: { armed?: (lock: string) => boolean; release?: Promise<void>; reached?: ReturnType<typeof deferred<void>> } = {};
+    const coordinator: typeof inner = {
+      request: (async (lock: string, options: unknown, callback: unknown) => {
+        const result = await (inner.request as (...args: unknown[]) => Promise<unknown>)(lock, options, callback);
+        if (control.armed?.(lock)) {
+          control.armed = undefined;
+          control.reached?.resolve();
+          await control.release;
+        }
+        return result;
+      }) as typeof inner.request,
+    };
+    const arm = (match: (lock: string) => boolean) => {
+      const release = deferred<void>();
+      const reached = deferred<void>();
+      Object.assign(control, { armed: match, release: release.promise, reached });
+      return { reached: reached.promise, release: () => release.resolve() };
+    };
+    return { coordinator, arm };
+  }
+
+  async function writeLegacy(id: string, key: string) {
+    const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
+    await writeCommitted(legacy, 'data.bin', 'old bytes');
+    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: FILE_ID, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: key }));
+  }
+
+  const LEGACY = 'offline_1731000000000_legacy101';
+  const isLegacyLock = (lock: string) => lock.startsWith('filefn-offline-legacy:');
+
+  it.each(['fresh admission', 'already-admitted recovery'])(
+    'returns no entry when the account switches while the legacy lock hands back a %s',
+    async (path) => {
+      await writeLegacy(LEGACY, 'test-legacy-key-0101');
+      let signedIn: OfflineQueuePrincipal = ALICE.principal;
+      const gated = gatedCoordinator('a');
+      const a = tab('a', { coordinator: gated.coordinator, currentPrincipal: () => signedIn });
+      if (path === 'already-admitted recovery') {
+        expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+      }
+      const gate = gated.arm(isLegacyLock);
+      const migrating = a.migrateLegacyUpload(LEGACY, { ownershipVerified: true });
+      await gate.reached;
+      signedIn = BOB.principal;
+      gate.release();
+      expect(await migrating).toEqual({ status: 'refused', reason: 'principal-mismatch' });
+      // The admission stays with its owner: back as Alice, the same entry.
+      signedIn = ALICE.principal;
+      expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toMatchObject({
+        status: 'staged',
+        entry: { entryId: FILE_ID, generation: 1 },
+      });
+      expect(await a.list()).toHaveLength(1);
+      a.dispose();
+    },
+  );
+
+  it('rejects a migration whose legacy lock hands back after the queue was disposed', async () => {
+    await writeLegacy(LEGACY, 'test-legacy-key-0101');
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    const gate = gated.arm(isLegacyLock);
+    const migrating = a.migrateLegacyUpload(LEGACY, { ownershipVerified: true });
+    await gate.reached;
+    a.dispose();
+    gate.release();
+    await expect(migrating).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    // A new instance of the partition finds the admission.
+    expect(await tab('b').migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toMatchObject({ status: 'staged', entry: { generation: 1 } });
+  });
+
+  it('admits a legacy upload under one queue root only: a retry under another root after an interrupted cleanup is refused', async () => {
+    await writeLegacy(LEGACY, 'test-legacy-key-0101');
+    const a = tab('a', { rootDir: 'queue-root-a' });
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true, entryId: 'entry-from-a' })).toMatchObject({ status: 'staged' });
+    // Its cleanup was interrupted: the legacy record is back.
+    await writeLegacy(LEGACY, 'test-legacy-key-0101');
+    const b = tab('b', { rootDir: 'queue-root-b' });
+    expect(await b.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toEqual({ status: 'refused', reason: 'already-migrated' });
+    expect(await b.list()).toEqual([]);
+    // The admitting root recovers its own admission (its entry ID), and the cleanup completes.
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true, entryId: 'another-entry' })).toMatchObject({
+      status: 'staged',
+      entry: { entryId: 'entry-from-a', generation: 1 },
+    });
+    expect(await a.listLegacyUploads()).toEqual([]);
+    expect(await a.list()).toHaveLength(1);
+  });
+
+  it.each(['get', 'list'])('leaves a waiter of a newer generation pending when an older %s read is applied late', async (read) => {
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    const b = tab('b');
+    await stage(a);
+    const gate = gated.arm((lock) => !lock.includes(':entry:'));
+    const reading = read === 'get' ? a.get(FILE_ID) : a.list();
+    await gate.reached;
+    // Another tab stages generation 2 while the read of generation 1 is held back.
+    const newer = await stage(b, 'v2', { expectedGeneration: 1 });
+    const outcome: { settled?: string } = {};
+    const waiter = a.whenSettled(FILE_ID, newer.entry.generation);
+    waiter.then(() => (outcome.settled = 'resolved'), (error) => (outcome.settled = error.code));
+    gate.release();
+    await reading;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(outcome.settled).toBeUndefined();
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published', entry: { generation: 2 } });
+    await a.get(FILE_ID);
+    await expect(waiter).resolves.toMatchObject({ generation: 2, state: 'published' });
+    a.dispose();
+  });
+
+  it('never aborts or revokes a newer generation when the cancel of an older one returns late', async () => {
+    const revoked: string[] = [];
+    let created = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:preview-${++created}`, revokeObjectURL: (url: string) => revoked.push(url) });
+    const started = deferred<AbortSignal>();
+    const finish = deferred<void>();
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        started.resolve(input.signal);
+        await finish.promise;
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator, uploader });
+    const b = tab('b');
+    await stage(a);
+    const gate = gated.arm((lock) => !lock.includes(':entry:'));
+    const cancelling = a.cancel(FILE_ID);
+    await gate.reached;
+    // Removed: another tab stages the entry again, and this tab previews and uploads that generation.
+    const again = await stage(b, 'v2');
+    expect(again.entry.generation).toBe(2);
+    const preview = await a.getPendingLocalDescriptor(FILE_ID);
+    expect(preview?.source.url).toBe('blob:preview-1');
+    const processing = a.process(FILE_ID);
+    const signal = await started.promise;
+    gate.release();
+    expect(await cancelling).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(signal.aborted).toBe(false);
+    expect(revoked).toEqual([]);
+    finish.resolve();
+    expect(await processing).toMatchObject({ status: 'published', entry: { generation: 2 } });
+    a.dispose();
+  });
+
+  it('keeps a committed pending generation when its journal cannot be read during reclaim or restaging', async () => {
+    const a = tab('a');
+    await stage(a, 'only copy');
+    storage.storage.fault = (path, step) => {
+      if (path.endsWith('journal.json') && step === 'read') throw new DOMException('read failed', 'NotReadableError');
+    };
+    await expect(a.reclaim()).rejects.toMatchObject({ name: 'NotReadableError' });
+    await expect(a.stage({ policy: 'p', file: new Blob(['replacement']), fileId: FILE_ID })).rejects.toMatchObject({ name: 'NotReadableError' });
+    storage.storage.fault = undefined;
+    expect(await a.get(FILE_ID)).toMatchObject({ generation: 1, phase: 'staged' });
+    expect(dataFiles()).toHaveLength(1);
+    const uploader = recordingUploader();
+    expect(await tab('b', { uploader }).process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(uploader.calls.map((call) => call.body)).toEqual(['only copy']);
+  });
+
+  it('never hands out a generation again when the partition meta cannot be read', async () => {
+    const a = tab('a');
+    await stage(a);
+    await stage(a, 'v2', { expectedGeneration: 1 });
+    expect(await a.cancel(FILE_ID)).toBe(true);
+    storage.storage.fault = (path, step) => {
+      if (path.endsWith('partition.json') && step === 'read') throw new DOMException('read failed', 'NotReadableError');
+    };
+    await expect(a.stage({ policy: 'p', file: new Blob(['v3']), fileId: FILE_ID })).rejects.toMatchObject({ name: 'NotReadableError' });
+    storage.storage.fault = undefined;
+    expect((await stage(a, 'v3')).entry.generation).toBe(3);
+  });
+
+  it('goes on with the pass when another tab replaces the entry being uploaded, and uploads its new generation', async () => {
+    const FIRST = 'file_00000000aaaa0001';
+    const SECOND = 'file_00000000bbbb0002';
+    const reached = deferred<void>();
+    const resume = deferred<void>();
+    const calls: Array<{ fileId: string; body: string }> = [];
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        calls.push({ fileId: input.fileId, body: await input.file.text() });
+        if (calls.length === 1) {
+          reached.resolve();
+          await resume.promise;
+          // The guard before the next request finds the generation replaced.
+          await input.assertPrincipal();
+        }
+        return { fileId: input.fileId, versionId: `ver_${calls.length}` };
+      },
+    };
+    const a = tab('a', { uploader });
+    const b = tab('b');
+    await a.stage({ policy: 'p', file: new Blob(['first v1']), fileId: FIRST });
+    await a.stage({ policy: 'p', file: new Blob(['second']), fileId: SECOND });
+    const pass = a.processAll();
+    await reached.promise;
+    const replaced = await b.stage({ policy: 'p', file: new Blob(['first v2']), fileId: FIRST, expectedGeneration: 1 });
+    if (replaced.status !== 'staged') throw new Error('not staged');
+    resume.resolve();
+    const results = await pass;
+    expect(results).toEqual([
+      { entryId: FIRST, result: expect.objectContaining({ status: 'published', entry: expect.objectContaining({ generation: replaced.entry.generation }) }) },
+      { entryId: SECOND, result: expect.objectContaining({ status: 'published' }) },
+    ]);
+    expect(calls.map((call) => call.body)).toEqual(['first v1', 'first v2', 'second']);
+    expect((await a.get(FIRST))?.attempts).toBe(0);
+  });
+});

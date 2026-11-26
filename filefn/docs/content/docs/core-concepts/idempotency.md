@@ -28,6 +28,10 @@ The server:
 
 A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, and `versionConfirmed: true` while that version is still stored under its file, so the client confirms the file instead of uploading again, without needing read permission on it; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
 
+An `in_progress` replay whose completion was already decided adds `completionStarted: true` (so does the session status): send no part, finish it with the completion call.
+
+An offline replay (`@filefn/client`'s queue) also sends `x-filefn-replay-scope`: `unpinned` on its first `upload/init`, then the `replayScope` that init returned (an opaque fingerprint of the caller's owner and tenant). A marked init without an authenticated caller is refused with 401, also where auth is optional, and one whose caller has another owner or tenant than the pinned scope with 409 `FILEFN_REPLAY_SCOPE_MISMATCH`; neither creates anything. Unmarked requests are unchanged.
+
 Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value.
 
 Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
