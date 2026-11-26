@@ -311,10 +311,10 @@ function collectionError(schemas: object[], custom: boolean): unknown {
  * Validators a custom compiler returned to one registry or any copy derived
  * from it (clone(), cloneEmpty(), a server declaration's copy). Such a
  * compiler may hold state the registry cannot roll back (an Ajv instance keeps
- * each compiled `$id`), so a validator from a registration that failed, or
- * from a copy that does not hold it, is reused for an equal schema instead of
- * compiling it again. A registry never reuses a validator it already holds,
- * so a second equal schema is compiled and meets the compiler's own rules,
+ * each compiled `$id`), so a registry that holds no equal schema reuses the
+ * lineage's validator for it (a retry after a failed registration or
+ * declaration) instead of compiling it again. A registry that already holds
+ * an equal schema compiles another one, which meets the compiler's own rules,
  * and independent registries sharing one compiler share nothing.
  */
 interface CompileLineage {
@@ -1046,8 +1046,10 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // The custom compiler's validators in this registry's lineage.
+  // The custom compiler's validators in this registry's lineage, and the
+  // accepted entries by snapshot text (see CompileLineage).
   private lineage: CompileLineage = { compiled: new Map() };
+  private readonly held = new Map<string, SchemaEntry[]>();
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -1113,6 +1115,12 @@ export class McpFnRegistry<TContext = undefined> {
 
   private accept(entry: SchemaEntry): void {
     this.entries.push(entry);
+    if (this.customCompile) {
+      const text = snapshotText(entry.snapshot);
+      const held = this.held.get(text);
+      if (held) held.push(entry);
+      else this.held.set(text, [entry]);
+    }
     this.issued.set(entry.snapshot, entry);
     if (entry.source) this.sources.set(entry.source, entry);
   }
@@ -1179,16 +1187,17 @@ export class McpFnRegistry<TContext = undefined> {
     this.compileAttempts += 1;
     if (!this.customCompile) return this.builtIn!.compile(schema);
     const text = snapshotText(schema);
-    const compiled = this.lineage.compiled.get(text) ?? [];
-    const held = (validator: CompiledSchema) =>
-      this.entries.some((entry) => entry.validator === validator) ||
-      (this.pending ?? []).some((entry) => entry.validator === validator);
-    const reusable = compiled.find((entry) =>
-      sameJson(entry.snapshot, schema) && !held(entry.validator));
+    const equal = (entry: SchemaEntry) => sameJson(entry.snapshot, schema);
+    const compiled = this.lineage.compiled.get(text);
+    // A registry that holds an equal schema compiles another one, so the
+    // compiler's own rules (a duplicate `$id`) apply to it.
+    const held = this.held.get(text)?.some(equal) || this.pending?.some(equal);
+    const reusable = held ? undefined : compiled?.find(equal);
     if (reusable) return reusable.validator;
     const validator = this.customCompile(schema);
-    compiled.push({ snapshot: schema, validator });
-    this.lineage.compiled.set(text, compiled);
+    // One reusable validator per distinct schema is enough.
+    if (!compiled) this.lineage.compiled.set(text, [{ snapshot: schema, validator }]);
+    else if (!compiled.some(equal)) compiled.push({ snapshot: schema, validator });
     return validator;
   }
 

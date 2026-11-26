@@ -342,6 +342,24 @@ describe("McpFnRegistry custom compiler authority", () => {
     expect(source.listTools().map((listed) => listed.name)).toEqual(["a"]);
   });
 
+  it("compiles an equal schema again on a registry that holds one, even after a copy registered it", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    // Accepts two schemas with one $id and rejects the third.
+    const seen = new Map<unknown, number>();
+    const compileSchema = vi.fn((schema: object) => {
+      const id = (schema as { $id?: unknown }).$id;
+      const count = (seen.get(id) ?? 0) + 1;
+      seen.set(id, count);
+      if (count > 2) throw new Error(`schema with key or id "${String(id)}" already exists`);
+      return Object.assign(() => true, { errors: null });
+    });
+    const source = new McpFnRegistry({ compileSchema }).register(tool("a"));
+    source.clone().register(tool("b"));
+
+    expect(() => source.register(tool("c"))).toThrow("Tool c contains an invalid JSON Schema");
+    expect(compileSchema).toHaveBeenCalledTimes(3);
+  });
+
   it("compiles in each independent registry that shares one compiler", async () => {
     const { McpFnRegistry } = await import("../src/index.js");
     const compileSchema = vi.fn((schema: object) => new Ajv2020({ strict: false }).compile(schema));

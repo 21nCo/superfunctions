@@ -1,4 +1,6 @@
+import Ajv from "ajv";
 import { describe, expect, it } from "vitest";
+import { McpFnRegistry } from "../src/index.js";
 import { fromOpenAPI } from "../src/openapi/index.js";
 import { recordingExecutor } from "./openapi-helpers.js";
 
@@ -43,6 +45,38 @@ describe("fromOpenAPI scale", () => {
     expect(skipped).toEqual([]);
     expect(registry.listTools()).toHaveLength(2000);
     expect(tools.filter((entry) => entry.outputSchema)).toHaveLength(1000);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  // SFNS-107 PR round 2: a custom compileSchema registry finds a reusable
+  // validator in constant time, so 2,000 operations whose input and output
+  // schemas are all equal register as fast as on the built-in engine.
+  it("registers 2,000 operations with equal schemas on a custom compiler within 2 seconds", () => {
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 2000; index += 1) {
+      paths[`/ping${index}`] = {
+        get: {
+          operationId: `ping${index}`,
+          responses: { "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" } } } } } } },
+        },
+      };
+    }
+    const ajv = new Ajv({ strict: false });
+    const compiled: object[] = [];
+    const registry = new McpFnRegistry({
+      compileSchema: (schema) => {
+        compiled.push(schema);
+        return ajv.compile(schema);
+      },
+    });
+    const started = performance.now();
+    const { tools, skipped } = fromOpenAPI({ openapi: "3.0.3", paths }, { executor: recordingExecutor(), registry });
+    const copy = registry.clone();
+    const elapsed = performance.now() - started;
+    expect(tools).toHaveLength(2000);
+    expect(skipped).toEqual([]);
+    expect(copy.listTools()).toHaveLength(2000);
+    expect(compiled).toHaveLength(4000);
     expect(elapsed).toBeLessThan(2000);
   });
 
