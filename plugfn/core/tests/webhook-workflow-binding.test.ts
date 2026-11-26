@@ -191,6 +191,7 @@ describe('webhook workflow admission', () => {
           id: 'test-stale-receipt', provider: verified.provider, event: input.event,
           workflowIdempotencyKey: scopeKey, payloadHash: input.payloadHash, verificationStatus: 'not-required',
           ownerKind: 'organization', ownerId: 'test-unverified-owner', idempotencyKey: 'test-standalone-key',
+          signatureVerified: 0,
           createdAt: new Date(0), receivedAt: new Date(0),
         },
       });
@@ -845,6 +846,13 @@ describe('webhook workflow admission', () => {
       signatureVerified: true,
     });
     await expect(after.runtime.runtime.webhooks.listDeliveries(data.receiptId)).resolves.toEqual([
+      expect.objectContaining({ signatureVerified: true, workflowScoped: true }),
+    ]);
+    const adapter = createPlugFnDatabaseAdapter({ database });
+    await expect(adapter.getWebhookReceipt(data.receiptId)).resolves.toMatchObject({
+      signatureVerified: true,
+    });
+    await expect(adapter.listWebhookDeliveries(data.receiptId)).resolves.toEqual([
       expect.objectContaining({ signatureVerified: true, workflowScoped: true }),
     ]);
     expect(await findOne({ model: receiptModel, where: [{ field: 'id', operator: 'eq', value: data.receiptId }] }))

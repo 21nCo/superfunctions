@@ -21,6 +21,7 @@ import {
   assertWebhookUpdateFields,
   hasWebhookSignatureProof,
   isBindingId,
+  normalizeWebhookStorageRow,
   webhookBindingRequired,
   webhookDeliveryReassignmentConflict,
   WebhookHandlerError,
@@ -695,19 +696,6 @@ function syncJobClaimLost(id: string): Error {
   const error = new Error(`sync job ${id} claim is no longer owned by this worker`);
   error.name = 'SyncJobClaimLostError';
   return error;
-}
-
-function normalizeWebhookStorageRow<T extends PlugFnWebhookReceipt | PlugFnWebhookDelivery | null>(row: T): T {
-  if (!row) return row;
-  const normalizeFlag = (value: unknown): true | null | undefined =>
-    value === undefined ? undefined : value === true || value === 1 ? true : null;
-  const signatureVerified = normalizeFlag(row.signatureVerified);
-  const workflowScoped = 'workflowScoped' in row ? normalizeFlag(row.workflowScoped) : undefined;
-  return {
-    ...row,
-    ...(signatureVerified !== undefined ? { signatureVerified } : {}),
-    ...(workflowScoped !== undefined ? { workflowScoped } : {}),
-  };
 }
 
 function workflowReceiptKey(provider: string, idempotencyKey: string): string {

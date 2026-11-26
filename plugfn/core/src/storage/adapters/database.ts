@@ -15,6 +15,7 @@ import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
 import {
   assertWebhookReceiptProvider,
   assertWebhookUpdateFields,
+  normalizeWebhookStorageRow,
   webhookDeliveryReassignmentConflict,
   webhookRetryUpdates,
 } from '../../webhooks/webhook-handler.js';
@@ -470,14 +471,14 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     return this.database.create<PlugFnWebhookReceipt>({
       model: this.models.webhookReceipts,
       data: cloneRecord(receipt),
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async getWebhookReceipt(id: string): Promise<PlugFnWebhookReceipt | null> {
     return this.database.findOne<PlugFnWebhookReceipt>({
       model: this.models.webhookReceipts,
       where: [{ field: 'id', operator: 'eq', value: id }],
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async findWebhookReceiptByIdempotencyKey(
@@ -491,7 +492,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
         { field: 'idempotencyKey', operator: 'eq', value: idempotencyKey },
         { field: 'workflowIdempotencyKey', operator: 'eq', value: null },
       ],
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateWebhookReceipt(
@@ -532,14 +533,14 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       if (!receipt) throw new NotFoundError(model, where);
       return receipt;
     }
-    return this.database.update<PlugFnWebhookReceipt>({ model, where, data });
+    return this.database.update<PlugFnWebhookReceipt>({ model, where, data }).then(normalizeWebhookStorageRow);
   }
 
   async createWebhookDelivery(delivery: PlugFnWebhookDelivery): Promise<PlugFnWebhookDelivery> {
     return this.database.create<PlugFnWebhookDelivery>({
       model: this.models.webhookDeliveries,
       data: cloneRecord(delivery),
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateWebhookDelivery(
@@ -566,13 +567,13 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     if (Object.keys(data).length === 0) {
       const delivery = await this.database.findOne<PlugFnWebhookDelivery>({ model, where });
       if (!delivery) throw new NotFoundError(model, where);
-      return delivery;
+      return normalizeWebhookStorageRow(delivery);
     }
     return this.database.update<PlugFnWebhookDelivery>({
       model,
       where,
       data,
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateClaimedWebhookDelivery(
@@ -588,13 +589,15 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       { field: 'workflowScoped', operator: 'eq', value: null },
     ];
     const data = webhookRetryUpdates(updates);
-    if (Object.keys(data).length === 0) return this.database.findOne<PlugFnWebhookDelivery>({ model, where });
+    if (Object.keys(data).length === 0) {
+      return this.database.findOne<PlugFnWebhookDelivery>({ model, where }).then(normalizeWebhookStorageRow);
+    }
     try {
       return await this.database.update<PlugFnWebhookDelivery>({
         model,
         where,
         data: cloneRecord(data),
-      });
+      }).then(normalizeWebhookStorageRow);
     } catch (error) {
       if (error instanceof NotFoundError) {
         return null;
@@ -608,7 +611,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       model: this.models.webhookDeliveries,
       where: [{ field: 'receiptId', operator: 'eq', value: receiptId }],
       orderBy: [{ field: 'createdAt', direction: 'desc' }],
-    });
+    }).then((rows) => rows.map(normalizeWebhookStorageRow));
   }
 
   async listWebhookDeliveriesForRetry(
@@ -658,7 +661,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
         const rightTime = toTime(right.nextAttemptAt ?? right.createdAt);
         return leftTime - rightTime;
       })
-      .slice(0, limit);
+      .slice(0, limit)
+      .map(normalizeWebhookStorageRow);
   }
 
   async claimWebhookDeliveriesForRetry(
@@ -702,7 +706,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
           }),
         });
         if (updated?.status === 'running') {
-          claimed.push(updated);
+          claimed.push(normalizeWebhookStorageRow(updated));
         }
       } catch {
         // Another worker claimed or updated the delivery first.

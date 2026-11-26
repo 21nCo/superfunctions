@@ -709,6 +709,21 @@ export function hasWebhookSignatureProof(record: { signatureVerified?: unknown }
   return record.signatureVerified === true || record.signatureVerified === 1;
 }
 
+export function normalizeWebhookStorageRow<T extends PlugFnWebhookReceipt | PlugFnWebhookDelivery | null>(row: T): T {
+  if (!row) return row;
+  const normalizeFlag = (value: unknown): true | null | undefined =>
+    value === undefined ? undefined : value === true || value === 1 ? true : null;
+  const signatureVerified = normalizeFlag(row.signatureVerified);
+  const workflowScoped = 'workflowScoped' in row ? normalizeFlag(row.workflowScoped) : undefined;
+  if (signatureVerified === row.signatureVerified &&
+      (!('workflowScoped' in row) || workflowScoped === row.workflowScoped)) return row;
+  return {
+    ...row,
+    ...(signatureVerified !== undefined ? { signatureVerified } : {}),
+    ...(workflowScoped !== undefined ? { workflowScoped } : {}),
+  };
+}
+
 const retryBookkeepingFields = new Set([
   'status', 'attempts', 'claimToken', 'nextAttemptAt', 'error', 'metadata', 'updatedAt',
 ]);
