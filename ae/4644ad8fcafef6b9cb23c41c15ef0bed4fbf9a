@@ -1,0 +1,25 @@
+apifn/core/README.md
+  s_cff285c8033656::t_2c543f276aa927 211,213,215
+apifn/core/src/idempotency/__tests__/request-idempotency.test.ts
+  s_cff285c8033656::t_df55a0ced5251f 811,816-819,1265-1383
+apifn/core/src/idempotency/canonical-json.ts
+  s_cff285c8033656::t_89b69259c9c61b 9-11,97-105,107
+apifn/core/src/idempotency/request-idempotency.ts
+  s_cff285c8033656::t_38e229433e3c59 44-51,212-219,267-271,415-419,421-433,489,502,510,528,550,785-788,796-797,814,839-842,847,870,913,940-958,960-962,966,974-978,997,1004-1025,1030-1035
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae4644ad8fcafef6b9cb23c41c15ef0bed4fbf9a",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
