@@ -1,0 +1,67 @@
+filefn/client/README.md
+  s_d2b57e44227705::t_63ee4bf06f47d7 74
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  s_d2b57e44227705::t_02c47872ffea6c 266-268,270-272
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_d2b57e44227705::t_72b389383ec88f 2,245-428
+filefn/client/src/client.ts
+  s_78487463d47055::t_bd7c9befc266d7 64,649-653,662
+filefn/client/src/index.ts
+  s_d2b57e44227705::t_e8c804310c019c 6,9-10,18,44,346,350-372,385-391,458-459,507-511
+filefn/client/src/offline/queue.ts
+  s_78487463d47055::t_6622edcaff01d5 9,103-108,821-825,828,1012-1018,1076-1083,1232-1244,1248-1251,1281,1293,1302-1305,1319,1327-1334,1360-1363,1391,1408-1417,1481-1482,1494-1497,1530-1533,1564-1565,1575-1578,1590,1595,1605-1619,1628,1630,1632,1634,1643-1644,1647,1650,1653,1669,1684,1743,1813,1815-1835,1950-1959,1961-1966,1968-1970,1972,1974,1977,1979-1981,1983-1985,2401-2402,2461-2464,2466,3334-3336
+filefn/client/src/types.ts
+  s_d2b57e44227705::t_0e04effe4f25fb 14-19,85-96
+filefn/client/src/upload-manager.ts
+  s_d2b57e44227705::t_c8a7d6d224ed1e 5,63-69,72-73,78-104,116-141,411,415-418,467,491-494,515-516,527-535,584
+filefn/docs/content/api/filefn.json
+  s_d2b57e44227705::t_0936af8ad19868 1920
+filefn/docs/content/docs/core-concepts/errors.md
+  s_78487463d47055::t_dd663e2503cccd 43
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_78487463d47055::t_1a4b3d99c07c22 33
+filefn/docs/content/docs/features/offline.md
+  s_d2b57e44227705::t_c2ae6594cafbb9 28-29,100,122,126,142
+filefn/docs/content/docs/reference/changelog.md
+  s_d2b57e44227705::t_7e42937a421267 18,21
+filefn/docs/content/docs/reference/routes.md
+  s_78487463d47055::t_6c481e3189c157 117
+filefn/docs/content/docs/sdk/client.md
+  s_d2b57e44227705::t_84552eedd1f5c4 141
+filefn/docs/static/llms-full.txt
+  s_d2b57e44227705::t_959261a756f4ab 1573,1855,3865-3866,3937,3959,3963,3979,8399,8402,9028,9385
+filefn/server/contracts/filefn-client-v1.openapi.json
+  s_d2b57e44227705::t_5f5a5f2bd68400 1920
+filefn/server/src/client-contract.ts
+  s_78487463d47055::t_73251ab6a08c9b 549
+filefn/server/src/upload-sessions/routes.ts
+  s_d2b57e44227705::t_f61debbe33a46a 9,34-42,155,157
+filefn/server/tests/offline-replay.test.ts
+  s_d2b57e44227705::t_fd42db02e49d29 8,385-403,413,418-433
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_d2b57e44227705::t_e9d0732de9b9ec 2239-2265,2267-2271,2273-2274,2276,2461-2592
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc4c8d490ca4148d6679ede9b125c6d89434868d",
+  "prompts": {},
+  "sessions": {
+    "s_78487463d47055": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216c5-7ab7-7720-aec3-bb9ec6dc2cfa",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d2b57e44227705": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3149a86-58c5-404b-98f1-ec3b87637488",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
