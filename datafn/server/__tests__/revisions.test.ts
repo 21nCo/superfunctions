@@ -2945,6 +2945,7 @@ describe("DATA-41 revisions: PR review round 2", () => {
   });
 
   it("keeps post-write rows for a push a gateway routing assertion admitted", async () => {
+    let moveOnRead = false;
     const directory = createMemoryDatafnPlacementDirectory();
     await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
     const assertions = createDatafnHmacRoutingAssertions({ activeKeyId: "v1", keys: { v1: "test-only-secret" } });
@@ -2952,7 +2953,15 @@ describe("DATA-41 revisions: PR review round 2", () => {
       schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
       context: () => ({ namespace: "tenant" }),
       namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
-      authorize: (_ctx: unknown, action: string, payload: Json) => action !== "query" || payload?.resource !== "project",
+      authorize: async (_ctx: unknown, action: string, payload: Json) => {
+        if (action === "query" && moveOnRead) {
+          // The placement moves to a new epoch while the read runs.
+          moveOnRead = false;
+          const current = (await directory.get("tenant"))!;
+          await directory.compareAndSet({ namespace: "tenant", expectedEpoch: current.epoch, next: { ...current, epoch: current.epoch + 1 } });
+        }
+        return action !== "query" || payload?.resource !== "project";
+      },
       plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
         placement: { directory, requireRoutingAssertion: true, assertionVerifier: assertions, replayStore: createMemoryDatafnRoutingReplayStore() } })],
     } as any);
@@ -2974,6 +2983,9 @@ describe("DATA-41 revisions: PR review round 2", () => {
     expect((await pushVia("task", "task:1", { title: "t" })).record).toMatchObject({ id: "task:1", title: "t", $rev: 1 });
     // The host's read rule still applies to the in-process read.
     expect(await pushVia("project", "project:1", { name: "p" })).toEqual({ resource: "project", id: "project:1", rev: 1 });
+    moveOnRead = true;
+    expect(await pushVia("task", "task:2", { title: "t" })).toEqual({ resource: "task", id: "task:2", rev: 1 });
+    expect((await pushVia("task", "task:3", { title: "t" })).record).toMatchObject({ id: "task:3", $rev: 1 });
   });
 
   it("gives an assertion-admitted push rev alone where route tickets guard queries", async () => {
@@ -3023,6 +3035,22 @@ describe("DATA-41 revisions: PR review round 2", () => {
     expect(beta.body.result.revisions[beta.mutationId].record).toMatchObject({ id: "x:1", title: "same", $rev: 1 });
     const alpha = await push({ resource: "alpha", operation: "insert", id: "x:1", record: { title: "same" } });
     expect(alpha.body.result.revisions[alpha.mutationId]).toEqual({ resource: "alpha", id: "x:1", rev: 1 });
+
+    // An afterQuery hook that renames the executed query back does not change what was read.
+    const restoring = {
+      ...redirect,
+      afterQuery: (_ctx: unknown, query: Json, result: unknown) => {
+        if (query.resource === "beta") query.resource = "alpha";
+        return result;
+      },
+    };
+    const restored = await serve({
+      schema: { resources: [{ ...twin, name: "alpha" }, { ...twin, name: "beta" }] },
+      config: { plugins: [restoring] },
+    });
+    await restored.push({ resource: "beta", operation: "insert", id: "x:1", record: { title: "same" } });
+    const renamed = await restored.push({ resource: "alpha", operation: "insert", id: "x:1", record: { title: "same" } });
+    expect(renamed.body.result.revisions[renamed.mutationId]).toEqual({ resource: "alpha", id: "x:1", rev: 1 });
   });
 
   it("does not spend the caller's query rate limit on the post-write read", async () => {

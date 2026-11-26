@@ -92,7 +92,10 @@ type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
  */
 export const POST_WRITE_READ_PROBE = Symbol("datafn.postWriteReadProbe");
 export interface PostWriteReadProbe {
-  executed?: { namespace: string; queries: readonly unknown[] };
+  executed?: {
+    namespace: string;
+    queries: ReadonlyArray<{ resource: unknown; accessMode: unknown; namespaceFilter: boolean }>;
+  };
 }
 
 function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema): boolean {
@@ -831,7 +834,20 @@ export function createQueryHandler(
         if (db) {
           const namespace = await extractNamespace(ctx);
           const readProbe = (ctx as Record<symbol, PostWriteReadProbe | undefined> | undefined)?.[POST_WRITE_READ_PROBE];
-          if (readProbe) readProbe.executed = { namespace, queries: transformedQueries };
+          // Copied now: a later hook may change the query objects.
+          if (readProbe) {
+            readProbe.executed = {
+              namespace,
+              queries: transformedQueries.map((q) => {
+                const query = q as { resource?: unknown; metadata?: { accessMode?: unknown; namespaceFilter?: unknown } };
+                return {
+                  resource: query.resource,
+                  accessMode: query.metadata?.accessMode,
+                  namespaceFilter: query.metadata?.namespaceFilter !== undefined,
+                };
+              }),
+            };
+          }
           const actorId = extractActorId ? await extractActorId(ctx) : undefined;
           // Membership and hierarchy are written by the host, outside this
           // handler, so a cache kept on the handler would survive revocation.

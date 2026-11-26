@@ -1443,16 +1443,17 @@ export async function createDatafnServer<TContext = any>(
           });
         }
 
+        let admittedPlacement: { epoch: number; regionId: string } | undefined;
         if (multiRegionRuntime?.placement && action !== "status") {
           try {
-            await validateDatafnPlacement({
+            ({ placement: admittedPlacement } = await validateDatafnPlacement({
               namespace: await extractNamespace(enrichedCtx),
               regionId: multiRegionRuntime.regionId,
               runtime: multiRegionRuntime.placement,
               request: placementRequest,
               scope: action,
               trustedInternal: origin === "executor",
-            });
+            }));
           } catch (error) {
             if (error instanceof DatafnRoutingError) {
               return completeDatafnResponse({
@@ -1568,15 +1569,24 @@ export async function createDatafnServer<TContext = any>(
               ) as TContext;
               const response = await withAuthUnannounced("query", queryHandler, readOrigin, false, true)(readRequest, readCtx);
               const executed = probe.executed;
-              const query = executed?.queries.length === 1 ? executed.queries[0] as Record<string, any> : undefined;
+              const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
               if (
                 !response.ok || executed?.namespace !== pushNamespace || query?.resource !== resource ||
-                query.metadata?.accessMode === "sharedWithMe" || query.metadata?.namespaceFilter !== undefined
+                query.accessMode === "sharedWithMe" || query.namespaceFilter
               ) continue;
               const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
               if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
               for (const row of body.result.data as Array<Record<string, unknown>>) {
                 if (row && typeof row.id === "string" && chunk.includes(row.id)) rows.set(row.id, row);
+              }
+            }
+            if (assertionAdmitted && rows.size > 0) {
+              // The in-process read checks no routing grant's epoch. Epochs only
+              // increase, so the admitted placement still current after the
+              // read means the read ran under it.
+              const current = await multiRegionRuntime?.placement?.directory.get(pushNamespace);
+              if (current?.epoch !== admittedPlacement?.epoch || current?.regionId !== admittedPlacement?.regionId) {
+                return new Map();
               }
             }
             return rows;
