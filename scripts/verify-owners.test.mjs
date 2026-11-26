@@ -11,6 +11,7 @@ import {
   REPOSITORY_GUARD,
   REUSABLE_CALL_INPUT,
   REUSABLE_WORKFLOW_GUARD,
+  REUSABLE_WORKFLOW_GUARD_ALWAYS,
   SHARED_WORKFLOWS,
   hasRepositoryGuard,
   pyprojectName,
@@ -604,7 +605,16 @@ test("the reusable api-check runs for every caller and for a direct dispatch onl
   const file = ".github/workflows/apifn-api-check.yml";
   const source = readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), "utf8");
   assert.deepEqual(workflowGuardErrors(file, source), []);
-  const condition = source.match(/^ {2}api-check:\n(?: {4}#.*\n)* {4}if: (.*)$/m)?.[1];
+  // A job's properties may come in any order (api-check lists needs: next to if:), so each job's block is searched.
+  const jobCondition = (job) => {
+    const block = source.match(new RegExp(`^ {2}${job}:\\n((?: {4}.*\\n|\\s*\\n)*)`, "m"))?.[1] ?? "";
+    return block.match(/^ {4}if: (.*)$/m)?.[1];
+  };
+  assert.equal(jobCondition("evaluate"), REUSABLE_WORKFLOW_GUARD);
+  // api-check runs whatever evaluate's result, so a failed evaluate fails it instead of skipping it; beside always()
+  // it runs exactly when the evaluate guard holds.
+  assert.equal(jobCondition("api-check"), REUSABLE_WORKFLOW_GUARD_ALWAYS);
+  const condition = REUSABLE_WORKFLOW_GUARD_ALWAYS.slice("always() && (".length, -1);
   assert.equal(condition, REUSABLE_WORKFLOW_GUARD);
   // GitHub builds a called workflow's inputs from its workflow_call declarations (defaults plus the caller's with:)
   // and a direct run's inputs from its workflow_dispatch declarations; github is always the caller's or the run's.
@@ -633,7 +643,7 @@ test("the reusable-workflow guard is accepted only with a call-only marker input
   const reusable = (condition, on = `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n      spec:\n        type: string\n`) =>
     `name: X\n${on}jobs:\n  api-check:\n    if: ${condition}\n    runs-on: ubuntu-latest\n`;
   const file = ".github/workflows/any.yml";
-  for (const condition of [REUSABLE_WORKFLOW_GUARD, `\${{ ${REUSABLE_WORKFLOW_GUARD} }}`, REPOSITORY_GUARD]) {
+  for (const condition of [REUSABLE_WORKFLOW_GUARD, `\${{ ${REUSABLE_WORKFLOW_GUARD} }}`, REPOSITORY_GUARD, REUSABLE_WORKFLOW_GUARD_ALWAYS, `\${{ ${REUSABLE_WORKFLOW_GUARD_ALWAYS} }}`]) {
     assert.deepEqual(workflowGuardErrors(file, reusable(condition)), [], condition);
   }
   assert.deepEqual(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn()}`)), []);
@@ -675,6 +685,22 @@ test("the reusable-workflow guard is accepted only with a call-only marker input
     /does not declare the input called_as_reusable_workflow/,
   );
   assert.match(workflowGuardErrors(file, reusable(`${REUSABLE_WORKFLOW_GUARD} || always()`))[0] ?? "", /job "api-check" has if:/);
+  // Only always() joined by && to the whole parenthesised guard counts; every other status form is rejected.
+  for (const condition of [
+    `!cancelled() && (${REUSABLE_WORKFLOW_GUARD})`,
+    `(${REUSABLE_WORKFLOW_GUARD}) && always()`,
+    `always() || (${REUSABLE_WORKFLOW_GUARD})`,
+    `always() && ${REUSABLE_WORKFLOW_GUARD}`,
+    `always() && (${REUSABLE_WORKFLOW_GUARD}) || true`,
+    `always() && (${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT})`,
+  ]) {
+    // Wrapped in ${{ }}, since a plain YAML scalar cannot start with "!".
+    assert.match(workflowGuardErrors(file, reusable(`\${{ ${condition} }}`))[0] ?? "", /job "api-check" has if:/, condition);
+  }
+  assert.match(
+    workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD_ALWAYS, `on:\n${callOn("")}`))[0] ?? "",
+    /carries the reusable-workflow guard, but workflow_call does not declare the input called_as_reusable_workflow/,
+  );
   assert.match(workflowGuardErrors(file, reusable(`${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT}`))[0] ?? "", /job "api-check" has if:/);
 });
 

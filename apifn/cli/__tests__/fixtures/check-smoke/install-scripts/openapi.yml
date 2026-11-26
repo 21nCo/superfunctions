@@ -1,0 +1,34 @@
+info:
+  title: Install scripts smoke fixture
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /install-script:
+    get:
+      operationId: getInstallScript
+      responses:
+        "200":
+          description: The install script ran
+      summary: Served only after the postinstall script ran
+      tags:
+        - users
+  /prepare-script:
+    get:
+      operationId: getPrepareScript
+      responses:
+        "200":
+          description: The prepare script ran
+      summary: Served only after the prepare-dep prepare script ran
+      tags:
+        - users
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        "200":
+          description: All users
+      summary: List users
+      tags:
+        - users
+tags:
+  - name: users
