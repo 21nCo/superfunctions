@@ -1,0 +1,39 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_354c90d1ae0cd0::t_7ebb9d80270c0c 12,268,278-304,2754-2845
+filefn/client/src/__tests__/offline.test.ts
+  s_354c90d1ae0cd0::t_bab713d6f1f524 470,635-677
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_354c90d1ae0cd0::t_f4cfba0c2ade32 464-531,556-580,727-734,737
+filefn/client/src/client.ts
+  s_354c90d1ae0cd0::t_b2d6da0a9b74f5 144-150,161-165,177-181,183-186
+filefn/client/src/index.ts
+  s_354c90d1ae0cd0::t_b47de00fa7a8af 142,337-355,390-394,531,545-549,555,570,576-581,595,598-609,635
+filefn/client/src/offline/queue.ts
+  s_354c90d1ae0cd0::t_05a7f96367795e 4,257-262,346-355,409-415,470-475,552,799-802,825-828,1071-1075,1155-1159,1163-1168,1170,1316,1318-1326,1330,1335-1410,1879,1891,2211-2212,2961-2964,2971-2972,2987-2990,3002,3169-3180,3182-3183,3188-3194,3207-3211,3553-3566,3594,3643-3645
+filefn/client/src/offline/sync.ts
+  s_354c90d1ae0cd0::t_fc202fb39d553b 406
+filefn/client/src/upload-manager.ts
+  s_354c90d1ae0cd0::t_0a5bb070485c39 44-76,436
+filefn/docs/content/docs/features/offline.md
+  s_354c90d1ae0cd0::t_3d874bda788503 35,101,108,112,124
+filefn/docs/content/docs/reference/changelog.md
+  s_354c90d1ae0cd0::t_9883993e0212ce 24
+filefn/docs/static/llms-full.txt
+  s_354c90d1ae0cd0::t_155bfac172b6ae 3872,3931,3938,3945,3949,3961,8402,8407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db7f2b67b3c67a95b0234e1f835377e41416d2bb",
+  "prompts": {},
+  "sessions": {
+    "s_354c90d1ae0cd0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ac404db-e472-4bb9-8332-1a5c99d10a14",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
