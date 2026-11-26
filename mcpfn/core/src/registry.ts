@@ -3,6 +3,7 @@ import {
   createSchemaCompiler,
   type CompiledSchema,
   type SchemaCompiler,
+  type SchemaIssue,
 } from "./validation.js";
 import type {
   CallToolResult,
@@ -967,18 +968,27 @@ export class McpFnRegistry<TContext = undefined> {
         }],
       });
     }
-    if (!registered.validateInput(normalizedArgs)) {
-      return {
-        args:
-          normalizedArgs &&
-          typeof normalizedArgs === "object" &&
-          !Array.isArray(normalizedArgs)
-            ? (normalizedArgs as Record<string, unknown>)
-            : {},
-        issues: formatMcpFnSchemaIssues(registered.validateInput.errors),
-      };
+    let issues: SchemaIssue[] | null | undefined;
+    try {
+      if (registered.validateInput(normalizedArgs)) {
+        return { args: normalizedArgs as Record<string, unknown> };
+      }
+      issues = registered.validateInput.errors;
+    } catch (error) {
+      // A validator that recurses per instance (@cfworker/json-schema) can
+      // overflow the stack on a deeply nested value: reject it as invalid input.
+      if (!isStackOverflow(error)) throw error;
+      issues = [{ instancePath: "", keyword: "depth", message: "must not nest too deeply to validate" }];
     }
-    return { args: normalizedArgs as Record<string, unknown> };
+    return {
+      args:
+        normalizedArgs &&
+        typeof normalizedArgs === "object" &&
+        !Array.isArray(normalizedArgs)
+          ? (normalizedArgs as Record<string, unknown>)
+          : {},
+      issues: formatMcpFnSchemaIssues(issues),
+    };
   }
 
   async callTool(
@@ -1231,4 +1241,9 @@ export class McpFnRegistry<TContext = undefined> {
     }
     return result;
   }
+}
+
+/** A V8 or JavaScriptCore stack overflow ("Maximum call stack size exceeded."); no other error. */
+function isStackOverflow(error: unknown): boolean {
+  return error instanceof RangeError && /^Maximum call stack size exceeded\.?$/.test(error.message);
 }

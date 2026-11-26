@@ -1,0 +1,164 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/accounts": {
+      "post": {
+        "operationId": "createAccount",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Account"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles": {
+      "post": {
+        "operationId": "createProfile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Profile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/records": {
+      "post": {
+        "operationId": "createRecord",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Record"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "readOnly": true
+      },
+      "Password": {
+        "type": "string",
+        "minLength": 8,
+        "writeOnly": true
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ],
+            "description": "allOf-wrapped readOnly reference"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Password"
+              }
+            ],
+            "description": "allOf-wrapped writeOnly reference"
+          }
+        },
+        "required": [
+          "createdAt",
+          "name",
+          "password"
+        ]
+      },
+      "Identified": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true
+          }
+        }
+      },
+      "Named": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "Profile": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Identified"
+          },
+          {
+            "$ref": "#/components/schemas/Named"
+          }
+        ]
+      },
+      "Record": {
+        "type": "object",
+        "properties": {
+          "named": {
+            "$ref": "#/components/schemas/Named"
+          }
+        },
+        "required": [
+          "named"
+        ]
+      }
+    }
+  }
+}

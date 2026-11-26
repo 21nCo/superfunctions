@@ -40,7 +40,7 @@ export interface LangFnHttpOptions<TSession extends AuthSession = AuthSession> {
   maxBodyBytes?: number;
 }
 
-const HEALTH_METADATA = { status: "ok", name: "langfn", version: "0.2.0" } as const;
+const HEALTH_METADATA = { status: "ok", name: "langfn", version: "0.2.1" } as const;
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 
 export function createLangFnRoutes<TSession extends AuthSession = AuthSession>(

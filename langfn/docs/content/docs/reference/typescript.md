@@ -5,7 +5,7 @@ description: Current langfn TypeScript package guide.
 
 LangFn for TypeScript ships the canonical `langfn` package plus the documented subpath exports used throughout the SDK examples and tests.
 
-Current release target: `0.2.0`.
+Current release target: `0.2.1`.
 
 ## Install
 
