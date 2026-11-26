@@ -1,0 +1,19 @@
+plugfn/core/src/core/connection-manager.ts
+  s_ebd9333df8a03e::t_5d88db81eaddd7 106-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c23e7e7f082a51fbe8b04c19326753cb15e8f5b9",
+  "prompts": {},
+  "sessions": {
+    "s_ebd9333df8a03e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ebd9333df8a03e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

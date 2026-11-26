@@ -1,0 +1,29 @@
+mcpfn/core/src/registry.ts
+  s_561989680f3618::t_3fea71d123d33d 21,68-75,79,82,84-88,90-94,133-137,139,141,143-148,715-723,726-729,751-759,773-774,785,790-795,821-825,827-830,832-839,841-846,852-862,864,866,876-890,896,960-964,1005-1006,1016,1020,1034-1037,1064-1069,1162-1168,1216-1218,1260-1263,1268-1271,1529
+mcpfn/core/tests/openapi-forms.test.ts
+  s_561989680f3618::t_92d9d13719619b 2243,2249-2262,2264-2265
+mcpfn/core/tests/registry-clone-empty.test.ts
+  s_561989680f3618::t_8c5d859591cf8f 8-13,76-77,99-102,151-152,338
+mcpfn/core/tests/registry-identity.test.ts
+  s_561989680f3618::t_d1a3d0d5d3ad63 1-245
+plugfn/core/src/core/connection-manager.ts
+  s_561989680f3618::t_02f694fe10f5ef 74-153,200,259,303,322,417-439,443,457
+plugfn/core/tests/connection-manager.test.ts
+  s_561989680f3618::t_c71baaccd2aba2 1282-1367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae6cde027889883af913a290b2e8032c0c4a399a",
+  "prompts": {},
+  "sessions": {
+    "s_561989680f3618": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_561989680f3618",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
