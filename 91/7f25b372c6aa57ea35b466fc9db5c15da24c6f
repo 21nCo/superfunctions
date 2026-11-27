@@ -1,0 +1,31 @@
+apifn/core/src/idempotency/__tests__/request-idempotency.test.ts
+  s_92122ac941a68b::t_c9492d96363517 1976,1978-1979,1986,1994-1998,2055-2058,2060,2083-2155
+apifn/core/src/idempotency/request-idempotency.ts
+  s_cff285c8033656::t_7e1fa5e257a4e9 1006-1007,1009,1011,1013-1017,1152-1155,1161-1169,1177-1187,1191,1193,1195-1205,1207-1221,1224,1244
+apifn/core/README.md
+  s_92122ac941a68b::t_695e5640daa347 213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "917f25b372c6aa57ea35b466fc9db5c15da24c6f",
+  "prompts": {},
+  "sessions": {
+    "s_92122ac941a68b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2190f-cde4-7c00-9b87-e8f0870071bd",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

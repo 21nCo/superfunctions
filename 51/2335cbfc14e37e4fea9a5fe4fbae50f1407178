@@ -1,0 +1,51 @@
+mcpfn/core/src/registry.ts
+  s_a328b21deffb11::t_9158d50d5f5b32 5,64,69,145-172,205-207,223-292,362,367-390,439-447,449-451,486-489,493,994-999,1068-1072,1077-1081,1121,1128-1135,1170-1174,1291,1464,1501
+mcpfn/core/src/validation.ts
+  s_a328b21deffb11::t_78508c72118c97 580-589
+plugfn/core/src/core/action-executor.ts
+  s_a328b21deffb11::t_a8964894c79fc9 162-170
+plugfn/core/src/core/connection-manager.ts
+  s_a328b21deffb11::t_122c972189c741 88-92,97-101,107,320-321,353-366,406-409,875-891,898,903-904,907-920,1001-1005,1008,1010,1013,1018-1029,1112-1147
+plugfn/core/src/middleware/caching.ts
+  s_a328b21deffb11::t_130314b095d70b 35-38,42-45,49,55-61
+plugfn/core/tests/action-cache-credential.test.ts
+  s_70d63391dff51f::t_c191af205f2cbd 19-22,43-48,76-77,156,160,170-197
+plugfn/core/tests/connection-manager.test.ts
+  s_6919616020cfb4::t_3a98258c04d275 1461-1620
+mcpfn/core/tests/registry-clone-empty.test.ts
+  s_a328b21deffb11::t_1297361afcbb5c 585
+mcpfn/core/tests/registry-custom-compiler.test.ts
+  s_a328b21deffb11::t_e9450a6df5608f 1-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "512335cbfc14e37e4fea9a5fe4fbae50f1407178",
+  "prompts": {},
+  "sessions": {
+    "s_6919616020cfb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f97debb-6d74-4057-a134-145a8e4f0851",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_70d63391dff51f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a219b0-e784-7a23-873f-2c77086c874c",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a328b21deffb11": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aaedaad8-1b2c-4cfa-b4c4-3a3586f7d9d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

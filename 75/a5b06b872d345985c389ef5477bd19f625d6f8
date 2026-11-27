@@ -1,0 +1,23 @@
+apifn/core/README.md
+  s_3f2296e85517a9::t_df7eabfc36eb87 213
+apifn/core/src/idempotency/__tests__/request-idempotency.test.ts
+  s_3f2296e85517a9::t_cb979c862b5703 1876-1903
+apifn/core/src/idempotency/request-idempotency.ts
+  s_3f2296e85517a9::t_f1432ade816235 878-880,955-956
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75a5b06b872d345985c389ef5477bd19f625d6f8",
+  "prompts": {},
+  "sessions": {
+    "s_3f2296e85517a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78b57faa-8375-4465-9686-836fe3e995ff",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

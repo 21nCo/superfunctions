@@ -1,0 +1,23 @@
+scripts/docs-site/README.md
+  s_c53d7d40b21eab::t_e1e609d4d7cbc2 13
+scripts/docs-site/llms.mjs
+  s_c53d7d40b21eab::t_a41921ac54e609 19-20,24-25,34-36,38,42,46-51,140,143,145,147,171-176,193-194,211,218-222
+scripts/docs-site/llms.test.mjs
+  s_c53d7d40b21eab::t_fd687e0ea6b8b0 2,161-162,189-190,297-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d855ea664e4f446fcba27c921d3a32139c88696b",
+  "prompts": {},
+  "sessions": {
+    "s_c53d7d40b21eab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "688dfd1d-378d-4718-a494-371600d6fd7e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
