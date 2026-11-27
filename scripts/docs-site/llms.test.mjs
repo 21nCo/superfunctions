@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, posix, relative, sep, win32 } from "node:path";
+import { basename, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
+import { assertProviderContentInsideSnapshot, createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -267,6 +267,33 @@ describe("LLM loader front matter policy", () => {
     expect(error.message).not.toContain("docs-llms-snapshot-");
   });
 
+  it.each(["docsDir", "pagesDir", "blogDir"])("hands the provider only snapshot paths for an absolute %s under a missing root", async (key) => {
+    const live = external();
+    writeFileSync(join(live, "index.md"), `---js\n({ title: (globalThis.${executed} = true, "Executed") })\n---\nBody`);
+    writeSite({ root: "absent", docsDir: "guide", [key]: live.replaceAll("\\", "/") });
+    const error = await expectProviderErrorParity();
+    expect(error.code).toBe("DOCS_ENTRY_INVALID");
+    expect(error.message).toContain(join(cwd, "absent"));
+    expect(error.message).not.toContain("docs-llms-snapshot-");
+    const received = [];
+    class RecordingProvider extends FsContentProvider {
+      async listEntries(input) {
+        received.push(input.config.content);
+        return super.listEntries(input);
+      }
+    }
+    await expect(loadLlmsSiteSource(cwd, { buildManifest, loadDocsConfig, FsContentProvider: RecordingProvider })).rejects.toMatchObject({ code: "DOCS_ENTRY_INVALID" });
+    expect(received).toHaveLength(1);
+    const staging = relative(realpathSync.native(scratch), received[0].root).split(sep)[0];
+    expect(staging).toMatch(/^docs-llms-snapshot-/);
+    for (const name of ["docsDir", "pagesDir", "blogDir"]) {
+      if (received[0][name] === undefined) continue;
+      const resolved = relative(join(realpathSync.native(scratch), staging), resolve(received[0].root, received[0][name]));
+      expect(resolved.startsWith("..")).toBe(false);
+    }
+    expect(globalThis[executed]).toBeUndefined();
+  });
+
   it("stages in a temp dir inside the site when no collection contains it", async () => {
     write("guide/index.md", "# Guide");
     write("pages/about.md", "# About");
@@ -437,5 +464,22 @@ describe("snapshot path mapping", () => {
     expect(mapper.toSourceText("at /tmp/docs-llms-snapshot-1/root/a.md")).toBe("at /site/a.md");
     const special = createSnapshotPathMapper([["/tmp/docs-llms-snapshot-1/root", "/site/$&$'x"]], posix);
     expect(special.toSourceText("at /tmp/docs-llms-snapshot-1/root/a.md")).toBe("at /site/$&$'x/a.md");
+  });
+});
+
+describe("provider content check", () => {
+  const base = join(tmpdir(), "docs-llms-snapshot-unit");
+  const root = join(base, "root");
+  it("accepts a root and Markdown directories inside the snapshot", () => {
+    expect(() => assertProviderContentInsideSnapshot({ root, docsDir: "content/docs", pagesDir: join(base, "collections", "pages"), blogDir: undefined, apiDir: "/live/api" }, base)).not.toThrow();
+  });
+  it.each([
+    ["an absolute live docs directory", { root, docsDir: join(tmpdir(), "live-docs") }, "docsDir"],
+    ["an escaping pages directory", { root, pagesDir: "../../live-pages" }, "pagesDir"],
+    ["a non-string blog directory", { root, blogDir: 1 }, "blogDir"],
+    ["a root outside the snapshot", { root: tmpdir() }, "root"],
+    ["a relative root", { root: "root" }, "root"],
+  ])("rejects %s", (_name, content, key) => {
+    expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow(`Docs snapshot ${key} `);
   });
 });

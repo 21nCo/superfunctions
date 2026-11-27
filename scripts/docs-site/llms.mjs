@@ -215,15 +215,44 @@ function createCheckedContentSnapshot(root, content) {
         snapshotFile(join(sourceDirectory, relativePath), join(snapshotDirectory, relativePath), isMarkdown);
       }
     }
-    // Every snapshot directory handed to the provider is absolute and inside this run's staging tree.
-    for (const [key, value] of Object.entries(overrides)) {
-      if (!SNAPSHOT_KEYS.has(key)) continue;
-      if (!isAbsolute(value) || !isInside(snapshotBase, value)) throw new Error(`Docs snapshot ${key} ${value} is outside its staging tree ${snapshotBase}`);
+    if (!isDirectory(root)) {
+      // No collection is resolved under a missing root, so no configured Markdown directory may reach
+      // the provider as the live source value: each becomes a missing directory inside the snapshot,
+      // and the provider still reports its own missing-root error.
+      for (const [collection, key] of COLLECTION_DIRECTORIES) {
+        if (!MARKDOWN_COLLECTIONS.has(collection) || typeof content[key] !== "string" || !content[key]) continue;
+        const configured = /** @type {string} */ (content[key]);
+        const missing = join(snapshotBase, "missing", collection);
+        overrides[key] = missing;
+        prefixes.push([missing, resolve(root, configured)]);
+        aliases.push([`configured ${key} ${missing} `, `configured ${key} ${configured} `]);
+      }
     }
-    return { content: overrides, dispose, ...mapper() };
+    return { content: overrides, base: snapshotBase, dispose, ...mapper() };
   } catch (error) {
     dispose();
     throw mapSnapshotError(error, mapper());
+  }
+}
+
+/**
+ * Check the final content configuration the provider receives: the root and every Markdown collection
+ * directory (configured or left to the provider's defaults) must resolve inside this run's staging
+ * tree, so the provider can only parse checked snapshot bytes. Fails closed on anything else.
+ * @param {Record<string, unknown>} content
+ * @param {string} snapshotBase
+ */
+export function assertProviderContentInsideSnapshot(content, snapshotBase) {
+  const { root } = content;
+  if (typeof root !== "string" || !isAbsolute(root) || !isInside(snapshotBase, root)) {
+    throw new Error(`Docs snapshot root ${String(root)} is outside its staging tree ${snapshotBase}`);
+  }
+  for (const key of SNAPSHOT_KEYS) {
+    if (key === "root" || content[key] === undefined) continue;
+    const value = content[key];
+    if (typeof value !== "string" || !isInside(snapshotBase, resolve(root, value))) {
+      throw new Error(`Docs snapshot ${key} ${String(value)} is outside its staging tree ${snapshotBase}`);
+    }
   }
 }
 
@@ -264,11 +293,10 @@ function createCheckedProvider(FsContentProvider, options) {
       const root = resolve(String(input.config.content.root || options.root));
       const snapshot = createCheckedContentSnapshot(root, content);
       try {
+        const providerContent = { ...content, ...snapshot.content };
+        assertProviderContentInsideSnapshot(providerContent, snapshot.base);
         const provider = new FsContentProvider({ root: snapshot.content.root });
-        const entries = await provider.listEntries({
-          ...input,
-          config: { ...input.config, content: { ...content, ...snapshot.content } },
-        });
+        const entries = await provider.listEntries({ ...input, config: { ...input.config, content: providerContent } });
         return entries.map((/** @type {{ absolutePath?: unknown }} */ entry) => typeof entry.absolutePath === "string"
           ? { ...entry, absolutePath: snapshot.toSourcePath(entry.absolutePath) }
           : entry);
