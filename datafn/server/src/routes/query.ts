@@ -23,9 +23,18 @@ import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import {
   isNamespaceOwnerActor,
   isPrivateShareableResource,
+  canReadEveryField,
+  withoutHiddenDeclaredFields,
   resolveAccessLevel,
   validateQueryAuthz,
 } from "../validation/authz.js";
+import {
+  REVISION_FIELD,
+  canonicalRow,
+  isRevisionCertified,
+  issuesRevisions,
+  readWithRevisionsOrPlain,
+} from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery, relationQuerySelectTokens } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
@@ -36,7 +45,8 @@ import {
   canonicalizePrincipalFromLegacyUserId,
   getSpv2MigrationRuntimeConfig,
 } from "../execution/migration/spv2.js";
-import { hasTemporalGrouping } from "@datafn/core";
+import { endpointList, findRelationMatch, hasTemporalGrouping, relationTargetEndpoint } from "@datafn/core";
+import { projectFieldsPushdown } from "../execution/query/pushdown.js";
 import {
   getDatafnMultiRegionRuntimeConfig,
   queryDatafnPermissionGrants,
@@ -64,6 +74,147 @@ export interface QueryHandlerOpts {
 
 type QueryEnvelopeMetadata = QueryMetadata;
 type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
+
+/**
+ * DATA-41: the server passes a push's post-write read a probe as a handler
+ * option; the handler records the namespace and queries it actually executed
+ * (after every hook), so the push can tell the read selected the written
+ * record.
+ */
+export interface PostWriteReadProbe {
+  executed?: {
+    namespace: string;
+    queries: ReadonlyArray<{ resource: unknown; accessMode: unknown; namespaceFilter: boolean }>;
+  };
+}
+
+/**
+ * DATA-41: a query sent with `withRevisions: true` returns each complete row
+ * of its own resource with its revision as `$rev`. Only a plain row read
+ * qualifies: a relation traversal (rows of another resource), a projection
+ * (`select` other than `*`, `omit`), grouping, aggregation or a temporal
+ * clause gets none, and so does a resource whose fields the caller may not
+ * all read.
+ */
+function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema): boolean {
+  if (query.withRevisions !== true || typeof query.resource !== "string") return false;
+  if (!issuesRevisions(schema, query.resource) || !canReadEveryField(schema, query.resource)) return false;
+  if (query.relation !== undefined || query.temporal !== undefined) return false;
+  const select = query.select;
+  if (Array.isArray(select) && !(select.length === 1 && select[0] === "*")) return false;
+  if (Array.isArray(query.omit) && query.omit.length > 0) return false;
+  return !query.groupBy && !query.aggregations && !hasTemporalGrouping(query);
+}
+
+
+/** The rows of a query result, or undefined. */
+function rowsOf(result: unknown): Array<Record<string, unknown>> | undefined {
+  const rows = (result as { data?: unknown } | null | undefined)?.data;
+  return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
+}
+
+/**
+ * DATA-41: records on a push read-back's probe the namespace and queries the
+ * handler executes, copied now: a later hook may change the query objects.
+ */
+function recordExecutedQueries(probe: PostWriteReadProbe | undefined, namespace: string, queries: readonly unknown[]): void {
+  if (!probe) return;
+  probe.executed = {
+    namespace,
+    queries: queries.map((q) => {
+      const query = q as { resource?: unknown; metadata?: { accessMode?: unknown; namespaceFilter?: unknown } };
+      return {
+        resource: query.resource,
+        accessMode: query.metadata?.accessMode,
+        namespaceFilter: query.metadata?.namespaceFilter !== undefined,
+      };
+    }),
+  };
+}
+
+/**
+ * DATA-41: `result` without the fields of `resource` that the read policy
+ * withholds. Only declared fields are removed, so aggregation aliases survive.
+ */
+function withoutHiddenFields<T>(schema: DatafnSchema, resource: string, result: T): T {
+  const rows = rowsOf(result);
+  rows?.forEach((row, index) => {
+    rows[index] = withoutHiddenDeclaredFields(schema, resource, row);
+  });
+  return result;
+}
+
+/** DATA-41: a read sent with `withRevisions` never returns a field the read policy withholds. */
+function withoutHiddenFieldsIfVersioned<T>(schema: DatafnSchema, query: Record<string, unknown>, result: T): T {
+  if (query.withRevisions !== true || query.relation !== undefined || typeof query.resource !== "string") return result;
+  return withoutHiddenFields(schema, query.resource, result);
+}
+
+/**
+ * One execution of a query: on `readDb`, with its stored rows projected
+ * (`projectRecords`), its row-level access resolved on `accessDb` with
+ * `cache` (the request's cache when omitted).
+ */
+type QueryRun = (
+  readDb: Adapter,
+  projectRecords?: boolean,
+  accessDb?: Adapter,
+  cache?: RequestPrincipalResolutions,
+) => Promise<unknown>;
+
+/**
+ * DATA-41: runs `query` on `db`. A query sent with `withRevisions` that does
+ * not qualify (isVersionedQuery) returns no revision, and never a field of its
+ * resource that the read policy withholds. A versioned query, including its
+ * row-level access (owned rows, grants and principal memberships of a private
+ * shareable resource, resolved without the request's cache), runs inside the
+ * revision snapshot and returns its stored rows unprojected (as clone returns
+ * them), so each row it selected is paired with the revision read in that
+ * same snapshot. A row the server did not pair with a revision (an
+ * unreadable field, a tombstone, no verified pairing, or a stored legacy
+ * `$rev` value) is returned as the plain query projects it, without `$rev`.
+ * If revision setup or any read inside the snapshot fails (thrown, or
+ * swallowed by a push-down or in-memory fallback, which on PostgreSQL aborts
+ * the transaction), the query is run again outside it, without revisions,
+ * and with access resolved afresh too: an earlier query of the batch may have
+ * cached a membership revoked since. Its query index (`versioned.index`) is
+ * added to `versioned.indexes` when it is read with revisions.
+ */
+async function executeWithRevisions(
+  query: Record<string, unknown>,
+  schema: DatafnSchema,
+  db: Adapter,
+  namespace: string,
+  run: QueryRun,
+  versioned: { indexes: Set<number>; index: number },
+): Promise<unknown> {
+  if (!isVersionedQuery(query, schema)) return withoutHiddenFieldsIfVersioned(schema, query, await run(db));
+  versioned.indexes.add(versioned.index);
+  const resource = String(query.resource);
+  const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
+  let plain = false;
+  const result = await readWithRevisionsOrPlain(
+    db,
+    namespace,
+    resource,
+    (readDb) => run(readDb, false, readDb, new Map()),
+    () => {
+      plain = true;
+      return run(db, true, db, new Map());
+    },
+    rowsOf,
+    (row: Record<string, unknown>) => canReadEveryField(schema, resource, row),
+  );
+  if (plain) return result;
+  const rows = rowsOf(result);
+  rows?.forEach((row, index) => {
+    if (isRevisionCertified(row)) return;
+    const projected = projectFieldsPushdown(row, resource, schema, select, undefined);
+    delete projected[REVISION_FIELD];
+    rows[index] = projected;
+  });
+  return result;
+}
 
 /**
  * Create query validation + execution route handler
@@ -96,10 +247,13 @@ export function createQueryHandler(
     namespace: string,
     actorId: string | undefined,
     cache: RequestPrincipalResolutions,
+    // DATA-41: a versioned query resolves access on its revision snapshot.
+    accessDb: Adapter | undefined = db,
   ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
-    if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
+    if (!accessDb || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
     }
+    const db = accessDb;
     if (!actorId) {
       return { shareableAccessIds: [] };
     }
@@ -147,7 +301,7 @@ export function createQueryHandler(
     }
 
     if (readMode !== "v1") {
-      const principals = await resolveActorPrincipals(namespace, actorId, cache);
+      const principals = await resolveActorPrincipals(namespace, actorId, cache, db);
       let hasScopeGrant = false;
       for (const principalId of principals) {
         const permissionRows = await db.findMany({
@@ -230,10 +384,12 @@ export function createQueryHandler(
     namespace: string,
     actorId: string,
     cache: RequestPrincipalResolutions,
+    principalDb: Adapter | undefined = db,
   ): Promise<string[]> => {
-    if (!db) {
+    if (!principalDb) {
       return [];
     }
+    const db = principalDb;
     const key = JSON.stringify([namespace, actorId]);
     const cached = cache.get(key);
     if (cached) return cached;
@@ -624,7 +780,11 @@ export function createQueryHandler(
     });
   };
 
-    return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
+    return async (
+      req: Request,
+      ctx?: { parsedBody?: unknown },
+      options?: { postWriteReadProbe?: PostWriteReadProbe },
+    ): Promise<Response> => {
       const startTime = Date.now();
       let resource: string | undefined;
       const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -787,16 +947,19 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           const namespace = await extractNamespace(ctx);
+          recordExecutedQueries(options?.postWriteReadProbe, namespace, transformedQueries);
           const actorId = extractActorId ? await extractActorId(ctx) : undefined;
           // Membership and hierarchy are written by the host, outside this
           // handler, so a cache kept on the handler would survive revocation.
           // One cache per request still dedupes lookups inside a batch.
           const principalResolverCache: RequestPrincipalResolutions = new Map();
+          // DATA-41: the query indexes read with revisions.
+          const versionedIndexes = new Set<number>();
 
           timer?.startPhase("plan");
           // FIX-SRV-003: Bounded concurrency — queue excess queries instead of rejecting
           const concurrency = handlerOpts?.maxBatchQueryConcurrency ?? 20;
-          const queryTasks = transformedQueries.map((q) => () => {
+          const queryTasks = transformedQueries.map((q, queryIndex) => () => {
               const queryStart = Date.now();
               const query = q as Record<string, unknown>;
               const metadata =
@@ -844,24 +1007,34 @@ export function createQueryHandler(
                   principalResolverCache,
                 ).then((result) => {
                   queryDurations.push(Date.now() - queryStart);
-                  return result;
+                  // DATA-41: shared rows come from other namespaces, whose
+                  // revisions a client cannot pair with its own records, so
+                  // they get none.
+                  return withoutHiddenFieldsIfVersioned(validatedSchema, query, result);
                 });
               }
 
-              return resolveShareableAccessIds(
-                String(query.resource),
-                namespace,
-                actorId,
-                principalResolverCache,
-              ).then((shareableAccess) => {
-                // Access fields are the server's to set: a client-supplied
-                // hasShareableScopeAccess or shareableAccessIds must never
-                // widen or replace the access filter.
-                const {
-                  shareableAccessIds: _clientAccessIds,
-                  hasShareableScopeAccess: _clientScopeAccess,
-                  ...clientMetadata
-                } = (metadata ?? {}) as QueryEnvelopeMetadata;
+              // Access fields are the server's to set: a client-supplied
+              // hasShareableScopeAccess or shareableAccessIds must never
+              // widen or replace the access filter.
+              const {
+                shareableAccessIds: _clientAccessIds,
+                hasShareableScopeAccess: _clientScopeAccess,
+                ...clientMetadata
+              } = (metadata ?? {}) as QueryEnvelopeMetadata;
+              const run = async (
+                readDb: Adapter,
+                projectRecords = true,
+                accessDb: Adapter = readDb,
+                cache: RequestPrincipalResolutions = principalResolverCache,
+              ) => {
+                const shareableAccess = await resolveShareableAccessIds(
+                  String(query.resource),
+                  namespace,
+                  actorId,
+                  cache,
+                  accessDb,
+                );
                 const queryWithMetadata = {
                   ...query,
                   metadata: {
@@ -876,16 +1049,18 @@ export function createQueryHandler(
                 return executeSingleQuery(
                   queryWithAutoFilters as unknown as Record<string, unknown>,
                   validatedSchema,
-                  db,
+                  readDb,
                   namespace,
                   actorId,
                   searchProvider,
                   logger,
                   timer,
                   multiRegionRuntime,
-                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true },
+                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true, projectRecords },
                 );
-              }).then((result) => {
+              };
+              const versioned = { indexes: versionedIndexes, index: queryIndex };
+              return executeWithRevisions(query, validatedSchema, db, namespace, run, versioned).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;
               });
@@ -914,9 +1089,20 @@ export function createQueryHandler(
           timer?.startPhase("materialize");
           let result = isBatch ? results : results[0];
 
+          // DATA-41: a `$rev` belongs to the exact row it was certified with,
+          // by the query (index) that certified it. What each query returned
+          // is captured before the afterQuery hooks, which may change, add,
+          // drop or reorder rows and results. Hook output is not modified.
+          const ties = captureRevisionTies(transformedQueries, results, validatedSchema, versionedIndexes);
+
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
 
+          // The response envelope is serialized once, exactly as okResponse
+          // would send it, so every serializer (toJSON) sees its wire key. A
+          // server `$rev` that cannot be tied back is removed from that wire
+          // form, which is sent.
+          result = withTiedRevisionsOnly(result, isBatch, ties);
           if (timingEmitter && timer) {
             timingEmitter(timer.build("/datafn/query", resource, "query"));
           }
@@ -960,3 +1146,208 @@ export function createQueryHandler(
           }, logger);
       }
     };}
+
+/**
+ * DATA-41: how the client reads one result slot (a query index), captured
+ * before the afterQuery hooks. `versioned`: a query whose rows were read with
+ * revisions (executeWithRevisions took its versioned path). `issuing`: any
+ * other read of rows of resources that issue revisions, which therefore
+ * cannot declare `$rev` (a plain or relation read, a shared-with-me read, a
+ * permission listing). `application`: a read of rows that may declare `$rev`
+ * as their own field (a resource that issues no revisions, an unknown
+ * resource, or a relation reaching one). `own` holds the rows (canonical) the
+ * query returned with a `$rev`, and `ids` their ids (as JSON).
+ */
+interface SlotTie {
+  kind: "versioned" | "issuing" | "application";
+  own: Set<string>;
+  ids: Set<string>;
+}
+
+/** Where a row object with a `$rev` came from: its query index, slot kind and canonical form then. */
+interface RowOrigin {
+  index: number;
+  application: boolean;
+  canonical: string;
+}
+
+/**
+ * DATA-41: what each query of a batch returned before the afterQuery hooks,
+ * so a `$rev` after them is tied to the query it came from rather than to the
+ * result slot a hook moved it to, or to a value it happens to equal.
+ */
+interface RevisionTies {
+  /** Each query's slot, by query index. */
+  slots: SlotTie[];
+  /** The provenance of each row object that had a `$rev`, by identity. */
+  origins: WeakMap<object, RowOrigin>;
+  /** The rows (canonical) the `application` slots returned with their own `$rev`. */
+  application: Set<string>;
+  /** The `[id, $rev]` pairs (as JSON) the `versioned` slots certified. */
+  certified: Set<string>;
+}
+
+/** The `[id, $rev]` pair of a wire row, as JSON. */
+function revisionPair(row: Record<string, unknown>): string {
+  return JSON.stringify([row.id ?? null, row[REVISION_FIELD] ?? null]);
+}
+
+/** The top-level rows of a query result (its `data` entries that are objects). */
+function resultRows(value: unknown): Array<Record<string, unknown> | undefined> {
+  const rows = value !== null && typeof value === "object" ? (value as { data?: unknown }).data : undefined;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => (row !== null && typeof row === "object" ? (row as Record<string, unknown>) : undefined));
+}
+
+/** The top-level rows of a query result that carry a `$rev`. */
+function rowsWithRevision(value: unknown): Array<Record<string, unknown>> {
+  return resultRows(value).filter((row): row is Record<string, unknown> => row !== undefined && REVISION_FIELD in row);
+}
+
+/** Whether every resource the rows of `query` belong to issues revisions. */
+function readsIssuingRows(query: Record<string, unknown>, schema: DatafnSchema): boolean {
+  if (typeof query.resource !== "string") return false;
+  if (query.relation === undefined) return issuesRevisions(schema, query.resource);
+  if (typeof query.relation !== "string") return false;
+  const match = findRelationMatch(schema as any, query.resource, query.relation);
+  if (!match) return false;
+  return endpointList(relationTargetEndpoint(match.relation, match.direction))
+    .every((target) => issuesRevisions(schema, target));
+}
+
+function slotKind(query: Record<string, unknown>, versioned: boolean, schema: DatafnSchema): SlotTie["kind"] {
+  if (versioned) return "versioned";
+  return readsIssuingRows(query, schema) ? "issuing" : "application";
+}
+
+/**
+ * Captures `results` (by query index, before the afterQuery hooks), with the
+ * query indexes read with revisions (`versioned`); undefined when none was.
+ */
+function captureRevisionTies(
+  queries: readonly unknown[],
+  results: readonly unknown[],
+  schema: DatafnSchema,
+  versioned: ReadonlySet<number>,
+): RevisionTies | undefined {
+  if (versioned.size === 0) return undefined;
+  const ties: RevisionTies = { slots: [], origins: new WeakMap(), application: new Set(), certified: new Set() };
+  queries.forEach((q, index) => {
+    const kind = slotKind(q as Record<string, unknown>, versioned.has(index), schema);
+    const slot: SlotTie = { kind, own: new Set(), ids: new Set() };
+    ties.slots.push(slot);
+    const application = kind === "application";
+    for (const row of rowsWithRevision(results[index])) {
+      const canonical = canonicalRow(row);
+      const wire = JSON.parse(canonical) as Record<string, unknown>;
+      slot.own.add(canonical);
+      slot.ids.add(JSON.stringify(wire.id ?? null));
+      if (application) ties.application.add(canonical);
+      if (kind === "versioned") ties.certified.add(revisionPair(wire));
+      if (!ties.origins.has(row)) ties.origins.set(row, { index, application, canonical });
+    }
+  });
+  return ties;
+}
+
+/**
+ * DATA-41: with a versioned query in the request (`ties`), serialize
+ * `{ ok: true, result }` once and remove each `$rev` that cannot be tied back
+ * to where it came from (keepsRevision). A result entry is read as the slot of
+ * the query with its index; a batch result a hook reshaped (no longer an
+ * array) or extended has entries no query answers. A wire row's provenance is
+ * the hook output's row object at the same position, when that object was
+ * captured and still serializes to the wire row. Only the rows of `data`
+ * arrays are checked; nested values are left as they are. The returned value
+ * is plain JSON, so okResponse re-serializes it byte-identically.
+ */
+function withTiedRevisionsOnly(result: unknown, isBatch: boolean, ties: RevisionTies | undefined): unknown {
+  if (!ties) return result;
+  const wire = JSON.parse(JSON.stringify({ ok: true, result })) as { result?: unknown };
+  const slotted = !isBatch || Array.isArray(wire.result);
+  const entries = isBatch && Array.isArray(wire.result) ? wire.result : [wire.result];
+  const liveEntries: unknown[] = isBatch && Array.isArray(result) ? result : [result];
+  entries.forEach((entry, index) => {
+    const slot = slotted ? ties.slots[index] : undefined;
+    const live = resultRows(liveEntries[index]);
+    resultRows(entry).forEach((row, position) => {
+      if (!row || !(REVISION_FIELD in row)) return;
+      const canonical = canonicalRow(row);
+      const origin = originOf(live[position], canonical, ties);
+      if (!keepsRevision({ row, canonical, origin }, slot, ties)) delete row[REVISION_FIELD];
+    });
+  });
+  return wire.result;
+}
+
+/**
+ * The captured provenance of hook output row `live`, if it serializes to the
+ * wire row `canonical`. A row whose serializer throws when serialized on its
+ * own (its toJSON at the root key) has no provenance.
+ */
+function originOf(live: Record<string, unknown> | undefined, canonical: string, ties: RevisionTies): RowOrigin | undefined {
+  const origin = live ? ties.origins.get(live) : undefined;
+  if (!origin) return undefined;
+  try {
+    return canonicalRow(live as Record<string, unknown>) === canonical ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A wire row with a `$rev`: the row, its canonical form and its provenance. */
+interface WireRow {
+  row: Record<string, unknown>;
+  canonical: string;
+  origin: RowOrigin | undefined;
+}
+
+/**
+ * DATA-41: whether a wire row keeps its `$rev` in `slot` (undefined for an
+ * entry no query answers).
+ *
+ * - A row from an `application` slot (by identity) keeps it anywhere, edited
+ *   or not: it is the row's declared field.
+ * - Any other row with provenance (a certified row) keeps it only unchanged,
+ *   in a revision-bearing slot whose own query returned that exact row: the
+ *   versioned slot that certified it, or another query that certified the
+ *   same row. Moved to another query index, into an `application` slot or
+ *   where no query answers, or edited in place, it loses it.
+ * - A row without provenance (a copy a hook made): see keepsCopiedRevision.
+ */
+function keepsRevision(wire: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
+  const { canonical, origin } = wire;
+  if (origin?.application) return true;
+  if (origin) return slot !== undefined && slot.kind !== "application" && canonical === origin.canonical && slot.own.has(canonical);
+  return keepsCopiedRevision(wire, slot, ties);
+}
+
+/**
+ * DATA-41: whether a hook's copy of a row (no provenance) keeps its `$rev`.
+ *
+ * - In a versioned slot a copy keeps it if it equals a row the slot's own
+ *   query certified, or if it equals an `application` row whose `[id, $rev]`
+ *   no versioned query certified (a declared `$rev` that cannot be a server
+ *   one). A copy equal to an `application` row whose pair collides with a
+ *   certified pair loses it, as does an edited copy: values cannot tell either
+ *   from a certified row a hook rewrote, and keeping it could pair a record
+ *   with a revision that slot's query never certified. An `application` row
+ *   object itself keeps it by identity (see keepsRevision).
+ * - In an issuing slot, or where no query answers, it keeps it only if it
+ *   equals a row an `application` slot returned with its declared `$rev` (an
+ *   issuing query returns no `$rev` of its own).
+ * - In an `application` slot the `$rev` is the row's declared field and is
+ *   kept, edited or not, unless it is a server `$rev` moved into a foreign
+ *   slot: its `[id, $rev]` is a pair a versioned query certified, its id is
+ *   none of the ids the slot's own query returned with a `$rev`, and it is not
+ *   an unchanged copy of an `application` row.
+ */
+function keepsCopiedRevision({ row, canonical }: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
+  if (slot?.kind === "versioned") {
+    return slot.own.has(canonical) || (ties.application.has(canonical) && !ties.certified.has(revisionPair(row)));
+  }
+  if (slot?.kind !== "application") return slot?.own.has(canonical) === true || ties.application.has(canonical);
+  return ties.application.has(canonical)
+    || !ties.certified.has(revisionPair(row))
+    || slot.ids.has(JSON.stringify(row.id ?? null));
+}

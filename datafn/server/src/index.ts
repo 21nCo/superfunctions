@@ -41,6 +41,7 @@ export type {
   DatafnServer,
 } from "./server.js";
 export type { RateLimitConfig } from "./core-types.js";
+export type { DatafnRevisionsConfig } from "./execution/revisions.js";
 export type {
   DataFnAction,
   DataFnAuthorizationDeniedEvent,

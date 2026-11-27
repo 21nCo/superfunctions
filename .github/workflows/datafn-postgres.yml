@@ -1,7 +1,8 @@
 name: DataFn Postgres Integration
 
 # DATA-41: per-record revisions under truly concurrent PostgreSQL sessions
-# (overlapping writers and deletes at READ COMMITTED).
+# (overlapping writers and deletes at READ COMMITTED, clone and
+# versioned-query snapshots).
 # PGlite has one session, so these suites need a PostgreSQL server.
 
 on:
@@ -87,4 +88,5 @@ jobs:
         run: >-
           npx vitest run --maxWorkers=2 --minWorkers=1
           __tests__/revisions-postgres-writes.test.ts
+          __tests__/revisions-postgres-server.test.ts
           __tests__/revisions-postgres.test.ts

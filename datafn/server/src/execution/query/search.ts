@@ -40,6 +40,7 @@ export async function executeSearchQuery(
   }) => Promise<string[]>,
   logger?: DatafnLogger,
   temporal?: DatafnTemporalConfig,
+  projectRecords = true,
 ): Promise<QueryResult | AggregateResult> {
   if (!query.search) {
     throw new DatafnExecutionError(
@@ -105,7 +106,7 @@ export async function executeSearchQuery(
     if (query.filters && Object.keys(query.filters).length > 0) {
       mergedFilters = { $and: [query.filters, candidateFilter] };
     }
-    return executeQuery({ ...query, filters: mergedFilters }, schema, store, temporal);
+    return executeQuery({ ...query, filters: mergedFilters }, schema, store, temporal, projectRecords);
   }
 
   // Multi-chunk path: process all candidates in pages
@@ -148,5 +149,5 @@ export async function executeSearchQuery(
     finalMergedFilters = { $and: [query.filters, finalFilter] };
   }
 
-  return executeQuery({ ...query, filters: finalMergedFilters }, schema, store, temporal);
+  return executeQuery({ ...query, filters: finalMergedFilters }, schema, store, temporal, projectRecords);
 }
