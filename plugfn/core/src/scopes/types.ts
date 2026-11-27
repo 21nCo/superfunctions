@@ -160,7 +160,7 @@ export type PublishedScopeDimensions<D extends ScopeDimensions> =
     ? { readonly [K in keyof D]-?: PublishedScopeDimension<D[K]> } & NoInheritedMembers<keyof D, undefined>
     : { readonly [dimension: string]: ScopeDimension | undefined } & NoInheritedMembers<never, ScopeDimension | undefined>;
 
-/** One requested item, as passed to `riskOf`. */
+/** One requested item, as passed to `riskOf`: a frozen record with a null prototype. */
 export interface ScopeItem<D extends ScopeDimensions = ScopeDimensions> {
   readonly dimension: IsExactDimensions<D> extends true ? keyof D & string : string;
   readonly kind: ScopeDimensionKind;
@@ -176,30 +176,38 @@ export type ScopeViolationCode =
   /** A requested scalar is larger than the envelope allows. */
   | 'exceeds_envelope';
 
+/**
+ * One violation. Like every record the engine returns, it is a frozen object
+ * with a null prototype in which every field below is an own property, set to
+ * `undefined` when it does not apply, so no field is ever read from a
+ * (possibly polluted) `Object.prototype`.
+ */
 export interface ScopeViolation {
   readonly code: ScopeViolationCode;
   /** Which input the violation is about. */
   readonly side: 'request' | 'envelope';
-  readonly dimension?: string;
+  /** The dimension, when the violation is about one. */
+  readonly dimension: string | undefined;
   /** The offending string or number, when it is one. */
-  readonly item?: string | number;
-  /** The envelope limit for `exceeds_envelope`. */
-  readonly limit?: number;
+  readonly item: string | number | undefined;
+  /** The envelope limit for `exceeds_envelope`, otherwise `undefined`. */
+  readonly limit: number | undefined;
   readonly message: string;
 }
 
 /**
- * The result of `isSubset`. When `ok`, `scope` is the engine's frozen snapshot
- * of the request: exactly the values the verdict covers. Mint from it, never
- * by reading the raw request again.
+ * The result of `isSubset` (and `normalize`): a frozen null-prototype record
+ * with `ok`, `violations` (a fresh frozen array, empty when `ok`) and `scope`
+ * always own. When `ok`, `scope` is the engine's frozen snapshot of the
+ * request: exactly the values the verdict covers. Mint from it, never by
+ * reading the raw request again. When not `ok`, `scope` is `undefined`.
  */
 export type ScopeSubsetResult<D extends ScopeDimensions = ScopeDimensions> =
   | { readonly ok: true; readonly violations: readonly ScopeViolation[]; readonly scope: NormalizedScope<D> }
-  | { readonly ok: false; readonly violations: readonly ScopeViolation[]; readonly scope?: undefined };
+  | { readonly ok: false; readonly violations: readonly ScopeViolation[]; readonly scope: undefined };
 
-export type ScopeNormalizeResult<D extends ScopeDimensions> =
-  | { readonly ok: true; readonly scope: NormalizedScope<D> }
-  | { readonly ok: false; readonly violations: readonly ScopeViolation[] };
+/** The result of `normalize`; the same shape as {@link ScopeSubsetResult}. */
+export type ScopeNormalizeResult<D extends ScopeDimensions> = ScopeSubsetResult<D>;
 
 export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   /** Provider identifier, for example `github`. */

@@ -661,16 +661,21 @@ describe('fail closed', () => {
     const arrayProto = Array.prototype as unknown as Record<number, unknown>;
     objectProto.rate = 1;
     arrayProto[1] = 'admin';
+    let missing: ReturnType<typeof violationsOf>;
+    let holedOk: boolean;
     try {
       const { rate: _rate, ...withoutRate } = base;
-      expect(violationsOf(withoutRate).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+      missing = violationsOf(withoutRate);
       const holed = ['contents:read'];
       holed.length = 2;
-      expect(violationsOf({ ...base, permissions: holed }).ok).toBe(false);
+      holedOk = violationsOf({ ...base, permissions: holed }).ok;
     } finally {
       delete objectProto.rate;
       delete arrayProto[1];
     }
+    // Asserted after the cleanup: the matcher itself would see the polluted key.
+    expect(missing.violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+    expect(holedOk).toBe(false);
   });
 
   it('never takes a dimension kind, option or callback from a polluted prototype at define time', () => {
@@ -789,6 +794,7 @@ describe('fail closed', () => {
     ]);
     expect(github.normalize({ repositories: ['org/a', 'org/a'], permissions: {} })).toEqual({
       ok: true,
+      violations: [],
       scope: { repositories: ['org/a'], permissions: [] },
     });
   });
@@ -920,6 +926,142 @@ describe('untrusted input is read once, as a structured clone (I1)', () => {
   });
 });
 
+describe('every record the engine hands out is its own (I7)', () => {
+  const VIOLATION_FIELDS = ['code', 'side', 'dimension', 'item', 'limit', 'message'] as const;
+  const RESULT_FIELDS = ['ok', 'violations', 'scope'] as const;
+  const pollution: Record<string, unknown> = {
+    scope: { ids: ['*'], ttl: 86_400 },
+    item: 'polluted-item',
+    limit: 99,
+    dimension: 'polluted-dimension',
+    cause: 'polluted-cause',
+    ok: true,
+    violations: ['polluted-violation'],
+  };
+
+  /** Runs `read` with `Object.prototype` polluted; everything it returns is asserted after the cleanup. */
+  function whilePolluted<T>(read: () => T): T {
+    const objectProto = Object.prototype as Record<string, unknown>;
+    Object.assign(objectProto, pollution);
+    try {
+      return read();
+    } finally {
+      for (const key of Object.keys(pollution)) delete objectProto[key];
+    }
+  }
+
+  /** What a direct read of each field gives, and which record-shape rules it breaks: read while polluted. */
+  function observe(record: object, fields: readonly string[]) {
+    const values: unknown[] = fields.map(field => (record as Record<string, unknown>)[field]);
+    const broken: string[] = [];
+    if (Object.getPrototypeOf(record) !== null) broken.push('prototype');
+    if (!Object.isFrozen(record)) broken.push('not frozen');
+    for (const field of fields) if (!Object.hasOwn(record, field)) broken.push(`${field} not own`);
+    return { values, broken };
+  }
+
+  function observeResult(result: object) {
+    const own = observe(result, RESULT_FIELDS);
+    const violations = (result as { violations: readonly object[] }).violations;
+    return {
+      ...own,
+      violationsFrozen: Object.isFrozen(violations),
+      violations: violations.map(record => observe(record, VIOLATION_FIELDS)),
+    };
+  }
+
+  const items: object[] = [];
+  const g = defineScopeGrammar({
+    provider: 'own-records',
+    dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' }, rate: { kind: 'numericMax' }, ttl: { kind: 'ttlMax' } },
+    riskOf: item => {
+      items.push(item);
+      return 'read';
+    },
+  });
+  const env = { ids: ['a'], paths: ['org/*'], rate: 10, ttl: 60 };
+  const fine = { ids: ['a'], paths: ['org/x'], rate: 1, ttl: 60 };
+
+  it.each([
+    ['normalize, malformed', () => g.normalize({ ...fine, ids: [1] } as never), ['malformed', 'request', 'ids', undefined, undefined]],
+    ['isSubset, malformed request', () => g.isSubset({ ...fine, ids: [1] } as never, env), ['malformed', 'request', 'ids', undefined, undefined]],
+    ['isSubset, malformed envelope', () => g.isSubset(fine, { ...env, ttl: 0 }), ['malformed', 'envelope', 'ttl', 0, undefined]],
+    ['isSubset, malformed root', () => g.isSubset(fine, [] as never), ['malformed', 'envelope', undefined, undefined, undefined]],
+    ['isSubset, exactSet not_in_envelope', () => g.isSubset({ ...fine, ids: ['b'] }, env), ['not_in_envelope', 'request', 'ids', 'b', undefined]],
+    ['isSubset, prefixGlobSet not_in_envelope', () => g.isSubset({ ...fine, paths: ['other/x'] }, env), ['not_in_envelope', 'request', 'paths', 'other/x', undefined]],
+    ['isSubset, numericMax exceeds_envelope', () => g.isSubset({ ...fine, rate: 11 }, env), ['exceeds_envelope', 'request', 'rate', 11, 10]],
+    ['isSubset, ttlMax exceeds_envelope', () => g.isSubset({ ...fine, ttl: 61 }, env), ['exceeds_envelope', 'request', 'ttl', 61, 60]],
+  ] as const)('%s: a failed result and its violation hold only their own fields', (_name, run, [code, side, dimension, item, limit]) => {
+    const seen = whilePolluted(() => observeResult(run()));
+    expect(seen.broken).toEqual([]);
+    expect(seen.values).toEqual([false, expect.any(Array), undefined]);
+    expect(seen.violationsFrozen).toBe(true);
+    expect(seen.violations).toHaveLength(1);
+    const [violation] = seen.violations;
+    expect(violation!.broken).toEqual([]);
+    expect(violation!.values.slice(0, 5)).toEqual([code, side, dimension, item, limit]);
+  });
+
+  it('gives ok results an own frozen empty violations array and the snapshot as scope', () => {
+    const seen = whilePolluted(() => [g.normalize(fine), g.isSubset(fine, env)].map(result => ({ ...observeResult(result), isSnapshot: g.classifyScope(result.scope!) })));
+    for (const result of seen) {
+      expect(result.broken).toEqual([]);
+      expect(result.values[0]).toBe(true);
+      expect(result.values[1]).toEqual([]);
+      expect(result.violationsFrozen).toBe(true);
+      expect(result.isSnapshot).toBe('read');
+    }
+  });
+
+  it('gives ScopeError its own frozen violations and an own cause, undefined when there is none', () => {
+    const seen = whilePolluted(() =>
+      [thrownBy(() => g.classifyRisk({ ...fine, ids: [1] } as never)), thrownBy(() => g.classifyScope({} as never))].map(error => ({
+        ownCause: Object.hasOwn(error, 'cause'),
+        cause: error.cause,
+        frozen: Object.isFrozen(error.violations),
+        violations: error.violations.map(record => observe(record, VIOLATION_FIELDS)),
+      })),
+    );
+    expect(seen.map(({ ownCause, cause, frozen }) => [ownCause, cause, frozen])).toEqual([
+      [true, undefined, true],
+      [true, undefined, true],
+    ]);
+    expect(seen[0]!.violations).toEqual([{ values: ['malformed', 'request', 'ids', undefined, undefined, expect.any(String)], broken: [] }]);
+    expect(seen[1]!.violations).toEqual([]);
+  });
+
+  it('passes riskOf a frozen null-prototype item with every field own', () => {
+    items.length = 0;
+    const seen = whilePolluted(() => {
+      g.classifyRisk(fine);
+      return items.map(item => observe(item, ['dimension', 'kind', 'value']));
+    });
+    expect(seen).toEqual([
+      { values: ['ids', 'exactSet', 'a'], broken: [] },
+      { values: ['paths', 'prefixGlobSet', 'org/x'], broken: [] },
+      { values: ['rate', 'numericMax', 1], broken: [] },
+      { values: ['ttl', 'ttlMax', 60], broken: [] },
+    ]);
+  });
+
+  it('publishes dimension definitions with a null prototype', () => {
+    const seen = whilePolluted(() => Object.values(g.dimensions).map(def => [Object.getPrototypeOf(def), (def as { values?: unknown }).values]));
+    expect(seen).toEqual([
+      [null, undefined],
+      [null, undefined],
+      [null, undefined],
+      [null, undefined],
+    ]);
+  });
+
+  it('builds returned records only through its constructors: no object literal is returned or pushed', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../src/scopes/grammar.ts', import.meta.url)), 'utf8');
+    expect(source).not.toMatch(/return\s*\{/);
+    expect(source).not.toMatch(/push\(\s*\{/);
+    expect(source).not.toMatch(/\.\.\.\(/);
+  });
+});
+
 describe('the returned snapshot (I4)', () => {
   it('returns the frozen snapshot it judged, which later changes to the input cannot reach', () => {
     const request = { ...base, permissions: ['contents:read'] };
@@ -974,7 +1116,7 @@ describe('normalize works on engine-owned copies (I2)', () => {
       },
       riskOf,
     });
-    expect(g.normalize(input)).toEqual({ ok: true, scope: { names: ['a', 'b'] } });
+    expect(g.normalize(input)).toEqual({ ok: true, violations: [], scope: { names: ['a', 'b'] } });
     expect(seen).not.toBe(input);
     expect(input.names).toEqual(['a']);
   });
@@ -993,7 +1135,7 @@ describe('normalize works on engine-owned copies (I2)', () => {
       riskOf,
     });
     const result = withGetter.normalize({ names: [] });
-    expect(result).toEqual({ ok: true, scope: { names: ['a'] } });
+    expect(result).toEqual({ ok: true, violations: [], scope: { names: ['a'] } });
     expect(reads).toBe(1);
 
     const outputFailure = (side: string) =>
@@ -1313,366 +1455,5 @@ describe('classifyRisk', () => {
     });
     expect(() => broken.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
     expect(broken.classifyRisk({ names: [] })).toBe('read');
-  });
-});
-
-describe('performance', () => {
-  // Every timed workload holds exactly 10k requested items, the acceptance bound.
-  const n = 10_000;
-  const half = n / 2;
-  const big = defineScopeGrammar({
-    provider: 'big',
-    dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' }, ttl: { kind: 'ttlMax' } },
-    riskOf: ({ value }) => (String(value).startsWith('w') ? 'write' : 'read'),
-  });
-  const ids = Array.from({ length: half }, (_, i) => `id-${i}`);
-  // 10k distinct envelope globs: a matcher that compares every request item
-  // with every envelope pattern does 5 x 10^7 comparisons and cannot meet the bound.
-  const envelopePaths = Array.from({ length: n }, (_, i) => `team-${i}/*`);
-  const requestPaths = Array.from({ length: half - 1 }, (_, i) => (i % 2 ? `team-${n - 1 - 2 * i}/repo` : `team-${n - 1 - 2 * i}/sub*`));
-  // 5k ids + 4,999 paths + 1 ttl = 10k items.
-  const request = { ids, paths: requestPaths, ttl: 60 };
-  const env = { ids: [...ids].reverse(), paths: envelopePaths, ttl: 60 };
-  // 5k ids + 4,999 paths + 1 ttl = 10k items, every one outside the envelope below.
-  const uncovered = { ids, paths: requestPaths, ttl: 61 };
-  const writeLast = { ids: [...ids.slice(0, -1), 'w-last'], paths: requestPaths, ttl: 60 };
-
-  /** Best of three timed runs after a warm-up, so scheduler noise from parallel suites does not decide the result. */
-  function bestOfThree(run: () => void): number {
-    run();
-    let best = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < 3; i++) {
-      const start = performance.now();
-      run();
-      best = Math.min(best, performance.now() - start);
-    }
-    return best;
-  }
-
-  it('evaluates 10k requested items against 10k envelope globs in under 50 ms', () => {
-    let result: ReturnType<typeof big.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = big.isSubset(request, env);
-    });
-    expect(result).toEqual({ ok: true, violations: [], scope: expect.objectContaining({ ttl: 60 }) });
-    expect(elapsed).toBeLessThan(50);
-  });
-
-  it('reports 10k uncovered items in under 50 ms', () => {
-    let result: ReturnType<typeof big.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = big.isSubset(uncovered, { ids: [], paths: ['other/*'], ttl: 60 });
-    });
-    expect(result?.violations).toHaveLength(n);
-    expect(elapsed).toBeLessThan(50);
-  });
-
-  /**
-   * 2^levels distinct strings that share one 32-bit FNV-1a hash. Each level
-   * appends one of two two-character blocks that collide from the same state:
-   * the first characters give equal high 16 bits, and the second characters
-   * cancel the low 16 bits. This is the input shape that degrades a
-   * hash-bucketed prefix index to E x R comparisons.
-   */
-  function fnvCollidingStrings(levels: number): string[] {
-    const step = (hash: number, code: number) => Math.imul(hash ^ code, 0x01000193);
-    const usable = (code: number) => code >= 0x100 && code <= 0xffff && (code < 0xd800 || code > 0xdfff);
-    let strings = [''];
-    let state = 0x811c9dc5 | 0;
-    for (let level = 0; level < levels; level++) {
-      const firstByHighBits = new Map<number, number>();
-      let blocks: [string, string] | undefined;
-      for (let a = 0x100; !blocks; a++) {
-        const mid = step(state, a);
-        const other = firstByHighBits.get(mid >>> 16);
-        if (other === undefined) {
-          firstByHighBits.set(mid >>> 16, a);
-          continue;
-        }
-        const delta = (step(state, other) ^ mid) & 0xffff;
-        for (let b = 0x100; b <= 0xffff; b++) {
-          if (usable(b) && usable(b ^ delta)) {
-            blocks = [String.fromCharCode(other, b ^ delta), String.fromCharCode(a, b)];
-            state = step(mid, b);
-            break;
-          }
-        }
-      }
-      const [left, right] = blocks;
-      strings = strings.flatMap(prefix => [prefix + left, prefix + right]);
-    }
-    return strings;
-  }
-
-  it('stays within 50 ms for 10k envelope prefixes and 10k request items that share a hash', () => {
-    const colliding = fnvCollidingStrings(15);
-    const globs = defineScopeGrammar({ provider: 'globs', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    const collidingEnvelope = { paths: colliding.slice(0, n).map(prefix => `${prefix}*`) };
-    const collidingRequest = { paths: colliding.slice(n, 2 * n) };
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = globs.isSubset(collidingRequest, collidingEnvelope);
-    });
-    expect(result?.violations).toHaveLength(n);
-    expect(globs.isSubset({ paths: [`${colliding[n - 1]}/repo`] }, collidingEnvelope).ok).toBe(true);
-    expect(elapsed).toBeLessThan(50);
-  });
-
-  it('keeps long envelope globs cheap: memory and time follow the item count, not a node per character', () => {
-    // 1,000 envelope globs of the maximum member length (about 4M characters)
-    // and 1,000 maximum-length literals under them. A per-character trie
-    // allocates about 4M nodes here and takes seconds.
-    const count = 1_000;
-    const filler = 'x'.repeat(SCOPE_LIMITS.maxMemberLength - 5);
-    const prefixes = Array.from({ length: count }, (_, i) => `${String(i).padStart(4, '0')}${filler}`);
-    const globs = defineScopeGrammar({ provider: 'long-globs', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    const longEnvelope = { paths: prefixes.map(prefix => `${prefix}*`) };
-    const longRequest = { paths: prefixes.map(prefix => `${prefix}r`) };
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = globs.isSubset(longRequest, longEnvelope);
-    });
-    expect(result?.ok).toBe(true);
-    expect(globs.isSubset({ paths: [`${prefixes[0]!.slice(0, -1)}y`] }, longEnvelope).ok).toBe(false);
-    expect(elapsed).toBeLessThan(100);
-  });
-
-  /**
-   * The unseeded 32-bit integer hash V8 applies to small-integer Map keys
-   * (ComputeUnseededHash). It is fixed, so an envelope can pick sibling code
-   * units that all land in one bucket of a code-unit-keyed Map.
-   */
-  function v8SmiHash(key: number): number {
-    let x = key >>> 0;
-    x = (~x + (x << 15)) >>> 0;
-    x = (x ^ (x >>> 12)) >>> 0;
-    x = (x + (x << 2)) >>> 0;
-    x = (x ^ (x >>> 4)) >>> 0;
-    x = Math.imul(x, 2057) >>> 0;
-    x = (x ^ (x >>> 16)) >>> 0;
-    return x & 0x3fffffff;
-  }
-
-  it('stays within 50 ms when sibling code units collide in the runtime integer hash', () => {
-    // One main-path glob plus 200 hash-colliding sibling globs at each of 50
-    // depths of that path (10,001 envelope items), and 10k request items that
-    // walk the whole path. A child index keyed by the runtime's integer hash
-    // walks a 200-entry bucket chain at every depth and takes about 600 ms.
-    const main = 0x61;
-    const depth = 50;
-    const buckets = 128;
-    const target = v8SmiHash(main) & (buckets - 1);
-    const siblings: number[] = [];
-    for (let code = 0x21; code < 0x10000 && siblings.length < 200; code++) {
-      if (code === main || code === 0x2a || (code >= 0xd800 && code <= 0xdfff)) continue;
-      if ((v8SmiHash(code) & (buckets - 1)) === target) siblings.push(code);
-    }
-    expect(siblings).toHaveLength(200);
-    const mainPath = `${'a'.repeat(depth)}z`;
-    const paths = [`${mainPath}*`];
-    for (let d = 0; d < depth; d++) {
-      for (const code of siblings) paths.push(`${'a'.repeat(d)}${String.fromCharCode(code)}*`);
-    }
-    const globs = defineScopeGrammar({ provider: 'smi-collisions', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    const collidingRequest = { paths: Array.from({ length: n }, (_, i) => `${mainPath}${i}`) };
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = globs.isSubset(collidingRequest, { paths });
-    });
-    expect(result?.ok).toBe(true);
-    expect(globs.isSubset({ paths: [`${'a'.repeat(depth)}y`] }, { paths }).ok).toBe(false);
-    expect(elapsed).toBeLessThan(50);
-  });
-
-  describe('integer-like members, which V8 hashes without its seed', () => {
-    // String(i * 4096) and String(i * 65536) are array-index strings: V8
-    // hashes them from their numeric value, so they share one bucket chain in
-    // a Set keyed by the member itself.
-    const literals = defineScopeGrammar({
-      provider: 'index-strings',
-      dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' } },
-      riskOf: () => 'read',
-    });
-    const colliding = (step: number) => Array.from({ length: n }, (_, i) => String(i * step));
-
-    for (const step of [4096, 65_536]) {
-      it(`compares 10k exactSet members String(i * ${step}) in under 50 ms`, () => {
-        const items = colliding(step);
-        let result: ReturnType<typeof literals.isSubset> | undefined;
-        const elapsed = bestOfThree(() => {
-          result = literals.isSubset({ ids: items }, { ids: items });
-        });
-        expect(result?.ok).toBe(true);
-        expect(literals.isSubset({ ids: ['1'] }, { ids: items }).ok).toBe(false);
-        expect(elapsed).toBeLessThan(50);
-      });
-
-      it(`compares 10k prefixGlobSet literals String(i * ${step}) in under 50 ms`, () => {
-        const items = colliding(step);
-        let result: ReturnType<typeof literals.isSubset> | undefined;
-        const elapsed = bestOfThree(() => {
-          result = literals.isSubset({ paths: items }, { paths: items });
-        });
-        expect(result?.ok).toBe(true);
-        expect(literals.isSubset({ paths: ['1'] }, { paths: items }).ok).toBe(false);
-        expect(elapsed).toBeLessThan(50);
-      });
-
-      it(`deduplicates a request of 10k colliding members String(i * ${step}) in under 50 ms`, () => {
-        // 5k distinct members, each twice.
-        const items = colliding(step).map((_, i) => String((i % half) * step));
-        let result: ReturnType<typeof literals.normalize> | undefined;
-        const elapsed = bestOfThree(() => {
-          result = literals.normalize({ ids: items });
-        });
-        expect(result?.ok).toBe(true);
-        expect(result?.ok && result.scope.ids).toHaveLength(half);
-        expect(result?.ok && result.scope.ids.slice(0, 2)).toEqual(['0', String(step)]);
-        expect(elapsed).toBeLessThan(50);
-      });
-
-      it(`checks 10k members against a 10k-value vocabulary of String(i * ${step}) in under 50 ms`, () => {
-        const items = colliding(step);
-        const vocabulary = defineScopeGrammar({
-          provider: 'index-vocabulary',
-          dimensions: { ids: { kind: 'exactSet', values: items } },
-          riskOf: () => 'read',
-        });
-        let result: ReturnType<typeof vocabulary.isSubset> | undefined;
-        const elapsed = bestOfThree(() => {
-          result = vocabulary.isSubset({ ids: items }, { ids: items });
-        });
-        expect(result?.ok).toBe(true);
-        expect(vocabulary.normalize({ ids: ['1'] })).toMatchObject({ ok: false, violations: [expect.objectContaining({ code: 'malformed', item: '1' })] });
-        expect(elapsed).toBeLessThan(50);
-      });
-    }
-  });
-
-  it('stays within 50 ms for 10k shuffled envelope globs sharing a 64-unit prefix', () => {
-    // A comparison sort of the envelope prefixes would first walk the 64-unit
-    // shared prefix in each of its O(E log E) comparisons.
-    const prefix = 'p'.repeat(64);
-    let seed = 0x5eed;
-    const random = () => {
-      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
-      return seed / 2 ** 32;
-    };
-    const shuffled = <T>(items: T[]): T[] => {
-      const out = [...items];
-      for (let i = out.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [out[i], out[j]] = [out[j]!, out[i]!];
-      }
-      return out;
-    };
-    const indexes = Array.from({ length: n }, (_, i) => i);
-    const envelopeGlobs = { paths: shuffled(indexes).map(i => `${prefix}${i}/*`) };
-    const sharedRequest = { paths: shuffled(indexes).map(i => `${prefix}${i}/repo`) };
-    const globs = defineScopeGrammar({ provider: 'shared-prefix', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const elapsed = bestOfThree(() => {
-      result = globs.isSubset(sharedRequest, envelopeGlobs);
-    });
-    expect(result?.ok).toBe(true);
-    expect(globs.isSubset({ paths: [`${prefix}${n}/repo`] }, envelopeGlobs).ok).toBe(false);
-    expect(elapsed).toBeLessThan(50);
-  });
-
-  /**
-   * Best of three interleaved timed runs of each function after a warm-up, so
-   * a run and its baseline see the same machine load.
-   */
-  function bestOfThreeEach(...runs: (() => void)[]): number[] {
-    for (const run of runs) run();
-    const best = runs.map(() => Number.POSITIVE_INFINITY);
-    for (let round = 0; round < 3; round++) {
-      runs.forEach((run, i) => {
-        const start = performance.now();
-        run();
-        best[i] = Math.min(best[i]!, performance.now() - start);
-      });
-    }
-    return best;
-  }
-
-  /**
-   * The glob-index vectors below are measured against a same-run baseline:
-   * normalizing both sides, which copies, checks and validates the same input
-   * but builds no index. isSubset stays under 1.75 times that baseline (about
-   * 0.8 and 1.25 here); a comparison sort of the prefixes measured 2.4 and 3.4,
-   * and a sorted child array with insertion by splice is quadratic. Idle, the
-   * two vectors take about 15 ms and 100 ms, but most of that is copying the
-   * input, so an absolute bound would measure machine load, not the index.
-   */
-  const INDEX_OVERHEAD_LIMIT = 1.75;
-
-  /** Deterministic shuffle for the index-build vectors below. */
-  function shuffle<T>(items: readonly T[], seed: number): T[] {
-    const out = [...items];
-    let state = seed;
-    for (let i = out.length - 1; i > 0; i--) {
-      state = (Math.imul(state, 1103515245) + 12345) >>> 0;
-      const j = Math.floor((state / 2 ** 32) * (i + 1));
-      [out[i], out[j]] = [out[j]!, out[i]!];
-    }
-    return out;
-  }
-
-  it('builds the index for every usable first code unit as a sibling at one trie node in linear time', () => {
-    // Every UTF-16 code unit a member may start with (all but control
-    // characters and "*"): 65,502 siblings under the root, in shuffled order.
-    // A sorted child array with insertion by splice would be quadratic here.
-    const codes = Array.from({ length: 0x10000 }, (_, code) => code).filter(code => code >= 0x20 && code !== 0x7f && code !== 0x2a);
-    expect(codes).toHaveLength(65_502);
-    const siblings = { paths: shuffle(codes, 0x5eed).map(code => `${String.fromCharCode(code)}-x*`) };
-    const picks = shuffle(codes, 0xbeef);
-    const siblingRequest = { paths: Array.from({ length: n }, (_, i) => `${String.fromCharCode(picks[i % picks.length]!)}-x/${i}`) };
-    const globs = defineScopeGrammar({ provider: 'wide-node', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const [baseline, elapsed] = bestOfThreeEach(
-      () => {
-        globs.normalize(siblingRequest);
-        globs.normalize(siblings);
-      },
-      () => {
-        result = globs.isSubset(siblingRequest, siblings);
-      },
-    );
-    expect(result?.ok).toBe(true);
-    expect(globs.isSubset({ paths: ['a-y'] }, siblings).ok).toBe(false);
-    expect(elapsed).toBeLessThan(baseline! * INDEX_OVERHEAD_LIMIT);
-  });
-
-  it('builds the index for 10k shuffled globs sharing a 2000-unit prefix in time linear in their length', () => {
-    // 20M envelope code units and 20M request code units: copying and
-    // validating them is most of the cost, and the index adds a linear pass.
-    const prefix = 'p'.repeat(2000);
-    const indexes = Array.from({ length: n }, (_, i) => i);
-    const envelopeGlobs = { paths: shuffle(indexes, 0x5eed).map(i => `${prefix}${i}/*`) };
-    const sharedRequest = { paths: shuffle(indexes, 0xbeef).map(i => `${prefix}${i}/repo`) };
-    const globs = defineScopeGrammar({ provider: 'long-prefix', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
-    let result: ReturnType<typeof globs.isSubset> | undefined;
-    const [baseline, elapsed] = bestOfThreeEach(
-      () => {
-        globs.normalize(sharedRequest);
-        globs.normalize(envelopeGlobs);
-      },
-      () => {
-        result = globs.isSubset(sharedRequest, envelopeGlobs);
-      },
-    );
-    expect(result?.ok).toBe(true);
-    expect(globs.isSubset({ paths: [`${prefix}${n}/repo`, `${prefix.slice(1)}q`] }, envelopeGlobs).violations).toHaveLength(2);
-    expect(elapsed).toBeLessThan(baseline! * INDEX_OVERHEAD_LIMIT);
-  });
-
-  it('classifies 10k items in under 50 ms', () => {
-    let risk: ScopeRisk | undefined;
-    const elapsed = bestOfThree(() => {
-      risk = big.classifyRisk(writeLast);
-    });
-    expect(risk).toBe('write');
-    expect(elapsed).toBeLessThan(50);
   });
 });

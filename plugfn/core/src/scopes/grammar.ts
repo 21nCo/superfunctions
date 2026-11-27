@@ -2,14 +2,23 @@ import { SCOPE_LIMITS } from './types.js';
 import type { NormalizedScope, PublishedScopeDimensions, ScopeDimension, ScopeDimensionKind, ScopeDimensions, ScopeGrammar } from './types.js';
 import type { ScopeGrammarDefinition, ScopeItem, ScopeNormalizeResult, ScopeRisk, ScopeShape, ScopeSubsetResult, ScopeViolation } from './types.js';
 
-/** Thrown by `classifyRisk` and `classifyScope` for input they cannot classify. */
+/**
+ * Thrown by `classifyRisk` and `classifyScope` for input they cannot classify.
+ * `violations` is a fresh frozen array and `cause` is always an own property
+ * (`undefined` when there is none), so neither is ever read from a polluted
+ * `Object.prototype`.
+ */
 export class ScopeError extends Error {
   readonly violations: readonly ScopeViolation[];
 
   constructor(message: string, violations: readonly ScopeViolation[] = [], options?: { cause?: unknown }) {
-    super(message, options);
+    // `Error` installs `cause` from any property it finds on the options, an
+    // inherited one included, so it always gets a null-prototype record that
+    // holds exactly the caller's own `cause`.
+    const cause = typeof options === 'object' && options !== null && Object.hasOwn(options, 'cause') ? options.cause : undefined;
+    super(message, ownRecord({ cause }));
     this.name = 'ScopeError';
-    this.violations = violations;
+    this.violations = Object.freeze(Array.from(violations));
   }
 }
 
@@ -289,13 +298,39 @@ function readDimensionsDefinition(provider: string, dimensions: unknown): Record
   return copy;
 }
 
-/** A frozen null-prototype record holding exactly the given own fields. */
+/**
+ * A frozen null-prototype record holding exactly the given own fields. Every
+ * record the engine creates goes through it, and each constructor below lists
+ * every declared field of its type (`undefined` when absent), so no field of
+ * an engine record is ever missing or read from a prototype.
+ */
 function ownRecord<T extends object>(fields: T): T {
   return Object.freeze(Object.assign(Object.create(null) as T, fields));
 }
 
+/** The one constructor of a {@link ScopeViolation}. */
+function violation(
+  code: ScopeViolation['code'],
+  side: Side,
+  message: string,
+  dimension: string | undefined,
+  item: string | number | undefined,
+  limit: number | undefined,
+): ScopeViolation {
+  return ownRecord<ScopeViolation>({ code, side, dimension, item, limit, message });
+}
+
 function malformed(side: Side, message: string, dimension?: string, item?: string | number): ScopeViolation {
-  return { code: 'malformed', side, message, ...(dimension === undefined ? {} : { dimension }), ...(item === undefined ? {} : { item }) };
+  return violation('malformed', side, message, dimension, item, undefined);
+}
+
+/**
+ * The one constructor of a `normalize` or `isSubset` result: `ok` exactly when
+ * there is a scope, a fresh frozen violations array, and `scope` own on both
+ * branches (`undefined` on failure).
+ */
+function scopeResult<D extends ScopeDimensions>(scope: NormalizedScope<D> | undefined, violations: readonly ScopeViolation[]): ScopeSubsetResult<D> {
+  return ownRecord({ ok: scope !== undefined, violations: Object.freeze(Array.from(violations)), scope }) as ScopeSubsetResult<D>;
 }
 
 function readBound(where: string, label: string, value: unknown, positiveInteger: boolean): number | undefined {
@@ -376,7 +411,7 @@ function compileDimension(provider: string, name: string, def: Record<string, un
     const value = def[key];
     return value === undefined ? [] : [[key, Array.isArray(value) ? Object.freeze([...value]) : value]];
   });
-  return { compiled, published: Object.freeze(Object.fromEntries(published)) as ScopeDimension };
+  return ownRecord<CompileResult>({ compiled, published: ownRecord(Object.fromEntries(published)) as ScopeDimension });
 }
 
 function isSetKind(dim: CompiledDimension): boolean {
@@ -455,7 +490,7 @@ function compareExact(name: string, request: readonly string[], envelope: readon
   const allowed = new Set(envelope.map(memberKey));
   for (const item of request) {
     if (!allowed.has(memberKey(item))) {
-      out.push({ code: 'not_in_envelope', side: 'request', dimension: name, item, message: `"${item}" is not in the envelope for "${name}"` });
+      out.push(violation('not_in_envelope', 'request', `"${item}" is not in the envelope for "${name}"`, name, item, undefined));
     }
   }
 }
@@ -469,22 +504,25 @@ function compareExact(name: string, request: readonly string[], envelope: readon
  * point or ends a prefix, so the trie has at most two nodes per prefix and its
  * memory does not grow with prefix length.
  */
-interface RadixNode {
-  readonly source: string;
-  /** Nibble depth of this node, so `source[0, end)` is its whole path. */
-  readonly end: number;
-  /** Some envelope prefix ends at this node; it covers everything below. */
-  terminal: boolean;
+class RadixNode {
   /**
    * Children indexed by the next nibble: 16 slots, allocated when the node
    * first branches. A child lookup is one array index, with no comparison or
    * hash function an input could make slow.
    */
-  children: (RadixNode | undefined)[] | undefined;
+  children: (RadixNode | undefined)[] | undefined = undefined;
+
+  constructor(
+    readonly source: string,
+    /** Nibble depth of this node, so `source[0, end)` is its whole path. */
+    readonly end: number,
+    /** Some envelope prefix ends at this node; it covers everything below. */
+    public terminal: boolean,
+  ) {}
 }
 
 function radixNode(source: string, end: number, terminal: boolean): RadixNode {
-  return { source, end, terminal, children: undefined };
+  return new RadixNode(source, end, terminal);
 }
 
 function emptySlots(): (RadixNode | undefined)[] {
@@ -590,7 +628,7 @@ function comparePrefixGlob(name: string, request: readonly string[], envelope: r
     if (!isGlob && literals.has(memberKey(item))) continue;
     const covered = trie !== undefined && hasPrefixIn(trie, item, isGlob ? item.length - 1 : item.length);
     if (!covered) {
-      out.push({ code: 'not_in_envelope', side: 'request', dimension: name, item, message: `"${item}" is not covered by the envelope for "${name}"` });
+      out.push(violation('not_in_envelope', 'request', `"${item}" is not covered by the envelope for "${name}"`, name, item, undefined));
     }
   }
 }
@@ -602,6 +640,11 @@ function readCallback(provider: string, label: string, value: unknown, optional:
     throw new TypeError(`Scope grammar "${provider}": ${label} must be synchronous, not an async function`);
   }
   return value as (arg: never) => unknown;
+}
+
+/** The one constructor of the item passed to `riskOf`. */
+function riskItem<D extends ScopeDimensions>(dimension: string, kind: ScopeDimensionKind, value: string | number): ScopeItem<D> {
+  return ownRecord({ dimension, kind, value }) as ScopeItem<D>;
 }
 
 /**
@@ -716,7 +759,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       for (const item of typeof value === 'number' ? [value] : value) {
         let risk: unknown;
         try {
-          risk = riskOf(Object.freeze({ dimension: dim.name, kind: dim.kind, value: item }) as ScopeItem<D>);
+          risk = riskOf(riskItem<D>(dim.name, dim.kind, item));
         } catch (error) {
           throw new ScopeError(`Scope grammar "${provider}": riskOf failed for dimension "${dim.name}"`, [], { cause: error });
         }
@@ -736,13 +779,13 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
 
     normalize(input: TInput): ScopeNormalizeResult<D> {
       const { scope, violations } = parse(input, 'request');
-      return scope ? { ok: true, scope: snapshot(scope) } : { ok: false, violations };
+      return scope ? scopeResult(snapshot(scope), []) : scopeResult<D>(undefined, violations);
     },
 
     isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D> {
       const req = parse(request, 'request');
       const env = parse(envelope, 'envelope');
-      if (!req.scope || !env.scope) return { ok: false, violations: [...req.violations, ...env.violations] };
+      if (!req.scope || !env.scope) return scopeResult<D>(undefined, req.violations.concat(env.violations));
       const out: ScopeViolation[] = [];
       for (const dim of dims) {
         const requested = req.scope.get(dim.name)!;
@@ -753,10 +796,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
           comparePrefixGlob(dim.name, requested as readonly string[], allowed as readonly string[], out);
         } else if ((requested as number) > (allowed as number)) {
           const message = `"${dim.name}" ${String(requested)} exceeds the envelope limit ${String(allowed)}`;
-          out.push({ code: 'exceeds_envelope', side: 'request', dimension: dim.name, item: requested as number, limit: allowed as number, message });
+          out.push(violation('exceeds_envelope', 'request', message, dim.name, requested as number, allowed as number));
         }
       }
-      return out.length === 0 ? { ok: true, violations: out, scope: snapshot(req.scope) } : { ok: false, violations: out };
+      return out.length === 0 ? scopeResult(snapshot(req.scope), out) : scopeResult<D>(undefined, out);
     },
 
     classifyRisk(request: TInput): ScopeRisk {
