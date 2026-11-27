@@ -43,7 +43,8 @@ function isDirectory(path) {
  * Relative paths of regular files the provider would list: no dot segments, no symbolic links
  * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`). A staging tree of this
  * prebuild (left by an interrupted build or staged by another one) fails closed instead of being
- * listed as content.
+ * listed as content. So does any entry name the provider's fast-glob listing would rewrite (on POSIX,
+ * one containing a backslash, which it turns into a separator and can resolve outside the directory).
  * @param {string} directory real path of the directory to list
  * @param {{ key: string, sourceDirectory: string }} owner collection being listed, for the error
  * @param {string} [prefix]
@@ -51,8 +52,11 @@ function isDirectory(path) {
  */
 function* listProviderFiles(directory, owner, prefix = "") {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (hasGlobRewrittenCharacter(entry.name)) {
+      throw new Error(`The docs ${owner.key} ${owner.sourceDirectory} contains ${join(owner.sourceDirectory, relativePath)}, whose name has a backslash the docs provider's file listing rewrites to a path separator; rename it`);
+    }
+    if (entry.name.startsWith(".")) continue;
     if (entry.isDirectory()) {
       if (entry.name.startsWith(STAGING_PREFIX)) {
         throw new Error(`The docs ${owner.key} ${owner.sourceDirectory} contains the LLM prebuild staging tree ${join(owner.sourceDirectory, relativePath)} from an interrupted or concurrent build; remove it and keep TMPDIR (TEMP or TMP on Windows) outside the docs content`);
@@ -195,6 +199,9 @@ function createCheckedContentSnapshot(root, content) {
   const aliases = [];
   /** @type {Record<string, string>} */
   const overrides = { root: snapshotRoot };
+  /** Resolved snapshot paths of every Markdown and control file copied (and checked) for the provider. */
+  /** @type {Set<string>} */
+  const files = new Set();
   const dispose = () => rmSync(snapshotBase, { recursive: true, force: true });
   const mapper = () => createSnapshotPathMapper(prefixes, nodePath, aliases);
   try {
@@ -225,7 +232,9 @@ function createCheckedContentSnapshot(root, content) {
         const name = relativePath.slice(relativePath.lastIndexOf("/") + 1).toLowerCase();
         const isMarkdown = MARKDOWN_EXTENSIONS.has(extname(name));
         if (name !== CONTROL_FILE_NAME && !isMarkdown) continue;
-        snapshotFile(join(sourceDirectory, relativePath), join(snapshotDirectory, relativePath), isMarkdown);
+        const target = join(snapshotDirectory, relativePath);
+        snapshotFile(join(sourceDirectory, relativePath), target, isMarkdown);
+        files.add(resolve(target));
       }
     }
     if (!isDirectory(root)) {
@@ -241,7 +250,7 @@ function createCheckedContentSnapshot(root, content) {
         aliases.push([`configured ${key} ${missing} `, `configured ${key} ${configured} `]);
       }
     }
-    return { content: overrides, base: snapshotBase, dispose, ...mapper() };
+    return { content: overrides, base: snapshotBase, files, dispose, ...mapper() };
   } catch (error) {
     dispose();
     throw mapSnapshotError(error, mapper());
@@ -298,6 +307,23 @@ function mapSnapshotError(error, snapshot) {
 }
 
 /**
+ * Defence in depth: every docs, pages or blog entry the provider returns must come from a file this
+ * run copied into the snapshot and checked, never from a path the provider resolved elsewhere.
+ * @param {unknown[]} entries
+ * @param {{ files: Set<string>, toSourcePath: (path: string) => string }} snapshot
+ */
+export function assertEntriesFromSnapshot(entries, snapshot) {
+  for (const entry of entries) {
+    const { collection, absolutePath } = /** @type {{ collection?: unknown, absolutePath?: unknown }} */ (entry ?? {});
+    if (typeof collection !== "string" || !MARKDOWN_COLLECTIONS.has(collection)) continue;
+    if (typeof absolutePath !== "string" || !snapshot.files.has(resolve(absolutePath))) {
+      const path = typeof absolutePath === "string" ? snapshot.toSourcePath(resolve(absolutePath)) : String(absolutePath);
+      throw new Error(`The docs provider returned the ${collection} entry ${path}, which is not a checked snapshot file`);
+    }
+  }
+}
+
+/**
  * Wrap the installed filesystem provider. Each listing snapshots and checks the Markdown it is about
  * to read, lets the provider parse only that snapshot, and removes the snapshot before returning.
  * @param {new (options: object) => { listEntries: Function }} FsContentProvider
@@ -318,6 +344,7 @@ function createCheckedProvider(FsContentProvider, options) {
         assertProviderContentInsideSnapshot(providerContent, snapshot.base);
         const provider = new FsContentProvider({ root: snapshot.content.root });
         const entries = await provider.listEntries({ ...input, config: { ...input.config, content: providerContent } });
+        assertEntriesFromSnapshot(entries, snapshot);
         return entries.map((/** @type {{ absolutePath?: unknown }} */ entry) => typeof entry.absolutePath === "string"
           ? { ...entry, absolutePath: snapshot.toSourcePath(entry.absolutePath) }
           : entry);

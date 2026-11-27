@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { assertProviderContentInsideSnapshot, createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
+import { assertEntriesFromSnapshot, assertProviderContentInsideSnapshot, createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -400,6 +400,42 @@ describe("LLM loader front matter policy", () => {
     expect(readdirSync(join(outer, "a", "b"))).toEqual([]);
   });
 
+  // POSIX only: fast-glob turns each backslash in a listed name into a separator, so "a\\..\\..\\<path>"
+  // in a collection would make the provider read <path> outside every checked collection.
+  it.skipIf(process.platform === "win32").each([
+    ["docs", "docsDir", "guide"],
+    ["pages", "pagesDir", "pages"],
+    ["blog", "blogDir", "blog"],
+  ])("refuses a %s file name with backslashes that the provider's listing would resolve outside the snapshot", async (_collection, key, directory) => {
+    // Blog posts need a publish date, so every file here builds without the backslash name.
+    write("notes/evil.md", `---js\n{ title: (globalThis.${executed} = true, "Evil"), date: "2026-01-01" }\n---\n# evil`);
+    write(`${directory}/index.md`, "---\ndate: \"2026-01-01\"\n---\n# Index");
+    write(`${directory}/a/x.md`, "---\ndate: \"2026-01-01\"\n---\n# X");
+    const decoy = `a${"\\..".repeat(24)}${join(cwd, "notes", "evil.md").replaceAll("/", "\\")}`;
+    write(`${directory}/${decoy}`, "# Decoy");
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error?.message).toContain(`The docs ${key} ${join(cwd, directory)} contains ${join(cwd, directory, decoy)}, `);
+    expect(error?.message).toContain("backslash");
+    expect(error?.message).not.toContain("docs-llms-snapshot-");
+    expect(globalThis[executed]).toBeUndefined();
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    ["an api file", "apiDir", "api", "a\\b.json"],
+    ["an assets file", "assetsDir", "static", "a\\b.png"],
+    ["a docs directory", "docsDir", "guide", "sub\\dir/x.md"],
+    ["an api directory", "apiDir", "api", "sub\\dir/x.json"],
+  ])("refuses %s whose name holds a backslash", async (_name, key, directory, path) => {
+    write("guide/index.md", "# Guide");
+    write(`${directory}/${path}`, directory === "guide" ? "# X" : "{}");
+    const named = join(cwd, directory, path.split("/")[0]);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error?.message).toContain(`The docs ${key} ${join(cwd, directory)} contains ${named}, `);
+    expect(error?.message).toContain("backslash");
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
   it("snapshots each collection on its own when one contains another's case variant", async (context) => {
     rmSync(join(cwd, "guide"), { recursive: true });
     write("Guide/intro.md", "# Intro");
@@ -506,5 +542,27 @@ describe("provider content check", () => {
   ])("rejects %s holding a backslash on POSIX", (_name, content, key) => {
     expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow(`Docs snapshot ${key} `);
     expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow("backslash");
+  });
+});
+
+describe("provider entry check", () => {
+  const base = resolve("/snapshot");
+  const checked = join(base, "collections", "docs", "index.md");
+  const snapshot = { files: new Set([checked]), toSourcePath: (path) => path.replace(join(base, "collections", "docs"), resolve("/site/guide")) };
+
+  it("accepts Markdown entries from checked snapshot files and ignores API and asset entries", () => {
+    expect(() => assertEntriesFromSnapshot([
+      { collection: "docs", absolutePath: checked.replaceAll(sep, "/") },
+      { collection: "api", absolutePath: resolve("/site/api/openapi.json") },
+      { collection: "assets", absolutePath: resolve("/site/static/logo.png") },
+    ], snapshot)).not.toThrow();
+  });
+
+  it.each([
+    ["a path the provider resolved outside the snapshot", { collection: "pages", absolutePath: `${join(base, "collections", "docs", "a")}/../../../../site/notes/evil.md` }, resolve("/site/notes/evil.md")],
+    ["an unchecked snapshot path", { collection: "blog", absolutePath: join(base, "collections", "docs", "other.md") }, resolve("/site/guide/other.md")],
+    ["a missing path", { collection: "docs" }, "undefined"],
+  ])("rejects %s", (_name, entry, reported) => {
+    expect(() => assertEntriesFromSnapshot([entry], snapshot)).toThrow(`entry ${reported}, which is not a checked snapshot file`);
   });
 });
