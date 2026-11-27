@@ -205,10 +205,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   /** Provider identifier, for example `github`. */
   readonly provider: string;
   /**
-   * The dimension definitions, read once as their structured clone. A
-   * non-enumerable or symbol-keyed property of this object or of any entry
-   * would be dropped by the clone, so it makes `defineScopeGrammar` throw
-   * `TypeError` instead.
+   * The dimension definitions. This object, every entry and every option
+   * object must be plain data: a prototype of exactly `Object.prototype` or
+   * `null` (`Array.prototype` for `values`) and only enumerable string-keyed
+   * data properties. A class instance, an inherited option, a getter or
+   * setter, or a non-enumerable or symbol-keyed property makes
+   * `defineScopeGrammar` throw `TypeError`, because the engine would not
+   * enforce it. The checked data is then read once as its structured clone.
    */
   readonly dimensions: D;
   /**

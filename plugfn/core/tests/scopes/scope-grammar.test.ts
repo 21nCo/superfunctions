@@ -56,7 +56,7 @@ describe('defineScopeGrammar', () => {
     }
   });
 
-  it('throws when the definition holds a property structuredClone would drop', () => {
+  it('throws when the definition holds a non-enumerable or symbol-keyed property', () => {
     const hidden = <T extends object>(target: T, key: PropertyKey, value: unknown): T =>
       Object.defineProperty(target, key, { value, enumerable: false });
     const definitions: [string, unknown][] = [
@@ -71,7 +71,7 @@ describe('defineScopeGrammar', () => {
     for (const [label, dimensions] of definitions) {
       const error = thrownBy(() => defineScopeGrammar({ provider: 'p', dimensions: dimensions as never, riskOf }));
       expect(error, label).toBeInstanceOf(TypeError);
-      expect(error.message, label).toMatch(/must have only enumerable string-keyed own properties/);
+      expect(error.message, label).toMatch(/must be plain data/);
     }
     const definition = { provider: 'p', dimensions: { names: { kind: 'exactSet' as const } }, riskOf };
     expect(() => defineScopeGrammar(hidden({ ...definition }, 'normalize', (x: unknown) => x) as never)).toThrow(TypeError);
@@ -138,15 +138,15 @@ describe('defineScopeGrammar', () => {
     expect(optional.normalize({ size: 10 }).ok).toBe(true);
   });
 
-  it('reads the dimensions once as their structured clone', () => {
-    // Definitions are trusted, but they are still read once: a Proxy or a
-    // function cannot be cloned, and a getter runs exactly once.
+  it('reads the definition once as plain data and never runs a definition getter', () => {
+    // A Proxy or a function option still cannot be cloned.
     expect(() =>
       defineScopeGrammar({ provider: 'p', dimensions: new Proxy({ ttl: { kind: 'ttlMax' as const } }, {}), riskOf }),
     ).toThrow(TypeError);
     expect(() =>
       defineScopeGrammar({ provider: 'p', dimensions: { ttl: { kind: 'ttlMax', maxSeconds: () => 60 } } as never, riskOf }),
     ).toThrow(TypeError);
+    // A getter is rejected from its descriptor, without running it.
     let reads = 0;
     const ttl = {
       kind: 'ttlMax' as const,
@@ -155,10 +155,72 @@ describe('defineScopeGrammar', () => {
         return reads === 1 ? 60 : 3600;
       },
     };
-    const once = defineScopeGrammar({ provider: 'p', dimensions: { ttl }, riskOf });
-    expect(reads).toBe(1);
-    expect(once.dimensions.ttl).toEqual({ kind: 'ttlMax', maxSeconds: 60 });
-    expect(once.normalize({ ttl: 61 }).ok).toBe(false);
+    expect(thrownBy(() => defineScopeGrammar({ provider: 'p', dimensions: { ttl }, riskOf })).message).toMatch(/must be plain data/);
+    expect(reads).toBe(0);
+  });
+
+  it('enforces exactly the definition it was given: inherited options and accessors throw instead of being dropped', () => {
+    class TtlWithGetter {
+      readonly kind = 'ttlMax';
+      get maxSeconds() {
+        return 60;
+      }
+    }
+    class TtlWithField {
+      readonly kind = 'ttlMax';
+      readonly maxSeconds = 60;
+    }
+    class Dimensions {
+      readonly ttl = { kind: 'ttlMax', maxSeconds: 60 };
+    }
+    const accessor = <T extends object>(target: T, key: string, value: unknown): T =>
+      Object.defineProperty(target, key, { get: () => value, enumerable: true });
+    const inherit = (proto: object, own: object) => Object.assign(Object.create(proto) as object, own);
+    const ttlEntry = { kind: 'ttlMax', maxSeconds: 60 };
+    const dimensionCases: [string, unknown][] = [
+      ['a class instance entry with a getter option', { ttl: new TtlWithGetter() }],
+      ['a class instance entry with own fields', { ttl: new TtlWithField() }],
+      ['an inherited maxSeconds', { ttl: inherit({ maxSeconds: 60 }, { kind: 'ttlMax' }) }],
+      ['an inherited max', { rate: inherit({ max: 10 }, { kind: 'numericMax' }) }],
+      ['an inherited integer', { rate: inherit({ integer: true }, { kind: 'numericMax' }) }],
+      ['inherited values', { names: inherit({ values: ['a'] }, { kind: 'exactSet' }) }],
+      ['an inherited kind', { names: inherit({ kind: 'exactSet' }, {}) }],
+      ['a class instance as the dimensions object', new Dimensions()],
+      ['an accessor-backed dimension entry', accessor({ names: { kind: 'exactSet' } }, 'ttl', ttlEntry)],
+      ['an accessor-backed option', { ttl: accessor({ kind: 'ttlMax' }, 'maxSeconds', 60) }],
+      ['a values array with an accessor member', { names: { kind: 'exactSet', values: accessor(['a'], '1', 'b') } }],
+    ];
+    for (const [label, dimensions] of dimensionCases) {
+      const error = thrownBy(() => defineScopeGrammar({ provider: 'p', dimensions: dimensions as never, riskOf }));
+      expect(error, label).toBeInstanceOf(TypeError);
+      expect(error.message, label).toMatch(/must be plain data/);
+    }
+    const definition = { provider: 'p', dimensions: { ttl: ttlEntry }, riskOf } as Record<string, unknown>;
+    const definitionCases: [string, unknown][] = [
+      ...['provider', 'dimensions', 'normalize', 'riskOf'].map((key): [string, unknown] => {
+        const value = key === 'normalize' ? (input: unknown) => input : definition[key];
+        const { [key]: _omitted, ...rest } = definition;
+        return [`an accessor ${key}`, accessor(rest, key, value)];
+      }),
+      ['a class instance definition', Object.assign(new (class Definition {})(), definition)],
+      ['an inherited definition field', inherit({ riskOf }, { provider: 'p', dimensions: { ttl: ttlEntry } })],
+    ];
+    for (const [label, candidate] of definitionCases) {
+      expect(() => defineScopeGrammar(candidate as never), label).toThrow(TypeError);
+    }
+    // Null-prototype objects holding data properties are plain data, and their bounds are enforced.
+    const bare = <T extends object>(fields: T): T => Object.assign(Object.create(null) as T, fields);
+    const nullProto = defineScopeGrammar(
+      bare({
+        provider: 'p',
+        dimensions: bare({ ttl: bare({ kind: 'ttlMax' as const, maxSeconds: 60 }), names: bare({ kind: 'exactSet' as const, values: ['a'] }) }),
+        riskOf,
+      }),
+    );
+    expect(nullProto.dimensions).toEqual({ ttl: { kind: 'ttlMax', maxSeconds: 60 }, names: { kind: 'exactSet', values: ['a'] } });
+    expect(nullProto.isSubset({ ttl: 86_400, names: ['a'] }, { ttl: 86_400, names: ['a'] }).ok).toBe(false);
+    expect(nullProto.isSubset({ ttl: 60, names: ['b'] }, { ttl: 60, names: ['a', 'b'] }).ok).toBe(false);
+    expect(nullProto.isSubset({ ttl: 60, names: ['a'] }, { ttl: 60, names: ['a'] }).ok).toBe(true);
   });
 
   it('rejects an exactSet vocabulary that is too large, sparse or not made of strings', () => {
@@ -1026,6 +1088,29 @@ describe('radix trie insertion order', () => {
     expect(uncovered(['a', 'a*'], ['ab*', 'ab*'])).toEqual(['a', 'a*']);
   });
 
+  it('has no comparison sort and no hashed child index in the glob trie', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../src/scopes/grammar.ts', import.meta.url)), 'utf8');
+    expect(source).not.toMatch(/\.sort\(/);
+    const trie = source.slice(source.indexOf('interface RadixNode'), source.indexOf('function comparePrefixGlob'));
+    expect(trie).not.toMatch(/\bMap\b|\bSet\b/);
+  });
+
+  it('agrees with the naive definition when code units differ in any nibble, in any insertion order', () => {
+    // These code units first differ from 'a' (0x0061) in nibble 3, 2, 1 and 0 of the unit.
+    const alphabet = ['a', 'q', '\u0161', '\u1061', '\u10a1'];
+    let seed = 11;
+    const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff);
+    const word = () => Array.from({ length: next() % 4 }, () => alphabet[next() % alphabet.length]).join('');
+    for (let round = 0; round < 300; round++) {
+      const env = Array.from({ length: 1 + (next() % 8) }, () => (next() % 3 ? `${word()}*` : word() || 'a'));
+      const request = [...new Set(Array.from({ length: 10 }, () => (next() % 2 ? `${word()}*` : word() || 'q')))];
+      const expected = request.filter(item => !naive(item, env));
+      for (const order of [env, [...env].reverse(), [...env].sort(), [...env].sort().reverse()]) {
+        expect(uncovered(request, order), JSON.stringify({ request, order })).toEqual(expected);
+      }
+    }
+  });
+
   it('agrees with the naive definition on random envelopes in any insertion order', () => {
     let seed = 7;
     const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff);
@@ -1304,8 +1389,8 @@ describe('performance', () => {
   });
 
   it('stays within 50 ms for 10k shuffled envelope globs sharing a 64-unit prefix', () => {
-    // Building the glob index sorts the envelope prefixes (O(E log E)
-    // comparisons); each comparison here first walks the 64-unit shared prefix.
+    // A comparison sort of the envelope prefixes would first walk the 64-unit
+    // shared prefix in each of its O(E log E) comparisons.
     const prefix = 'p'.repeat(64);
     let seed = 0x5eed;
     const random = () => {
@@ -1331,6 +1416,94 @@ describe('performance', () => {
     expect(result?.ok).toBe(true);
     expect(globs.isSubset({ paths: [`${prefix}${n}/repo`] }, envelopeGlobs).ok).toBe(false);
     expect(elapsed).toBeLessThan(50);
+  });
+
+  /**
+   * Best of three interleaved timed runs of each function after a warm-up, so
+   * a run and its baseline see the same machine load.
+   */
+  function bestOfThreeEach(...runs: (() => void)[]): number[] {
+    for (const run of runs) run();
+    const best = runs.map(() => Number.POSITIVE_INFINITY);
+    for (let round = 0; round < 3; round++) {
+      runs.forEach((run, i) => {
+        const start = performance.now();
+        run();
+        best[i] = Math.min(best[i]!, performance.now() - start);
+      });
+    }
+    return best;
+  }
+
+  /**
+   * The glob-index vectors below are measured against a same-run baseline:
+   * normalizing both sides, which copies, checks and validates the same input
+   * but builds no index. isSubset stays under 1.75 times that baseline (about
+   * 0.8 and 1.25 here); a comparison sort of the prefixes measured 2.4 and 3.4,
+   * and a sorted child array with insertion by splice is quadratic. Idle, the
+   * two vectors take about 15 ms and 100 ms, but most of that is copying the
+   * input, so an absolute bound would measure machine load, not the index.
+   */
+  const INDEX_OVERHEAD_LIMIT = 1.75;
+
+  /** Deterministic shuffle for the index-build vectors below. */
+  function shuffle<T>(items: readonly T[], seed: number): T[] {
+    const out = [...items];
+    let state = seed;
+    for (let i = out.length - 1; i > 0; i--) {
+      state = (Math.imul(state, 1103515245) + 12345) >>> 0;
+      const j = Math.floor((state / 2 ** 32) * (i + 1));
+      [out[i], out[j]] = [out[j]!, out[i]!];
+    }
+    return out;
+  }
+
+  it('builds the index for every usable first code unit as a sibling at one trie node in linear time', () => {
+    // Every UTF-16 code unit a member may start with (all but control
+    // characters and "*"): 65,502 siblings under the root, in shuffled order.
+    // A sorted child array with insertion by splice would be quadratic here.
+    const codes = Array.from({ length: 0x10000 }, (_, code) => code).filter(code => code >= 0x20 && code !== 0x7f && code !== 0x2a);
+    expect(codes).toHaveLength(65_502);
+    const siblings = { paths: shuffle(codes, 0x5eed).map(code => `${String.fromCharCode(code)}-x*`) };
+    const picks = shuffle(codes, 0xbeef);
+    const siblingRequest = { paths: Array.from({ length: n }, (_, i) => `${String.fromCharCode(picks[i % picks.length]!)}-x/${i}`) };
+    const globs = defineScopeGrammar({ provider: 'wide-node', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const [baseline, elapsed] = bestOfThreeEach(
+      () => {
+        globs.normalize(siblingRequest);
+        globs.normalize(siblings);
+      },
+      () => {
+        result = globs.isSubset(siblingRequest, siblings);
+      },
+    );
+    expect(result?.ok).toBe(true);
+    expect(globs.isSubset({ paths: ['a-y'] }, siblings).ok).toBe(false);
+    expect(elapsed).toBeLessThan(baseline! * INDEX_OVERHEAD_LIMIT);
+  });
+
+  it('builds the index for 10k shuffled globs sharing a 2000-unit prefix in time linear in their length', () => {
+    // 20M envelope code units and 20M request code units: copying and
+    // validating them is most of the cost, and the index adds a linear pass.
+    const prefix = 'p'.repeat(2000);
+    const indexes = Array.from({ length: n }, (_, i) => i);
+    const envelopeGlobs = { paths: shuffle(indexes, 0x5eed).map(i => `${prefix}${i}/*`) };
+    const sharedRequest = { paths: shuffle(indexes, 0xbeef).map(i => `${prefix}${i}/repo`) };
+    const globs = defineScopeGrammar({ provider: 'long-prefix', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const [baseline, elapsed] = bestOfThreeEach(
+      () => {
+        globs.normalize(sharedRequest);
+        globs.normalize(envelopeGlobs);
+      },
+      () => {
+        result = globs.isSubset(sharedRequest, envelopeGlobs);
+      },
+    );
+    expect(result?.ok).toBe(true);
+    expect(globs.isSubset({ paths: [`${prefix}${n}/repo`, `${prefix.slice(1)}q`] }, envelopeGlobs).violations).toHaveLength(2);
+    expect(elapsed).toBeLessThan(baseline! * INDEX_OVERHEAD_LIMIT);
   });
 
   it('classifies 10k items in under 50 ms', () => {

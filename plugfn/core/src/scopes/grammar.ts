@@ -62,12 +62,14 @@ const DIMENSION_KEYS: Readonly<Record<ScopeDimensionKind, ReadonlySet<string>>> 
 const DEFINITION_KEYS: ReadonlySet<string> = new Set(['provider', 'dimensions', 'normalize', 'riskOf']);
 const ASYNC_FUNCTION_TAGS: ReadonlySet<string> = new Set(['[object AsyncFunction]', '[object AsyncGeneratorFunction]']);
 
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
+/** A control character or `*`: one scan finds the first character a member needs a rule for. */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const SPECIAL_CHAR = /[\u0000-\u001f\u007f*]/;
+
 function hasControlChar(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
+  return CONTROL_CHAR.test(value);
 }
 
 /**
@@ -93,24 +95,30 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
  */
 function notPlainAt(root: unknown): string | null | undefined {
   const seen = new Set<object>();
-  const pending: [unknown, string | null][] = [[root, null]];
+  // Objects still to visit, each with the top-level key it sits under.
+  const pending: [object, string | null][] = [];
+  /** Whether `value` is a plain leaf, or queues it; `false` when it can never be plain. */
+  const accept = (value: unknown, at: string | null): boolean => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    pending.push([value, at]);
+    return true;
+  };
+  if (!accept(root, null)) return null;
   while (pending.length > 0) {
     const [value, at] = pending.pop()!;
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') continue;
-    if (typeof value === 'number') {
-      if (Number.isFinite(value)) continue;
-      return at;
-    }
-    if (typeof value !== 'object' || seen.has(value)) return at;
-    seen.add(value);
     if (Array.isArray(value)) {
       if (Object.getPrototypeOf(value) !== Array.prototype || Object.keys(value).length !== value.length) return at;
       for (let i = 0; i < value.length; i++) {
-        if (!Object.hasOwn(value, i)) return at;
-        pending.push([value[i], at]);
+        if (!Object.hasOwn(value, i) || !accept(value[i], at)) return at;
       }
     } else if (isCloneRecord(value)) {
-      for (const key of Object.keys(value)) pending.push([value[key], value === root ? key : at]);
+      for (const key of Object.keys(value)) {
+        const under = value === root ? key : at;
+        if (!accept(value[key], under)) return under;
+      }
     } else {
       return at;
     }
@@ -139,11 +147,14 @@ function invalidMember(value: unknown, glob: boolean): string | undefined {
   if (typeof value !== 'string') return 'must be a string';
   if (value.length === 0) return 'must not be empty';
   if (value.length > MAX_MEMBER_LENGTH) return `must be at most ${MAX_MEMBER_LENGTH} characters`;
-  if (hasControlChar(value)) return 'must not contain control characters';
-  const star = value.indexOf('*');
-  if (star === -1) return undefined;
+  const special = value.search(SPECIAL_CHAR);
+  if (special === -1) return undefined;
+  // The first special character is a control character or `*`; after a `*`
+  // only a non-final one can be followed by a control character.
+  const final = special === value.length - 1;
+  if (value.charCodeAt(special) !== 0x2a || (!final && hasControlChar(value.slice(special + 1)))) return 'must not contain control characters';
   if (!glob) return 'must not contain "*"';
-  if (star !== value.length - 1) return 'may contain "*" only as the final character';
+  if (!final) return 'may contain "*" only as the final character';
   return undefined;
 }
 
@@ -155,15 +166,51 @@ function own(record: object, key: string): unknown {
   return Object.hasOwn(record, key) ? (record as Record<string, unknown>)[key] : undefined;
 }
 
+const PLAIN_DEFINITION = 'must be plain data: objects with a prototype of Object.prototype or null, arrays, and only enumerable string-keyed data properties (no getters or setters)';
+
 /**
- * Throws unless `copy` kept every own property of `raw`: `structuredClone`
- * silently drops non-enumerable and symbol-keyed properties, and a dropped
- * bound or dimension would weaken the grammar the types describe.
+ * The own data properties of one trusted definition object, read once through
+ * its descriptors into a null-prototype record. Throws unless the object is
+ * plain: a prototype of exactly `Object.prototype` or `null` (or
+ * `Array.prototype` for an array) and only enumerable string-keyed data
+ * properties. Nothing is inherited and no getter runs, so the record is exactly
+ * the data the author wrote. `structuredClone` would silently drop an
+ * inherited, non-enumerable or symbol-keyed property or a prototype accessor,
+ * and a dropped bound or dimension would weaken the grammar the types describe.
  */
-function assertNothingDropped(where: string, raw: unknown, copy: object): void {
-  const keys = typeof raw === 'object' && raw !== null ? Reflect.ownKeys(raw) : undefined;
-  if (!keys || keys.length !== Object.keys(copy).length || keys.some(key => typeof key !== 'string' || !Object.hasOwn(copy, key))) {
-    throw new TypeError(`${where} must have only enumerable string-keyed own properties`);
+function readDefinitionData(where: string, value: object): Record<string, unknown> {
+  const isArray = Array.isArray(value);
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (isArray ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+  // Bound the descriptor read: no definition array may exceed the set limit.
+  if (isArray && (value as unknown[]).length > MAX_SET_ITEMS) throw new TypeError(`${where} arrays must have at most ${MAX_SET_ITEMS} items`);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const data = Object.create(null) as Record<string, unknown>;
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[key as keyof typeof descriptors] as PropertyDescriptor;
+    const arrayLength = isArray && key === 'length';
+    if (typeof key !== 'string' || !('value' in descriptor) || !(descriptor.enumerable === true || arrayLength)) {
+      throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+    }
+    if (!arrayLength) data[key] = descriptor.value;
+  }
+  return data;
+}
+
+/**
+ * Checks a trusted definition subtree (the `dimensions` object, its entries
+ * and their options) with {@link readDefinitionData} before it is cloned:
+ * with no accessor anywhere, the clone runs no author code and copies exactly
+ * the data checked here. A Proxy or function still fails in the clone.
+ */
+function assertPlainDefinition(where: string, root: unknown): void {
+  const seen = new Set<object>();
+  const pending: unknown[] = [root];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value !== 'object' || value === null || seen.has(value)) continue;
+    seen.add(value);
+    for (const member of Object.values(readDefinitionData(where, value))) pending.push(member);
   }
 }
 
@@ -200,11 +247,10 @@ function compiledDimension(name: string, kind: ScopeDimensionKind, integer: bool
  * are absent. Only own properties are read, so a polluted prototype can never
  * supply a kind or an option.
  */
-function compileDimension(provider: string, name: string, def: unknown, raw: unknown): CompileResult {
+function compileDimension(provider: string, name: string, def: unknown): CompileResult {
   const where = `Scope grammar "${provider}": dimension "${name}"`;
   if (!DIMENSION_NAME.test(name)) throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
   if (!isCloneRecord(def)) throw new TypeError(`${where} must be an object`);
-  assertNothingDropped(where, raw, def);
   const kind = own(def, 'kind');
   if (typeof kind !== 'string' || !Object.hasOwn(DIMENSION_KEYS, kind)) {
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : typeof kind}`);
@@ -266,7 +312,9 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
     return undefined;
   }
   const glob = dim.kind === 'prefixGlobSet';
-  const seen = new Set<string>();
+  // Only the request is deduplicated (it becomes the snapshot); the envelope
+  // is engine-owned and read only by the comparisons.
+  const seen = side === 'request' ? new Set<string>() : undefined;
   const before = out.length;
   for (let i = 0; i < members.length; i++) {
     const value = members[i];
@@ -276,10 +324,11 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
     } else if (dim.vocabulary && !dim.vocabulary.has(value as string)) {
       out.push(malformed(side, `dimension "${dim.name}" item ${i} is not in the grammar`, dim.name, value as string));
     } else {
-      seen.add(value as string);
+      seen?.add(value as string);
     }
   }
-  return out.length === before ? Object.freeze([...seen]) : undefined;
+  if (out.length !== before) return undefined;
+  return seen ? Object.freeze([...seen]) : (members as readonly string[]);
 }
 
 function parseScalar(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeViolation[]): number | undefined {
@@ -329,70 +378,92 @@ function compareExact(name: string, request: readonly string[], envelope: readon
 }
 
 /**
- * A node of a compressed (radix) trie over the envelope's glob prefixes. The
- * edge into a node is `source[start, end)`: a range of an envelope string, not
- * a copy. Every node but the root ends at least one edge with two or more
- * children or at a prefix, so the trie has at most two nodes per prefix and
- * its memory does not grow with prefix length.
+ * A node of a compressed 16-ary radix trie over the envelope's glob prefixes,
+ * keyed by nibble: each UTF-16 code unit is four 4-bit digits, most
+ * significant first. A node at nibble depth `end` holds the prefix
+ * `source[0, end)` in nibbles, where `source` is the envelope glob that
+ * created it (a reference, not a copy). Every node but the root is a branch
+ * point or ends a prefix, so the trie has at most two nodes per prefix and its
+ * memory does not grow with prefix length.
  */
 interface RadixNode {
-  source: string;
-  start: number;
-  end: number;
+  readonly source: string;
+  /** Nibble depth of this node, so `source[0, end)` is its whole path. */
+  readonly end: number;
   /** Some envelope prefix ends at this node; it covers everything below. */
   terminal: boolean;
   /**
-   * Children in ascending order of their first code unit, searched by
-   * bisection: a lookup costs at most 17 comparisons whatever the code units,
-   * with no hash function an input could make collide.
+   * Children indexed by the next nibble: 16 slots, allocated when the node
+   * first branches. A child lookup is one array index, with no comparison or
+   * hash function an input could make slow.
    */
-  children: RadixNode[] | undefined;
+  children: (RadixNode | undefined)[] | undefined;
 }
 
-function radixNode(source: string, start: number, end: number, terminal: boolean): RadixNode {
-  return { source, start, end, terminal, children: undefined };
+function radixNode(source: string, end: number, terminal: boolean): RadixNode {
+  return { source, end, terminal, children: undefined };
 }
 
-function firstCode(node: RadixNode): number {
-  return node.source.charCodeAt(node.start);
+function emptySlots(): (RadixNode | undefined)[] {
+  return new Array<RadixNode | undefined>(16).fill(undefined);
+}
+
+/** Nibble `n` of `value`: bits of code unit `n >> 2`, most significant nibble first. */
+function nibbleAt(value: string, n: number): number {
+  return (value.charCodeAt(n >> 2) >> ((3 - (n & 3)) << 2)) & 0xf;
 }
 
 /**
- * Adds the prefix `prefix[0, length)`. Prefixes must arrive in ascending
- * code-unit order: then a new branch always sorts after its siblings, so the
- * only child it can share an edge with is the last one, and insertion is an
- * append, linear in `length`.
+ * The first nibble in `[from, to)` where `a` and `b` differ, or `to`. Both
+ * already agree before `from` (it is the depth of the node being left), so
+ * whole code units are compared, one step per code unit, and the differing
+ * nibble is read from the XOR of the first unequal pair.
  */
-function insertSortedPrefix(root: RadixNode, prefix: string, length: number): void {
+function agreeUntil(a: string, b: string, from: number, to: number): number {
+  let unit = from >> 2;
+  const whole = to >> 2;
+  // A long shared run (a common path prefix) is compared natively in one go;
+  // either way the cost stays linear in the run's length.
+  if (whole - unit > 32 && a.slice(unit, whole) === b.slice(unit, whole)) unit = whole;
+  for (; unit << 2 < to; unit++) {
+    const diff = a.charCodeAt(unit) ^ b.charCodeAt(unit);
+    // clz32 counts 16 leading zeros above a code unit, then 4 per equal nibble.
+    if (diff !== 0) return Math.min((unit << 2) + ((Math.clz32(diff) - 16) >> 2), to);
+  }
+  return to;
+}
+
+/**
+ * Adds the prefix `prefix[0, units)`, in any order relative to the others:
+ * linear in its length.
+ * A shorter prefix added after a longer one marks its node terminal and drops
+ * the subtree; a prefix that reaches a terminal adds nothing.
+ */
+function insertPrefix(root: RadixNode, prefix: string, units: number): void {
+  const length = units * 4;
   let node = root;
-  let i = 0;
   for (;;) {
     if (node.terminal) return;
-    if (i === length) {
-      // A shorter prefix covers everything below it; drop the subtree.
+    const depth = node.end;
+    if (depth === length) {
       node.terminal = true;
       node.children = undefined;
       return;
     }
-    const code = prefix.charCodeAt(i);
-    const children: RadixNode[] = (node.children ??= []);
-    const last = children.length - 1;
-    const child = children[last];
-    if (!child || firstCode(child) !== code) {
-      children.push(radixNode(prefix, i, length, true));
+    const children = (node.children ??= emptySlots());
+    const slot = nibbleAt(prefix, depth);
+    const child = children[slot];
+    if (!child) {
+      children[slot] = radixNode(prefix, length, true);
       return;
     }
-    let j = child.start;
-    while (j < child.end && i < length && child.source.charCodeAt(j) === prefix.charCodeAt(i)) {
-      j++;
-      i++;
-    }
-    if (j < child.end) {
-      // Split the edge where the new prefix leaves it (or ends inside it).
-      const middle = radixNode(child.source, child.start, j, false);
-      middle.children = [child];
-      child.start = j;
-      children[last] = middle;
+    const split = agreeUntil(child.source, prefix, depth, Math.min(child.end, length));
+    if (split < child.end) {
+      // The new prefix leaves the edge (or ends inside it) at `split`.
+      const middle = radixNode(child.source, split, false);
+      middle.children = emptySlots();
+      middle.children[nibbleAt(child.source, split)] = child;
+      children[slot] = middle;
       node = middle;
     } else {
       node = child;
@@ -400,33 +471,16 @@ function insertSortedPrefix(root: RadixNode, prefix: string, length: number): vo
   }
 }
 
-/** The child whose edge starts with `code`, by bisection over the sorted children. */
-function childFor(children: readonly RadixNode[], code: number): RadixNode | undefined {
-  let low = 0;
-  let high = children.length - 1;
-  while (low <= high) {
-    const middle = (low + high) >>> 1;
-    const child = children[middle]!;
-    const childCode = firstCode(child);
-    if (childCode === code) return child;
-    if (childCode < code) low = middle + 1;
-    else high = middle - 1;
-  }
-  return undefined;
-}
-
-/** Whether some prefix in the trie is a prefix of `body[0, length)`: one bounded step per character. */
+/** Whether some prefix in the trie is a prefix of `body[0, length)`: linear in `length`. */
 function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
+  const nibbles = length * 4;
   let node = root;
-  let i = 0;
   for (;;) {
     if (node.terminal) return true;
-    if (i === length || !node.children) return false;
-    const child = childFor(node.children, body.charCodeAt(i));
-    if (!child) return false;
-    for (let j = child.start; j < child.end; j++, i++) {
-      if (i === length || child.source.charCodeAt(j) !== body.charCodeAt(i)) return false;
-    }
+    const depth = node.end;
+    if (depth === nibbles || !node.children) return false;
+    const child = node.children[nibbleAt(body, depth)];
+    if (!child || child.end > nibbles || agreeUntil(child.source, body, depth, child.end) !== child.end) return false;
     node = child;
   }
 }
@@ -434,24 +488,20 @@ function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
 /**
  * A literal `v` is covered by the literal `v` or by a glob `p*` with `p` a
  * prefix of `v`. A glob `q*` is covered only by a glob `p*` with `p` a prefix
- * of `q`. Building the envelope index sorts its glob prefixes by code unit
- * (O(E log E) comparisons for E envelope globs) and forms a radix trie; every
- * request item is then checked with one walk over its own characters, each
- * step a bisection over at most 65,536 siblings, so request evaluation is
- * linear, the cost of a lookup does not depend on any hash function, and
- * memory is linear in the number of envelope globs.
+ * of `q`. The envelope's glob prefixes go into a nibble radix trie in the
+ * order given, with no sort: building it is linear in the envelope's code
+ * units, and each request item is then checked with one walk over its own code
+ * units, each child lookup one array index. Evaluation is linear in the input,
+ * no hash function decides the cost, and memory is linear in the number of
+ * envelope globs.
  */
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
-  const prefixes: string[] = [];
+  let trie: RadixNode | undefined;
   for (const pattern of envelope) {
-    if (pattern.endsWith('*')) prefixes.push(pattern.slice(0, -1));
+    if (pattern.endsWith('*')) insertPrefix((trie ??= radixNode('', 0, false)), pattern, pattern.length - 1);
     else literals.add(pattern);
   }
-  // Default sort order is ascending UTF-16 code units, the order insertion needs.
-  prefixes.sort();
-  let trie: RadixNode | undefined;
-  for (const prefix of prefixes) insertSortedPrefix((trie ??= radixNode('', 0, 0, false)), prefix, prefix.length);
   for (const item of request) {
     const isGlob = item.endsWith('*');
     if (!isGlob && literals.has(item)) continue;
@@ -485,31 +535,31 @@ function parseResult(scope: ParsedScope | undefined, violations: ScopeViolation[
 /**
  * Defines a provider scope grammar. Throws `TypeError` for an invalid
  * definition: any dimension kind outside the closed set, an option the kind
- * does not have, an invalid bound, an async callback, or a runtime without
- * `structuredClone`.
+ * does not have, an invalid bound, an async callback, a definition that is
+ * not plain data (see `ScopeGrammarDefinition.dimensions`), or a runtime
+ * without `structuredClone`.
  */
 export function defineScopeGrammar<const D extends ScopeDimensions, TInput = ScopeShape<D>>(
   definition: ScopeGrammarDefinition<D, TInput>,
 ): ScopeGrammar<D, TInput> {
   const clone = hostClone;
   if (!clone) throw new TypeError('Scope grammars need structuredClone, which this runtime does not provide');
-  if (typeof definition !== 'object' || definition === null) throw new TypeError('Scope grammar definition must be an object');
-  // Every own key must be one Object.keys sees: nothing hidden is ignored.
-  if (Reflect.ownKeys(definition).length !== Object.keys(definition).length) {
-    throw new TypeError('Scope grammar definition must have only enumerable string-keyed own properties');
-  }
-  for (const key of Object.keys(definition)) {
+  if (typeof definition !== 'object' || definition === null || Array.isArray(definition)) throw new TypeError('Scope grammar definition must be an object');
+  // One read of the definition's own data: nothing inherited, hidden or computed by a getter.
+  const fields = readDefinitionData('Scope grammar definition', definition);
+  for (const key of Object.keys(fields)) {
     if (!DEFINITION_KEYS.has(key)) throw new TypeError(`Scope grammar definition has unsupported option ${JSON.stringify(key)}`);
   }
-  // Own properties only: a polluted prototype never supplies a field or callback.
-  const provider = own(definition, 'provider');
-  const dimensions = own(definition, 'dimensions');
+  const { provider, dimensions } = fields;
   if (typeof provider !== 'string' || provider.trim() === '' || hasControlChar(provider)) {
     throw new TypeError('Scope grammar provider must be a non-empty string');
   }
-  const normalize = readCallback(provider, 'normalize', own(definition, 'normalize'), true) as ((input: TInput) => unknown) | undefined;
-  const riskOf = readCallback(provider, 'riskOf', own(definition, 'riskOf'), false) as (item: ScopeItem<D>) => unknown;
+  const normalize = readCallback(provider, 'normalize', fields.normalize, true) as ((input: TInput) => unknown) | undefined;
+  const riskOf = readCallback(provider, 'riskOf', fields.riskOf, false) as (item: ScopeItem<D>) => unknown;
 
+  // The dimensions are checked as plain data, then cloned and compiled from
+  // that one clone: the engine enforces exactly what the author wrote.
+  assertPlainDefinition(`Scope grammar "${provider}": dimensions`, dimensions);
   let dimensionDefs: unknown;
   try {
     dimensionDefs = clone(dimensions);
@@ -517,10 +567,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     throw new TypeError(`Scope grammar "${provider}": dimensions must be plain data`, { cause: error });
   }
   if (!isCloneRecord(dimensionDefs)) throw new TypeError(`Scope grammar "${provider}": dimensions must be an object`);
-  // The clone must keep every dimension and option the author wrote.
-  assertNothingDropped(`Scope grammar "${provider}": dimensions`, dimensions, dimensionDefs);
-  const rawDimensions = dimensions as Record<string, unknown>;
-  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name), rawDimensions[name]));
+  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name)));
   if (results.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
