@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, posix, relative, sep, win32 } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
@@ -158,7 +158,8 @@ describe("LLM loader front matter policy", () => {
     expect(manifest.pages["docs:index.md"]).toMatchObject({ title: "Original", body: "Original body." });
     expect(manifest.pages["docs:late.md"]).toBeUndefined();
     expect(globalThis[executed]).toBeUndefined();
-    expect(relative(scratch, roots[0]).split(sep)[0]).toMatch(/^docs-llms-snapshot-/);
+    // Staged under the canonical (real) temp dir.
+    expect(relative(realpathSync.native(scratch), roots[0]).split(sep)[0]).toMatch(/^docs-llms-snapshot-/);
     expect(existsSync(roots[0])).toBe(false);
   });
 
@@ -185,7 +186,8 @@ describe("LLM loader front matter policy", () => {
       writeFileSync(join(docs, "nested", "meta.json"), '{"title":"Nested"}');
       writeFileSync(join(docs, "nested", ".hidden", "secret.md"), "# Hidden");
       writeFileSync(join(docs, "nested", "notes.txt"), "ignored");
-      symlinkSync(join(docs, "index.md"), join(docs, "nested", "linked.md"));
+      // File symbolic links need a privilege Windows runners usually lack.
+      if (process.platform !== "win32") symlinkSync(join(docs, "index.md"), join(docs, "nested", "linked.md"));
     }
     writeFileSync(join(pages, "about.md"), "# About");
     writeFileSync(join(root, "api", "openapi.json"), '{"openapi":"3.0.0","info":{"title":"Example","version":"1"},"paths":{}}');
@@ -290,6 +292,68 @@ describe("LLM loader front matter policy", () => {
     expect(error?.message).toContain(`is inside the docs ${key} `);
     expect(error?.message).toContain("TMPDIR");
     expect(readdirSync(scratch)).toEqual(["docs-llms-snapshot-other"]);
+  });
+
+  it("stages under a relative temp dir resolved once, like an absolute one", async () => {
+    for (const directory of ["guide", "pages", "blog", "api", "static"]) rmSync(join(cwd, directory), { recursive: true });
+    write("content/docs/index.md", "---\ntitle: Home\n---\nHome body.");
+    mkdirSync(join(cwd, "tmp"));
+    writeSite({ root: "." });
+    const invocation = process.cwd();
+    process.chdir(cwd);
+    try {
+      redirectTemporary("tmp");
+      scratch = join(cwd, "tmp");
+      const manifest = await expectProviderParity();
+      expect(Object.keys(manifest.pages)).toEqual(["docs:index.md"]);
+    } finally {
+      process.chdir(invocation);
+    }
+  });
+
+  it.each([
+    ["the docs collection", "guide"],
+    ["the assets directory", "static"],
+  ])("stages where a temp dir reaching out of %s through a symbolic link and .. really points", async (_name, collection) => {
+    write("guide/index.md", "# Guide");
+    write("static/logo.svg", "<svg/>");
+    const outside = external();
+    mkdirSync(join(outside, "child"));
+    symlinkSync(join(outside, "child"), join(cwd, collection, "link"), process.platform === "win32" ? "junction" : "dir");
+    // Not path.join, which would drop "link/.." lexically.
+    redirectTemporary(`${join(cwd, collection, "link")}${sep}..`);
+    // Sorts before the staging tree name, so a snapshot staged inside the docs walk would copy itself.
+    write("guide/a.md", "# A");
+    const roots = [];
+    class RecordingProvider extends FsContentProvider {
+      constructor(options) {
+        super(options);
+        roots.push(options.root);
+      }
+    }
+    const { config, manifest } = await loadLlmsSiteSource(cwd, { ...dependencies, FsContentProvider: RecordingProvider });
+    expect(manifest).toEqual(await buildManifest(new FsContentProvider({ ...config.content }), config));
+    expect(JSON.stringify(manifest)).not.toContain("docs-llms-snapshot-");
+    // The snapshot was staged where the temp dir really is, outside the collection.
+    expect(relative(realpathSync.native(outside), roots[0]).split(sep)[0]).toMatch(/^docs-llms-snapshot-/);
+    expect(readdirSync(join(cwd, collection)).sort()).toEqual(collection === "guide" ? ["a.md", "index.md", "link"] : ["link", "logo.svg"]);
+    expect(readdirSync(outside)).toEqual(["child"]);
+  });
+
+  it.each([
+    ["a root-level pages collection", { root: ".", docsDir: "guide", pagesDir: "." }, "docs-llms-snapshot-old", "pagesDir"],
+    ["a nested docs directory", defaultLayout, "guide/nested/docs-llms-snapshot-old", "docsDir"],
+    ["the API directory", defaultLayout, "api/docs-llms-snapshot-old", "apiDir"],
+    ["the assets directory", defaultLayout, "static/docs-llms-snapshot-old", "assetsDir"],
+  ])("refuses a staging tree left in %s by an interrupted build", async (_name, content, stale, key) => {
+    write("guide/index.md", "# Guide");
+    write(`${stale}/collections/docs/meta.json`, '{"title":"Staged"}');
+    write(`${stale}/collections/docs/x.md`, "# Staged");
+    writeSite(content);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error?.message).toContain(`The docs ${key} `);
+    expect(error?.message).toContain(`staging tree ${join(cwd, ...stale.split("/"))} `);
+    expect(readdirSync(scratch)).toEqual([]);
   });
 
   it("snapshots each collection on its own when one contains another's case variant", async (context) => {

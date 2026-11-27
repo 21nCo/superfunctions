@@ -16,9 +16,13 @@ const COLLECTION_DIRECTORIES = /** @type {const} */ ([
   ["assets", "assetsDir", ["public", "assets"]],
 ]);
 const MARKDOWN_COLLECTIONS = new Set(["docs", "pages", "blog"]);
+/** Provider configuration keys that always point into the snapshot: the root and the Markdown collections. */
+const SNAPSHOT_KEYS = new Set(["root", ...COLLECTION_DIRECTORIES.filter(([collection]) => MARKDOWN_COLLECTIONS.has(collection)).map(([, key]) => key)]);
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
 /** The published provider hardcodes this control file name in Markdown collections. */
 const CONTROL_FILE_NAME = "meta.json";
+/** Every staging tree this prebuild creates is a temp directory with this name prefix. */
+const STAGING_PREFIX = "docs-llms-snapshot-";
 
 /** @param {string} path */
 function isDirectory(path) {
@@ -27,17 +31,24 @@ function isDirectory(path) {
 
 /**
  * Relative paths of regular files the provider would list: no dot segments, no symbolic links
- * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`).
+ * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`). A staging tree of this
+ * prebuild (left by an interrupted build or staged by another one) fails closed instead of being
+ * listed as content.
  * @param {string} directory real path of the directory to list
+ * @param {{ key: string, sourceDirectory: string }} owner collection being listed, for the error
  * @param {string} [prefix]
  * @returns {Generator<string>}
  */
-function* listProviderFiles(directory, prefix = "") {
+function* listProviderFiles(directory, owner, prefix = "") {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) yield* listProviderFiles(join(directory, entry.name), relativePath);
-    else if (entry.isFile()) yield relativePath;
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith(STAGING_PREFIX)) {
+        throw new Error(`The docs ${owner.key} ${owner.sourceDirectory} contains the LLM prebuild staging tree ${join(owner.sourceDirectory, relativePath)} from an interrupted or concurrent build; remove it and keep TMPDIR (TEMP or TMP on Windows) outside the docs content`);
+      }
+      yield* listProviderFiles(join(directory, entry.name), owner, relativePath);
+    } else if (entry.isFile()) yield relativePath;
   }
 }
 
@@ -126,14 +137,14 @@ function resolveCollections(root, content) {
 }
 
 /**
- * Fail closed when the temp directory lies inside a directory the provider enumerates: a staging tree
+ * Fail closed when the staging parent lies inside a directory the provider enumerates: a staging tree
  * there (this run's or a concurrent build's) would be listed as content.
  * @param {ReturnType<typeof resolveCollections>} collections
+ * @param {string} stagingParent canonical absolute directory the snapshot is created in
  */
-function assertStagingOutsideCollections(collections) {
-  const temporary = realpathSync.native(tmpdir());
+function assertStagingOutsideCollections(collections, stagingParent) {
   for (const { key, sourceDirectory, exists } of collections) {
-    if (exists && isInside(realpathSync.native(sourceDirectory), temporary)) {
+    if (exists && isInside(realpathSync.native(sourceDirectory), stagingParent)) {
       throw new Error(`The temporary directory ${tmpdir()} is inside the docs ${key} ${sourceDirectory}; set TMPDIR (TEMP or TMP on Windows) to a directory outside the docs content`);
     }
   }
@@ -157,8 +168,12 @@ function assertStagingOutsideCollections(collections) {
  */
 function createCheckedContentSnapshot(root, content) {
   const collections = isDirectory(root) ? resolveCollections(root, content) : [];
-  assertStagingOutsideCollections(collections);
-  const snapshotBase = mkdtempSync(join(tmpdir(), "docs-llms-snapshot-"));
+  // One canonical absolute staging parent for both the containment check and the allocation: a
+  // relative TMPDIR, or one that reaches outside through a symbolic link and "..", cannot make the
+  // snapshot land somewhere the check did not look, or be resolved by the provider against its root.
+  const stagingParent = realpathSync.native(tmpdir());
+  assertStagingOutsideCollections(collections, stagingParent);
+  const snapshotBase = mkdtempSync(join(stagingParent, STAGING_PREFIX));
   const snapshotRoot = join(snapshotBase, "root");
   /** @type {Array<[string, string]>} */
   const prefixes = [[snapshotRoot, root]];
@@ -175,6 +190,8 @@ function createCheckedContentSnapshot(root, content) {
     for (const { collection, key, configured, defaults, sourceDirectory, exists } of collections) {
       const markdown = MARKDOWN_COLLECTIONS.has(collection);
       if (exists && !markdown) {
+        // Read live by the provider: it must not contain a staging tree either.
+        Array.from(listProviderFiles(realpathSync(sourceDirectory), { key, sourceDirectory }));
         overrides[key] = sourceDirectory;
         continue;
       }
@@ -191,12 +208,17 @@ function createCheckedContentSnapshot(root, content) {
       overrides[key] = snapshotDirectory;
       prefixes.push([snapshotDirectory, sourceDirectory]);
       mkdirSync(snapshotDirectory, { recursive: true, mode: 0o700 });
-      for (const relativePath of listProviderFiles(realpathSync(sourceDirectory))) {
+      for (const relativePath of listProviderFiles(realpathSync(sourceDirectory), { key, sourceDirectory })) {
         const name = relativePath.slice(relativePath.lastIndexOf("/") + 1).toLowerCase();
         const isMarkdown = MARKDOWN_EXTENSIONS.has(extname(name));
         if (name !== CONTROL_FILE_NAME && !isMarkdown) continue;
         snapshotFile(join(sourceDirectory, relativePath), join(snapshotDirectory, relativePath), isMarkdown);
       }
+    }
+    // Every snapshot directory handed to the provider is absolute and inside this run's staging tree.
+    for (const [key, value] of Object.entries(overrides)) {
+      if (!SNAPSHOT_KEYS.has(key)) continue;
+      if (!isAbsolute(value) || !isInside(snapshotBase, value)) throw new Error(`Docs snapshot ${key} ${value} is outside its staging tree ${snapshotBase}`);
     }
     return { content: overrides, dispose, ...mapper() };
   } catch (error) {
