@@ -17,6 +17,7 @@ import type {
   DisconnectOptions,
   DisconnectResult,
   Connection,
+  ConnectOptions,
   StartConnectionOptions,
 } from '../types/connection.js';
 import type { PlugFnSyncFetchResult, Provider } from '../types/provider.js';
@@ -43,6 +44,7 @@ import {
   createConnectionManagerOAuthDependencies,
 } from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
+import { deriveCacheBindingKey } from '../middleware/caching.js';
 import { WorkflowEngine } from './workflow-engine.js';
 import { WebhookHandler } from '../webhooks/webhook-handler.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
@@ -81,10 +83,12 @@ export interface PlugFn {
   // Connection management
   connections: {
     start(options: StartConnectionOptions): Promise<{ authUrl: string }>;
+    connect(options: ConnectOptions): Promise<Connection>;
     getAuthUrl(options: GetAuthUrlOptions): Promise<string>;
     handleCallback(options: HandleCallbackOptions): Promise<HandleCallbackResult>;
     list(options: ListConnectionsOptions): Promise<Connection[]>;
     get(id: string): Promise<Connection>;
+    isValid(id: string): Promise<boolean>;
     disconnect(options: DisconnectOptions): Promise<DisconnectResult>;
     refresh(id: string): Promise<Connection>;
   };
@@ -338,6 +342,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       cacheStore: config.cache?.store ?? config.cacheStore,
       cacheTtl: config.cache?.ttl ?? config.cache?.defaultTTL,
       cacheKeyPrefix: config.cache?.keyPrefix,
+      cacheBindingKey: deriveCacheBindingKey(config.encryptionKey),
       respectProviderLimits: config.rateLimit?.respectProviderLimits,
       globalRateLimit: config.rateLimit?.global,
       rateLimitStore: config.rateLimit?.atomicStore,
@@ -396,10 +401,12 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     // Connection management
     connections: {
       start: async (options) => ({ authUrl: await connectionManager.getAuthUrl(options) }),
+      connect: (options) => connectionManager.connect(options),
       getAuthUrl: (options) => connectionManager.getAuthUrl(options),
       handleCallback: (options) => connectionManager.handleCallback(options),
       list: (options) => connectionManager.list(options),
       get: (id) => connectionManager.get(id),
+      isValid: (id) => connectionManager.isValid(id),
       disconnect: (options) => connectionManager.disconnect(options),
       refresh: (id) => connectionManager.refresh(id),
     },

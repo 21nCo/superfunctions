@@ -1,5 +1,6 @@
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
 import { McpFnRegistry } from "./registry.js";
+import { registryInternals } from "./registry-internals.js";
 import {
   createMcpFnServer,
   resolveMcpFnServerCapabilities,
@@ -46,25 +47,35 @@ export class McpFnServerDeclaration<TContext = undefined> {
     // Always own a copy of a supplied registry: capabilities are resolved
     // here, so later registrations on the caller's registry must not change
     // this declaration's tools without changing its manifest.
-    this.registry = options.registry ? options.registry.clone() : new McpFnRegistry<TContext>();
-    for (const tool of options.tools ?? []) this.registry.register(tool);
-    for (const resource of options.resources ?? []) this.registry.registerResource(resource);
-    for (const template of options.resourceTemplates ?? []) {
-      this.registry.registerResourceTemplate(template);
+    this.registry = options.registry
+      ? registryInternals.declarationCopy(options.registry)
+      : new McpFnRegistry<TContext>();
+    try {
+      for (const tool of options.tools ?? []) this.registry.register(tool);
+      for (const resource of options.resources ?? []) this.registry.registerResource(resource);
+      for (const template of options.resourceTemplates ?? []) {
+        this.registry.registerResourceTemplate(template);
+      }
+      for (const prompt of options.prompts ?? []) this.registry.registerPrompt(prompt);
+      const capabilities = resolveMcpFnServerCapabilities(
+        this.registry,
+        options.capabilities,
+        Boolean(this.registry.capabilities().tasks),
+      );
+      this.manifestOptions = {
+        protocolVersions: options.protocolVersions,
+        transports: options.transports,
+        extensions: options.extensions,
+        capabilities,
+        clientRequirements: options.clientRequirements,
+      };
+    } catch (error) {
+      // The copy is discarded: a corrected declaration over the same registry
+      // reuses what its custom compiler compiled.
+      registryInternals.settleCopy(this.registry, true);
+      throw error;
     }
-    for (const prompt of options.prompts ?? []) this.registry.registerPrompt(prompt);
-    const capabilities = resolveMcpFnServerCapabilities(
-      this.registry,
-      options.capabilities,
-      Boolean(this.registry.capabilities().tasks),
-    );
-    this.manifestOptions = {
-      protocolVersions: options.protocolVersions,
-      transports: options.transports,
-      extensions: options.extensions,
-      capabilities,
-      clientRequirements: options.clientRequirements,
-    };
+    registryInternals.settleCopy(this.registry, false);
   }
 
   manifest(): McpFnManifest {
