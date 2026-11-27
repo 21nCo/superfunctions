@@ -1,4 +1,5 @@
 import {
+  SCOPE_LIMITS,
   type NormalizedScope,
   type ScopeDimension,
   type ScopeDimensionKind,
@@ -11,6 +12,7 @@ import {
   type ScopeShape,
   type ScopeSubsetResult,
   type ScopeViolation,
+  type PublishedScopeDimensions,
 } from './types.js';
 
 /** Thrown by `classifyRisk` for input it cannot classify. */
@@ -45,10 +47,13 @@ interface CompiledDimension {
 }
 
 const DIMENSION_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+const { maxSetItems: MAX_SET_ITEMS, maxMemberLength: MAX_MEMBER_LENGTH } = SCOPE_LIMITS;
+/** Longest thrown-error message copied into a violation. */
+const MAX_ERROR_MESSAGE_LENGTH = 200;
+const UNREADABLE_ERROR = 'an unreadable value was thrown';
 /** Private copy of the risk order, independent of the exported array. */
 const RISK_ORDER: readonly ScopeRisk[] = Object.freeze(['read', 'write', 'destructive'] as const);
 const RISK_RANK: ReadonlyMap<unknown, number> = new Map(RISK_ORDER.map((level, rank) => [level, rank]));
-const DESTRUCTIVE_RANK = RISK_ORDER.length - 1;
 
 /** The keys each dimension kind accepts; anything else is a definition error. */
 const DIMENSION_KEYS: Readonly<Record<ScopeDimensionKind, ReadonlySet<string>>> = Object.freeze({
@@ -77,6 +82,7 @@ function isPlainObject(value: unknown): value is object {
 function invalidMember(value: unknown, glob: boolean): string | undefined {
   if (typeof value !== 'string') return 'must be a string';
   if (value.length === 0) return 'must not be empty';
+  if (value.length > MAX_MEMBER_LENGTH) return `must be at most ${MAX_MEMBER_LENGTH} characters`;
   if (hasControlChar(value)) return 'must not contain control characters';
   const star = value.indexOf('*');
   if (star === -1) return undefined;
@@ -85,15 +91,33 @@ function invalidMember(value: unknown, glob: boolean): string | undefined {
   return undefined;
 }
 
-/** A short description of a thrown value that cannot itself throw. */
+/**
+ * A short description of a thrown value. Total: it reads `message` once, uses
+ * it only when that one read is a primitive string, and otherwise returns a
+ * fixed fallback, so formatting a hostile error can never throw.
+ */
 function describeError(error: unknown): string {
+  let message: unknown;
   try {
-    if (error instanceof Error && typeof error.message === 'string') return error.message;
-    if (typeof error === 'string') return error;
+    message = typeof error === 'string' ? error : error instanceof Error ? error.message : undefined;
   } catch {
-    // An unreadable error (for example a Proxy or a throwing `message` getter).
+    // An unreadable error (for example a Proxy trap or a throwing `message` getter).
+    return UNREADABLE_ERROR;
   }
-  return 'an unreadable value was thrown';
+  if (typeof message !== 'string') return UNREADABLE_ERROR;
+  return message.length > MAX_ERROR_MESSAGE_LENGTH ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}...` : message;
+}
+
+/**
+ * Reads an array's length once and checks it, so a Proxy cannot report a
+ * length (NaN, negative, huge) that skips or inflates the member scan.
+ * Returns the length, or why it is unusable.
+ */
+function readSetLength(array: readonly unknown[]): number | string {
+  const length: unknown = array.length;
+  if (!Number.isSafeInteger(length) || (length as number) < 0) return 'has an invalid length';
+  if ((length as number) > MAX_SET_ITEMS) return `must have at most ${MAX_SET_ITEMS} items`;
+  return length as number;
 }
 
 function malformed(side: Side, message: string, dimension?: string, item?: string | number): ScopeViolation {
@@ -101,20 +125,26 @@ function malformed(side: Side, message: string, dimension?: string, item?: strin
 }
 
 /**
- * Reads a definition object's own data properties, rejecting any key outside
- * `allowed` (when given), symbol keys and accessors, so a mistyped option (for example a
- * `max` on a ttlMax dimension) fails at definition time instead of being
- * silently dropped.
+ * Reads a definition object's own data properties once, rejecting any key
+ * outside `allowed` (when given), symbol keys and accessors, so a mistyped
+ * option (for example a `max` on a ttlMax dimension) fails at definition time
+ * instead of being silently dropped. Keys whose value is `undefined` are kept:
+ * callers treat an undefined option as absent, but a dimension entry must be
+ * an object, so an undefined dimension fails instead of disappearing.
  */
 function readDefinitionFields(where: string, value: object, allowed?: ReadonlySet<string>): Map<string, unknown> {
   const fields = new Map<string, unknown>();
   for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string' || (allowed !== undefined && !allowed.has(key))) {
-      throw new TypeError(`${where} has unsupported option ${typeof key === 'string' ? JSON.stringify(key) : 'a symbol key'}`);
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (typeof key !== 'string') throw new TypeError(`${where} has unsupported option a symbol key`);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
     if (!('value' in descriptor)) throw new TypeError(`${where} option "${key}" must be a data property`);
-    if (descriptor.value !== undefined) fields.set(key, descriptor.value);
+    fields.set(key, descriptor.value);
+  }
+  if (allowed !== undefined) {
+    for (const key of fields.keys()) {
+      if (!allowed.has(key)) throw new TypeError(`${where} has unsupported option ${JSON.stringify(key)}`);
+    }
   }
   return fields;
 }
@@ -144,12 +174,15 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
     throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
   }
   if (!isPlainObject(def)) throw new TypeError(`${where} must be an object`);
-  const kindDescriptor = Object.getOwnPropertyDescriptor(def, 'kind');
-  const kind: unknown = kindDescriptor && 'value' in kindDescriptor ? kindDescriptor.value : undefined;
+  // One read of the definition: `kind` and the options come from the same snapshot.
+  const fields = readDefinitionFields(where, def);
+  const kind = fields.get('kind');
   if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(DIMENSION_KEYS, kind)) {
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : String(typeof kind)}`);
   }
-  const fields = readDefinitionFields(where, def, DIMENSION_KEYS[kind as ScopeDimensionKind]);
+  for (const key of fields.keys()) {
+    if (!DIMENSION_KEYS[kind as ScopeDimensionKind].has(key)) throw new TypeError(`${where} has unsupported option ${JSON.stringify(key)}`);
+  }
   const published: Record<string, unknown> = { kind };
 
   switch (kind as ScopeDimensionKind) {
@@ -157,8 +190,10 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
       const values = fields.get('values');
       if (values === undefined) return { compiled: Object.freeze({ name, kind: 'exactSet', integer: false }), published: publish(published) };
       if (!Array.isArray(values)) throw new TypeError(`${where} values must be an array`);
+      const length = readSetLength(values);
+      if (typeof length === 'string') throw new TypeError(`${where} values ${length}`);
       const copy: string[] = [];
-      for (let i = 0; i < values.length; i++) {
+      for (let i = 0; i < length; i++) {
         const value: unknown = values[i];
         const reason = invalidMember(value, false);
         if (reason) throw new TypeError(`${where} value ${reason}`);
@@ -209,10 +244,14 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
     out.push(malformed(side, `dimension "${dim.name}" must be an array of strings`, dim.name));
     return undefined;
   }
+  const length = readSetLength(raw);
+  if (typeof length === 'string') {
+    out.push(malformed(side, `dimension "${dim.name}" ${length}`, dim.name));
+    return undefined;
+  }
   const glob = dim.kind === 'prefixGlobSet';
   const seen = new Set<string>();
   const before = out.length;
-  const length = raw.length;
   for (let i = 0; i < length; i++) {
     const value: unknown = raw[i];
     const reason = invalidMember(value, glob);
@@ -377,7 +416,9 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   const results = [...dimensionDefs].map(([name, def]) => compileDimension(provider, name, def));
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
-  const publishedDimensions = Object.freeze(Object.fromEntries(results.map(result => [result.compiled.name, result.published]))) as Readonly<D>;
+  const publishedDimensions = Object.freeze(
+    Object.fromEntries(results.map(result => [result.compiled.name, result.published])),
+  ) as PublishedScopeDimensions<D>;
 
   /**
    * Normalises and validates one input. Every failure, including a throwing
@@ -437,6 +478,8 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     classifyRisk(request: TInput): ScopeRisk {
       const parsed = parse(request, 'request');
       if (Array.isArray(parsed)) throw new ScopeError(`Scope request for "${provider}" does not fit the grammar`, parsed);
+      // Every item is passed to riskOf and validated, even after the highest
+      // level is reached, so an invalid result fails whatever the item order.
       let rank = 0;
       for (const dim of dims) {
         const value = parsed.get(dim.name)!;
@@ -453,7 +496,6 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
             throw new ScopeError(`Scope grammar "${provider}": riskOf returned an unknown risk for dimension "${dim.name}"`);
           }
           if (itemRank > rank) rank = itemRank;
-          if (rank === DESTRUCTIVE_RANK) return RISK_ORDER[rank] as ScopeRisk;
         }
       }
       return RISK_ORDER[rank] as ScopeRisk;

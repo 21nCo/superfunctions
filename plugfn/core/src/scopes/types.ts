@@ -12,6 +12,18 @@ export const SCOPE_RISK_LEVELS = Object.freeze(['read', 'write', 'destructive'] 
 
 export type ScopeRisk = (typeof SCOPE_RISK_LEVELS)[number];
 
+/**
+ * Input bounds. A set with more items, or a member with more characters, does
+ * not normalise (it is rejected as `malformed`), which keeps every evaluation
+ * linear in the input size.
+ */
+export const SCOPE_LIMITS = Object.freeze({
+  /** Most items one set dimension may hold, on either side. */
+  maxSetItems: 100_000,
+  /** Longest set member, in UTF-16 code units. */
+  maxMemberLength: 4096,
+} as const);
+
 /** A set of literal strings. Values never contain `*`. */
 export interface ExactSetDimension {
   readonly kind: 'exactSet';
@@ -56,8 +68,16 @@ export type ScopeDimensions = Readonly<Record<string, ScopeDimension>>;
 
 type SetDimension = ExactSetDimension | PrefixGlobSetDimension;
 
+/**
+ * The value a dimension holds: a string set for set kinds, a number for scalar
+ * kinds. Distributes over a union of kinds, so a dimension typed as the whole
+ * {@link ScopeDimension} union holds either.
+ */
+export type ScopeDimensionValue<T> = T extends SetDimension ? readonly string[] : number;
+
+/** Keys whose dimension may be a set kind; these may be omitted (an empty set). */
 type SetKeys<D extends ScopeDimensions> = {
-  [K in keyof D]: D[K] extends SetDimension ? K : never;
+  [K in keyof D]: [Extract<D[K], SetDimension>] extends [never] ? never : K;
 }[keyof D];
 
 type ScalarKeys<D extends ScopeDimensions> = Exclude<keyof D, SetKeys<D>>;
@@ -67,14 +87,24 @@ type ScalarKeys<D extends ScopeDimensions> = Exclude<keyof D, SetKeys<D>>;
  * dimensions are required, because an absent limit would mean "unbounded".
  */
 export type ScopeShape<D extends ScopeDimensions> = {
-  readonly [K in SetKeys<D>]?: readonly string[];
+  readonly [K in SetKeys<D>]?: ScopeDimensionValue<D[K]>;
 } & {
-  readonly [K in ScalarKeys<D>]: number;
+  readonly [K in ScalarKeys<D>]: ScopeDimensionValue<D[K]>;
 };
 
 /** A scope after validation: every dimension present, sets de-duplicated. */
 export type NormalizedScope<D extends ScopeDimensions> = {
-  readonly [K in keyof D]: D[K] extends SetDimension ? readonly string[] : number;
+  readonly [K in keyof D]: ScopeDimensionValue<D[K]>;
+};
+
+type ReadonlyArrays<T> = T extends readonly (infer U)[] ? readonly U[] : T;
+
+/** A dimension definition as published on a grammar: frozen, arrays included. */
+export type PublishedScopeDimension<T> = { readonly [P in keyof T]: ReadonlyArrays<T[P]> };
+
+/** The frozen dimension definitions a grammar publishes. */
+export type PublishedScopeDimensions<D extends ScopeDimensions> = {
+  readonly [K in keyof D]: PublishedScopeDimension<D[K]>;
 };
 
 /** One requested item, as passed to `riskOf`. */
@@ -134,10 +164,11 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
   /**
-   * Frozen copies of the dimension definitions, as given. The engine evaluates
-   * from its own private copy, so these are informational only.
+   * Frozen copies of the dimension definitions, as given (their `values`
+   * arrays included). The engine evaluates from its own private copy, so these
+   * are informational only.
    */
-  readonly dimensions: Readonly<D>;
+  readonly dimensions: PublishedScopeDimensions<D>;
   /**
    * Normalises and validates input without comparing it to anything. Never
    * throws: unreadable input yields a `malformed` violation.

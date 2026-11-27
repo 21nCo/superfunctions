@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defineScopeGrammar, SCOPE_RISK_LEVELS, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
+import { defineScopeGrammar, SCOPE_LIMITS, SCOPE_RISK_LEVELS, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
 
 const grammar = defineScopeGrammar({
   provider: 'test-provider',
@@ -74,6 +74,35 @@ describe('defineScopeGrammar', () => {
     expect(() =>
       defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf, normalise: (x: unknown) => x } as never),
     ).toThrow(TypeError);
+  });
+
+  it('rejects an undefined dimension entry but allows undefined optional fields', () => {
+    const riskOf = () => 'read' as const;
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: { perms: { kind: 'exactSet' }, ttl: undefined } as never, riskOf }),
+    ).toThrow(TypeError);
+    const optional = defineScopeGrammar({
+      provider: 'p',
+      dimensions: {
+        size: { kind: 'numericMax', min: undefined, max: 10, integer: undefined },
+        names: { kind: 'exactSet', values: undefined },
+      },
+      normalize: undefined,
+      riskOf,
+    });
+    expect(Object.keys(optional.dimensions)).toEqual(['size', 'names']);
+    expect(optional.normalize({ size: 11 }).ok).toBe(false);
+    expect(optional.normalize({ size: 10 }).ok).toBe(true);
+  });
+
+  it('rejects an exactSet vocabulary whose length is invalid or too large', () => {
+    const riskOf = () => 'read' as const;
+    for (const length of [Number.NaN, -1, 1.5, SCOPE_LIMITS.maxSetItems + 1]) {
+      const values = new Proxy(['a'], {
+        get: (target, key, receiver) => (key === 'length' ? length : (Reflect.get(target, key, receiver) as unknown)),
+      });
+      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
+    }
   });
 
   it('exposes a frozen grammar whose dimensions mirror the definition', () => {
@@ -277,6 +306,41 @@ describe('fail closed', () => {
     expect(violationsOf(accessor).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
   });
 
+  it('rejects a set whose reported length is invalid instead of skipping it', () => {
+    const lying = (length: unknown) =>
+      new Proxy(['admin'], {
+        get: (target, key, receiver) => (key === 'length' ? length : (Reflect.get(target, key, receiver) as unknown)),
+      });
+    for (const length of [Number.NaN, -1, 0.5, '1', Number.POSITIVE_INFINITY, 5_000_000]) {
+      const malformedLength = expect.objectContaining({ code: 'malformed', dimension: 'permissions' });
+      expect(violationsOf({ ...base, permissions: lying(length) }).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions' }),
+      ]);
+      expect(violationsOf(base, { ...envelope, permissions: lying(length) }).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
+      ]);
+      expect(grammar.normalize({ ...base, permissions: lying(length) }).ok).toBe(false);
+      expect(() => grammar.classifyRisk({ ...base, permissions: lying(length) })).toThrow(
+        expect.objectContaining({ name: 'ScopeError', violations: [malformedLength] }),
+      );
+    }
+  });
+
+  it('rejects sets and members beyond the input limits', () => {
+    const tooMany = Array.from({ length: SCOPE_LIMITS.maxSetItems + 1 }, (_, i) => `l-${i}`);
+    expect(violationsOf({ ...base, labels: tooMany }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels' }),
+    ]);
+    const longest = 'a'.repeat(SCOPE_LIMITS.maxMemberLength);
+    expect(violationsOf({ ...base, labels: [longest] }, { ...envelope, labels: [longest] }).ok).toBe(true);
+    expect(violationsOf({ ...base, resources: [`${longest}b`] }, { ...envelope, resources: ['*'] }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'resources' }),
+    ]);
+    expect(violationsOf(base, { ...envelope, resources: [`${longest}*`] }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'resources' }),
+    ]);
+  });
+
   it('rejects everything against a malformed envelope, even an empty request', () => {
     expect(violationsOf(base, { ...envelope, resources: ['a*b'] }).ok).toBe(false);
     expect(violationsOf(base, { ...envelope, unknown: 1 }).ok).toBe(false);
@@ -400,6 +464,72 @@ describe('unreadable input', () => {
   });
 });
 
+describe('unreadable error messages', () => {
+  /** An error whose `message` getter returns the given values in turn. */
+  function shiftingError(...reads: unknown[]): Error {
+    const error = new Error('placeholder');
+    let read = 0;
+    Object.defineProperty(error, 'message', { get: () => reads[Math.min(read++, reads.length - 1)] });
+    return error;
+  }
+
+  const symbolMessage = Symbol('unreadable');
+  const cases: Array<[string, () => Error, string]> = [
+    ['a string, then a Symbol', () => shiftingError('test-error', symbolMessage), 'test-error'],
+    ['a Symbol, then a string', () => shiftingError(symbolMessage, 'test-error'), 'an unreadable value was thrown'],
+    ['an object whose toString throws', () => shiftingError({ toString: () => { throw new Error('toString failed'); } }), 'an unreadable value was thrown'],
+  ];
+
+  it.each(cases)('formats a normalizer error whose message reads as %s without throwing', (_label, make, text) => {
+    const throwing = defineScopeGrammar({
+      provider: 'shifting-normalize',
+      dimensions: { names: { kind: 'exactSet' } },
+      normalize: (): { names: string[] } => {
+        throw make();
+      },
+      riskOf: () => 'read',
+    });
+    expect(throwing.isSubset({}, {}).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', message: `normalize failed: ${text}` }),
+      expect.objectContaining({ code: 'malformed', side: 'envelope', message: `normalize failed: ${text}` }),
+    ]);
+    expect(throwing.normalize({}).ok).toBe(false);
+    expect(() => throwing.classifyRisk({})).toThrow(ScopeError);
+  });
+
+  it.each(cases)('formats a scope-reading error whose message reads as %s without throwing', (_label, make, text) => {
+    const hostile = () => {
+      const labels = ['alpha'];
+      Object.defineProperty(labels, 0, {
+        get: () => {
+          throw make();
+        },
+      });
+      return { ...base, labels };
+    };
+    expect(violationsOf(hostile()).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', message: `scope could not be read: ${text}` }),
+    ]);
+    expect(violationsOf(base, hostile()).violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope' })]);
+    expect(grammar.normalize(hostile()).ok).toBe(false);
+    expect(() => grammar.classifyRisk(hostile())).toThrow(ScopeError);
+  });
+
+  it('shortens a very long error message', () => {
+    const throwing = defineScopeGrammar({
+      provider: 'long-error',
+      dimensions: { names: { kind: 'exactSet' } },
+      normalize: (): { names: string[] } => {
+        throw new Error('x'.repeat(100_000));
+      },
+      riskOf: () => 'read',
+    });
+    const result = throwing.normalize({});
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.violations[0]!.message.length).toBeLessThan(300);
+  });
+});
+
 describe('classifyRisk', () => {
   it('returns the maximum risk over all requested items', () => {
     expect(grammar.classifyRisk(base)).toBe('read');
@@ -460,6 +590,29 @@ describe('classifyRisk', () => {
     expect(() => throwing.classifyRisk({ names: ['a'] })).toThrow(expect.objectContaining({ name: 'ScopeError', cause: failure }));
   });
 
+  it('validates riskOf for every item, whatever the order, after the highest level', () => {
+    const levels = defineScopeGrammar({
+      provider: 'levels',
+      dimensions: { names: { kind: 'exactSet' }, size: { kind: 'numericMax' } },
+      riskOf: ({ value }) => {
+        if (value === 'admin') return 'destructive';
+        if (value === 'boom') throw new Error('riskOf failed for boom');
+        if (value === 'bad') return 'admin' as never;
+        return 'read';
+      },
+    });
+    for (const names of [['admin', 'bad'], ['bad', 'admin'], ['admin', 'boom'], ['boom', 'admin']]) {
+      expect(() => levels.classifyRisk({ names, size: 1 })).toThrow(ScopeError);
+    }
+    const laterScalar = defineScopeGrammar({
+      provider: 'later-scalar',
+      dimensions: { names: { kind: 'exactSet' }, size: { kind: 'numericMax' } },
+      riskOf: ({ dimension }) => (dimension === 'names' ? 'destructive' : ('unknown' as never)),
+    });
+    expect(() => laterScalar.classifyRisk({ names: ['admin'], size: 1 })).toThrow(ScopeError);
+    expect(levels.classifyRisk({ names: ['admin', 'x'], size: 1 })).toBe('destructive');
+  });
+
   it('throws when riskOf returns a level outside the closed set', () => {
     const broken = defineScopeGrammar({
       provider: 'broken',
@@ -472,19 +625,24 @@ describe('classifyRisk', () => {
 });
 
 describe('performance', () => {
+  // Every timed workload holds exactly 10k requested items, the acceptance bound.
   const n = 10_000;
+  const half = n / 2;
   const big = defineScopeGrammar({
     provider: 'big',
     dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' }, ttl: { kind: 'ttlMax' } },
     riskOf: ({ value }) => (String(value).startsWith('w') ? 'write' : 'read'),
   });
-  const ids = Array.from({ length: n }, (_, i) => `id-${i}`);
+  const ids = Array.from({ length: half }, (_, i) => `id-${i}`);
   // 10k distinct envelope globs: a matcher that compares every request item
-  // with every envelope pattern does 10^8 comparisons and cannot meet the bound.
+  // with every envelope pattern does 5 x 10^7 comparisons and cannot meet the bound.
   const envelopePaths = Array.from({ length: n }, (_, i) => `team-${i}/*`);
-  const requestPaths = Array.from({ length: n }, (_, i) => (i % 2 ? `team-${n - 1 - i}/repo` : `team-${n - 1 - i}/sub*`));
+  const requestPaths = Array.from({ length: half - 1 }, (_, i) => (i % 2 ? `team-${n - 1 - 2 * i}/repo` : `team-${n - 1 - 2 * i}/sub*`));
+  // 5k ids + 4,999 paths + 1 ttl = 10k items.
   const request = { ids, paths: requestPaths, ttl: 60 };
   const env = { ids: [...ids].reverse(), paths: envelopePaths, ttl: 60 };
+  const uncovered = { ids, paths: [...requestPaths, 'team-0/last'], ttl: 60 };
+  const writeLast = { ids: [...ids.slice(0, -1), 'w-last'], paths: requestPaths, ttl: 60 };
 
   /** Best of three timed runs after a warm-up, so scheduler noise from parallel suites does not decide the result. */
   function bestOfThree(run: () => void): number {
@@ -498,7 +656,7 @@ describe('performance', () => {
     return best;
   }
 
-  it('evaluates 10k items per dimension in under 50 ms', () => {
+  it('evaluates 10k requested items against 10k envelope globs in under 50 ms', () => {
     let result: ReturnType<typeof big.isSubset> | undefined;
     const elapsed = bestOfThree(() => {
       result = big.isSubset(request, env);
@@ -510,9 +668,9 @@ describe('performance', () => {
   it('reports 10k uncovered items in under 50 ms', () => {
     let result: ReturnType<typeof big.isSubset> | undefined;
     const elapsed = bestOfThree(() => {
-      result = big.isSubset(request, { ids: [], paths: ['other/*'], ttl: 60 });
+      result = big.isSubset(uncovered, { ids: [], paths: ['other/*'], ttl: 60 });
     });
-    expect(result?.violations).toHaveLength(2 * n);
+    expect(result?.violations).toHaveLength(n);
     expect(elapsed).toBeLessThan(50);
   });
 
@@ -570,7 +728,7 @@ describe('performance', () => {
   it('classifies 10k items in under 50 ms', () => {
     let risk: ScopeRisk | undefined;
     const elapsed = bestOfThree(() => {
-      risk = big.classifyRisk({ ids: [...ids, 'w-last'], paths: requestPaths, ttl: 60 });
+      risk = big.classifyRisk(writeLast);
     });
     expect(risk).toBe('write');
     expect(elapsed).toBeLessThan(50);

@@ -137,7 +137,9 @@ grammar.classifyRisk({ permissions: ['contents:write'], repositories: [], ttl: 9
 - Only four dimension kinds exist: `exactSet`, `prefixGlobSet` (a single trailing `*`), `numericMax` and `ttlMax` (whole seconds). An unknown kind, or an option a kind does not have (such as `max` on a `ttlMax` dimension), throws `TypeError` when the grammar is defined.
 - The grammar is frozen and evaluates from its own copy of the definition, so later changes to the definition object or `grammar.dimensions` cannot change a decision.
 - An optional `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit, a non-finite number, or input that throws while being read) is rejected as `malformed`, never widened. `isSubset` and `normalize` report this in their result and do not throw.
-- `classifyRisk` returns the highest `riskOf` result over every requested item and throws `ScopeError` for a malformed request or when `riskOf` throws or returns anything other than `read`, `write` or `destructive`.
+- A dimension entry must be an object: an `undefined` dimension throws `TypeError` when the grammar is defined. Optional options left `undefined` are treated as absent.
+- `SCOPE_LIMITS` bounds the input: a set may hold at most `maxSetItems` (100,000) items and a member at most `maxMemberLength` (4,096) characters. A larger set, a member over the limit, or an array that reports an invalid length is `malformed`.
+- `classifyRisk` returns the highest `riskOf` result over every requested item. It calls `riskOf` for every item, so it throws `ScopeError` for a malformed request, or when `riskOf` throws or returns anything other than `read`, `write` or `destructive` for any item, whatever the item order.
 - Evaluation is linear in the input size; glob coverage uses a character trie, so it does not depend on hashing.
 
 ## OAuth migration
