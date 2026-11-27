@@ -8,6 +8,10 @@ export const registryInternals = {
   /** The copy a server declaration registers on (a clone()). */
   declarationCopy: <TContext>(registry: McpFnRegistry<TContext>): McpFnRegistry<TContext> =>
     registry.clone(),
-  /** Park the compiles of a declaration copy that was discarded. */
-  abandonCopy: (_registry: object): void => {},
+  /**
+   * End a declaration copy's construction. A discarded copy parks its compiles
+   * for the next declaration over its source; either way the copy keeps no
+   * declaration retries afterwards.
+   */
+  settleCopy: <TContext>(_copy: McpFnRegistry<TContext>, _abandoned: boolean): void => {},
 };

@@ -591,6 +591,17 @@ describe("McpFnRegistry custom compiler authority", () => {
     expect(first.listTools().map((listed) => listed.name)).toEqual(["t"]);
   });
 
+  it("keeps a failed declaration's retry from a live declaration over the same registry", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const source = new McpFnRegistry({ compileSchema: counting() });
+    const live = defineMcpFnServer({ info, registry: source });
+    expect(() => defineMcpFnServer({ info, registry: source, tools: [failing("t") as never] }))
+      .toThrow("Tool t contains an invalid JSON Schema");
+    expect(() => live.registry.register(tool("t"))).toThrow("Tool t contains an invalid JSON Schema");
+    expect(defineMcpFnServer({ info, registry: source, tools: [tool("t")] }).registry.listTools()
+      .map((listed) => listed.name)).toEqual(["t"]);
+  });
+
   it("retries a declaration that failed after its definitions registered", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const registry = new McpFnRegistry({ compileSchema: counting() });

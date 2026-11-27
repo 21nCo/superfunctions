@@ -1061,8 +1061,10 @@ export class McpFnRegistry<TContext = undefined> {
       copy.parked = registry.declarationParked ??= new Map();
       return copy;
     };
-    registryInternals.abandonCopy = (registry) => {
-      if (registry instanceof McpFnRegistry) registry.abandon();
+    registryInternals.settleCopy = (copy, abandoned) => {
+      if (abandoned) copy.abandon();
+      // A copy keeps no declaration's retries once its declaration ends.
+      copy.parked = new Map();
     };
   }
 
@@ -1106,10 +1108,13 @@ export class McpFnRegistry<TContext = undefined> {
    * reuses the source snapshot and validator without compiling, so a `$ref`
    * resolves whichever kind or name order the copy registers in. A built-in
    * engine holds the inherited snapshots, so any other schema is accepted or
-   * rejected exactly as the source would. When this registry's schema
-   * collection is self-contained (or this registry is itself such a copy), the
-   * copy's listings and clones throw unless its own collection is
-   * self-contained too, so its manifest stays valid on its own.
+   * rejected exactly as the source would. With the built-in engine, when
+   * this registry's schema collection is self-contained (or this registry is
+   * itself such a copy), the copy's listings and clones throw unless its own
+   * collection is self-contained too, so its manifest stays valid on its own.
+   * A custom compileSchema is shared and decides reference resolution alone:
+   * the copy lists whatever it accepted, including a reference only the
+   * shared compiler resolves.
    */
   cloneEmpty(): McpFnRegistry<TContext> {
     return this.derive();

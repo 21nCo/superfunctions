@@ -72,9 +72,10 @@ export class McpFnServerDeclaration<TContext = undefined> {
     } catch (error) {
       // The copy is discarded: a corrected declaration over the same registry
       // reuses what its custom compiler compiled.
-      registryInternals.abandonCopy(this.registry);
+      registryInternals.settleCopy(this.registry, true);
       throw error;
     }
+    registryInternals.settleCopy(this.registry, false);
   }
 
   manifest(): McpFnManifest {
