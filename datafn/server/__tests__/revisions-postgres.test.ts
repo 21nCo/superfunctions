@@ -67,13 +67,13 @@ afterEach(async () => {
 describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
   it("creates, bumps and tombstones a revision inside transactions", async () => {
     await ensureRevisionsTable(adapter);
-    const first = await adapter.transaction(async (tx) => bumpRevision(tx as any, "ns", "task", "task:1", false));
-    const second = await adapter.transaction(async (tx) => bumpRevision(tx as any, "ns", "task", "task:1", true));
+    const first = await adapter.transaction(async (tx) => bumpRevision(tx as any, "ns", "task", "task:1", false, true));
+    const second = await adapter.transaction(async (tx) => bumpRevision(tx as any, "ns", "task", "task:1", true, true));
     expect([first, second]).toEqual([1, 2]);
     expect((await readRevisions(adapter, "ns", "task", ["task:1"])).get("task:1")).toEqual({ rev: 2, deleted: true });
     // A rolled-back write leaves the revision as it was.
     await expect(adapter.transaction(async (tx) => {
-      await bumpRevision(tx as any, "ns", "task", "task:1", false);
+      await bumpRevision(tx as any, "ns", "task", "task:1", false, true);
       throw new Error("rollback");
     })).rejects.toThrow("rollback");
     expect((await readRevisions(adapter, "ns", "task", ["task:1"])).get("task:1")?.rev).toBe(2);
@@ -93,7 +93,7 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
     await service.ensureReady();
     await service.ensureRevisionsReady();
     await db.transaction(async (tx) => {
-      const write = withWriteEvidence(tx as any);
+      const write = withWriteEvidence(tx as any, true);
       await write.update({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], data: { title: "b" } } as any);
       await service.withDb(write, false).recordChanges([
         { serverSeq: 1, resource: "task", id: "task:1", op: "merge", record: { id: "task:1" } },
@@ -105,7 +105,7 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
 
   it("reads rows and revisions in one REPEATABLE READ transaction", async () => {
     await ensureRevisionsTable(adapter);
-    await bumpRevision(adapter, "ns", "task", "task:1", false);
+    await bumpRevision(adapter, "ns", "task", "task:1", false, false);
     let level: unknown;
     const rows = await readWithRevisions(
       adapter,
@@ -125,11 +125,11 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
 
   it("keeps every revision row and tombstone through a plan-driven namespace backup and copy", async () => {
     await ensureRevisionsTable(adapter);
-    await bumpRevision(adapter, "ns", "task", "task:live", false);
-    await bumpRevision(adapter, "ns", "task", "task:live", false);
-    await bumpRevision(adapter, "ns", "task", "task:gone", false);
-    await bumpRevision(adapter, "ns", "task", "task:gone", true);
-    await bumpRevision(adapter, "other", "task", "task:live", false);
+    await bumpRevision(adapter, "ns", "task", "task:live", false, false);
+    await bumpRevision(adapter, "ns", "task", "task:live", false, false);
+    await bumpRevision(adapter, "ns", "task", "task:gone", false, false);
+    await bumpRevision(adapter, "ns", "task", "task:gone", true, false);
+    await bumpRevision(adapter, "other", "task", "task:live", false, false);
 
     const query = async (sql: string) => adapter.rawSql!.query(sql) as Promise<any[]>;
     const plan = resolveNamespaceStoragePlan({
@@ -156,7 +156,7 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
         "task:gone": { rev: 2, deleted: true },
       });
       // The copy continues from the tombstone.
-      expect(await bumpRevision(targetAdapter, "ns", "task", "task:gone", false)).toBe(3);
+      expect(await bumpRevision(targetAdapter, "ns", "task", "task:gone", false, false)).toBe(3);
     } finally {
       await targetKysely.destroy();
     }

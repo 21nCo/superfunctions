@@ -1383,7 +1383,7 @@ export async function executePush(
       try {
         await (db as any).transaction(async (txAdapter: Adapter) => {
           // DATA-41: the write's own statements decide which revisions it raises.
-          const txDb = withWriteEvidence(txAdapter);
+          const txDb = withWriteEvidence(txAdapter, true);
           // Execute operation inside transaction
           const opResult = await executeMutationOp(mut, txDb);
           if (!opResult.ok) {
@@ -1469,7 +1469,7 @@ export async function executePush(
       }
     } else {
       // Non-transaction path: execute operation, then record changes separately (best-effort)
-      const writeDb = withWriteEvidence(db);
+      const writeDb = withWriteEvidence(db, false);
       let opResult: ExecuteMutationResult;
       let failedShareCompensationDeferred = false;
       try {

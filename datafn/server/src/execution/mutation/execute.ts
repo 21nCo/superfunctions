@@ -1441,7 +1441,7 @@ export async function executeMutation(
       await changeTracking.ensureRevisionsReady();
       await (db as any).transaction(async (txAdapter: Adapter) => {
         // DATA-41: the write's own statements decide which revisions it raises.
-        const txDb = withWriteEvidence(txAdapter);
+        const txDb = withWriteEvidence(txAdapter, true);
         // DI-002: Re-read record inside transaction to prevent TOCTOU
         const guardResult = await evaluateGuard(
           txDb,
@@ -1586,7 +1586,7 @@ export async function executeMutation(
       await changeTracking.ensureReady();
       await changeTracking.ensureRevisionsReady();
       await (db as any).transaction(async (txAdapter: Adapter) => {
-        const txDb = withWriteEvidence(txAdapter);
+        const txDb = withWriteEvidence(txAdapter, true);
         txMutationResult = await executeMutationCore(
           mutation,
           txDb,
@@ -1658,7 +1658,7 @@ export async function executeMutation(
     if (!insideTransaction) {
       await changeTracking.ensureRevisionsReady();
     }
-    const writeDb = withWriteEvidence(db);
+    const writeDb = withWriteEvidence(db, insideTransaction);
     result = await executeMutationCore(
       mutation,
       writeDb,

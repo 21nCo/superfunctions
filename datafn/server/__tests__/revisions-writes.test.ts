@@ -9,7 +9,15 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import { NotFoundError, type Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
-import { assignWriteRevisions, bumpRevision, bumpTombstone, readRevisions, withWriteEvidence } from "../src/execution/revisions.js";
+import {
+  assignWriteRevisions,
+  bumpRevision,
+  bumpTombstone,
+  configureRevisions,
+  readRevisions,
+  revisionsEnabled,
+  withWriteEvidence,
+} from "../src/execution/revisions.js";
 import { CHANGES_REV_COLUMN_RECHECK_MS, ensureChangesRevColumn } from "../src/execution/internal-tables.js";
 
 type Json = Record<string, any>;
@@ -188,7 +196,7 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
     stale.set("task:1", await base.findOne({ model: "task", where, namespace: NS }));
     // Another transaction deletes the record and commits its tombstone.
     await base.delete({ model: "task", where, namespace: NS } as any);
-    await bumpTombstone(base, NS, "task", "task:1");
+    await bumpTombstone(base, NS, "task", "task:1", false);
 
     const merge = await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "m" } });
 
@@ -203,7 +211,7 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
       // Between this write's DELETE and its change read, another writer
       // re-creates the record and raises its revision.
       await target.create({ model: "kv", data: { id: "kv:prefs", value: { b: 2 } }, namespace: NS } as any);
-      await bumpRevision(target, NS, "kv", "kv:prefs", false);
+      await bumpRevision(target, NS, "kv", "kv:prefs", false, false);
     };
     const db = withoutTransactions(overriding(base, (target) => ({
       async delete(p: any) {
@@ -247,7 +255,7 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
       if (p.model !== "kv" || !overtake) return;
       overtake = false;
       await target.delete({ model: "kv", where: [{ field: "id", operator: "eq", value: "kv:prefs" }], namespace: NS } as any);
-      await bumpTombstone(target, NS, "kv", "kv:prefs");
+      await bumpTombstone(target, NS, "kv", "kv:prefs", false);
     };
     const db = withoutTransactions(overriding(base, (target) => Object.fromEntries(
       ["create", "update", "upsert"].map((name) => [name, async (p: any) => {
@@ -429,7 +437,7 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
             stage = "recreateAfterSample";
             // Writer 2 deletes the record and raises its tombstone.
             await target.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
-            await bumpTombstone(target, NS, "kv", "kv:prefs");
+            await bumpTombstone(target, NS, "kv", "kv:prefs", false);
           }
           return out;
         }])),
@@ -439,7 +447,7 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
             stage = "done";
             // Writer 3 re-creates it and raises it live, after this write sampled it absent.
             await target.create({ model: "kv", data: { id: "kv:prefs", value: { c: 3 } }, namespace: NS } as any);
-            await bumpRevision(target, NS, "kv", "kv:prefs", false);
+            await bumpRevision(target, NS, "kv", "kv:prefs", false, false);
           }
           return out;
         },
@@ -473,7 +481,7 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
             stage = "done";
             // Another writer deletes the record after this write sampled it live.
             await target.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
-            await bumpTombstone(target, NS, "kv", "kv:prefs");
+            await bumpTombstone(target, NS, "kv", "kv:prefs", false);
           }
           return out;
         },
@@ -511,9 +519,9 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
       const base = memoryAdapter() as Adapter;
       const where = [{ field: "id", operator: "eq" as const, value: "task:1" }];
       await base.create({ model: "task", data: { id: "task:1", title: "a" }, namespace: NS } as any);
-      await bumpRevision(base, NS, "task", "task:1", false);
+      await bumpRevision(base, NS, "task", "task:1", false, false);
       // A setNull update, then a cascade delete a BEFORE DELETE trigger suppresses.
-      const db = withWriteEvidence(overriding(base, () => ({ delete: async () => undefined })));
+      const db = withWriteEvidence(overriding(base, () => ({ delete: async () => undefined })), transactional);
       await db.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
       await db.delete({ model: "task", where, namespace: NS } as any);
       const entries: Array<{ resource: string; id: string; op: string; record: null; rev?: number }> = [
@@ -529,12 +537,12 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
 
   it("gives a rewritten KV entry no revision while raising the ledger once to the latest state", async () => {
     const base = memoryAdapter() as Adapter;
-    const db = withWriteEvidence(withoutTransactions(base));
+    const db = withWriteEvidence(withoutTransactions(base), false);
     await db.create({ model: "kv", data: { id: "kv:prefs", value: { a: 1 } }, namespace: NS } as any);
     // Another writer deletes the record before this write's change is read,
     // so the change is rewritten to the stored state: a delete.
     await base.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
-    await bumpTombstone(base, NS, "kv", "kv:prefs");
+    await bumpTombstone(base, NS, "kv", "kv:prefs", false);
     const entries: Array<{ resource: string; id: string; op: string; record: null; rev?: number }> = [
       { resource: "kv", id: "kv:prefs", op: "delete", record: null },
     ];
@@ -599,7 +607,7 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
                 loseAck = false;
                 // The raise committed; a second writer advances the record
                 // before this writer learns the outcome.
-                await bumpRevision(target, NS, "task", "task:1", false);
+                await bumpRevision(target, NS, "task", "task:1", false, false);
                 throw new Error("connection lost after commit");
               }
               return out;
@@ -656,15 +664,15 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
   async function insertedTask(): Promise<Adapter> {
     const base = memoryAdapter() as Adapter;
     await base.create({ model: "task", data: { id: "task:1", title: "a" }, namespace: NS } as any);
-    await bumpRevision(base, NS, "task", "task:1", false);
+    await bumpRevision(base, NS, "task", "task:1", false, false);
     return base;
   }
 
   it("raises a count-less delete after a merge that observed its absence and raised first", async () => {
     for (const mergeFirst of [true, false]) {
       const base = await insertedTask();
-      const dbA = withWriteEvidence(countless(base));
-      const dbB = withWriteEvidence(countless(base));
+      const dbA = withWriteEvidence(countless(base), false);
+      const dbB = withWriteEvidence(countless(base), false);
       await dbA.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
       await dbB.delete({ model: "task", where, namespace: NS } as any);
       const raises = [() => assignWriteRevisions(dbA, NS, mergeEntry() as any, () => false, schema, false),
@@ -688,7 +696,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
             const out = await (target as any)[name](p);
             if (p.model === resource && other === undefined) {
               // Another request's count-less delete removes the row; it raises after this write.
-              other = withWriteEvidence(countless(base));
+              other = withWriteEvidence(countless(base), false);
               await other.delete({ model: resource, where: byId, namespace: NS } as any);
             }
             return out;
@@ -696,7 +704,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         }));
         const record = resource === "kv" ? { value: { a: 1 } } : { title: "a" };
         await base.create({ model: resource, data: { id, ...record }, namespace: NS } as any);
-        await bumpRevision(base, NS, resource, id, false);
+        await bumpRevision(base, NS, resource, id, false, false);
         const served = await serve(db);
         const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
         const merged = resource === "kv" ? { value: { b: 2 } } : { title: "b" };
@@ -709,7 +717,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("raises a first revision again, never not at all, when many other raises drop its mark", async () => {
+  it("adopts a first revision whose acknowledgement was lost however many raises follow it", async () => {
     for (const route of ["push", "mutation"] as const) {
       const base = memoryAdapter() as Adapter;
       let loseAck = true;
@@ -723,7 +731,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
               const out = await value.apply(internal, [table, ...args]);
               if (table === "__datafn_revisions" && loseAck) {
                 loseAck = false;
-                for (let i = 0; i < 12; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                for (let i = 0; i < 12; i++) await bumpRevision(target, NS, "task", "task:1", false, false);
                 throw new Error("connection lost after commit");
               }
               return out;
@@ -737,10 +745,9 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
 
       expect(loseAck, route).toBe(false);
       expect(inserted.body.ok, route).toBe(true);
-      // The insert (1) and the 12 other raises; the insert's dropped mark
-      // cannot prove its raise, so it is raised again (14): a skipped value,
-      // never an uncounted write.
-      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 14, deleted: false });
+      // The insert (1) and the 12 other raises: the insert's mark is still
+      // kept, so its retry adopts its raise.
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 13, deleted: false });
       expect(await changeRows(base, "task:1"), route).toHaveLength(1);
     }
   });
@@ -756,7 +763,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     const entries = [deleteEntry(), deleteEntry()];
     for (const entry of entries) {
       await db.transaction(async (tx: Adapter) => {
-        const write = withWriteEvidence(tx);
+        const write = withWriteEvidence(tx, true);
         await write.delete({ model: "task", where, namespace: NS } as any);
         await assignWriteRevisions(write, NS, entry as any, () => false, schema, true);
       });
@@ -769,7 +776,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
   it("raises once for two count-less deletes of the same row", async () => {
     for (const firstRaisesFirst of [true, false]) {
       const base = await insertedTask();
-      const dbs = [withWriteEvidence(countless(base)), withWriteEvidence(countless(base))];
+      const dbs = [withWriteEvidence(countless(base), false), withWriteEvidence(countless(base), false)];
       for (const db of dbs) await db.delete({ model: "task", where, namespace: NS } as any);
       for (const db of firstRaisesFirst ? dbs : [...dbs].reverse()) {
         await assignWriteRevisions(db, NS, deleteEntry() as any, () => false, schema, false);
@@ -779,9 +786,12 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("counts a write of unknown outcome exactly once while its mark is kept, and at least once after", async () => {
-    // [other raises, whether the lost raise applied, the expected revision]
-    const cases = [[3, true, 5], [3, false, 5], [12, true, 15], [30, true, 33], [13, false, 15]] as const;
+  it("counts a write of unknown outcome exactly once, however many raises follow it", async () => {
+    // [other raises, whether the lost raise applied, the expected revision];
+    // 450 raises drop the mark from the revision row, which records it.
+    const cases = [
+      [3, true, 5], [3, false, 5], [12, true, 14], [30, true, 32], [13, false, 15], [450, true, 452], [450, false, 452],
+    ] as const;
     for (const [others, applies, expected] of cases) {
       for (const route of ["push", "mutation", "transact"] as const) {
         const base = memoryAdapter() as Adapter;
@@ -799,7 +809,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
                 loseAck = false;
                 // The raise is applied (or not), then other writers raise the record before the failure is seen.
                 if (applies) await value.apply(internal, [table, ...args]);
-                for (let i = 0; i < others; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                for (let i = 0; i < others; i++) await bumpRevision(target, NS, "task", "task:1", false, false);
                 throw new Error("connection lost");
               };
             },
@@ -811,9 +821,9 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         const merged = await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
         const label = `${route} others=${others} applies=${applies}`;
 
-        // A raise found by its kept mark is adopted. Once its mark is
-        // dropped, whether it applied is unknown and the merge is raised
-        // again: the revision may skip a value, but every write is counted.
+        // A raise found by its mark, kept on the revision row or recorded
+        // when a later raise dropped it, is adopted; one that never applied
+        // is raised again. Every write is counted once.
         expect(loseAck, label).toBe(false);
         expect(okOf(route, merged.body), label).toBe(true);
         expect(await rev(base, "task", "task:1"), label).toEqual({ rev: expected, deleted: false });
@@ -1034,7 +1044,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
                 armed = false;
                 // 13 other raises land between this write's read and its
                 // swap, which then changes no row; the next read fails.
-                for (let i = 0; i < 13; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                for (let i = 0; i < 13; i++) await bumpRevision(target, NS, "task", "task:1", false, false);
                 const out = await value.apply(internal, [table, ...args]);
                 failRead = true;
                 return out;
@@ -1059,7 +1069,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
       for (const order of orders) {
         const base = await insertedTask();
-        const dbs = [0, 1, 2].map(() => withWriteEvidence(countless(base)));
+        const dbs = [0, 1, 2].map(() => withWriteEvidence(countless(base), false));
         await dbs[0].update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
         await dbs[1].delete({ model: "task", where, namespace: NS } as any);
         // The second delete finds no row.
@@ -1076,12 +1086,12 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     it("raises a delete that removed a re-inserted row after another delete's tombstone, in either raise order", async () => {
       for (const deleteFirst of [true, false]) {
         const base = await insertedTask();
-        const first = withWriteEvidence(countless(base));
+        const first = withWriteEvidence(countless(base), false);
         await first.delete({ model: "task", where, namespace: NS } as any);
         await assign(first, deleteEntry());
-        const insert = withWriteEvidence(countless(base));
+        const insert = withWriteEvidence(countless(base), false);
         await insert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
-        const second = withWriteEvidence(countless(base));
+        const second = withWriteEvidence(countless(base), false);
         await second.delete({ model: "task", where, namespace: NS } as any);
         const raises = [() => assign(second, deleteEntry()), () => assign(insert, insertEntry())];
         for (const raise of deleteFirst ? raises : [...raises].reverse()) await raise();
@@ -1093,14 +1103,14 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
 
     it("raises a delete that found no row when a re-insert it removed raised in between", async () => {
       const base = await insertedTask();
-      const first = withWriteEvidence(countless(base));
+      const first = withWriteEvidence(countless(base), false);
       await first.delete({ model: "task", where, namespace: NS } as any);
       await assign(first, deleteEntry());
       const racing = withWriteEvidence(overriding(countless(base), (target) => ({
         delete: async (p: any) => {
           // After this delete's read found no row, another request re-inserts
           // the record and raises it; then this delete removes it.
-          const insert = withWriteEvidence(countless(base));
+          const insert = withWriteEvidence(countless(base), false);
           await insert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
           await assign(insert, insertEntry());
           // The re-insert's writer stamped the revision row with a clock far behind.
@@ -1111,7 +1121,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
           });
           await target.delete(p);
         },
-      })));
+      })), false);
       await racing.delete({ model: "task", where, namespace: NS } as any);
       expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: false });
       await assign(racing, deleteEntry());
@@ -1134,7 +1144,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
             await target.delete(p);
           },
         }));
-        const writes = [withWriteEvidence(paused), withWriteEvidence(paused)];
+        const writes = [withWriteEvidence(paused, false), withWriteEvidence(paused, false)];
         await Promise.all(writes.map((db) => db.delete({ model: "task", where, namespace: NS } as any)));
         for (const db of firstRaisesFirst ? writes : [...writes].reverse()) await assign(db, deleteEntry());
 
@@ -1144,22 +1154,24 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
 
     it("raises a delete that removed a re-insert whose raise observed the absence first", async () => {
       const base = await insertedTask();
-      const first = withWriteEvidence(countless(base));
+      const first = withWriteEvidence(countless(base), false);
       let reinsert: Adapter | undefined;
       const late = withWriteEvidence(overriding(countless(base), (target) => ({
         delete: async (p: any) => {
           // After this delete's reads, the id is re-inserted; this delete removes it.
-          reinsert = withWriteEvidence(countless(base));
+          reinsert = withWriteEvidence(countless(base), false);
           await reinsert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
           await target.delete(p);
         },
-      })));
+      })), false);
       await first.delete({ model: "task", where, namespace: NS } as any);
       await assign(first, deleteEntry());
       // `late` reads no row under a tombstone, then removes the re-inserted row.
       await late.delete({ model: "task", where, namespace: NS } as any);
       await assign(reinsert!, insertEntry());
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: true });
+      // The re-insert finds its row removed under `late`'s intent: it counts
+      // its live state (3) and that delete's tombstone (4).
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 4, deleted: true });
       await assign(late, deleteEntry());
 
       // insert (1), delete (2), re-insert (3), its delete (4).
@@ -1235,5 +1247,135 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       // The comment's committed delete still raised its revision.
       expect(await rev(base, "comment", "comment:1")).toEqual({ rev: 2, deleted: true });
     });
+
+  describe("PR review round 10", () => {
+    it("counts a delete that removed a re-insert it found absent when the re-insert raises after it, on every route", async () => {
+      for (const route of ["push", "mutation", "transact"] as const) {
+        const base = await insertedTask();
+        let phase = 0;
+        let reinsert: Adapter | undefined;
+        const db = withoutTransactions(overriding(base, (target) => ({
+          internal: new Proxy(target.internal as any, {
+            get(internal, key, receiver) {
+              const value = Reflect.get(internal, key, receiver);
+              if (typeof value !== "function") return value;
+              if (key !== "findMany") return value.bind(internal);
+              return async (table: string, ...args: unknown[]) => {
+                if (table === "__datafn_revisions" && phase === 1) {
+                  phase = 2;
+                  // Before the delete's reads, another request deletes the task and raises its tombstone (2).
+                  await target.delete({ model: "task", where, namespace: NS } as any);
+                  await bumpTombstone(target, NS, "task", "task:1", false);
+                }
+                return value.apply(internal, [table, ...args]);
+              };
+            },
+          }),
+          async delete(p: any) {
+            if (phase === 2 && p.model === "task") {
+              phase = 3;
+              // After the delete's reads found no row, a third request
+              // re-inserts the task; this delete's statement removes it.
+              reinsert = withWriteEvidence(countless(base), false);
+              await reinsert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
+            }
+            return target.delete(p);
+          },
+        })));
+        const send = await nonAtomicRoutes(db, route);
+        phase = 1;
+        const deleted = await send({ resource: "task", operation: "delete", id: "task:1" });
+
+        expect(phase, route).toBe(3);
+        expect(okOf(route, deleted.body), `${route} ${JSON.stringify(deleted.body).slice(0, 300)}`).toBe(true);
+        // The delete found no row and its revision row unchanged: it raised nothing.
+        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 2, deleted: true });
+        // The re-insert raises after the delete decided, and counts that delete.
+        await assign(reinsert!, insertEntry());
+        // insert (1), delete (2), re-insert (3), delete (4): no revision names two states.
+        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 4, deleted: true });
+      }
+    });
+
+    it("keeps a revision for a delete that found no row and removed nothing", async () => {
+      const base = await insertedTask();
+      const first = withWriteEvidence(countless(base), false);
+      await first.delete({ model: "task", where, namespace: NS } as any);
+      await assign(first, deleteEntry());
+      const again = withWriteEvidence(countless(base), false);
+      await again.delete({ model: "task", where, namespace: NS } as any);
+      await assign(again, deleteEntry());
+      // A later write that finds the row present is raised once, live.
+      const insert = withWriteEvidence(countless(base), false);
+      await insert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
+      await assign(insert, insertEntry());
+
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: false });
+    });
+
+    it("issues no revision read before a delete's statement inside a transaction, on every route", async () => {
+      for (const nested of [false, true]) {
+        for (const route of ["push", "mutation", "transact"] as const) {
+          const base = await insertedTask();
+          const early: string[] = [];
+          let removed = false;
+          let aborted = false;
+          // A transaction that a failed statement aborts, as on PostgreSQL;
+          // its adapter exposes a nested `transaction` only when `nested`.
+          const tracked = (tx: Adapter): Adapter =>
+            overriding(tx, (target, self) => ({
+              transaction: nested ? (fn: (inner: Adapter) => Promise<unknown>) => fn(self()) : undefined,
+              internal: new Proxy(target.internal as any, {
+                get(internal, key, receiver) {
+                  const value = Reflect.get(internal, key, receiver);
+                  if (typeof value !== "function") return value;
+                  return async (table: string, ...args: unknown[]) => {
+                    if (aborted) throw new Error("current transaction is aborted");
+                    if (!removed && table === "__datafn_revisions" && (key === "findOne" || key === "findMany")) {
+                      early.push(`${String(key)}:${table}`);
+                      aborted = true;
+                      throw new Error("forced read failure");
+                    }
+                    return value.apply(internal, [table, ...args]);
+                  };
+                },
+              }),
+              async delete(p: any) {
+                if (aborted) throw new Error("current transaction is aborted");
+                const out = await target.delete(p);
+                if (p.model === "task") removed = true;
+                return out;
+              },
+            }));
+          const db = overriding(base, (target) => ({
+            transaction: (fn: (tx: Adapter) => Promise<unknown>, ...rest: unknown[]) =>
+              (target.transaction as any)((tx: Adapter) => fn(tracked(tx)), ...rest),
+          }));
+          const served = await serve(db);
+          const send = { push: served.push, mutation: served.mutate, transact: served.transact }[route];
+          const result = await send({ resource: "task", operation: "delete", id: "task:1" });
+          const label = `nested=${nested} ${route}`;
+
+          expect(early, label).toEqual([]);
+          expect(okOf(route, result.body), `${label} ${JSON.stringify(result.body).slice(0, 300)}`).toBe(true);
+          expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 2, deleted: true });
+        }
+      }
+    });
+
+    it("refuses to enable revisions for a schema whose relation writes the record id", () => {
+      const writesId = {
+        resources: [...schema.resources, { name: "comment", version: 1, fields: [] }],
+        relations: [{ from: "comment", to: "task", type: "many-one", relation: "task", fkField: "id" }],
+      } as any;
+
+      expect(() => configureRevisions(writesId, { enabled: true })).toThrow(/DATAFN_REVISIONS_UNSUPPORTED/);
+      expect(revisionsEnabled(writesId)).toBe(false);
+      expect(() => configureRevisions(writesId, { enabled: false })).not.toThrow();
+      expect(() => configureRevisions(schema, { enabled: true })).not.toThrow();
+      expect(revisionsEnabled(schema)).toBe(true);
+      configureRevisions(schema, undefined);
+    });
+  });
   });
 });

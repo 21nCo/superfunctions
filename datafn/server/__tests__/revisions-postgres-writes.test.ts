@@ -50,7 +50,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
  * when it removed nothing.
  */
 async function deleteWithTombstone(tx: Adapter, id: string): Promise<number | undefined> {
-  const write = withWriteEvidence(tx);
+  const write = withWriteEvidence(tx, true);
   await write.delete({ model: "task", where: [{ field: "id", operator: "eq", value: id }], namespace: "datafn" } as any);
   const entry: { resource: string; id: string; op: string; record: null; rev?: number } = { resource: "task", id, op: "delete", record: null };
   // In the transaction, as push and /mutation raise inside theirs.
@@ -85,7 +85,7 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
     await adapter.rawSql!.execute(`INSERT INTO "${taskTable}" (id, title) VALUES ('${id}', 't0')`);
     // Each write updates the row and records its change from that UPDATE.
     const merge = async (tx: Adapter, entry: { id: string; record: { id: string; title: string } } & Record<string, unknown>) => {
-      const write = withWriteEvidence(tx);
+      const write = withWriteEvidence(tx, true);
       await write.update({ model: "task", where: [{ field: "id", operator: "eq", value: entry.id }], data: { title: entry.record.title } } as any);
       await service.withDb(write, false).recordChanges([entry as any]);
     };
@@ -159,7 +159,7 @@ describe.skipIf(!url)("DATA-41 overlapping deletes on a PostgreSQL server", { ti
     await ensureRevisionsTable(first);
     const id = "task:raced";
     await first.rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'first')`);
-    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false));
+    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false, true));
     // P1 deletes the record and commits its tombstone.
     await first.transaction(async (tx) => {
       expect(await deleteWithTombstone(tx as Adapter, id)).toBe(2);
@@ -169,7 +169,7 @@ describe.skipIf(!url)("DATA-41 overlapping deletes on a PostgreSQL server", { ti
     const commit = deferred();
     const reinsert = second.transaction(async (tx) => {
       await (tx as Adapter).rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'again')`);
-      const rev = await bumpRevision(tx as Adapter, "datafn", "task", id, false);
+      const rev = await bumpRevision(tx as Adapter, "datafn", "task", id, false, true);
       bumped.resolve();
       await commit.promise;
       return rev;
@@ -193,7 +193,7 @@ describe.skipIf(!url)("DATA-41 overlapping deletes on a PostgreSQL server", { ti
     await ensureRevisionsTable(first);
     const id = "task:twice";
     await first.rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'first')`);
-    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false));
+    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false, true));
     // T1 deletes the record and raises its tombstone, holding its transaction open.
     const raised = deferred();
     const commit = deferred();
