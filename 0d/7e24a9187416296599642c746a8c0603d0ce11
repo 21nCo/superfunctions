@@ -1,0 +1,33 @@
+plugfn/core/README.md
+  s_c7988b8d844b06::t_60254fb255476c 131-154,162-165
+plugfn/core/src/scopes/grammar.ts
+  s_c7988b8d844b06::t_61a7e0425d85c1 4-24,56-250,258-262,266,318-354,387-395,427-434,436,464,472,867,870-871,1028-1049,1053-1063,1065-1071,1087-1089,1111-1112,1116-1118,1121-1127,1131-1151,1155,1159-1192,1196,1201-1203,1228-1247
+plugfn/core/src/scopes/index.ts
+  s_c7988b8d844b06::t_2aeab0666e63c1 2
+plugfn/core/src/scopes/types.ts
+  s_c7988b8d844b06::t_4d60ece9054e3a 6-8,11-15,205-214,233-391,422-426,428,440,446-463,467,469,477-482
+plugfn/core/tests/scopes/scope-callbacks.test.ts
+  s_c7988b8d844b06::t_94a64af6e2f518 1-1545
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_c7988b8d844b06::t_6fe495726c10d7 86,88-89
+plugfn/core/tests/scopes/scope-performance.test.ts
+  s_c7988b8d844b06::t_3e72b80ee14508 2,9-10,77,89-90,109-127
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_c7988b8d844b06::t_778bd9488a793a 17,20-22,25-27,202-427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d7e24a9187416296599642c746a8c0603d0ce11",
+  "prompts": {},
+  "sessions": {
+    "s_c7988b8d844b06": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b925831-cd57-4477-868d-8171588b9a97",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
