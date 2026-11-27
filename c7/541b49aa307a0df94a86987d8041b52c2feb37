@@ -1,0 +1,31 @@
+scripts/docs-site/README.md
+  s_92122ac941a68b::t_a1e2d0eae35255 13
+scripts/docs-site/llms.mjs
+  s_cff285c8033656::t_52995e1ff22512 27-36,185-187,254-256,265-267,274-276
+scripts/docs-site/llms.test.mjs
+  s_cff285c8033656::t_71c1915fe3ee83 386-402,502-509
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7541b49aa307a0df94a86987d8041b52c2feb37",
+  "prompts": {},
+  "sessions": {
+    "s_92122ac941a68b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2190f-cde4-7c00-9b87-e8f0870071bd",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
