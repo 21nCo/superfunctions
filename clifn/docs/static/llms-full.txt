@@ -109,7 +109,28 @@ const loaded = await loadConfig<{ target: string }>({
 });
 ```
 
-The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, or `CLIFN_CONFIG_UNSUPPORTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, `CLIFN_CONFIG_UNSUPPORTED`, or (under the data-only policy below) `CLIFN_CONFIG_UNTRUSTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+
+### Data-only config for untrusted workspaces
+
+TS, JS, MJS and CJS configs run code when they are loaded. A CLI that runs in workspaces it does not trust, such as a cloned repository, passes `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` keeps the behaviour above):
+
+- Discovery reads only `.json` candidates. `config.json` is loaded even when `config.ts` sits beside it, and no TS, JS, MJS or CJS candidate is imported. When no JSON candidate exists but an executable one does, the error is `CLIFN_CONFIG_UNTRUSTED` and names the file.
+- An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before the file is checked or imported, unless the host passes `trustExecutableConfig: true`. That is the explicit, non-interactive trust signal, typically set from a flag the user passed. Only the boolean `true` trusts; the loader never prompts, and discovery stays JSON-only even with trust.
+- An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read.
+
+```ts
+import { loadConfig } from "@clifn/core/config-loader";
+
+const loaded = await loadConfig({
+  cwd: process.cwd(),
+  configPath: flags.config,
+  policy: "data-only",
+  trustExecutableConfig: flags.trustConfig === true,
+});
+```
+
+Catch `CLIFN_CONFIG_UNTRUSTED` to name your CLI's trust flag in the message you show.
 
 ## Store project settings
 
@@ -578,6 +599,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
 - `@clifn/core/config-loader`
   - shared config discovery and typed loading contract for TS/JS/MJS/CJS/JSON configs
   - uses the same Jiti-informed `.ts` loading path already established in `packages/cli` and `apifn/cli`
+  - `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` is unchanged) for config from untrusted workspaces: discovery reads only `.json` candidates, so `config.json` is loaded even when `config.ts` sits beside it, and a TS, JS, MJS or CJS file is never imported (when no JSON candidate exists, a discovered executable file raises `CLIFN_CONFIG_UNTRUSTED`, naming it). An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before it is checked or imported unless the host passes `trustExecutableConfig: true`, its explicit non-interactive trust signal (such as a `--trust-config` flag); only the boolean `true` trusts, the loader never prompts, and discovery stays JSON-only with trust. An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read
 - `@clifn/core/env`
   - generic environment readers for strings, integers, and booleans
   - explicit missing, invalid, and out-of-range error codes for shared CLI callers
@@ -710,6 +732,7 @@ If `extfn/cli` needs a generic capability that is not yet exported by `clifn`, t
 - `clifn` is designed for public imports only; no private/internal path imports are required.
 - The generic modules prefer repository-shared mechanisms, including the existing `packages/cli` loader pattern, before introducing new runtime dependencies.
 - `@clifn/core/config-loader` rejects remote config URLs and unsupported extensions with explicit error codes.
+- `@clifn/core/config-loader` with `policy: "data-only"` never runs a discovered config and runs an explicit TS/JS/MJS/CJS config only with `trustExecutableConfig: true` (`CLIFN_CONFIG_UNTRUSTED` otherwise).
 - `@clifn/core/env` uses explicit `CLIFN_ENV_*` error codes for missing, invalid, and out-of-range values.
 
 ## Conduct v0.3 compatibility note
@@ -750,7 +773,7 @@ Executable naming belongs to the consumer package.
 | `/runner` | `runAction`, `RunnerOptions`, `RunnerJsonStyle`, `RunnerContext`, `RunnerActionResult` | Normalized action execution and exit code; one redacted JSON result document with `jsonStyle: 'document'` |
 | `/output` | `createOutput`, `OutputOptions`, `OutputService`, `OutputTable`, `Spinner` | Text and JSON output, tables, spinners |
 | `/diagnostics` | `createDiagnostic`, `sortDiagnostics`, `redactDiagnostics`, `formatDiagnosticsText`, `formatDiagnosticsJson`, `Diagnostic` | Stable report formatting and redaction |
-| `/config-loader` | `defineConfig`, `loadConfig`, `ConfigLoaderOptions`, `LoadedConfig`, `ConfigLoaderError` | Discover and load TS/JS/MJS/CJS/JSON config |
+| `/config-loader` | `defineConfig`, `loadConfig`, `ConfigLoaderOptions`, `ConfigLoaderPolicy`, `LoadedConfig`, `ConfigLoaderError` | Discover and load TS/JS/MJS/CJS/JSON config, or JSON only with `policy: "data-only"` |
 | `/env` | `readRequiredStringEnv`, `readStringEnv`, `readIntEnv`, `readBooleanEnv`, option types | Typed environment values |
 | `/exec` | `createExec`, `ExecOptions`, `ExecResult`, `ExecTimeoutError` | Subprocesses, capture, streams, timeout |
 | `/scaffold` | `createScaffold`, `ScaffoldOperation`, `ScaffoldResult`, `ScaffoldError` | Bounded directory and file writes |

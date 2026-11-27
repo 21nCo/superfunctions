@@ -34,6 +34,7 @@ export {
   loadConfig,
   type ConfigLoaderOptions,
   type ConfigLoaderErrorCode,
+  type ConfigLoaderPolicy,
   type LoadedConfig,
 } from "./config-loader.js";
 export {
