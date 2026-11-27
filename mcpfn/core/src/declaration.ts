@@ -1,5 +1,6 @@
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
 import { McpFnRegistry } from "./registry.js";
+import { registryInternals } from "./registry-internals.js";
 import {
   createMcpFnServer,
   resolveMcpFnServerCapabilities,
@@ -47,12 +48,19 @@ export class McpFnServerDeclaration<TContext = undefined> {
     // here, so later registrations on the caller's registry must not change
     // this declaration's tools without changing its manifest.
     this.registry = options.registry ? options.registry.clone() : new McpFnRegistry<TContext>();
-    for (const tool of options.tools ?? []) this.registry.register(tool);
-    for (const resource of options.resources ?? []) this.registry.registerResource(resource);
-    for (const template of options.resourceTemplates ?? []) {
-      this.registry.registerResourceTemplate(template);
+    try {
+      for (const tool of options.tools ?? []) this.registry.register(tool);
+      for (const resource of options.resources ?? []) this.registry.registerResource(resource);
+      for (const template of options.resourceTemplates ?? []) {
+        this.registry.registerResourceTemplate(template);
+      }
+      for (const prompt of options.prompts ?? []) this.registry.registerPrompt(prompt);
+    } catch (error) {
+      // The copy is discarded: a corrected declaration over the same registry
+      // reuses what its custom compiler compiled.
+      registryInternals.abandonCopy(this.registry);
+      throw error;
     }
-    for (const prompt of options.prompts ?? []) this.registry.registerPrompt(prompt);
     const capabilities = resolveMcpFnServerCapabilities(
       this.registry,
       options.capabilities,

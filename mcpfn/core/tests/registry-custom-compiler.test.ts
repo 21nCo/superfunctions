@@ -526,6 +526,45 @@ describe("McpFnRegistry custom compiler authority", () => {
     }
   });
 
+  it("retries a registration and a declaration that rebuild every object", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const compileSchema = counting();
+    const registry = new McpFnRegistry({ compileSchema });
+    const corrected = (name: string) => ({ ...tool(name), outputSchema: { type: "object", properties: { ok: { type: "boolean" } } } });
+    expect(() => registry.register(failing("t") as never)).toThrow("Tool t contains an invalid JSON Schema");
+    registry.register(corrected("t") as never);
+
+    const other = new McpFnRegistry({ compileSchema: counting() });
+    const declare = (last: object) => defineMcpFnServer({
+      info,
+      registry: other,
+      tools: [
+        { name: "a", description: "First.", inputSchema: { $id: "https://test.invalid/first", type: "object" as const }, handler },
+        last as never,
+      ],
+    });
+    expect(() => declare(failing("b"))).toThrow("Tool b contains an invalid JSON Schema");
+    expect(declare(corrected("b")).registry.listTools().map((listed) => listed.name)).toEqual(["a", "b"]);
+    expect(registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+  });
+
+  it("compiles again when a registry registers a definition a live clone already registered", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    // Accepts two schemas with one $id and rejects the third.
+    let count = 0;
+    const compileSchema = vi.fn(() => {
+      count += 1;
+      if (count > 2) throw new Error(`schema with key or id "${sharedId}" already exists`);
+      return Object.assign(() => true, { errors: null });
+    });
+    const parent = new McpFnRegistry({ compileSchema }).register(tool("a"));
+    const b = tool("b");
+    parent.clone().register(b);
+
+    expect(() => parent.register(b)).toThrow("Tool b contains an invalid JSON Schema");
+    expect(compileSchema).toHaveBeenCalledTimes(3);
+  });
+
   it("reuses every compile of an interrupted multi-tool declaration on its retry", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const compileSchema = counting();
