@@ -479,10 +479,14 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     return this.checkedVersion(key, secrets);
   }
 
-  /** A cached version, refused when its token overlaps what redact() covers for the caller's secrets, escapes included. */
+  /**
+   * A cached version, refused when its token overlaps what redact() covers for the caller's secrets, escapes included, or
+   * a credential shape core redactText() redacts with no secret registered (its Bearer/token and sk- patterns).
+   */
   private checkedVersion(key: string, secrets: readonly string[]): { version: string } | { error: string; timedOut: boolean } {
     const { version, start, end, output } = this.versions.get(key)!;
-    return coverage(output, secrets)?.some((to, from) => from < end && to > start) ? { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false } : { version };
+    const shaped = [...output.matchAll(/\b(Bearer|token)\s+[A-Za-z0-9._~+/-]{8,}/gi), ...output.matchAll(/\bsk-[A-Za-z0-9_-]{8,}\b/g)].some(match => match.index < end && match.index + match[0].length > start);
+    return shaped || coverage(output, secrets)?.some((to, from) => from < end && to > start) ? { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false } : { version };
   }
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {

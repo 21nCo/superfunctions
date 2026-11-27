@@ -835,6 +835,8 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     ["the secret spans both streams", ["fixture-cred", "split-part"].join("\n"), "fake-cli version 1.2.3+fixture-cred", "split-part\n"],
     ["the output JSON-escapes the secret", ["test-fragment", "continued"].join("\n"), `${JSON.stringify({ version: `1.2.3+build.${["test-fragment", "continued"].join("\n")}` })}\n`, ""],
     ["the output \\u-escapes the secret", "build-credential", "fake-cli version 1.2.3+build\\u002dcredential\n", ""],
+    ["it is a credential shape core redacts with no secret registered", "unrelated-fixture-value", "Bearer 1.2.3+build.test\n", ""],
+    ["a token shape crosses a line break into it", "unrelated-fixture-value", "token\n1.2.3+build.fixture\n", ""],
   ])("refuses a version whose reported occurrence overlaps a secret when %s", async (_label, secret, stdout, stderr) => {
     const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout, stderr, timedOut: false, canceled: false });
     const result = await new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner }).preflight(configuration(profile()));
