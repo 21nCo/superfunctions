@@ -12,15 +12,22 @@ import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSub
  * Array iteration protocol (no `for...of`, spread or destructuring, no
  * `new Set(iterable)` or `new Map(iterable)`) and never calls an
  * `Array.prototype` method looked up at call time (no `push`, `map`, `pop`
- * or `fill`). Arrays are walked with index loops and grown by index
- * assignment, and `Array.isArray` is captured at load. A data-valued
- * pollution, or a replaced Array iterator or method, cannot change a
- * decision. See the trust boundary on `ScopeGrammar`.
+ * or `fill`). Arrays are walked with index loops and filled by own-property
+ * definition ({@link defineAt}), never by index assignment, and
+ * `Array.isArray` is captured at load. A data-valued pollution, a replaced
+ * Array iterator or method, or an index property on `Array.prototype` or
+ * `Object.prototype` (writable, non-writable or an accessor) cannot change a
+ * decision or make `normalize` or `isSubset` throw. See the trust boundary on
+ * `ScopeGrammar`.
+ *
+ * The result is an ordinary frozen array whose own indexes and `length` hold
+ * exactly the entries; reading it later through the realm's Array iterator or
+ * methods belongs to the caller's realm.
  */
 function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] {
   const out: T[] = [];
-  for (let i = 0; i < first.length; i++) out[out.length] = first[i]!;
-  for (let i = 0; i < second.length; i++) out[out.length] = second[i]!;
+  for (let i = 0; i < first.length; i++) defineAt(out, out.length, first[i]!);
+  for (let i = 0; i < second.length; i++) defineAt(out, out.length, second[i]!);
   return Object.freeze(out);
 }
 
@@ -51,9 +58,37 @@ const hostClone: Clone | undefined = (() => {
 /** `Array.isArray`, captured at load so replacing it later changes nothing. */
 const isArray: (value: unknown) => value is unknown[] = Array.isArray;
 
-/** Appends `item` by index assignment, never through `Array.prototype.push`. */
+/** `Object.defineProperty`, captured at load. */
+const defineOwnProperty: typeof Object.defineProperty = Object.defineProperty;
+
+/**
+ * The one element descriptor every per-call array write uses. It has a null
+ * prototype and own `value`, `writable`, `enumerable` and `configurable`, so a
+ * polluted `Object.prototype.get` or `.set` can never turn it into an accessor
+ * descriptor. Only `value` changes, and only inside {@link defineAt}.
+ */
+const ELEMENT: { value: unknown; writable: true; enumerable: true; configurable: true } = Object.assign(Object.create(null) as object, {
+  value: undefined,
+  writable: true as const,
+  enumerable: true as const,
+  configurable: true as const,
+});
+
+/**
+ * Defines `list[index]` as an own writable data element. Unlike index
+ * assignment (`[[Set]]`), a definition never consults the prototype chain, so
+ * an inherited accessor's setter cannot swallow the write and an inherited
+ * non-writable index cannot make it throw.
+ */
+function defineAt<T>(list: T[], index: number, item: T): void {
+  ELEMENT.value = item;
+  defineOwnProperty(list, index, ELEMENT);
+  ELEMENT.value = undefined;
+}
+
+/** Appends `item` by own-property definition, never through `Array.prototype.push` or `[[Set]]`. */
 function append<T>(list: T[], item: T): void {
-  list[list.length] = item;
+  defineAt(list, list.length, item);
 }
 
 /**
@@ -129,8 +164,8 @@ function notPlainAt(root: unknown): string | null | undefined {
     if (typeof value === 'number') return Number.isFinite(value);
     if (typeof value !== 'object' || seen.has(value)) return false;
     seen.add(value);
-    pendingValues[top] = value;
-    pendingAt[top] = at;
+    defineAt(pendingValues, top, value);
+    defineAt(pendingAt, top, at);
     top++;
     return true;
   };
@@ -500,13 +535,13 @@ function parseScope(dims: readonly CompiledDimension[], byName: ReadonlyMap<stri
   for (let d = 0; d < dims.length; d++) {
     const dim = dims[d]!;
     if (!Object.hasOwn(value, dim.name)) {
-      if (isSetKind(dim)) scope[d] = Object.freeze([]);
+      if (isSetKind(dim)) defineAt(scope, d, Object.freeze([]));
       else append(out, malformed(side, `dimension "${dim.name}" is required`, dim.name));
       continue;
     }
     const raw = value[dim.name];
     const parsed = isSetKind(dim) ? parseSet(dim, raw, side, out) : parseScalar(dim, raw, side, out);
-    if (parsed !== undefined) scope[d] = parsed;
+    if (parsed !== undefined) defineAt(scope, d, parsed);
   }
   return out.length > 0 ? rejected(out) : ownRecord<ParseOutcome>({ scope: Object.freeze(scope), violations: [] });
 }

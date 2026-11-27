@@ -1184,3 +1184,112 @@ describe('decisions do not depend on the Array iteration protocol or call-time A
     expect(result.scope).toEqual({ perms: ['admin'], repos: ['x/secret'], ttl: 99999 });
   });
 });
+
+describe('engine-built arrays are filled by own-property definition', () => {
+  const g = defineScopeGrammar({
+    provider: 'index-pollution',
+    dimensions: { perms: { kind: 'exactSet' }, repos: { kind: 'prefixGlobSet' }, ttl: { kind: 'ttlMax' } },
+  });
+  const env = { perms: ['contents:read'], repos: ['org/*'], ttl: 60 };
+  const requested = { perms: ['contents:read', 'admin'], repos: ['org/app', 'org/docs'], ttl: 99999 };
+  const badRequest = { perms: ['contents:read', 5], repos: ['org/app'], ttl: 60 };
+  const badEnvelope = { perms: ['contents:read'], repos: ['org/*'], ttl: 'sixty' };
+
+  type Prototype = typeof Array.prototype | typeof Object.prototype;
+  // Every key a tamper may plant. The bookkeeping uses no array, because the
+  // tampers break index assignment and push while they are in place.
+  const plantable: readonly (readonly [Prototype, PropertyKey])[] = [
+    [Array.prototype, 0],
+    [Array.prototype, 1],
+    [Object.prototype, 0],
+    [Object.prototype, 1],
+    [Object.prototype, 'get'],
+    [Object.prototype, 'set'],
+  ];
+  for (const [target, key] of plantable) expect(Object.hasOwn(target, key)).toBe(false);
+  /** Defines with a null-prototype descriptor, so an earlier plant of `get` or `set` cannot leak into it. */
+  const plant = (target: Prototype, key: PropertyKey, fields: PropertyDescriptor) => {
+    Object.defineProperty(target, key, Object.assign(Object.create(null) as PropertyDescriptor, fields, { configurable: true, enumerable: false }));
+  };
+  const restore = () => {
+    for (const [target, key] of plantable) delete (target as Record<PropertyKey, unknown>)[key];
+  };
+  const nonWritable = (target: Prototype, index: number) => () => plant(target, index, { value: 'polluted', writable: false });
+  const noOpAccessor = (index: number) => () =>
+    plant(Array.prototype, index, {
+      get: () => undefined,
+      set: () => {},
+    });
+  const tampers: Record<string, () => void> = {
+    'a non-writable Array.prototype[0]': nonWritable(Array.prototype, 0),
+    'a non-writable Array.prototype[1]': nonWritable(Array.prototype, 1),
+    'a non-writable Object.prototype[0]': nonWritable(Object.prototype, 0),
+    'a non-writable Object.prototype[1]': nonWritable(Object.prototype, 1),
+    'a no-op accessor at Array.prototype[0]': noOpAccessor(0),
+    'a no-op accessor at Array.prototype[1]': noOpAccessor(1),
+    // A plain-object descriptor would inherit these and become an invalid accessor descriptor.
+    'Object.prototype get and set functions': () => {
+      plant(Object.prototype, 'get', { value: () => undefined, writable: true });
+      plant(Object.prototype, 'set', { value: () => {}, writable: true });
+    },
+  };
+
+  /** Runs `run` with `tamper` applied by a request getter (after the envelope is captured) or before the call, restoring before it returns. */
+  function under<T>(tamper: () => void, fromGetter: boolean, source: Record<string, unknown>, run: (request: object) => T): T {
+    const request = fromGetter
+      ? {
+          get perms() {
+            tamper();
+            return source.perms;
+          },
+          repos: source.repos,
+          ttl: source.ttl,
+        }
+      : source;
+    try {
+      if (!fromGetter) tamper();
+      return run(request);
+    } finally {
+      restore();
+    }
+  }
+
+  const cases = Object.keys(tampers).flatMap(name => [
+    [name, 'from a request getter', true],
+    [name, 'before the call', false],
+  ]) as [string, string, boolean][];
+
+  it.each(cases)('isSubset denies exactly with %s applied %s', (name, _when, fromGetter) => {
+    const result = under(tampers[name]!, fromGetter, requested, request => g.isSubset(request as never, env as never));
+    expect(result.ok).toBe(false);
+    expect(result.scope).toBeUndefined();
+    expect(result.violations).toEqual([
+      expect.objectContaining({ code: 'not_in_envelope', side: 'request', dimension: 'perms', item: 'admin' }),
+      expect.objectContaining({ code: 'exceeds_envelope', side: 'request', dimension: 'ttl', item: 99999, limit: 60 }),
+    ]);
+  });
+
+  it.each(cases)('normalize keeps every member and scalar with %s applied %s', (name, _when, fromGetter) => {
+    const result = under(tampers[name]!, fromGetter, requested, request => g.normalize(request as never));
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.scope).toEqual({ perms: ['contents:read', 'admin'], repos: ['org/app', 'org/docs'], ttl: 99999 });
+  });
+
+  it.each(cases)('a malformed request stays malformed on the request side with %s applied %s', (name, _when, fromGetter) => {
+    const subset = under(tampers[name]!, fromGetter, badRequest, request => g.isSubset(request as never, env as never));
+    const normalized = under(tampers[name]!, fromGetter, badRequest, request => g.normalize(request as never));
+    for (const result of [subset, normalized]) {
+      expect(result.ok).toBe(false);
+      expect(result.scope).toBeUndefined();
+      expect(result.violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'perms' })]);
+    }
+  });
+
+  it.each(cases)('a malformed envelope stays malformed on the envelope side with %s applied %s', (name, _when, fromGetter) => {
+    const result = under(tampers[name]!, fromGetter, requested, request => g.isSubset(request as never, badEnvelope as never));
+    expect(result.ok).toBe(false);
+    expect(result.scope).toBeUndefined();
+    expect(result.violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'ttl' })]);
+  });
+});

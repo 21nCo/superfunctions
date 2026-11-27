@@ -227,8 +227,14 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
  *
  * The engine never reads an input or its own arrays through the Array
  * iteration protocol or an `Array.prototype` method looked up at call time,
- * so a data-valued pollution or a replaced Array iterator or method cannot
- * change a decision. The realm's other built-in functions (`Set`, `Map`,
+ * and fills every array it builds by own-property definition rather than
+ * index assignment. So a data-valued pollution, a replaced Array iterator or
+ * method, or an index property on `Array.prototype` or `Object.prototype`
+ * (writable, non-writable or an accessor) cannot change a decision or make
+ * `normalize` or `isSubset` throw. The set arrays in a returned scope are
+ * frozen ordinary arrays whose own indexes and `length` hold exactly the
+ * approved members; reading them after the call through the realm's Array
+ * iterator or methods belongs to the caller's realm. The realm's other built-in functions (`Set`, `Map`,
  * `String`, `Number`, `RegExp`, `JSON`, `Object` and `Math` methods) are
  * trusted; caller code that replaces them, including from an input getter,
  * has the caller's own authority and is outside this boundary. An input
