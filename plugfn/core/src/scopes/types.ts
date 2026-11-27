@@ -235,9 +235,16 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * shared references.
    * Any other clone (a SharedArrayBuffer, an ArrayBuffer or view, a Map, Set,
    * Date, RegExp, Error, Blob, boxed value or `undefined`) is `malformed` and
-   * `normalize` is not called. Every object in the clone it receives has a
-   * null prototype (arrays stay arrays), so a field inherited from a polluted
-   * `Object.prototype` never appears in the input. Its result is cloned again, checked to be
+   * `normalize` is not called. The engine detaches every record and array of
+   * the clone it receives from the shared realm: every record has a null
+   * prototype, and every array (still an array, `length` own) has a frozen
+   * null-prototype prototype holding the `Array.prototype` methods captured
+   * at load, without `constructor`. So a field inherited from a polluted
+   * `Object.prototype` or `Array.prototype` never appears in the input.
+   * Boundary: primitive values (read through the `String`, `Number` and
+   * `Boolean` prototypes) and every object `normalize` builds itself belong
+   * to the callback's realm, so a polluted realm can change what `normalize`
+   * computes from them. Its result is cloned again, checked to be
    * plain JSON-like data in the same way, and validated: a throw, or a result
    * that is not plain data or does not fit the grammar, is `malformed`.
    * Defaults to the identity.
@@ -251,11 +258,15 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * with a no-op rejection handler, which marks a native promise's rejection
    * handled so it cannot surface as an unhandled rejection. When the species
    * lookup inside `then` throws (a throwing `constructor` or
-   * `Symbol.species`), it retries once with an own `constructor: undefined`
-   * on the promise, then restores the original. Residual: a non-extensible
-   * promise, or one with a non-configurable own `constructor` whose lookup
-   * throws, cannot be marked handled; only deliberately hostile callback code
-   * can build one, and the engine still fails closed. Any other returned
+   * `Symbol.species`), it retries once with the promise's `constructor`
+   * reading as `undefined`, decided by its own `constructor` descriptor (in
+   * any realm): absent on an extensible promise, configurable, or
+   * non-configurable writable data; then it restores the original.
+   * Residual: a promise whose lookup throws and whose own `constructor` is a
+   * non-configurable accessor or non-configurable non-writable data, or a
+   * non-extensible promise with no own `constructor`, cannot be marked
+   * handled; only deliberately hostile callback code can build one, and the
+   * engine still fails closed. Any other returned
    * value is left alone; a returned object's own `then` is never read or
    * called.
    */

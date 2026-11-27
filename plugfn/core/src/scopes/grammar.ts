@@ -44,8 +44,6 @@ const intrinsicThen: (value: unknown, onFulfilled: undefined, onRejected: () => 
   intrinsicPromisePrototype.then,
 ) as never;
 const ignoreRejection = (): void => undefined;
-/** A bound on the prototype walk, so a Proxy that invents prototypes cannot loop forever. */
-const MAX_PROTOTYPE_DEPTH = 1000;
 
 /** Applies the intrinsic `then` with a no-op rejection handler; `false` when it throws. */
 function markHandled(value: object): boolean {
@@ -57,14 +55,15 @@ function markHandled(value: object): boolean {
   }
 }
 
-/** Whether the intrinsic `Promise.prototype` is on `value`'s prototype chain. */
-function inheritsFromPromise(value: object): boolean {
-  let proto: unknown = Object.getPrototypeOf(value);
-  for (let depth = 0; proto !== null && depth < MAX_PROTOTYPE_DEPTH; depth++) {
-    if (proto === intrinsicPromisePrototype) return true;
-    proto = Object.getPrototypeOf(proto as object);
+/** A data descriptor with a null prototype, so a polluted `Object.prototype.get` or `.set` cannot make it an accessor. */
+function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
+  const descriptor = Object.create(null) as PropertyDescriptor;
+  descriptor.value = value;
+  if (flags) {
+    descriptor.writable = true;
+    descriptor.configurable = true;
   }
-  return false;
+  return descriptor;
 }
 
 /**
@@ -78,35 +77,76 @@ function inheritsFromPromise(value: object): boolean {
  *
  * `then` looks up the species constructor (`constructor`, then
  * `Symbol.species`) before it attaches the handler, and that lookup can throw.
- * So when the first attempt throws on a value that inherits from
- * `Promise.prototype` and is extensible, with no own `constructor` or a
- * configurable one, an own `constructor: undefined` is defined for one retry,
- * which makes `then` use the intrinsic `Promise` without reading the species,
- * and the original own `constructor` is restored (or removed) afterwards. A
- * plain object never takes this path. Residual: a non-extensible promise, or
- * one with a non-configurable own `constructor` whose lookup throws, cannot be
- * marked handled; the caller still fails closed.
+ * So when the first attempt throws, the engine retries once with
+ * `constructor` reading as `undefined`, which makes `then` use the intrinsic
+ * `Promise` without reading the species, decided by the value's actual own
+ * `constructor` descriptor (whatever its realm):
+ * - absent: on an extensible value, an own `constructor: undefined` is
+ *   defined for the retry and deleted afterwards;
+ * - configurable (data or accessor): it is redefined to that data property
+ *   for the retry and the saved descriptor is restored afterwards;
+ * - non-configurable writable data: its value is set to `undefined` for the
+ *   retry and set back afterwards.
+ * A value with no own `constructor` whose prototype is `Object.prototype` or
+ * `null` (a plain record) never takes the retry. Residual: a non-configurable
+ * accessor, a non-configurable non-writable `constructor`, or a non-extensible
+ * promise with no own `constructor`, whose lookup throws, cannot be marked
+ * handled; the caller still fails closed.
  */
 function containPromise(value: unknown): void {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
   if (markHandled(value)) return;
   try {
-    if (!inheritsFromPromise(value) || !Object.isExtensible(value)) return;
     const saved = Object.getOwnPropertyDescriptor(value, 'constructor');
-    if (saved !== undefined && !saved.configurable) return;
-    // Null-prototype descriptors: a polluted Object.prototype.get or .set cannot turn them into accessors.
-    const neutral = Object.assign(Object.create(null) as PropertyDescriptor, { value: undefined, writable: true, configurable: true });
-    Object.defineProperty(value, 'constructor', neutral);
+    let restore: () => void;
+    if (saved === undefined) {
+      const proto: unknown = Object.getPrototypeOf(value);
+      if (proto === Object.prototype || proto === null || !Object.isExtensible(value)) return;
+      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, true));
+      restore = () => {
+        delete (value as { constructor?: unknown }).constructor;
+      };
+    } else if (saved.configurable) {
+      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, true));
+      restore = () => {
+        Object.defineProperty(value, 'constructor', Object.setPrototypeOf(saved, null) as PropertyDescriptor);
+      };
+    } else if (Object.hasOwn(saved, 'value') && saved.writable === true) {
+      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, false));
+      restore = () => {
+        Object.defineProperty(value, 'constructor', dataDescriptor(saved.value, false));
+      };
+    } else {
+      return;
+    }
     try {
       markHandled(value);
     } finally {
-      if (saved === undefined) delete (value as { constructor?: unknown }).constructor;
-      else Object.defineProperty(value, 'constructor', Object.setPrototypeOf(saved, null) as PropertyDescriptor);
+      restore();
     }
   } catch {
     // A Proxy trap or a failed restore: nothing more can be done, and the caller fails closed.
   }
 }
+
+/**
+ * The prototype of every array the engine hands to `normalize`: a frozen
+ * null-prototype copy of the own `Array.prototype` members (string and symbol
+ * keys, `Symbol.iterator` included) captured once at load, without
+ * `constructor`. Array methods work as usual, but nothing added to or
+ * replaced on `Array.prototype` or `Object.prototype` later is visible, and
+ * `ArraySpeciesCreate` sees no `constructor`, so `map` and friends create
+ * intrinsic arrays.
+ */
+const NORMALIZE_ARRAY_PROTOTYPE: object = (() => {
+  const proto = Object.create(null) as object;
+  for (const key of Reflect.ownKeys(Array.prototype)) {
+    if (key === 'constructor') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key)!;
+    Object.defineProperty(proto, key, Object.setPrototypeOf(descriptor, null) as PropertyDescriptor);
+  }
+  return Object.freeze(proto);
+})();
 
 type Side = ScopeViolation['side'];
 type ScopeValue = readonly string[] | number;
@@ -189,8 +229,10 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
  * walk is linear in the clone's size.
  *
  * With `detach`, each record is given a null prototype once its keys are
- * checked (arrays stay arrays), so a callback reading the clone can never see
- * a field inherited from a polluted `Object.prototype`. The result is only
+ * checked, and each array {@link NORMALIZE_ARRAY_PROTOTYPE} once its entries
+ * are queued (it stays an array), so a callback reading the clone can never
+ * see a field inherited from a polluted `Object.prototype` or
+ * `Array.prototype`. The result is only
  * meaningful when the whole walk passes; it is used only for the clone handed
  * to `normalize`, which is never checked again.
  */
@@ -215,6 +257,7 @@ function notPlainAt(root: unknown, detach = false): string | null | undefined {
       for (let i = 0; i < value.length; i++) {
         if (!Object.hasOwn(value, i) || !accept(value[i], at)) return at;
       }
+      if (detach) Object.setPrototypeOf(value, NORMALIZE_ARRAY_PROTOTYPE);
     } else if (isCloneRecord(value)) {
       for (const key of Object.keys(value)) {
         const under = value === root ? key : at;
@@ -819,7 +862,8 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     // and validation never meets an extra array key or a shared reference.
     if (normalize) {
       // The input is provider-shaped, so its keys name no dimension. Every
-      // record of the clone normalize receives has a null prototype.
+      // record of the clone normalize receives has a null prototype and
+      // every array NORMALIZE_ARRAY_PROTOTYPE.
       if (notPlainAt(value, true) !== undefined) return fail(side, NOT_PLAIN_DATA, undefined);
       let mapped: unknown;
       try {

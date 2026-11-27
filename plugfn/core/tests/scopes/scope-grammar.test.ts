@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineScopeGrammar, SCOPE_LIMITS, SCOPE_RISK_LEVELS, ScopeError, type AnyScopeGrammar, type ScopeRisk } from '../../src/scopes/index.js';
 
@@ -1116,7 +1117,98 @@ describe('every record the engine hands out is its own (I7)', () => {
     n.normalize({ access: [], meta: { nested: { deep: true } }, list: [{ inArray: 1 }] } as never);
     const [input] = inputs as [{ meta: { nested: object }; list: object[] }];
     expect([input, input.meta, input.meta.nested, input.list[0]].map(record => Object.getPrototypeOf(record))).toEqual([null, null, null, null]);
-    expect(Object.getPrototypeOf(input.list)).toBe(Array.prototype);
+    expect(Array.isArray(input.list)).toBe(true);
+    expect(Object.getPrototypeOf(input.list)).not.toBe(Array.prototype);
+  });
+
+  describe('input arrays', () => {
+    const grant = { permissions: ['test-write'] };
+    /** Reads the first rule's permissions, as a provider normalize might. */
+    const firstRule = defineScopeGrammar({
+      provider: 'input-arrays',
+      dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'test-write'] } },
+      normalize: ((input: { rules: { permissions?: string[] }[] }) => ({ perms: input.rules[0]?.permissions ?? [] })) as never,
+      riskOf,
+    });
+
+    it.each([
+      ['Object.prototype', Object.prototype],
+      ['Array.prototype', Array.prototype],
+    ])('grants nothing from an empty envelope array when %s[0] is polluted', (_label, target) => {
+      const request = { rules: [grant] } as never;
+      const emptyEnvelope = { rules: [] } as never;
+      const before = firstRule.isSubset(request, emptyEnvelope).ok;
+      const polluted = target as unknown as Record<number, unknown>;
+      let during: { ok: boolean; perms: unknown };
+      try {
+        polluted[0] = grant;
+        during = { ok: firstRule.isSubset(request, emptyEnvelope).ok, perms: firstRule.normalize(emptyEnvelope).scope?.perms };
+      } finally {
+        delete polluted[0];
+      }
+      expect(before).toBe(false);
+      expect(during).toEqual({ ok: false, perms: [] });
+    });
+
+    it('stay working arrays at every depth, with a frozen null-prototype prototype and no constructor', () => {
+      const seen: unknown[] = [];
+      const g = defineScopeGrammar({
+        provider: 'input-array-shape',
+        dimensions: { names: { kind: 'exactSet' } },
+        normalize: ((input: { names: string[]; nested: { lists: number[][] } }) => {
+          const arrays = [input.names, input.nested.lists, input.nested.lists[0]!];
+          const iterated: unknown[] = [];
+          for (const name of input.names) iterated.push(name);
+          seen.push(
+            arrays.map(array => {
+              const proto = Object.getPrototypeOf(array) as object;
+              return [Array.isArray(array), Object.hasOwn(array, 'length'), Object.isFrozen(proto), Object.getPrototypeOf(proto), 'constructor' in array];
+            }),
+            input.names.map(name => name.toUpperCase()),
+            input.names.filter(name => name !== 'b'),
+            input.names.includes('b'),
+            iterated,
+            Array.isArray(input.names.map(name => name)) && Object.getPrototypeOf(input.names.map(name => name)) === Array.prototype,
+          );
+          return { names: input.names };
+        }) as never,
+        riskOf,
+      });
+      expect(g.normalize({ names: ['a', 'b'], nested: { lists: [[1], [2]] } } as never).ok).toBe(true);
+      const shape = [true, true, true, null, false];
+      expect(seen).toEqual([[shape, shape, shape], ['A', 'B'], ['a'], true, ['a', 'b'], true]);
+    });
+
+    it('call the Array.prototype methods captured at load, not a later replacement', () => {
+      const original = Array.prototype.map;
+      const inputArrays = new Set<unknown>();
+      const onInput: unknown[] = [];
+      // Widens any input array it is called on; the engine's own arrays are mapped as usual.
+      const replacement = function (this: unknown[], ...args: Parameters<typeof original>) {
+        if (!inputArrays.has(this)) return original.apply(this, args);
+        onInput.push(this);
+        return ['test-write'];
+      };
+      const g = defineScopeGrammar({
+        provider: 'input-array-methods',
+        dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'test-write'] } },
+        normalize: ((input: { perms: string[] }) => {
+          inputArrays.add(input.perms);
+          return { perms: input.perms.map(perm => perm) };
+        }) as never,
+        riskOf,
+      });
+      let result: boolean;
+      try {
+        Array.prototype.map = replacement as never;
+        result = g.isSubset({ perms: ['test-write'] } as never, { perms: [] } as never).ok;
+      } finally {
+        Array.prototype.map = original;
+      }
+      expect(inputArrays.size).toBe(2);
+      expect(onInput).toEqual([]);
+      expect(result).toBe(false);
+    });
   });
 });
 
@@ -1494,8 +1586,35 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         return 5 as never;
       }
     }
+    /** A constructor value whose `Symbol.species` lookup throws. */
+    const throwingSpeciesHolder = () =>
+      Object.defineProperty({}, Symbol.species, {
+        get() {
+          throw new Error('species threw');
+        },
+      });
+    const crossRealm = () => {
+      const promise = runInNewContext('Promise.reject(new Error("cross-realm rejected"))') as object;
+      Object.defineProperty(promise, 'constructor', {
+        configurable: true,
+        get() {
+          throw new Error('constructor lookup threw');
+        },
+      });
+      return promise;
+    };
+    const nonExtensibleConfigurable = () => Object.preventExtensions(throwingConstructor());
+    const nonConfigurableWritable = () =>
+      Object.defineProperty(Promise.reject(new Error('species rejected')), 'constructor', {
+        value: throwingSpeciesHolder(),
+        writable: true,
+        configurable: false,
+      });
     const makers: [string, () => object][] = [
       ['an own throwing constructor getter', throwingConstructor],
+      ['a cross-realm promise with a configurable throwing constructor getter', crossRealm],
+      ['a non-extensible promise with a configurable throwing constructor getter', nonExtensibleConfigurable],
+      ['a non-configurable writable constructor whose species throws', nonConfigurableWritable],
       ['a subclass whose species getter throws', () => ThrowingSpecies.reject(new Error('species rejected'))],
       ['a subclass whose species is not a constructor', () => NonConstructorSpecies.reject(new Error('species rejected'))],
     ];
@@ -1535,7 +1654,24 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         const after = Object.getOwnPropertyDescriptor(value, 'constructor');
         expect(after).toEqual(before);
         expect(after?.get).toBe(before?.get);
+        expect(after?.value).toBe(before?.value);
       }
+    });
+
+    it('never defines a property on a plain record or a Proxy over one', () => {
+      let defines = 0;
+      const proxied = () =>
+        new Proxy(
+          { names: ['a'] },
+          {
+            defineProperty(target, key, descriptor) {
+              defines++;
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          },
+        );
+      expect(runAll(proxied, [])).toEqual([['request'], ['envelope'], false, true]);
+      expect(defines).toBe(0);
     });
 
     it('contains a plain rejected promise after Promise[Symbol.species] is redefined to throw', async () => {
@@ -1561,15 +1697,17 @@ describe('callbacks are synchronous and a returned promise is contained, never a
       for (const [value] of made) expect(Object.hasOwn(value, 'constructor')).toBe(false);
     });
 
-    it('still fails closed on the documented residual: a non-configurable or non-extensible promise', () => {
-      const nonConfigurable = () =>
+    it('still fails closed on the documented residual: a non-configurable accessor or read-only constructor, or a non-extensible promise without one', () => {
+      const nonConfigurableAccessor = () =>
         Object.defineProperty(Promise.resolve('settled'), 'constructor', {
           get() {
             throw new Error('constructor lookup threw');
           },
         });
+      const nonConfigurableReadOnly = () =>
+        Object.defineProperty(Promise.resolve('settled'), 'constructor', { value: throwingSpeciesHolder(), writable: false, configurable: false });
       const nonExtensible = () => Object.preventExtensions(ThrowingSpecies.resolve('settled' as never));
-      for (const make of [nonConfigurable, nonExtensible]) {
+      for (const make of [nonConfigurableAccessor, nonConfigurableReadOnly, nonExtensible]) {
         expect(runAll(make, [])).toEqual([['request'], ['envelope'], false, true]);
       }
     });
