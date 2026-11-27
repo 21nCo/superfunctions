@@ -1,0 +1,53 @@
+apifn/admin/package.json
+  s_1eda09393441ef::t_bbaee661fefeb7 3,41,47
+apifn/cli/package.json
+  s_1eda09393441ef::t_e0d0e72afe8db0 3,26-31
+apifn/collections/package.json
+  s_1eda09393441ef::t_1ec9049be3dce8 3,23
+apifn/contracts/package.json
+  s_1eda09393441ef::t_97420f566607f5 3,43
+apifn/core/README.md
+  s_1eda09393441ef::t_a00d5353243051 20,169-215,308-310
+apifn/core/package.json
+  s_1eda09393441ef::t_a6ee88651f1547 3
+apifn/core/src/idempotency/__tests__/request-idempotency.test.ts
+  s_1eda09393441ef::t_d722f5920162c3 1-421
+apifn/core/src/idempotency/canonical-json.ts
+  s_1eda09393441ef::t_80ace8ab50d540 1-70
+apifn/core/src/idempotency/request-idempotency.ts
+  s_1eda09393441ef::t_570761a959d64e 1-659
+apifn/core/src/index.ts
+  s_1eda09393441ef::t_0d3fe63cc4a55c 116-147
+apifn/docsfn/package.json
+  s_1eda09393441ef::t_4d7b8c0f3efb98 32
+apifn/mock/package.json
+  s_1eda09393441ef::t_f7451cd13dbc9e 3,23
+apifn/react/package.json
+  s_1eda09393441ef::t_eed4fb510ee0ad 22
+apifn/sdk/package.json
+  s_1eda09393441ef::t_f05e4bb92ceb0e 3,32
+apifn/sdk/src/version.ts
+  s_1eda09393441ef::t_5b41c361f5f9cc 3
+apifn/snippets/package.json
+  s_1eda09393441ef::t_0af1ee4bc8e19d 3,23
+apifn/svelte/package.json
+  s_1eda09393441ef::t_f99754761e1bc4 50
+package-lock.json
+  s_1eda09393441ef::t_7a840edc28945c 93,96,99,110,113-118,137,140,263,266,305,395,429,432,446,809,812,846,849,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23cf5688d7afbd8e8accf07f63c3ae8383a0f61a",
+  "prompts": {},
+  "sessions": {
+    "s_1eda09393441ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9864b5f1-7b73-48ab-aa84-9cbc5c8e2a60",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
