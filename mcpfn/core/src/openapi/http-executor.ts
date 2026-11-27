@@ -98,7 +98,30 @@ const HTML_NAMED = new Map<string, string>(
 );
 const HTML_LEGACY = ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT"] as const;
 const HTML_LEGACY_NAMES: ReadonlySet<string> = new Set(HTML_LEGACY);
-const HTML_NAME = /&([A-Za-z][A-Za-z0-9]*)/g;
+const HTML_NAME = /&([A-Za-z][A-Za-z0-9]*)(;?)/g;
+// The HTML5 named references HTML also decodes without `;` (a longer name
+// that starts with one, such as `&notit`, decodes as the legacy one plus text).
+const HTML_SEMICOLONLESS = [
+  "AElig", "AMP", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml", "COPY", "Ccedil", "ETH", "Eacute", "Ecirc",
+  "Egrave", "Euml", "GT", "Iacute", "Icirc", "Igrave", "Iuml", "LT", "Ntilde", "Oacute", "Ocirc", "Ograve", "Oslash",
+  "Otilde", "Ouml", "QUOT", "REG", "THORN", "Uacute", "Ucirc", "Ugrave", "Uuml", "Yacute", "aacute", "acirc", "acute",
+  "aelig", "agrave", "amp", "aring", "atilde", "auml", "brvbar", "ccedil", "cedil", "cent", "copy", "curren", "deg",
+  "divide", "eacute", "ecirc", "egrave", "eth", "euml", "frac12", "frac14", "frac34", "gt", "iacute", "icirc", "iexcl",
+  "igrave", "iquest", "iuml", "laquo", "lt", "macr", "micro", "middot", "nbsp", "not", "ntilde", "oacute", "ocirc",
+  "ograve", "ordf", "ordm", "oslash", "otilde", "ouml", "para", "plusmn", "pound", "quot", "raquo", "reg", "sect", "shy",
+  "sup1", "sup2", "sup3", "szlig", "thorn", "times", "uacute", "ucirc", "ugrave", "uml", "uuml", "yacute", "yen", "yuml",
+] as const;
+const HTML_SEMICOLONLESS_NAMES: ReadonlySet<string> = new Set(HTML_SEMICOLONLESS);
+// The longest semicolon-less name, so a prefix check looks at a bounded number of prefixes.
+const HTML_SEMICOLONLESS_LONGEST = Math.max(...HTML_SEMICOLONLESS.map((name) => name.length));
+// The WHATWG HTML numeric character reference replacements for 0x80-0x9F
+// (windows-1252); 0x81, 0x8D, 0x8F, 0x90 and 0x9D are not replaced.
+const HTML_C1 = new Map<number, number>([
+  [0x80, 0x20ac], [0x82, 0x201a], [0x83, 0x0192], [0x84, 0x201e], [0x85, 0x2026], [0x86, 0x2020], [0x87, 0x2021],
+  [0x88, 0x02c6], [0x89, 0x2030], [0x8a, 0x0160], [0x8b, 0x2039], [0x8c, 0x0152], [0x8e, 0x017d], [0x91, 0x2018],
+  [0x92, 0x2019], [0x93, 0x201c], [0x94, 0x201d], [0x95, 0x2022], [0x96, 0x2013], [0x97, 0x2014], [0x98, 0x02dc],
+  [0x99, 0x2122], [0x9a, 0x0161], [0x9b, 0x203a], [0x9c, 0x0153], [0x9e, 0x017e], [0x9f, 0x0178],
+]);
 const NON_ASCII = /[^\x00-\x7f]/;
 
 const encoder = new TextEncoder();
@@ -602,13 +625,18 @@ function htmlUnescaped(text: string): string {
   );
 }
 
-/** The character a numeric reference's digits name, U+FFFD for NUL, a surrogate or a value past U+10FFFF. */
+/**
+ * The character a numeric reference's digits name as HTML reads it: U+FFFD for
+ * NUL, a surrogate or a value past U+10FFFF, and 0x80-0x9F through the
+ * windows-1252 replacements in `HTML_C1`.
+ */
 function codePointText(digits: string, radix: number): string {
   let start = 0;
   while (start < digits.length - 1 && digits[start] === "0") start += 1;
   // More than seven significant digits exceed U+10FFFF in either radix, so such runs are not parsed.
   const code = digits.length - start > 7 ? Number.POSITIVE_INFINITY : Number.parseInt(digits.slice(start), radix);
-  return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff) ? "\ufffd" : String.fromCodePoint(code);
+  if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "\ufffd";
+  return String.fromCodePoint(HTML_C1.get(code) ?? code);
 }
 
 function holdsSecret(text: string, secrets: readonly string[]): boolean {
@@ -616,16 +644,28 @@ function holdsSecret(text: string, secrets: readonly string[]): boolean {
 }
 
 /**
- * Whether `text` has a named character reference whose name is not exactly
- * one `htmlUnescaped` decodes (a longer name that starts with a legacy one,
- * such as `&ltimes;`, is not). Such a reference (`&eacute;`) can stand for a non-ASCII character,
- * which only a credential form decoded from percent escapes can hold, so with
- * one of those it counts as a possible echo.
+ * Whether `text` has a named character reference HTML could decode whose name
+ * is not exactly one `htmlUnescaped` decodes (a longer name that starts with a
+ * legacy one, such as `&ltimes;`, is not). HTML could decode a name that ends
+ * in `;` or starts with a semicolon-less one; other text such as `&view=` in a
+ * URL is left alone. Such a reference (`&eacute;`) can stand for a non-ASCII
+ * character, which only a credential form decoded from percent escapes can
+ * hold, so with one of those it counts as a possible echo.
  */
 function opaqueReference(text: string): boolean {
-  for (const [, name] of text.matchAll(HTML_NAME)) {
+  for (const [, name, semicolon] of text.matchAll(HTML_NAME)) {
     // Only an exact name counts as decoded: `&ltimes;` starts with a legacy name but stands for U+22C9.
-    if (!HTML_NAMED.has(name!) && !HTML_LEGACY_NAMES.has(name!)) return true;
+    if (HTML_NAMED.has(name!) || HTML_LEGACY_NAMES.has(name!)) continue;
+    if (semicolon || semicolonlessPrefix(name!)) return true;
+  }
+  return false;
+}
+
+/** Whether `name` starts with a named reference HTML decodes without `;`. */
+function semicolonlessPrefix(name: string): boolean {
+  const longest = Math.min(name.length, HTML_SEMICOLONLESS_LONGEST);
+  for (let length = 2; length <= longest; length += 1) {
+    if (HTML_SEMICOLONLESS_NAMES.has(name.slice(0, length))) return true;
   }
   return false;
 }

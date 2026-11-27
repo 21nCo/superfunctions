@@ -2604,6 +2604,46 @@ describe("httpExecutor named references that only start with a legacy name", () 
   });
 });
 
+describe("httpExecutor HTML numeric references in the windows-1252 range and text that only looks like a reference", () => {
+  const run = (headers: Record<string, string>, status: number, body: string, contentType = "text/html") =>
+    execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        headers,
+        fetch: stubFetch(() => new Response(body, { status, headers: { "content-type": contentType } })).fetch,
+      }),
+      operationOf("echo"),
+    );
+  const withheld = "The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]";
+
+  it.each([
+    ["session=test-%E2%82%AC-key", "<p>test-&#128;-key</p>"],
+    ["session=test-%E2%82%AC-key", "<p>test-&#x80;-key</p>"],
+    ["session=test-%E2%80%94-key", "<p>test-&#151-key</p>"],
+  ])("withholds %s spelled as %s on an error and a success", async (cookie, body) => {
+    expect(text(await run({ cookie }, 500, body))).toBe(withheld);
+    expect(text(await run({ cookie }, 200, body))).toContain("reveals an operator credential and was withheld");
+  });
+
+  it("returns a C1 numeric reference unchanged when every credential form is ASCII", async () => {
+    const body = "<p>a &#128; b</p>";
+    const headers = { "x-api-key": "test-operator-key" };
+    expect(text(await run(headers, 500, body))).toBe(`The API responded with HTTP 500.\n\n${body}`);
+    expect(text(await run(headers, 200, body))).toBe(body);
+  });
+
+  it("returns a URL query with &name= unchanged beside a non-ASCII cookie, and still withholds real references", async () => {
+    const cookie = { cookie: "session=test-%C3%A9-key" };
+    const link = '{"link":"https://x/?a=1&view=compact"}';
+    expect(text(await run(cookie, 500, link, "application/json"))).toBe(`The API responded with HTTP 500.\n\n${link}`);
+    expect(text(await run(cookie, 200, link, "application/json"))).toBe(link);
+    for (const body of ["<p>test-&eacute;-key</p>", "<p>test-&ltimes;-key</p>"]) {
+      expect(text(await run(cookie, 500, body))).toBe(withheld);
+      expect(text(await run(cookie, 200, body))).toContain("reveals an operator credential and was withheld");
+    }
+  });
+});
+
 describe("httpExecutor JSON error bodies read as they serialize", () => {
   const headers = { "x-cfg": '{"label":"test-key"}' };
   const run = (body: string) =>
