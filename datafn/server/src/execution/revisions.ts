@@ -230,7 +230,7 @@ async function writeLatest(db: Adapter, id: unknown, updatedAt: string): Promise
 /**
  * Inserts the first revision row of a record unless another writer did:
  * `created`, or `exists` when the stored row is not this insert's (its raise
- * mark is not kept; see raiseCommitted), and the caller raises that row.
+ * mark is not kept; see raisedBy), and the caller raises that row.
  */
 async function createIfAbsent(
   db: Adapter,
@@ -262,7 +262,7 @@ async function createIfAbsent(
       // raised again, so a mark dropped since only skips a revision.
       const stored = await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }]);
       if (stored) {
-        return (await raiseCommitted(db, String(row.id), stored, raiseMarks(row)[0])) ? "created" : "exists";
+        return raisedBy(stored, raiseMarks(row)[0]) ? "created" : "exists";
       }
       // A concurrent writer created it first (MySQL and SQLite reject only
       // the statement); the caller reads it and retries the bump. A plain
@@ -376,11 +376,6 @@ interface RecordEvidence {
    * before that read (revision 0 without one); unset when it was not read.
    */
   ledgerBefore?: StoredRevision;
-  /**
-   * For such a delete that found no row outside a transaction: whether its
-   * intent was stamped on the revision row before its statement (stampIntent).
-   */
-  intent?: boolean;
   /** For such a delete: an earlier write of the same write that changed the row and left it live. */
   before?: RecordEvidence;
 }
@@ -427,16 +422,17 @@ async function revisionBefore(db: Adapter, p: any, id: string): Promise<StoredRe
  * that found no row: stamps its intent (INTENT) on the record's revision row,
  * keeping the revision `before` it read (a row at revision 0 when it has
  * none). A write whose row this delete may yet remove raises after it, sees
- * the intent and counts the delete. Whether it was stamped; a revision raised
- * meanwhile needs no stamp (the delete then decides from the raise).
+ * the intent and counts the delete. A revision raised meanwhile needs no
+ * stamp (the delete then decides from the raise). The stamp keeps every raise
+ * mark (see RAISE_HISTORY); a failed stamp fails nothing.
  */
-async function stampIntent(db: Adapter, p: any, id: string, before: StoredRevision): Promise<boolean> {
+async function stampIntent(db: Adapter, p: any, id: string, before: StoredRevision): Promise<void> {
   const rowId = revisionRowId(p.namespace, p.model, id);
   const where = [{ field: "id", op: "eq" as const, value: rowId }];
   try {
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    if ((row ? Number(row.rev) || 0 : 0) !== before.rev) return true;
-    const { stamp } = stampWith(new Date().toISOString(), newMark(INTENT), row);
+    if ((row ? Number(row.rev) || 0 : 0) !== before.rev) return;
+    const stamp = stampWith(new Date().toISOString(), newMark(INTENT), row);
     if (row) {
       await db.internal.update(REVISIONS_TABLE, [...where, { field: "rev", op: "eq", value: before.rev }], {
         updated_at: stamp,
@@ -445,9 +441,8 @@ async function stampIntent(db: Adapter, p: any, id: string, before: StoredRevisi
       const fields = { namespace: p.namespace, resource: p.model, record_id: id };
       await createIfAbsent(db, { id: rowId, ...fields, rev: 0, deleted: 0, updated_at: stamp }, false);
     }
-    return true;
   } catch {
-    return false;
+    // Without the intent, a write whose row this delete removes raises once.
   }
 }
 
@@ -475,7 +470,7 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
     ids: readonly string[],
     deleted: boolean,
     state: WriteState,
-    countless?: Pick<RecordEvidence, "absentNow" | "presentBefore" | "ledgerBefore" | "intent">,
+    countless?: Pick<RecordEvidence, "absentNow" | "presentBefore" | "ledgerBefore">,
   ) => {
     for (const id of ids) log.push({ key: JSON.stringify([model, id]), deleted, state, ...countless });
   };
@@ -553,7 +548,7 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
         ? await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })
           .then((row) => row !== null, () => undefined)
         : undefined;
-      const intent = presentBefore === false && ledgerBefore ? await stampIntent(db, p, ids![0], ledgerBefore) : undefined;
+      if (presentBefore === false && ledgerBefore) await stampIntent(db, p, ids![0], ledgerBefore);
       try {
         await db.delete(p);
       } catch (error) {
@@ -566,7 +561,7 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
       if (!ids) return;
       const absentNow = async () =>
         (await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })) === null;
-      note(p.model, ids, true, "applied", { absentNow, presentBefore, ledgerBefore, intent });
+      note(p.model, ids, true, "applied", { absentNow, presentBefore, ledgerBefore });
     },
     async deleteMany(p) {
       const count = await db.deleteMany(p);
@@ -610,8 +605,8 @@ function takeWriteEvidence(db: Adapter): Map<string, RecordEvidence> {
     if (event.state === "applied" || !prior || (prior.state === "missed" && event.state === "unverified")) {
       const live = prior && prior.state !== "missed" && !prior.deleted ? prior : undefined;
       const before = event.absentNow ? (prior?.absentNow ? prior.before : live) : undefined;
-      const { state, deleted, absentNow, presentBefore, ledgerBefore, intent } = event;
-      folded.set(event.key, { state, deleted, absentNow, presentBefore, ledgerBefore, intent, before });
+      const { state, deleted, absentNow, presentBefore, ledgerBefore } = event;
+      folded.set(event.key, { state, deleted, absentNow, presentBefore, ledgerBefore, before });
     }
   }
   return folded;
@@ -653,12 +648,14 @@ const OTHER = ":o";
  */
 const INTENT = ":x";
 
-/** Whether `row`'s latest raise is a tombstone that a delete statement's own evidence raised. */
-const deleteEvidenced = (row: Record<string, unknown> | null) =>
-  isTombstone(row) && raiseMarks(row)[0]?.endsWith(BY_DELETE) === true;
+const isIntent = (mark: string) => mark.endsWith(INTENT);
 
-/** Whether `row`'s latest mark is a count-less delete's intent. */
-const intentLatest = (row: Record<string, unknown> | null) => raiseMarks(row)[0]?.endsWith(INTENT) === true;
+/** Whether `row`'s latest raise (an intent is none) is a tombstone a delete statement's own evidence raised. */
+const deleteEvidenced = (row: Record<string, unknown> | null) =>
+  isTombstone(row) && raiseMarks(row).find((mark) => !isIntent(mark))?.endsWith(BY_DELETE) === true;
+
+/** Whether `row`'s latest mark is a count-less delete's intent (a raise drops intents). */
+const intentLatest = (row: Record<string, unknown> | null) => isIntent(raiseMarks(row)[0] ?? "");
 
 /**
  * Outside a transaction: whether a count-less delete that leaves the row
@@ -666,8 +663,8 @@ const intentLatest = (row: Record<string, unknown> | null) => raiseMarks(row)[0]
  * revision row `row` now. Whatever removed the row it found raises its
  * tombstone once: a delete-evidenced tombstone raised since stands for it.
  * Without a row to remove it raises nothing while the revision row keeps the
- * revision it read and the intent it stamped: a write whose row it removed
- * has not raised yet, and that raise counts this delete (raiseFromEvidence).
+ * revision it read: a write whose row it removed has not raised yet, and that
+ * raise counts this delete under its intent (raiseFromEvidence).
  * It raises when the record was raised since that read to a state it may have
  * removed: a live re-insert, or a tombstone a write observed after the
  * revision row read a tombstone. A delete that found the row absent under a
@@ -677,7 +674,7 @@ function countlessRemovedNothing(evidence: RecordEvidence, row: Record<string, u
   const before = evidence.ledgerBefore;
   const changed = before === undefined || (row ? Number(row.rev) || 0 : 0) > before.rev;
   if (evidence.presentBefore) return changed && deleteEvidenced(row);
-  if (!changed) return evidence.intent === true;
+  if (!changed) return true;
   if (!isTombstone(row)) return false;
   return deleteEvidenced(row) || before === undefined || !before.deleted;
 }
@@ -690,7 +687,7 @@ function countlessRemovedNothing(evidence: RecordEvidence, row: Record<string, u
  * marks it read the ones it replaces), so a write whose outcome is unknown
  * (the statement committed but the adapter then failed) is found by its mark
  * even after later writers raised the record, and a retry adopts that
- * revision instead of raising the record again (see raiseCommitted). A write
+ * revision instead of raising the record again (see raisedBy). A write
  * proven not to have committed (a compare-and-swap that changed no row, an
  * insert that found the row stored) clears it.
  */
@@ -701,21 +698,17 @@ interface PendingRaise {
 }
 
 /**
- * A revision row keeps its last RAISE_HISTORY marks, and every later mark
- * younger than MARK_HORIZON_MS (a mark starts with its time), up to MAX_MARKS.
- * A raise that drops a mark younger than the horizon first records it in its
- * own row (evictedMarkId), so a write that may still retry finds its raise
- * however many raises other writers make meanwhile. A retry longer than the
- * horizon (far beyond the change-tracking retries) whose mark was dropped
- * raises again: a revision may then skip a value, never stand for two states.
+ * How many raise marks a revision row keeps: more than the raises other
+ * writers usually make while one write retries, and short enough to keep the
+ * row small. A raise keeps its own mark and the RAISE_HISTORY - 1 raise marks
+ * before it, and drops every intent; an intent is stamped before them all and
+ * drops none. A mark dropped after RAISE_HISTORY later raises only makes its
+ * write raise again: outside a transaction a revision may then skip a value,
+ * never stand for two states (see raisedBy).
  */
 const RAISE_HISTORY = 12;
-const MARK_HORIZON_MS = 30_000;
-const MAX_MARKS = 400;
 
-function newMark(suffix: string): string {
-  return `${Date.now().toString(36)}.${randomBytes(4).toString("hex")}${suffix}`;
-}
+const newMark = (suffix: string) => randomBytes(6).toString("hex") + suffix;
 
 function raiseMarks(row: Record<string, unknown> | null): string[] {
   const stamp = typeof row?.updated_at === "string" ? row.updated_at : "";
@@ -723,44 +716,21 @@ function raiseMarks(row: Record<string, unknown> | null): string[] {
   return at < 0 ? [] : stamp.slice(at + 1).split(" ");
 }
 
-function isYoung(mark: string, now: number): boolean {
-  const at = Number.parseInt(mark.slice(0, Math.max(mark.indexOf("."), 0)), 36);
-  return Number.isFinite(at) && now - at < MARK_HORIZON_MS;
-}
-
-/** `row`'s marks after `mark`, and the young marks that no longer fit (see RAISE_HISTORY). */
-function stampWith(updatedAt: string, mark: string, row: Record<string, unknown> | null) {
-  const now = Date.now();
-  const kept: string[] = [];
-  const evicted: string[] = [];
-  for (const each of [mark, ...raiseMarks(row)]) {
-    const young = isYoung(each, now);
-    if (kept.length < RAISE_HISTORY || (young && kept.length < MAX_MARKS)) kept.push(each);
-    else if (young) evicted.push(each);
-  }
-  return { stamp: `${updatedAt}#${kept.join(" ")}`, evicted };
-}
-
-/** The row recording that the raise carrying `mark` committed on revision row `id`. */
-function evictedMarkId(id: string, mark: string): string {
-  return `revm1:${createHash("sha256").update(`${id} ${mark}`).digest("hex")}`;
+/** `row`'s `updated_at` after a raise or an intent carrying `mark`, at `updatedAt`. */
+function stampWith(updatedAt: string, mark: string, row: Record<string, unknown> | null): string {
+  const raises = raiseMarks(row).filter((each) => !isIntent(each));
+  return `${updatedAt}#${[mark, ...raises.slice(0, isIntent(mark) ? RAISE_HISTORY : RAISE_HISTORY - 1)].join(" ")}`;
 }
 
 /**
- * Whether the revision row write that carried `mark` committed: `row` (read
- * first) keeps its mark, or a raise that dropped it recorded it. Otherwise it
- * never committed (or its mark aged out; see RAISE_HISTORY) and the caller
- * raises the record again.
+ * Whether the revision row write that carried `mark` committed, read from the
+ * record's revision row: its mark is kept. Otherwise the write either never
+ * committed or its mark was dropped after RAISE_HISTORY later raises; the
+ * caller raises the record again either way. A write whose raise cannot be
+ * proven is then counted once more, never not at all.
  */
-async function raiseCommitted(
-  db: Adapter,
-  id: string,
-  row: Record<string, unknown> | null,
-  mark: string | undefined,
-): Promise<boolean> {
-  if (mark === undefined) return false;
-  if (raiseMarks(row).includes(mark)) return true;
-  return (await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: evictedMarkId(id, mark) }])) !== null;
+function raisedBy(row: Record<string, unknown> | null, mark: string | undefined): boolean {
+  return mark !== undefined && raiseMarks(row).includes(mark);
 }
 
 interface Raised {
@@ -782,7 +752,7 @@ async function raiseRevision(
   const { inTransaction } = options;
   const pending = options.pending ?? {};
   if (pending.mark !== undefined) {
-    if (await raiseCommitted(db, id, await db.internal.findOne(REVISIONS_TABLE, where), pending.mark)) {
+    if (raisedBy(await db.internal.findOne(REVISIONS_TABLE, where), pending.mark)) {
       return { rev: pending.rev!, deleted: pending.deleted! };
     }
     pending.mark = undefined;
@@ -803,7 +773,7 @@ async function raiseRevision(
     // A raise may count a state no raise named (see Decided.skip).
     const next = current + 1 + (decided.skip ?? 0);
     Object.assign(pending, { rev: next, deleted, mark });
-    const { stamp, evicted } = stampWith(updatedAt, mark, row);
+    const stamp = stampWith(updatedAt, mark, row);
     if (!row) {
       const created = await createIfAbsent(db, {
         id,
@@ -817,19 +787,6 @@ async function raiseRevision(
       if (created === "created") return { rev: next, deleted };
       pending.mark = undefined;
       continue;
-    }
-    // The marks this raise drops are recorded first, so the write of each
-    // finds its raise while it may still retry (see raiseCommitted).
-    for (const dropped of evicted) {
-      await createIfAbsent(db, {
-        id: evictedMarkId(id, dropped),
-        namespace,
-        resource,
-        record_id: recordId,
-        rev: 0,
-        deleted: 0,
-        updated_at: updatedAt,
-      }, inTransaction);
     }
     const affected = await db.internal.update(
       REVISIONS_TABLE,
@@ -1149,7 +1106,7 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  * statement left and the raise left that state; a rewritten entry carries
  * none. `pending` is this record's last revision row write, so a retry
  * after an unknown outcome adopts it (see PendingRaise), or raises again when
- * its raise did not commit (raiseCommitted).
+ * its mark is not kept (raisedBy).
  */
 async function raiseFromEvidence(
   db: Adapter,

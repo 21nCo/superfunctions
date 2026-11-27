@@ -717,7 +717,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("adopts a first revision whose acknowledgement was lost however many raises follow it", async () => {
+  it("raises a first revision again, never not at all, when many other raises drop its mark", async () => {
     for (const route of ["push", "mutation"] as const) {
       const base = memoryAdapter() as Adapter;
       let loseAck = true;
@@ -745,9 +745,10 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
 
       expect(loseAck, route).toBe(false);
       expect(inserted.body.ok, route).toBe(true);
-      // The insert (1) and the 12 other raises: the insert's mark is still
-      // kept, so its retry adopts its raise.
-      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 13, deleted: false });
+      // The insert (1) and the 12 other raises; the insert's dropped mark
+      // cannot prove its raise, so it is raised again (14): a skipped value,
+      // never an uncounted write.
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 14, deleted: false });
       expect(await changeRows(base, "task:1"), route).toHaveLength(1);
     }
   });
@@ -786,12 +787,9 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("counts a write of unknown outcome exactly once, however many raises follow it", async () => {
-    // [other raises, whether the lost raise applied, the expected revision];
-    // 450 raises drop the mark from the revision row, which records it.
-    const cases = [
-      [3, true, 5], [3, false, 5], [12, true, 14], [30, true, 32], [13, false, 15], [450, true, 452], [450, false, 452],
-    ] as const;
+  it("counts a write of unknown outcome exactly once while its mark is kept, and at least once after", async () => {
+    // [other raises, whether the lost raise applied, the expected revision]
+    const cases = [[3, true, 5], [3, false, 5], [12, true, 15], [30, true, 33], [13, false, 15]] as const;
     for (const [others, applies, expected] of cases) {
       for (const route of ["push", "mutation", "transact"] as const) {
         const base = memoryAdapter() as Adapter;
@@ -821,9 +819,9 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         const merged = await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
         const label = `${route} others=${others} applies=${applies}`;
 
-        // A raise found by its mark, kept on the revision row or recorded
-        // when a later raise dropped it, is adopted; one that never applied
-        // is raised again. Every write is counted once.
+        // A raise found by its kept mark is adopted. Once its mark is
+        // dropped, whether it applied is unknown and the merge is raised
+        // again: the revision may skip a value, but every write is counted.
         expect(loseAck, label).toBe(false);
         expect(okOf(route, merged.body), label).toBe(true);
         expect(await rev(base, "task", "task:1"), label).toEqual({ rev: expected, deleted: false });
@@ -1361,6 +1359,63 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
           expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 2, deleted: true });
         }
       }
+    });
+
+    it("raises once for two deletes that found the row when a later delete stamps its intent in between", async () => {
+      const base = await insertedTask();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let statements = 0;
+      const paused = overriding(countless(base), (target) => ({
+        delete: async (p: any) => {
+          if (++statements === 2) release();
+          await gate;
+          await target.delete(p);
+        },
+      }));
+      const [a, b] = [withWriteEvidence(paused, false), withWriteEvidence(paused, false)];
+      await Promise.all([a, b].map((db) => db.delete({ model: "task", where, namespace: NS } as any)));
+      await assign(a, deleteEntry());
+      // A third delete finds no row and stamps its intent before `b` raises.
+      const third = withWriteEvidence(countless(base), false);
+      await third.delete({ model: "task", where, namespace: NS } as any);
+      await assign(b, deleteEntry());
+      await assign(third, deleteEntry());
+
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+    });
+
+    it("leaves the revision of a delete that found no row unchanged when its intent cannot be stamped", async () => {
+      const base = await insertedTask();
+      const first = withWriteEvidence(countless(base), false);
+      await first.delete({ model: "task", where, namespace: NS } as any);
+      await assign(first, deleteEntry());
+      let failing = true;
+      const again = withWriteEvidence(failingInternal(countless(base), "__datafn_revisions", () => failing), false);
+      await again.delete({ model: "task", where, namespace: NS } as any);
+      failing = false;
+      await assign(again, deleteEntry());
+
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+    });
+
+    it("keeps every raise mark when a delete stamps its intent", async () => {
+      const base = await insertedTask();
+      const first = withWriteEvidence(countless(base), false);
+      await first.delete({ model: "task", where, namespace: NS } as any);
+      await assign(first, deleteEntry());
+      for (let i = 0; i < 10; i++) await bumpTombstone(base, NS, "task", "task:1", false);
+      const marks = async () => {
+        const [row] = await base.internal.findMany("__datafn_revisions", []);
+        return String(row.updated_at).split("#")[1].split(" ");
+      };
+      const raised = await marks();
+      const late = withWriteEvidence(countless(base), false);
+      await late.delete({ model: "task", where, namespace: NS } as any);
+
+      expect(raised).toHaveLength(12);
+      expect((await marks()).slice(1)).toEqual(raised);
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 12, deleted: true });
     });
 
     it("refuses to enable revisions for a schema whose relation writes the record id", () => {
