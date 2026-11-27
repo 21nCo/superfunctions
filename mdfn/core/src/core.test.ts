@@ -596,6 +596,12 @@ describe("@mdfn/core", () => {
     expect(mapAnchor({ from: 1, to: 2 }, new Ranges([{ from: 0, to: 0, insertedLength: 1 }]))).toEqual({ from: 2, to: 3 });
     const untouched = Object.freeze({ from: 1, to: 2 });
     expect(mapAnchor(untouched, new Ranges([]))).toBe(untouched);
+
+    // A later range slot is read only after the earlier range has been applied.
+    const first = { from: 0, to: 0, insertedLength: 1 };
+    const ordered: { from: number; to: number; insertedLength: number }[] = [first];
+    Object.defineProperty(ordered, 1, { enumerable: true, get: () => { first.insertedLength = 5; return first; } });
+    expect(mapAnchor({ from: 1, to: 2 }, ordered)).toEqual({ from: 7, to: 8 });
   });
 
   it("builds a mapped sidecar from the comments and suggestions it read", () => {
@@ -633,6 +639,14 @@ describe("@mdfn/core", () => {
     const entryMapped = mapSidecar({ comments: [entry] } as unknown as Parameters<typeof mapSidecar>[0], insert);
     expect(entryMapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 2, to: 3 } }]);
     expect(anchorReads).toBe(1);
+
+    // A malformed null collection is kept, so sidecar validation still rejects it.
+    const nullComments = mapSidecar({ comments: null } as unknown as Parameters<typeof mapSidecar>[0], insert);
+    const nullSuggestions = mapSidecar({ suggestions: null } as unknown as Parameters<typeof mapSidecar>[0], insert);
+    expect(nullComments).toEqual({ comments: null });
+    expect(nullSuggestions).toEqual({ suggestions: null });
+    expect(() => validateMdfnSidecar(nullComments)).toThrow();
+    expect(() => validateMdfnSidecar(nullSuggestions)).toThrow();
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {

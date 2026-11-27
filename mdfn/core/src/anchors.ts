@@ -50,12 +50,14 @@ function copyWith(source: object, overrides: Readonly<Record<string, unknown>>):
 }
 
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  // forEach skips holes in a sparse ranges array, as mapSelection's reduce does, and
-  // builds no array through the caller's species; with no populated range the
-  // anchor is returned before any of its fields is read.
-  const populated: ChangedRange[] = [];
-  ranges.forEach((range) => populated.push(range));
-  if (populated.length === 0) return anchor;
+  // Holes in a sparse ranges array are skipped, as mapSelection's reduce skips them.
+  // A slot is checked with `in`, which reads no value, so with no populated range the
+  // anchor is returned before any of its fields is read, and each range is read only
+  // when it is applied, in order.
+  const length = ranges.length;
+  let populated = false;
+  for (let index = 0; index < length && !populated; index += 1) populated = index in ranges;
+  if (!populated) return anchor;
   // Each field is read once, including one supplied through a prototype or getter,
   // and the result is built from those values only, so mapping edits together or
   // one call at a time gives the same anchor.
@@ -64,7 +66,9 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
   const originalTo = anchor.to;
   let from = originalFrom;
   let to = originalTo;
-  for (const range of populated) {
+  for (let index = 0; index < length; index += 1) {
+    if (!(index in ranges)) continue;
+    const range = ranges[index]!;
     const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
     const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
     from = Math.min(mappedFrom, mappedTo);
@@ -91,8 +95,11 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
     changed = true;
     return copyWith(entry, { anchor }) as unknown as T;
   };
-  const comments = sidecar.comments?.map(mapEntry);
-  const suggestions = sidecar.suggestions?.map(mapEntry);
+  // A null collection is kept as read, so sidecar validation still rejects it.
+  const readComments = sidecar.comments;
+  const readSuggestions = sidecar.suggestions;
+  const comments = readComments == null ? readComments : readComments.map(mapEntry);
+  const suggestions = readSuggestions == null ? readSuggestions : readSuggestions.map(mapEntry);
   if (reusable && !changed) return sidecar;
   // comments and suggestions come only from the values read and mapped above, so a
   // getter is never read twice and every kept anchor went through mapAnchor.
