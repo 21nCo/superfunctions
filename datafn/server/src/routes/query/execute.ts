@@ -236,7 +236,7 @@ export async function executeSingleQuery(
     try {
       return strategy === "FULL_PUSHDOWN"
         ? await executePushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources, projectRecords)
-        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources);
+        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources, projectRecords);
     } catch (error) {
       // A relation filter matched too many records to push down; evaluate
       // the query in memory below.
@@ -314,7 +314,7 @@ export async function executeSingleQuery(
       },
     };
     if (searchProvider) {
-      return executeSearchQuery(scopedQuery as any, schema, store, searchProvider, undefined, logger, temporalPlan.config);
+      return executeSearchQuery(scopedQuery as any, schema, store, searchProvider, undefined, logger, temporalPlan.config, projectRecords);
     }
     if (!hasDbNativeSearchSupport(db)) {
       throw new DatafnExecutionError(
@@ -350,6 +350,7 @@ export async function executeSingleQuery(
         } as any),
       logger,
       temporalPlan.config,
+      projectRecords,
     );
   }
 

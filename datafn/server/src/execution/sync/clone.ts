@@ -7,8 +7,16 @@ import { getJoinStoreKey, getRelationJoinTableName } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
+import {
+  isRevisionCertified,
+  issuesRevisions,
+  readWithRevisionsOrPlain,
+  withoutUncertifiedRevision,
+} from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import {
+  canReadEveryField,
+  withoutUnreadableFields,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
@@ -178,6 +186,32 @@ export async function executeClone(
   // Create change tracking service with user/tenant namespace and optional sequence store
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
 
+  /**
+   * DATA-41: reads a table's rows and, when revisions are on, their revisions
+   * in one snapshot, attaching each row's revision as `$rev`. Revisions are
+   * optional: if their setup or read fails, the rows are read again without
+   * them, so only a failure of the row read reaches the catch below. A stored
+   * `$rev` the server did not pair with its row is not returned, and a row
+   * the caller may not read in full gets none.
+   */
+  const readCloneRows = async (
+    table: string,
+    read: (readDb: Adapter) => Promise<Array<Record<string, unknown>>>,
+  ): Promise<Array<Record<string, unknown>>> => {
+    if (!issuesRevisions(schema, table)) return read(db);
+    // A row the caller may not read in full gets no revision, and its
+    // unreadable fields are withheld as pull withholds them (in every clone
+    // mode, the plain fallback included).
+    const rows = await readWithRevisionsOrPlain(db, namespace, table, read, () => read(db), (r) => r, (row) =>
+      canReadEveryField(schema, table, row),
+    );
+    return rows.map((row) => {
+      const returned = withoutUncertifiedRevision(row);
+      if (isRevisionCertified(returned) || canReadEveryField(schema, table, returned)) return returned;
+      return withoutUnreadableFields(schema, table, returned);
+    });
+  };
+
   // Handle paginated clone if page parameter is provided
   if (request.page) {
     const { table, afterId, limit } = request.page;
@@ -211,13 +245,15 @@ export async function executeClone(
         ? [{ field: "id", operator: "gt", value: afterId }]
         : [];
 
-      const records = await db.findMany({
-        model: table,
-        where,
-        orderBy: [{ field: "id", direction: "asc" }],
-        limit: effectiveLimit,
-        namespace,
-      });
+      const records = await readCloneRows(table, (readDb) =>
+        readDb.findMany({
+          model: table,
+          where,
+          orderBy: [{ field: "id", direction: "asc" }],
+          limit: effectiveLimit,
+          namespace,
+        }),
+      );
       data[table] = await filterActorVisibleRows(table, records);
 
       // Compute next marker
@@ -287,13 +323,15 @@ export async function executeClone(
               tableCounts[tableName] > 0 || countFailedTables.has(tableName) ? "" : null;
           } else {
             const readLimit = remaining;
-            const records = await db.findMany({
-              model: tableName,
-              where: [],
-              orderBy: [{ field: "id", direction: "asc" }],
-              limit: readLimit,
-              namespace,
-            });
+            const records = await readCloneRows(tableName, (readDb) =>
+              readDb.findMany({
+                model: tableName,
+                where: [],
+                orderBy: [{ field: "id", direction: "asc" }],
+                limit: readLimit,
+                namespace,
+              }),
+            );
             data[tableName] = await filterActorVisibleRows(tableName, records);
             remaining -= records.length;
 
@@ -327,12 +365,14 @@ export async function executeClone(
         try {
           // Cursor before rows, so a concurrent write is replayed by a pull.
           const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
-          const records = await db.findMany({
-            model: tableName,
-            where: [],
-            orderBy: [{ field: "id", direction: "asc" }],
-            namespace,
-          });
+          const records = await readCloneRows(tableName, (readDb) =>
+            readDb.findMany({
+              model: tableName,
+              where: [],
+              orderBy: [{ field: "id", direction: "asc" }],
+              namespace,
+            }),
+          );
           data[tableName] = await filterActorVisibleRows(tableName, records);
           fullyLoadedTables.add(tableName);
 
