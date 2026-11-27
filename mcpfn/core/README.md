@@ -344,8 +344,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   refused, so only an explicit `{}` sends no operator headers. An operator
   `Content-Type` is sent as written with a JSON body only when its media
   type is the operation's documented one, any charset it names is UTF-8, and
-  each of its other parameters (such as `profile`) has the same value in the
-  documented media type (names compared without case, values exactly);
+  it has the same other parameters (such as `profile`) as the documented media
+  type, in both directions: neither has a name the other lacks or gives
+  another value (names compared without case, values exactly);
   otherwise the call is refused before it is sent. With such a `Content-Type`
   in a record, the request body is chosen among the documented JSON entries
   it can label, by the same rule; when none can, the operation stays listed

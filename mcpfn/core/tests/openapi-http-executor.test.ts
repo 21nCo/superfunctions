@@ -2883,17 +2883,65 @@ describe("httpExecutor request bodies under an operator Content-Type with parame
     expect(sent).toEqual([{ contentType: 'application/json; Profile="b"', body: '{"b":"value"}' }]);
   });
 
-  it("still accepts the first documented entry for a Content-Type with no parameters", async () => {
+  it("chooses the entry without parameters for a Content-Type with none, and rejects a body for a profile entry", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools, skipped } = fromOpenAPI(
+      documentWith({ "application/json; profile=a": entry("a"), "application/json": entry("p") }),
+      { executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json" }, fetch }), allowMutations: true },
+    );
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json" });
+    const result = await registry.callTool("p", { body: { p: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent).toEqual([{ contentType: "application/json", body: '{"p":"value"}' }]);
+    await expect(registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra())).rejects.toThrow(McpFnValidationError);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("keeps listing an operation whose only entry has a parameter a Content-Type without parameters lacks, and refuses a body before fetch", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools, skipped } = fromOpenAPI(documentWith({ "application/json; profile=a": entry("a") }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json" }, fetch }),
+      allowMutations: true,
+    });
+    // No entry can be labeled, so every entry is kept and only a call with a body is refused.
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
+    const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Content-Type header does not match");
+    expect(text(result)).not.toContain("profile");
+    expect(sent).toEqual([]);
+  });
+
+  it("sends the first documented entry's media type as written when there is no operator Content-Type", async () => {
     const { sent, fetch } = recording();
     const { registry, tools } = fromOpenAPI(documentWith(profiles), {
-      executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json" }, fetch }),
+      executor: httpExecutor({ baseUrl: api.origin, headers: {}, fetch }),
       allowMutations: true,
     });
     expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
     const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
     expect(result.isError).toBeFalsy();
-    expect(sent).toEqual([{ contentType: "application/json", body: '{"a":"value"}' }]);
+    expect(sent).toEqual([{ contentType: "application/json; profile=a", body: '{"a":"value"}' }]);
   });
+
+  it.each(["application/json", "application/json; profile=a; version=1"])(
+    "refuses before fetch a function's Content-Type %j whose parameters differ from the chosen profile=a entry",
+    async (contentType) => {
+      const { sent, fetch } = recording();
+      const { registry, tools } = fromOpenAPI(documentWith(profiles), {
+        executor: httpExecutor({ baseUrl: api.origin, headers: () => ({ "Content-Type": contentType }), fetch }),
+        allowMutations: true,
+      });
+      expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
+      const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("Content-Type header does not match");
+      expect(text(result)).not.toContain("version");
+      expect(sent).toEqual([]);
+    },
+  );
 
   it("refuses before fetch a function's Content-Type whose parameters the chosen entry does not carry", async () => {
     const { sent, fetch } = recording();

@@ -1290,24 +1290,37 @@ function bodyContentType(headers: Headers, documented: string): void {
 /**
  * Whether an operator Content-Type cannot label a body documented as
  * `documented`: it is not the same media type, names a charset other than
- * UTF-8, or has a parameter other than `charset` (such as `profile`) that the
- * documented media type lacks or gives another value (names compared without
- * case, values exactly after unquoting). The executor uses it both to choose a
- * request body entry and to refuse a call, so the two cannot disagree.
+ * UTF-8, or the two do not have the same parameters other than `charset` (such
+ * as `profile`): either side has a name the other lacks or gives it another
+ * value (names compared without case, values exactly after unquoting). The
+ * executor uses it both to choose a request body entry and to refuse a call,
+ * so the two cannot disagree.
  */
 function contentTypeConflicts(operator: string, documented: string): boolean {
   const parsed = parseMediaType(operator);
   if (parsed === null || parsed.essence !== documentedEssence(documented) || (parsed.charset !== undefined && !isUtf8(parsed.charset))) {
     return true;
   }
-  if (parsed.parameters.length === 0) return false;
-  // A name the documented media type gives two different values is ambiguous, so it matches no operator value.
-  const documentedValues = new Map<string, string | null>();
-  for (const [name, value] of parseMediaType(documented)?.parameters ?? []) {
-    const earlier = documentedValues.get(name);
-    documentedValues.set(name, earlier === undefined || earlier === value ? value : null);
+  const operatorValues = parameterValues(parsed.parameters);
+  const documentedValues = parameterValues(parseMediaType(documented)?.parameters ?? []);
+  if (operatorValues.size !== documentedValues.size) return true;
+  for (const [name, value] of operatorValues) {
+    if (value === null || documentedValues.get(name) !== value) return true;
   }
-  return parsed.parameters.some(([name, value]) => documentedValues.get(name) !== value);
+  return false;
+}
+
+/**
+ * Non-charset media type parameters by name. A name given two different
+ * values is ambiguous, so it maps to null and matches nothing.
+ */
+function parameterValues(parameters: Array<[name: string, value: string]>): Map<string, string | null> {
+  const values = new Map<string, string | null>();
+  for (const [name, value] of parameters) {
+    const earlier = values.get(name);
+    values.set(name, earlier === undefined || earlier === value ? value : null);
+  }
+  return values;
 }
 
 function documentedEssence(documented: string): string {
