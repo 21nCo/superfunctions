@@ -1,7 +1,7 @@
 import { SCOPE_LIMITS } from './types.js';
 import type { NormalizedScope, PublishedScopeDimensions, ScopeDimension, ScopeDimensionKind, ScopeDimensions, ScopeGrammar } from './types.js';
 import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSubsetResult, ScopeViolation } from './types.js';
-import type { ScopeCallbackGrammar, ScopeCallbackGrammarDefinition, ScopeItem, ScopeRisk } from './types.js';
+import type { ScopeCallbackGrammar, ScopeCallbackGrammarFields, ScopeItem, ScopeRisk } from './types.js';
 
 /**
  * Thrown by `classifyRisk` and `classifyScope` for input they cannot classify.
@@ -197,7 +197,10 @@ function speciesIsDefault(value: object): boolean {
  * or non-configurable non-writable data, or a non-extensible promise with no
  * own `constructor`, gets `then` as is: a species lookup that throws leaves
  * it unhandled, and a custom species can reject the derived promise; the
- * caller still fails closed.
+ * caller still fails closed. Host code that runs inside `then` (a V8 promise
+ * hook, say) and makes `constructor` non-configurable keeps the restore from
+ * applying, so the value keeps `constructor: undefined`; such hooks have the
+ * host's authority and are outside this boundary.
  */
 function containPromise(value: unknown): void {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
@@ -1059,13 +1062,16 @@ function riskItem<D extends ScopeDimensions>(dimension: string, kind: ScopeDimen
  * input type is `normalize`'s parameter, so a provider-shaped input type
  * needs `normalize`; without one the input is {@link ScopeShape}.
  */
-export function defineScopeGrammar<const D extends ScopeDimensions, TInput>(
-  definition: ScopeCallbackGrammarDefinition<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> },
+export function defineScopeGrammar<const D extends ScopeDimensions, TInput = ScopeShape<D>>(
+  definition: ScopeCallbackGrammarFields<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> },
 ): ScopeCallbackGrammar<D, TInput>;
-export function defineScopeGrammar<const D extends ScopeDimensions>(definition: ScopeCallbackGrammarDefinition<D>): ScopeCallbackGrammar<D>;
+// Without `normalize` the input is the identity-mapped scope shape, so `TInput` can only be `ScopeShape<D>`.
+export function defineScopeGrammar<const D extends ScopeDimensions, TInput extends ScopeShape<D> = ScopeShape<D>>(
+  definition: ScopeCallbackGrammarFields<D>,
+): ScopeCallbackGrammar<D, TInput>;
 export function defineScopeGrammar<const D extends ScopeDimensions>(definition: ScopeGrammarDefinition<D>): ScopeGrammar<D>;
 export function defineScopeGrammar<const D extends ScopeDimensions, TInput>(
-  definition: ScopeGrammarDefinition<D> | ScopeCallbackGrammarDefinition<D, TInput>,
+  definition: ScopeGrammarDefinition<D> | ScopeCallbackGrammarFields<D, TInput>,
 ): ScopeGrammar<D, TInput> | ScopeCallbackGrammar<D, TInput> {
   const clone = hostClone;
   if (!clone) throw new TypeError('Scope grammars need structuredClone, which this runtime does not provide');

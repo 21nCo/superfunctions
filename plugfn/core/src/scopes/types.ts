@@ -293,9 +293,25 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  * own `constructor`, gets `then` as is: a species lookup that throws leaves
  * its rejection unhandled, and a custom species can reject the promise `then`
  * derives. Only deliberately hostile callback code can build one, and the
- * engine still fails closed.
+ * engine still fails closed. Host code that runs inside `then` (a V8 promise
+ * hook, say) has the host's authority and is outside this boundary: one that
+ * freezes the value keeps its `constructor` from being restored.
  */
-export interface ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
+export type ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> =
+  IsScopeShape<D, TInput> extends true
+    ? ScopeCallbackGrammarFields<D, TInput>
+    : ScopeCallbackGrammarFields<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> };
+
+/** Whether `TInput` is exactly the canonical input {@link ScopeShape} (each assignable to the other). */
+type IsScopeShape<D extends ScopeDimensions, TInput> = [TInput] extends [ScopeShape<D>] ? ([ScopeShape<D>] extends [TInput] ? true : false) : false;
+
+/**
+ * The fields of a {@link ScopeCallbackGrammarDefinition}, where `normalize`
+ * is optional whatever the input type. Declare a definition with
+ * `ScopeCallbackGrammarDefinition`, which requires `normalize` for a
+ * provider-shaped input type.
+ */
+export interface ScopeCallbackGrammarFields<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
   /**
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
    * envelopes alike. It receives the engine's structured clone of the input,
@@ -319,10 +335,11 @@ export interface ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInpu
    * computes from them. Its result is cloned again, checked to be plain
    * JSON-like data in the same way, and validated: a throw, a promise, or a
    * result that is not plain data or does not fit the grammar, is
-   * `malformed`. Defaults to the identity, so `defineScopeGrammar` requires
-   * it whenever the input type is not {@link ScopeShape} (an explicit
-   * `TInput` type argument, or one inferred from the expected grammar type).
-   * See the callback boundary above.
+   * `malformed`. Defaults to the identity, so it is required whenever the
+   * input type is not {@link ScopeShape} (an explicit `TInput` type argument,
+   * or one inferred from the expected grammar type); an unannotated
+   * `normalize` takes `ScopeShape`. See the callback boundary on
+   * {@link ScopeCallbackGrammarDefinition}.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**

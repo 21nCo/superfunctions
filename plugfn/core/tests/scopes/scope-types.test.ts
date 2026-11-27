@@ -18,6 +18,7 @@ import {
   type AnyScopeGrammar,
   type NormalizedScope,
   type ScopeCallbackGrammar,
+  type ScopeCallbackGrammarDefinition,
   type ScopeDimension,
   type ScopeDimensions,
   type ScopeGrammar,
@@ -269,6 +270,35 @@ const contextualNormalize: ScopeCallbackGrammar<TtlDims, SecondsInput> = defineS
   riskOf: () => 'read',
 });
 contextualNormalize.isSubset({ seconds: 60 }, { seconds: 300 });
+// An unannotated normalize takes the scope shape.
+const unannotated = defineScopeGrammar({
+  provider: 'unannotated',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.ttl }),
+  riskOf: () => 'read',
+});
+const unannotatedInput: Equal<Parameters<typeof unannotated.classifyRisk>[0], ScopeShape<TtlDims>> = true;
+void unannotatedInput;
+// An explicit scope-shape input type needs no normalize.
+const explicitShape: ScopeCallbackGrammar<TtlDims> = defineScopeGrammar<TtlDims, ScopeShape<TtlDims>>({
+  provider: 'explicit-shape',
+  dimensions: ttlDims,
+  riskOf: () => 'read',
+});
+void explicitShape;
+// The definition type requires normalize for a provider-shaped input and keeps that input when stored.
+const storedShaped: ScopeCallbackGrammarDefinition<TtlDims, SecondsInput> = {
+  provider: 'stored-shaped',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+};
+defineScopeGrammar(storedShaped).classifyRisk({ seconds: 60 });
+const storedRiskOnly: ScopeCallbackGrammarDefinition<TtlDims> = { provider: 'stored-risk-only', dimensions: ttlDims, riskOf: () => 'read' };
+defineScopeGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
+// @ts-expect-error a stored provider-shaped definition without normalize
+const storedNoNormalize: ScopeCallbackGrammarDefinition<TtlDims, SecondsInput> = { provider: 'stored', dimensions: ttlDims, riskOf: () => 'read' };
+void storedNoNormalize;
 // @ts-expect-error riskOf returns a closed risk level
 defineScopeGrammar({ provider: 'bad-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'admin' });
 const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;
