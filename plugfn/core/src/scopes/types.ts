@@ -346,6 +346,9 @@ type ScopeNormalizingFields<D extends ScopeDimensions, TInput> = ScopeCallbackGr
  * definition type for the canonical input extends this interface with the
  * default input, and one for any input is an intersection with
  * `ScopeCallbackGrammarDefinition`, which keeps the requirement.
+ * `defineScopeGrammar` checks its argument against
+ * `ScopeCallbackGrammarDefinition`, so a value typed only with these fields,
+ * for an input that is not canonical and without `normalize`, is rejected.
  */
 export interface ScopeCallbackGrammarFields<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
   /**

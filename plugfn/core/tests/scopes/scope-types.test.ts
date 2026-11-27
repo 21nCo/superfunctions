@@ -381,6 +381,23 @@ function buildConsumer<GD extends ScopeDimensions>(definition: ConsumerDefinitio
   return defineScopeGrammar(definition);
 }
 buildConsumer({ provider: 'consumer', dimensions: ttlDims, riskOf: () => 'read' }).classifyRisk({ ttl: 60 });
+// The fields interface keeps normalize optional for any input, but defineScopeGrammar still requires it for a provider-shaped one.
+const fieldsNoNormalize: ScopeCallbackGrammarFields<TtlDims, SecondsInput> = { provider: 'fields', dimensions: ttlDims, riskOf: () => 'read' };
+// @ts-expect-error a provider-shaped fields value without normalize
+defineScopeGrammar(fieldsNoNormalize);
+// @ts-expect-error a provider-shaped fields value without normalize, with explicit type arguments
+defineScopeGrammar<TtlDims, SecondsInput>(fieldsNoNormalize);
+// @ts-expect-error a provider-shaped fields value without normalize, through a generic consumer
+buildGrammar(fieldsNoNormalize);
+// A generic interface over any input that extends the fields does not satisfy the requirement either.
+interface AnyInputConsumerDefinition<GD extends ScopeDimensions, GInput> extends ScopeCallbackGrammarFields<GD, GInput> {
+  readonly provider: 'any-input-consumer';
+}
+function buildAnyInputConsumer<GD extends ScopeDimensions, GInput>(definition: AnyInputConsumerDefinition<GD, GInput>): ScopeCallbackGrammar<GD, GInput> {
+  // @ts-expect-error a fields interface over an unconstrained input may lack the required normalize
+  return defineScopeGrammar(definition);
+}
+void buildAnyInputConsumer;
 // A generic definition type extends the definition by intersection and keeps the normalize requirement.
 type TaggedDefinition<GD extends ScopeDimensions, GInput> = ScopeCallbackGrammarDefinition<GD, GInput> & { readonly provider: 'tagged' };
 const tagged: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, normalize: input => ({ ttl: input.seconds }), riskOf: () => 'read' };
