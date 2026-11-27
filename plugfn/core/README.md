@@ -134,10 +134,11 @@ grammar.isSubset(
 grammar.classifyRisk({ permissions: ['contents:write'], repositories: [], ttl: 900 }); // 'write'
 ```
 
-- Only four dimension kinds exist: `exactSet`, `prefixGlobSet` (a single trailing `*`), `numericMax` and `ttlMax` (whole seconds).
-- An optional `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit or a non-finite number) is rejected, never widened.
-- `classifyRisk` returns the highest `riskOf` result over every requested item and throws `ScopeError` for a malformed request.
-- Evaluation is linear in the input size.
+- Only four dimension kinds exist: `exactSet`, `prefixGlobSet` (a single trailing `*`), `numericMax` and `ttlMax` (whole seconds). An unknown kind, or an option a kind does not have (such as `max` on a `ttlMax` dimension), throws `TypeError` when the grammar is defined.
+- The grammar is frozen and evaluates from its own copy of the definition, so later changes to the definition object or `grammar.dimensions` cannot change a decision.
+- An optional `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit, a non-finite number, or input that throws while being read) is rejected as `malformed`, never widened. `isSubset` and `normalize` report this in their result and do not throw.
+- `classifyRisk` returns the highest `riskOf` result over every requested item and throws `ScopeError` for a malformed request or when `riskOf` throws or returns anything other than `read`, `write` or `destructive`.
+- Evaluation is linear in the input size; glob coverage uses a character trie, so it does not depend on hashing.
 
 ## OAuth migration
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defineScopeGrammar, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
+import { defineScopeGrammar, SCOPE_RISK_LEVELS, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
 
 const grammar = defineScopeGrammar({
   provider: 'test-provider',
@@ -57,10 +57,57 @@ describe('defineScopeGrammar', () => {
     for (const definition of bad) expect(() => defineScopeGrammar(definition as never)).toThrow(TypeError);
   });
 
-  it('exposes a frozen grammar', () => {
+  it('rejects options a dimension kind does not have instead of dropping them', () => {
+    const riskOf = () => 'read' as const;
+    const bad: unknown[] = [
+      // A mistyped cap must not leave the dimension unbounded.
+      { kind: 'ttlMax', max: 60 },
+      { kind: 'numericMax', maxSeconds: 60 },
+      { kind: 'exactSet', value: ['a'] },
+      { kind: 'prefixGlobSet', values: ['a'] },
+      { kind: 'ttlMax', [Symbol('maxSeconds')]: 60 },
+      Object.defineProperty({ kind: 'ttlMax' }, 'maxSeconds', { enumerable: true, get: () => 60 }),
+    ];
+    for (const d of bad) {
+      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d } as never, riskOf })).toThrow(TypeError);
+    }
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf, normalise: (x: unknown) => x } as never),
+    ).toThrow(TypeError);
+  });
+
+  it('exposes a frozen grammar whose dimensions mirror the definition', () => {
     expect(Object.isFrozen(grammar)).toBe(true);
     expect(Object.isFrozen(grammar.dimensions)).toBe(true);
-    expect(grammar.dimensions.ttl.kind).toBe('ttlMax');
+    for (const def of Object.values(grammar.dimensions)) expect(Object.isFrozen(def)).toBe(true);
+    expect(Object.isFrozen(grammar.dimensions.permissions.values)).toBe(true);
+    expect(grammar.dimensions).toEqual({
+      permissions: { kind: 'exactSet', values: ['contents:read', 'contents:write', 'admin'] },
+      labels: { kind: 'exactSet' },
+      resources: { kind: 'prefixGlobSet' },
+      rate: { kind: 'numericMax', min: 0, max: 1000, integer: true },
+      ttl: { kind: 'ttlMax', minSeconds: 900, maxSeconds: 3600 },
+    });
+  });
+
+  it('cannot be changed after definition through its dimensions or the definition object', () => {
+    const wildcardLabels = () => violationsOf({ ...base, labels: ['alpha'] }, { ...envelope, labels: ['al*'] });
+    expect(wildcardLabels().ok).toBe(false);
+    expect(() => {
+      (grammar.dimensions.labels as { kind: string }).kind = 'prefixGlobSet';
+    }).toThrow(TypeError);
+    expect(() => {
+      (grammar.dimensions.permissions.values as string[]).push('issues:write');
+    }).toThrow(TypeError);
+    expect(wildcardLabels().ok).toBe(false);
+
+    const dimensions = { names: { kind: 'exactSet', values: ['a'] as string[] }, ttl: { kind: 'ttlMax', maxSeconds: 60 } };
+    const owned = defineScopeGrammar({ provider: 'owned', dimensions: dimensions as never, riskOf: () => 'read' });
+    (dimensions.names as { kind: string }).kind = 'prefixGlobSet';
+    dimensions.names.values.push('b*');
+    dimensions.ttl.maxSeconds = 3600;
+    expect(owned.isSubset({ names: ['b'], ttl: 60 } as never, { names: ['b*'], ttl: 60 } as never).ok).toBe(false);
+    expect(owned.normalize({ names: [], ttl: 120 } as never).ok).toBe(false);
   });
 });
 
@@ -267,6 +314,92 @@ describe('fail closed', () => {
   });
 });
 
+describe('unreadable input', () => {
+  function throwingArray(): string[] {
+    const items = ['alpha'];
+    Object.defineProperty(items, 0, {
+      get() {
+        throw new Error('index getter failed');
+      },
+    });
+    return items;
+  }
+
+  const hostileScopes: Array<[string, () => unknown]> = [
+    ['an array with a throwing index getter', () => ({ ...base, labels: throwingArray() })],
+    [
+      'a Proxy whose ownKeys trap throws',
+      () =>
+        new Proxy(
+          { ...base },
+          {
+            ownKeys() {
+              throw new Error('ownKeys trap failed');
+            },
+          },
+        ),
+    ],
+    [
+      'a Proxy whose getPrototypeOf trap throws',
+      () =>
+        new Proxy(
+          { ...base },
+          {
+            getPrototypeOf() {
+              throw new Error('getPrototypeOf trap failed');
+            },
+          },
+        ),
+    ],
+    [
+      'a set whose length getter throws',
+      () => ({
+        ...base,
+        labels: new Proxy([], {
+          get(target, key, receiver) {
+            if (key === 'length') throw new Error('length getter failed');
+            return Reflect.get(target, key, receiver) as unknown;
+          },
+        }),
+      }),
+    ],
+  ];
+
+  it.each(hostileScopes)('rejects %s as malformed on either side without throwing', (_label, make) => {
+    expect(violationsOf(make() as never).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('scope could not be read') }),
+    ]);
+    expect(violationsOf(base, make() as never).violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope' })]);
+    expect(grammar.normalize(make() as never).ok).toBe(false);
+    expect(() => grammar.classifyRisk(make() as never)).toThrow(ScopeError);
+  });
+
+  it('rejects a normalizer throw that cannot be formatted', () => {
+    const errorWithThrowingMessage = new Error('hidden');
+    Object.defineProperty(errorWithThrowingMessage, 'message', {
+      get() {
+        throw new Error('message getter failed');
+      },
+    });
+    for (const thrown of [Object.create(null), errorWithThrowingMessage, { toString: () => { throw new Error('toString failed'); } }]) {
+      const throwing = defineScopeGrammar({
+        provider: 'throwing-normalize',
+        dimensions: { names: { kind: 'exactSet' } },
+        normalize: (): { names: string[] } => {
+          throw thrown;
+        },
+        riskOf: () => 'read',
+      });
+      expect(throwing.isSubset({}, {}).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', message: 'normalize failed: an unreadable value was thrown' }),
+        expect.objectContaining({ code: 'malformed', side: 'envelope' }),
+      ]);
+      expect(throwing.normalize({}).ok).toBe(false);
+      expect(() => throwing.classifyRisk({})).toThrow(ScopeError);
+    }
+  });
+});
+
 describe('classifyRisk', () => {
   it('returns the maximum risk over all requested items', () => {
     expect(grammar.classifyRisk(base)).toBe('read');
@@ -297,11 +430,34 @@ describe('classifyRisk', () => {
 
   it('throws for a malformed request instead of guessing a risk', () => {
     expect(() => grammar.classifyRisk({ ...base, resources: ['org/*/x'] })).toThrow(ScopeError);
+    let caught: unknown;
     try {
       grammar.classifyRisk({ ...base, rate: -1 });
     } catch (error) {
-      expect((error as ScopeError).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+      caught = error;
     }
+    expect(caught).toBeInstanceOf(ScopeError);
+    expect((caught as ScopeError).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+  });
+
+  it('keeps its own risk order when the exported levels are tampered with', () => {
+    expect(Object.isFrozen(SCOPE_RISK_LEVELS)).toBe(true);
+    expect(() => {
+      (SCOPE_RISK_LEVELS as unknown as string[])[2] = 'read';
+    }).toThrow(TypeError);
+    expect(grammar.classifyRisk({ ...base, permissions: ['admin'] })).toBe('destructive');
+  });
+
+  it('turns a throwing riskOf into a ScopeError', () => {
+    const failure = new Error('riskOf exploded');
+    const throwing = defineScopeGrammar({
+      provider: 'throwing',
+      dimensions: { names: { kind: 'exactSet' } },
+      riskOf: () => {
+        throw failure;
+      },
+    });
+    expect(() => throwing.classifyRisk({ names: ['a'] })).toThrow(expect.objectContaining({ name: 'ScopeError', cause: failure }));
   });
 
   it('throws when riskOf returns a level outside the closed set', () => {
@@ -357,6 +513,57 @@ describe('performance', () => {
       result = big.isSubset(request, { ids: [], paths: ['other/*'], ttl: 60 });
     });
     expect(result?.violations).toHaveLength(2 * n);
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  /**
+   * 2^levels distinct strings that share one 32-bit FNV-1a hash. Each level
+   * appends one of two two-character blocks that collide from the same state:
+   * the first characters give equal high 16 bits, and the second characters
+   * cancel the low 16 bits. This is the input shape that degrades a
+   * hash-bucketed prefix index to E x R comparisons.
+   */
+  function fnvCollidingStrings(levels: number): string[] {
+    const step = (hash: number, code: number) => Math.imul(hash ^ code, 0x01000193);
+    const usable = (code: number) => code >= 0x100 && code <= 0xffff && (code < 0xd800 || code > 0xdfff);
+    let strings = [''];
+    let state = 0x811c9dc5 | 0;
+    for (let level = 0; level < levels; level++) {
+      const firstByHighBits = new Map<number, number>();
+      let blocks: [string, string] | undefined;
+      for (let a = 0x100; !blocks; a++) {
+        const mid = step(state, a);
+        const other = firstByHighBits.get(mid >>> 16);
+        if (other === undefined) {
+          firstByHighBits.set(mid >>> 16, a);
+          continue;
+        }
+        const delta = (step(state, other) ^ mid) & 0xffff;
+        for (let b = 0x100; b <= 0xffff; b++) {
+          if (usable(b) && usable(b ^ delta)) {
+            blocks = [String.fromCharCode(other, b ^ delta), String.fromCharCode(a, b)];
+            state = step(mid, b);
+            break;
+          }
+        }
+      }
+      const [left, right] = blocks;
+      strings = strings.flatMap(prefix => [prefix + left, prefix + right]);
+    }
+    return strings;
+  }
+
+  it('stays within 50 ms for 10k envelope prefixes and 10k request items that share a hash', () => {
+    const colliding = fnvCollidingStrings(15);
+    const globs = defineScopeGrammar({ provider: 'globs', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    const collidingEnvelope = { paths: colliding.slice(0, n).map(prefix => `${prefix}*`) };
+    const collidingRequest = { paths: colliding.slice(n, 2 * n) };
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const elapsed = bestOfThree(() => {
+      result = globs.isSubset(collidingRequest, collidingEnvelope);
+    });
+    expect(result?.violations).toHaveLength(n);
+    expect(globs.isSubset({ paths: [`${colliding[n - 1]}/repo`] }, collidingEnvelope).ok).toBe(true);
     expect(elapsed).toBeLessThan(50);
   });
 

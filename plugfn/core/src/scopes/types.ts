@@ -7,8 +7,8 @@
  * is. Only the four dimension kinds below exist (a closed set).
  */
 
-/** Risk levels, ordered from least to most risky. */
-export const SCOPE_RISK_LEVELS = ['read', 'write', 'destructive'] as const;
+/** Risk levels, ordered from least to most risky. Frozen; the engine keeps its own copy. */
+export const SCOPE_RISK_LEVELS = Object.freeze(['read', 'write', 'destructive'] as const);
 
 export type ScopeRisk = (typeof SCOPE_RISK_LEVELS)[number];
 
@@ -124,20 +124,34 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * not fit the grammar is rejected. Defaults to the identity.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
-  /** Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS}. */
+  /**
+   * Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS};
+   * any other result, or a throw, makes `classifyRisk` throw `ScopeError`.
+   */
   readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }
 
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
+  /**
+   * Frozen copies of the dimension definitions, as given. The engine evaluates
+   * from its own private copy, so these are informational only.
+   */
   readonly dimensions: Readonly<D>;
-  /** Normalises and validates input without comparing it to anything. */
+  /**
+   * Normalises and validates input without comparing it to anything. Never
+   * throws: unreadable input yields a `malformed` violation.
+   */
   normalize(input: TInput): ScopeNormalizeResult<D>;
   /**
    * `ok` only when both inputs normalise and every requested item is inside
-   * the envelope. A malformed request or envelope is never widened.
+   * the envelope. A malformed or unreadable request or envelope is never
+   * widened, and never throws: it yields `malformed` violations.
    */
   isSubset(request: TInput, envelope: TInput): ScopeSubsetResult;
-  /** Maximum `riskOf` over all requested items; `read` for an empty request. */
+  /**
+   * Maximum `riskOf` over all requested items; `read` for an empty request.
+   * Throws `ScopeError` for a malformed request or an invalid `riskOf` result.
+   */
   classifyRisk(request: TInput): ScopeRisk;
 }
