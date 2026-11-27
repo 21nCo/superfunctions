@@ -492,9 +492,12 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
       // The adapter's delete reports no count. Reads just before it of the
       // revision row, then of the row, tell what it may have removed (see
       // raiseFromEvidence).
+      // Neither read fails the write: earlier statements of it (cascades)
+      // may have committed. Without them the delete is decided as unknown.
       const ledgerBefore = ids?.length === 1 ? await revisionBefore(db, p, ids[0]) : undefined;
       const presentBefore = ids
-        ? (await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })) !== null
+        ? await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })
+          .then((row) => row !== null, () => undefined)
         : undefined;
       try {
         await db.delete(p);

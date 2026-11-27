@@ -937,6 +937,38 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     expect(await rev(base, "comment", "comment:1")).toEqual({ rev: 2, deleted: true });
   });
 
+  it("never fails a write whose read before its delete fails, after its cascade committed, on every route", async () => {
+    for (const route of ["push", "mutation", "transact"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let armed = false;
+      let failed = false;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        async delete(p: any) {
+          const out = await target.delete(p);
+          // After the cascade removed the comment, the next read of the task fails once.
+          if (p.model === "comment") armed = true;
+          return out;
+        },
+        async findOne(p: any) {
+          if (armed && p.model === "task") {
+            armed = false;
+            failed = true;
+            throw new Error("connection lost");
+          }
+          return target.findOne(p);
+        },
+      })));
+      const routes = await cascadeServer(db);
+      const result = await routes[route]({ resource: "task", operation: "delete", id: "task:1" });
+
+      expect(failed, route).toBe(true);
+      expect(okOf(route, result.body), `${route} ${JSON.stringify(result.body).slice(0, 300)}`).toBe(true);
+      expect(await deleteChanges(base), route).toEqual(["comment:1", "task:1"]);
+      expect(await rev(base, "comment", "comment:1"), route).toEqual({ rev: 2, deleted: true });
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 2, deleted: true });
+    }
+  });
+
   it("raises every record a committed write changed when its sequence allocation fails, on every route", async () => {
     for (const route of ["push", "mutation", "transact"] as const) {
       const base = memoryAdapter() as Adapter;
