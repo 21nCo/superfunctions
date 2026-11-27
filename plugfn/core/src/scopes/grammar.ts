@@ -1,26 +1,6 @@
 import { SCOPE_LIMITS } from './types.js';
 import type { NormalizedScope, PublishedScopeDimensions, ScopeDimension, ScopeDimensionKind, ScopeDimensions, ScopeGrammar } from './types.js';
-import type { ScopeGrammarDefinition, ScopeItem, ScopeNormalizeResult, ScopeRisk, ScopeShape, ScopeSubsetResult, ScopeViolation } from './types.js';
-
-/**
- * Thrown by `classifyRisk` and `classifyScope` for input they cannot classify.
- * `violations` is a fresh frozen array and `cause` is always an own property
- * (`undefined` when there is none), so neither is ever read from a polluted
- * `Object.prototype`.
- */
-export class ScopeError extends Error {
-  readonly violations: readonly ScopeViolation[];
-
-  constructor(message: string, violations: readonly ScopeViolation[] = [], options?: { cause?: unknown }) {
-    // `Error` installs `cause` from any property it finds on the options, an
-    // inherited one included, so it always gets a null-prototype record that
-    // holds exactly the caller's own `cause`.
-    const cause = typeof options === 'object' && options !== null && Object.hasOwn(options, 'cause') ? options.cause : undefined;
-    super(message, ownRecord({ cause }));
-    this.name = 'ScopeError';
-    this.violations = frozenList(violations, []);
-  }
-}
+import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSubsetResult, ScopeViolation } from './types.js';
 
 /**
  * A fresh frozen array holding the entries of `first` and then `second`,
@@ -33,218 +13,6 @@ function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] 
   for (let i = 0; i < second.length; i++) out[out.length] = second[i]!;
   return Object.freeze(out);
 }
-
-/**
- * The intrinsic `Promise.prototype` and its `then`, captured once at load and
- * bound as `then.call`, so replacing `Promise`, its `then` or
- * `Function.prototype.call` later changes nothing.
- */
-const intrinsicPromisePrototype = Promise.prototype;
-const intrinsicThen: (value: unknown, onFulfilled: undefined, onRejected: () => void) => unknown = Function.prototype.call.bind(
-  intrinsicPromisePrototype.then,
-) as never;
-const ignoreRejection = (): void => undefined;
-
-/** Applies the intrinsic `then` with a no-op rejection handler; `false` when it throws. */
-function markHandled(value: object): boolean {
-  try {
-    intrinsicThen(value, undefined, ignoreRejection);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** A data descriptor with a null prototype, so a polluted `Object.prototype.get` or `.set` cannot make it an accessor. */
-function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
-  const descriptor = Object.create(null) as PropertyDescriptor;
-  descriptor.value = value;
-  if (flags) {
-    descriptor.writable = true;
-    descriptor.configurable = true;
-  }
-  return descriptor;
-}
-
-/** `Object` and `Object.prototype`, captured once at load. */
-const IntrinsicObject = Object;
-const intrinsicObjectPrototype: object = IntrinsicObject.prototype;
-
-/** How many levels of `Object`'s prototype chain the species check walks (three in a normal realm). */
-const MAX_SPECIES_CHAIN_DEPTH = 16;
-
-/**
- * Whether `then` on a promise whose prototype is `Object.prototype` (with no
- * own `constructor`) uses the default species: `Object.prototype.constructor`
- * is still the intrinsic `Object` as a data property, and no `Symbol.species`
- * is defined anywhere on `Object`'s prototype chain (`Object` itself,
- * `Function.prototype`, `Object.prototype`), which `then` reads with a full
- * property lookup. When it holds, a failed `then` was the brand check, so the
- * retry is skipped and a plain record never sees a `defineProperty`. The walk
- * is bounded; a longer chain, or one whose lookup throws (a Proxy), counts as
- * not default, so the retry runs.
- */
-function ambientSpeciesIsDefault(): boolean {
-  try {
-    const constructor = Object.getOwnPropertyDescriptor(intrinsicObjectPrototype, 'constructor');
-    if (constructor === undefined || !Object.hasOwn(constructor, 'value') || constructor.value !== IntrinsicObject) {
-      return false;
-    }
-    let level: unknown = IntrinsicObject;
-    for (let depth = 0; depth < MAX_SPECIES_CHAIN_DEPTH; depth++) {
-      if (level === null) return true;
-      if (Object.getOwnPropertyDescriptor(level as object, Symbol.species) !== undefined) return false;
-      level = Object.getPrototypeOf(level);
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Contains a promise that a synchronous callback returned by mistake (an
- * `async` normalize or riskOf, say): the intrinsic `then` marks a native
- * promise's rejection handled, so it can never surface as an unhandled
- * rejection; on any other object its brand check throws, which is swallowed.
- * A primitive is never a promise and is skipped. The engine never reads or
- * calls the value's own `then` and never awaits; the caller still fails
- * closed on the value itself.
- *
- * `then` looks up the species constructor (`constructor`, then
- * `Symbol.species`) before it attaches the handler, and that lookup can throw.
- * So when the first attempt throws, the engine retries once with
- * `constructor` reading as `undefined`, which makes `then` use the intrinsic
- * `Promise` without reading the species, decided by the value's actual own
- * `constructor` descriptor (whatever its realm):
- * - absent: on an extensible value, an own `constructor: undefined` is
- *   defined for the retry and deleted afterwards. It is skipped when the
- *   prototype is `null`, or `Object.prototype` while the ambient species is
- *   the default (`Object.prototype.constructor` is the intrinsic `Object`
- *   and no `Symbol.species` is defined anywhere on `Object`'s prototype
- *   chain), since `then` then failed on the
- *   brand check; so a plain record never takes the retry;
- * - configurable (data or accessor): it is redefined to that data property
- *   for the retry and the saved descriptor is restored afterwards;
- * - non-configurable writable data: its value is set to `undefined` for the
- *   retry and set back afterwards.
- * The restore runs in a `finally` around both the redefinition and the retry,
- * so a `defineProperty` that applies the change and then throws is undone too.
- * Residual: a promise whose lookup throws and whose own `constructor` is a
- * non-configurable accessor or non-configurable non-writable data, or a
- * non-extensible promise with no own `constructor`, cannot be marked handled;
- * the caller still fails closed.
- */
-function containPromise(value: unknown): void {
-  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
-  if (markHandled(value)) return;
-  try {
-    const saved = Object.getOwnPropertyDescriptor(value, 'constructor');
-    let neutral: PropertyDescriptor;
-    let restore: () => void;
-    if (saved === undefined) {
-      if (!Object.isExtensible(value)) return;
-      const proto: unknown = Object.getPrototypeOf(value);
-      if (proto === null || (proto === intrinsicObjectPrototype && ambientSpeciesIsDefault())) return;
-      neutral = dataDescriptor(undefined, true);
-      restore = () => {
-        delete (value as { constructor?: unknown }).constructor;
-      };
-    } else if (saved.configurable) {
-      neutral = dataDescriptor(undefined, true);
-      restore = () => {
-        Object.defineProperty(value, 'constructor', Object.setPrototypeOf(saved, null) as PropertyDescriptor);
-      };
-    } else if (Object.hasOwn(saved, 'value') && saved.writable === true) {
-      neutral = dataDescriptor(undefined, false);
-      restore = () => {
-        Object.defineProperty(value, 'constructor', dataDescriptor(saved.value, false));
-      };
-    } else {
-      return;
-    }
-    try {
-      Object.defineProperty(value, 'constructor', neutral);
-      markHandled(value);
-    } finally {
-      restore();
-    }
-  } catch {
-    // A Proxy trap or a failed restore: nothing more can be done, and the caller fails closed.
-  }
-}
-
-/**
- * The standard `Array.prototype` method names copied into
- * {@link NORMALIZE_ARRAY_PROTOTYPE}, plus `Symbol.iterator`. A fixed list, so
- * no other name added to `Array.prototype` (even before load) reaches an
- * input array.
- */
-const NORMALIZE_ARRAY_METHODS: readonly PropertyKey[] = Object.freeze([
-  'at',
-  'concat',
-  'copyWithin',
-  'entries',
-  'every',
-  'fill',
-  'filter',
-  'find',
-  'findIndex',
-  'findLast',
-  'findLastIndex',
-  'flat',
-  'flatMap',
-  'forEach',
-  'includes',
-  'indexOf',
-  'join',
-  'keys',
-  'lastIndexOf',
-  'map',
-  'pop',
-  'push',
-  'reduce',
-  'reduceRight',
-  'reverse',
-  'shift',
-  'slice',
-  'some',
-  'sort',
-  'splice',
-  'toLocaleString',
-  'toReversed',
-  'toSorted',
-  'toSpliced',
-  'toString',
-  'unshift',
-  'values',
-  'with',
-  Symbol.iterator,
-]);
-
-/**
- * The prototype of every array the engine hands to `normalize`: a frozen
- * null-prototype object holding the standard `Array.prototype` methods
- * captured once at load. Only the names in {@link NORMALIZE_ARRAY_METHODS}
- * are copied, each only when it is an own data property whose value is a
- * function; an absent name is skipped. So no other name (a method or data
- * added to `Array.prototype` even before load, `Array.prototype[0]`, say),
- * no accessor and no `constructor` is ever copied. Array methods work as
- * usual, nothing added to or replaced on `Array.prototype` or
- * `Object.prototype` later is visible, and `ArraySpeciesCreate` sees no
- * `constructor`, so `map` and friends create intrinsic arrays.
- */
-const NORMALIZE_ARRAY_PROTOTYPE: object = (() => {
-  const proto = Object.create(null) as object;
-  for (const key of NORMALIZE_ARRAY_METHODS) {
-    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
-    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') {
-      continue;
-    }
-    Object.defineProperty(proto, key, dataDescriptor(descriptor.value, true));
-  }
-  return Object.freeze(proto);
-})();
 
 type Side = ScopeViolation['side'];
 type ScopeValue = readonly string[] | number;
@@ -282,18 +50,13 @@ const NOT_PLAIN_DATA = 'scope must be plain data (objects, arrays, strings, fini
 const DIMENSION_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
 const { maxSetItems: MAX_SET_ITEMS, maxMemberLength: MAX_MEMBER_LENGTH } = SCOPE_LIMITS;
 /** Private copy of the risk order, independent of the exported array. */
-const RISK_ORDER: readonly ScopeRisk[] = Object.freeze(['read', 'write', 'destructive'] as const);
-const RISK_RANK: ReadonlyMap<unknown, number> = new Map(RISK_ORDER.map((level, rank) => [level, rank]));
-
-/** The keys each dimension kind accepts; anything else is a definition error. */
 const DIMENSION_KEYS: Readonly<Record<ScopeDimensionKind, ReadonlySet<string>>> = Object.freeze({
   exactSet: new Set(['kind', 'values']),
   prefixGlobSet: new Set(['kind']),
   numericMax: new Set(['kind', 'min', 'max', 'integer']),
   ttlMax: new Set(['kind', 'minSeconds', 'maxSeconds']),
 });
-const DEFINITION_KEYS: ReadonlySet<string> = new Set(['provider', 'dimensions', 'normalize', 'riskOf']);
-const ASYNC_FUNCTION_TAGS: ReadonlySet<string> = new Set(['[object AsyncFunction]', '[object AsyncGeneratorFunction]']);
+const DEFINITION_KEYS: ReadonlySet<string> = new Set(['provider', 'dimensions']);
 
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
@@ -325,16 +88,8 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
  * Iterative, so depth cannot overflow the call stack, and each object is
  * visited once: a second visit (a cycle or a shared reference) fails, so the
  * walk is linear in the clone's size.
- *
- * With `detach`, each record is given a null prototype once its keys are
- * checked, and each array {@link NORMALIZE_ARRAY_PROTOTYPE} once its entries
- * are queued (it stays an array), so a callback reading the clone can never
- * see a field inherited from a polluted `Object.prototype` or
- * `Array.prototype`. The result is only
- * meaningful when the whole walk passes; it is used only for the clone handed
- * to `normalize`, which is never checked again.
  */
-function notPlainAt(root: unknown, detach = false): string | null | undefined {
+function notPlainAt(root: unknown): string | null | undefined {
   const seen = new Set<object>();
   // Objects still to visit, each with the top-level key it sits under.
   const pending: [object, string | null][] = [];
@@ -355,13 +110,11 @@ function notPlainAt(root: unknown, detach = false): string | null | undefined {
       for (let i = 0; i < value.length; i++) {
         if (!Object.hasOwn(value, i) || !accept(value[i], at)) return at;
       }
-      if (detach) Object.setPrototypeOf(value, NORMALIZE_ARRAY_PROTOTYPE);
     } else if (isCloneRecord(value)) {
       for (const key of Object.keys(value)) {
         const under = value === root ? key : at;
         if (!accept(value[key], under)) return under;
       }
-      if (detach) Object.setPrototypeOf(value, null);
     } else {
       return at;
     }
@@ -867,41 +620,16 @@ function comparePrefixGlob(name: string, request: readonly string[], envelope: r
   }
 }
 
-function readCallback(provider: string, label: string, value: unknown, optional: boolean): ((arg: never) => unknown) | undefined {
-  if (value === undefined && optional) return undefined;
-  if (typeof value !== 'function') throw new TypeError(`Scope grammar "${provider}": ${label} must be a function`);
-  if (ASYNC_FUNCTION_TAGS.has(Object.prototype.toString.call(value))) {
-    throw new TypeError(`Scope grammar "${provider}": ${label} must be synchronous, not an async function`);
-  }
-  return value as (arg: never) => unknown;
-}
-
-/** The one constructor of the item passed to `riskOf`. */
-function riskItem<D extends ScopeDimensions>(dimension: string, kind: ScopeDimensionKind, value: string | number): ScopeItem<D> {
-  return ownRecord({ dimension, kind, value }) as ScopeItem<D>;
-}
-
-/**
- * A validated scope, or why reading failed; `cause` (a clone or normalize
- * error) is kept for `ScopeError` and never formatted. Built only by
- * {@link parseResult}, so every field is own and none is inherited.
- */
-type ParseResult = { readonly scope: ParsedScope | undefined; readonly violations: ScopeViolation[]; readonly cause: unknown };
-
-function parseResult(scope: ParsedScope | undefined, violations: ScopeViolation[], cause?: unknown): ParseResult {
-  return ownRecord<ParseResult>({ scope, violations, cause });
-}
-
 /**
  * Defines a provider scope grammar. Throws `TypeError` for an invalid
  * definition: any dimension kind outside the closed set, an option the kind
- * does not have, an invalid bound, an async callback, a definition that is
+ * does not have, an invalid bound, a definition that is
  * not plain data (see `ScopeGrammarDefinition.dimensions`), or a runtime
  * without `structuredClone`.
  */
-export function defineScopeGrammar<const D extends ScopeDimensions, TInput = ScopeShape<D>>(
-  definition: ScopeGrammarDefinition<D, TInput>,
-): ScopeGrammar<D, TInput> {
+export function defineScopeGrammar<const D extends ScopeDimensions>(
+  definition: ScopeGrammarDefinition<D>,
+): ScopeGrammar<D> {
   const clone = hostClone;
   if (!clone) throw new TypeError('Scope grammars need structuredClone, which this runtime does not provide');
   if (typeof definition !== 'object' || definition === null || Array.isArray(definition)) throw new TypeError('Scope grammar definition must be an object');
@@ -914,9 +642,6 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   if (typeof provider !== 'string' || provider.trim() === '' || hasControlChar(provider)) {
     throw new TypeError('Scope grammar provider must be a non-empty string');
   }
-  const normalize = readCallback(provider, 'normalize', fields.normalize, true) as ((input: TInput) => unknown) | undefined;
-  const riskOf = readCallback(provider, 'riskOf', fields.riskOf, false) as (item: ScopeItem<D>) => unknown;
-
   // One read of each dimensions object builds the engine's own copy, and only
   // that copy is compiled and published: the engine enforces exactly the data
   // it checked and never reads the author's objects again.
@@ -930,108 +655,47 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     Object.assign(Object.create(null) as object, Object.fromEntries(results.map(result => [result.compiled.name, result.published]))),
   ) as PublishedScopeDimensions<D>;
 
-  /** The frozen snapshots this grammar returned, with their parsed form, for `classifyScope`. */
   const snapshots = new WeakMap<object, ParsedScope>();
   const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
     const result = Object.create(null) as Record<string, ScopeValue>;
     for (const [name, value] of scope) result[name] = value;
-    const frozen = Object.freeze(result);
-    snapshots.set(frozen, scope);
-    return frozen as NormalizedScope<D>;
+    return Object.freeze(result) as NormalizedScope<D>;
   };
 
-  const fail = (side: Side, message: string, cause: unknown): ParseResult => parseResult(undefined, [malformed(side, message)], cause);
-
-  /**
-   * Reads one untrusted input: one structured clone, checked to be plain data;
-   * then `normalize` on that clone and one clone of its result, checked the
-   * same way; then validation of the engine-owned copy. Never throws; messages
-   * are fixed and never format a thrown value.
-   */
-  const parse = (input: TInput, side: Side): ParseResult => {
+  /** Validates a single structured clone. Never reads or formats a thrown value. */
+  const parse = (input: ScopeShape<D>, side: Side): ParsedScope | ScopeViolation[] => {
     let value: unknown;
     try {
       value = clone(input);
-    } catch (error) {
-      return fail(side, 'scope must be plain data that structuredClone can copy', error);
-    }
-    // Every engine-owned clone is checked to be plain JSON-like data before
-    // anything reads it: normalize never sees memory shared with the caller,
-    // and validation never meets an extra array key or a shared reference.
-    if (normalize) {
-      // The input is provider-shaped, so its keys name no dimension. Every
-      // record of the clone normalize receives has a null prototype and
-      // every array NORMALIZE_ARRAY_PROTOTYPE.
-      if (notPlainAt(value, true) !== undefined) return fail(side, NOT_PLAIN_DATA, undefined);
-      let mapped: unknown;
-      try {
-        mapped = normalize(value as TInput);
-      } catch (error) {
-        return fail(side, 'normalize threw', error);
-      }
-      // A returned promise is marked handled, then fails the clone below.
-      containPromise(mapped);
-      try {
-        value = clone(mapped);
-      } catch (error) {
-        return fail(side, 'normalize must return plain data that structuredClone can copy', error);
-      }
+    } catch {
+      return [malformed(side, 'scope must be plain data that structuredClone can copy')];
     }
     const at = notPlainAt(value);
-    if (at !== undefined) {
-      if (at === null || !byName.has(at)) return fail(side, normalize ? `normalize result: ${NOT_PLAIN_DATA}` : NOT_PLAIN_DATA, undefined);
-      return parseResult(undefined, [malformed(side, `dimension "${at}" must be plain data (arrays, strings, finite numbers) without shared references`, at)]);
-    }
-    const parsed = parseScope(dims, byName, value, side);
-    return Array.isArray(parsed) ? parseResult(undefined, parsed) : parseResult(parsed, []);
+    if (at === undefined) return parseScope(dims, byName, value, side);
+    if (at === null || !byName.has(at)) return [malformed(side, NOT_PLAIN_DATA)];
+    return [malformed(side, `dimension "${at}" must be plain data (arrays, strings, finite numbers) without shared references`, at)];
   };
 
-  /**
-   * Every item is passed to riskOf and validated, even after the highest level
-   * is reached, so an invalid result fails whatever the item order.
-   */
-  const classify = (parsed: ParsedScope): ScopeRisk => {
-    let rank = 0;
-    for (const dim of dims) {
-      const value = parsed.get(dim.name)!;
-      for (const item of typeof value === 'number' ? [value] : value) {
-        let risk: unknown;
-        try {
-          risk = riskOf(riskItem<D>(dim.name, dim.kind, item));
-        } catch (error) {
-          throw new ScopeError(`Scope grammar "${provider}": riskOf failed for dimension "${dim.name}"`, [], { cause: error });
-        }
-        // A returned promise is marked handled, then is an unknown risk below.
-        containPromise(risk);
-        const itemRank = RISK_RANK.get(risk);
-        if (itemRank === undefined) {
-          throw new ScopeError(`Scope grammar "${provider}": riskOf returned an unknown risk for dimension "${dim.name}"`);
-        }
-        if (itemRank > rank) rank = itemRank;
-      }
-    }
-    return RISK_ORDER[rank] as ScopeRisk;
-  };
-
-  const grammar: ScopeGrammar<D, TInput> = {
+  const grammar: ScopeGrammar<D> = {
     provider,
     dimensions: publishedDimensions,
 
-    normalize(input: TInput): ScopeNormalizeResult<D> {
-      const { scope, violations } = parse(input, 'request');
-      return scope ? scopeResult(snapshot(scope), []) : scopeResult<D>(undefined, violations);
+    normalize(input: ScopeShape<D>): ScopeNormalizeResult<D> {
+      const parsed = parse(input, 'request');
+      return Array.isArray(parsed) ? scopeResult<D>(undefined, parsed) : scopeResult(snapshot(parsed), []);
     },
 
-    isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D> {
-      // The envelope is captured first, so no request getter or normalize
-      // call can change it; violations still list the request side first.
+    isSubset(request: ScopeShape<D>, envelope: ScopeShape<D>): ScopeSubsetResult<D> {
+      // Capture the envelope before any request getter can change it.
       const env = parse(envelope, 'envelope');
       const req = parse(request, 'request');
-      if (!req.scope || !env.scope) return scopeResult<D>(undefined, frozenList(req.violations, env.violations));
+      if (Array.isArray(req) || Array.isArray(env)) {
+        return scopeResult<D>(undefined, frozenList(Array.isArray(req) ? req : [], Array.isArray(env) ? env : []));
+      }
       const out: ScopeViolation[] = [];
       for (const dim of dims) {
-        const requested = req.scope.get(dim.name)!;
-        const allowed = env.scope.get(dim.name)!;
+        const requested = req.get(dim.name)!;
+        const allowed = env.get(dim.name)!;
         if (dim.kind === 'exactSet') {
           compareExact(dim.name, requested as readonly string[], allowed as readonly string[], out);
         } else if (dim.kind === 'prefixGlobSet') {
@@ -1041,19 +705,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
           out.push(violation('exceeds_envelope', 'request', message, dim.name, requested as number, allowed as number));
         }
       }
-      return out.length === 0 ? scopeResult(snapshot(req.scope), out) : scopeResult<D>(undefined, out);
-    },
-
-    classifyRisk(request: TInput): ScopeRisk {
-      const { scope, violations, cause } = parse(request, 'request');
-      if (!scope) throw new ScopeError(`Scope request for "${provider}" does not fit the grammar`, violations, { cause });
-      return classify(scope);
-    },
-
-    classifyScope(scope: NormalizedScope<D>): ScopeRisk {
-      const parsed = typeof scope === 'object' && scope !== null ? snapshots.get(scope) : undefined;
-      if (!parsed) throw new ScopeError(`Scope grammar "${provider}": classifyScope accepts only a scope this grammar returned`);
-      return classify(parsed);
+      return out.length === 0 ? scopeResult(snapshot(req), out) : scopeResult<D>(undefined, out);
     },
   };
   return Object.freeze(grammar);

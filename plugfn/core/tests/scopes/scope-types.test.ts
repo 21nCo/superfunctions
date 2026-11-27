@@ -18,7 +18,6 @@ import {
   type NormalizedScope,
   type ScopeDimension,
   type ScopeDimensions,
-  type ScopeItem,
   type ScopeShape,
 } from '../../src/scopes/index.js';
 
@@ -29,11 +28,6 @@ const vocabulary: string[] = ['contents:read'];
 const concrete = defineScopeGrammar({
   provider: 'types',
   dimensions: { names: { kind: 'exactSet', values: vocabulary }, ttl: { kind: 'ttlMax' } },
-  riskOf: item => {
-    const exact: Equal<typeof item.dimension, 'names' | 'ttl'> = true;
-    void exact;
-    return 'read';
-  },
 });
 const names = concrete.dimensions.names;
 // @ts-expect-error published vocabulary arrays are readonly
@@ -65,10 +59,10 @@ declare const mixed: { readonly names: { kind: 'exactSet' } } & Readonly<Record<
 declare const templated: Readonly<Record<\`limit\${string}\`, { kind: 'numericMax' }>>;
 declare const union: { readonly names: { kind: 'exactSet' } } | { readonly ttl: { kind: 'ttlMax' } };
 
-const loose = defineScopeGrammar({ provider: 'loose', dimensions: widened, riskOf: () => 'read' });
-const mixedGrammar = defineScopeGrammar({ provider: 'mixed', dimensions: mixed, riskOf: () => 'read' });
-const templatedGrammar = defineScopeGrammar({ provider: 'templated', dimensions: templated, riskOf: () => 'read' });
-const unionGrammar = defineScopeGrammar({ provider: 'union', dimensions: union, riskOf: () => 'read' });
+const loose = defineScopeGrammar({ provider: 'loose', dimensions: widened });
+const mixedGrammar = defineScopeGrammar({ provider: 'mixed', dimensions: mixed });
+const templatedGrammar = defineScopeGrammar({ provider: 'templated', dimensions: templated });
+const unionGrammar = defineScopeGrammar({ provider: 'union', dimensions: union });
 const looseScope = loose.normalize({});
 if (looseScope.ok) {
   // @ts-expect-error a widened lookup may find no dimension (undefined at runtime)
@@ -128,7 +122,7 @@ type OptionalDims = {
   readonly limit?: { kind: 'numericMax' };
 };
 const optionalDims: OptionalDims = { names: { kind: 'exactSet' } };
-const optionalGrammar = defineScopeGrammar({ provider: 'optional', dimensions: optionalDims, riskOf: () => 'read' });
+const optionalGrammar = defineScopeGrammar({ provider: 'optional', dimensions: optionalDims });
 // @ts-expect-error an optional dimension may be absent from the published dimensions
 void optionalGrammar.dimensions.labels.kind;
 // @ts-expect-error even a required key of a definition with an optional key may be undefined
@@ -146,17 +140,6 @@ if (optionalScope.ok) {
 }
 // The optional scalar is not required on input (the engine judges its presence).
 optionalGrammar.isSubset({ names: ['a'] }, { names: ['a'] });
-const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;
-void optionalItem;
-
-const widenedItems: [
-  Equal<ScopeItem<ScopeDimensions>['dimension'], string>,
-  Equal<ScopeItem<typeof mixed>['dimension'], string>,
-  Equal<ScopeItem<typeof templated>['dimension'], string>,
-  Equal<ScopeItem<typeof union>['dimension'], string>,
-] = [true, true, true, true];
-void widenedItems;
-
 // Any grammar can be passed where every provider is accepted.
 const accepted: AnyScopeGrammar[] = [concrete, loose, mixedGrammar, templatedGrammar, unionGrammar, optionalGrammar];
 void accepted;
@@ -188,7 +171,6 @@ if (anyScope.ok) {
 const inheritedNames = defineScopeGrammar({
   provider: 'inherited-names',
   dimensions: { constructor: { kind: 'numericMax' }, toString: { kind: 'exactSet' } },
-  riskOf: () => 'read',
 });
 const inheritedScope = inheritedNames.normalize({ constructor: 1, toString: ['a'] });
 if (inheritedScope.ok) {

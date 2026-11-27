@@ -3,14 +3,9 @@
  *
  * A scope grammar describes the dimensions a provider credential request can
  * carry. Requests and envelopes are both expressed in that grammar, and the
- * engine answers whether a request stays inside an envelope and how risky it
- * is. Only the four dimension kinds below exist (a closed set).
+ * engine answers whether a request stays inside an envelope. It supports only
+ * the four dimension kinds below.
  */
-
-/** Risk levels, ordered from least to most risky. Frozen; the engine keeps its own copy. */
-export const SCOPE_RISK_LEVELS = Object.freeze(['read', 'write', 'destructive'] as const);
-
-export type ScopeRisk = (typeof SCOPE_RISK_LEVELS)[number];
 
 /**
  * Input bounds. A set with more items, or a member with more characters, does
@@ -160,14 +155,6 @@ export type PublishedScopeDimensions<D extends ScopeDimensions> =
     ? { readonly [K in keyof D]-?: PublishedScopeDimension<D[K]> } & NoInheritedMembers<keyof D, undefined>
     : { readonly [dimension: string]: ScopeDimension | undefined } & NoInheritedMembers<never, ScopeDimension | undefined>;
 
-/** One requested item, as passed to `riskOf`: a frozen record with a null prototype. */
-export interface ScopeItem<D extends ScopeDimensions = ScopeDimensions> {
-  readonly dimension: IsExactDimensions<D> extends true ? keyof D & string : string;
-  readonly kind: ScopeDimensionKind;
-  /** A set member (string) or a scalar value (number). */
-  readonly value: string | number;
-}
-
 export type ScopeViolationCode =
   /** The request or envelope does not normalise to the grammar. */
   | 'malformed'
@@ -209,7 +196,7 @@ export type ScopeSubsetResult<D extends ScopeDimensions = ScopeDimensions> =
 /** The result of `normalize`; the same shape as {@link ScopeSubsetResult}. */
 export type ScopeNormalizeResult<D extends ScopeDimensions> = ScopeSubsetResult<D>;
 
-export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
+export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
   /** Provider identifier, for example `github`. */
   readonly provider: string;
   /**
@@ -226,89 +213,19 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * change what the grammar enforces.
    */
   readonly dimensions: D;
-  /**
-   * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
-   * envelopes alike. It receives the engine's structured clone of the input,
-   * never the caller's object, and only when that clone is plain JSON-like
-   * data: objects (prototype `Object.prototype`), dense arrays without extra
-   * keys, strings, finite numbers, booleans and `null`, without cycles or
-   * shared references.
-   * Any other clone (a SharedArrayBuffer, an ArrayBuffer or view, a Map, Set,
-   * Date, RegExp, Error, Blob, boxed value or `undefined`) is `malformed` and
-   * `normalize` is not called. The engine detaches every record and array of
-   * the clone it receives from the shared realm: every record has a null
-   * prototype, and every array (still an array, `length` own) has a frozen
-   * null-prototype prototype holding the standard `Array.prototype` methods
-   * captured at load (a fixed list of method names plus `Symbol.iterator`,
-   * each copied only when it is an own data property whose value is a
-   * function, so no other name, method or data, present on `Array.prototype`
-   * even before load is ever copied), without `constructor`. So a field
-   * inherited from a polluted `Object.prototype` or `Array.prototype` never
-   * appears in the input.
-   * Boundary: primitive values (read through the `String`, `Number` and
-   * `Boolean` prototypes) and every object `normalize` builds itself belong
-   * to the callback's realm, so a polluted realm can change what `normalize`
-   * computes from them. Its result is cloned again, checked to be
-   * plain JSON-like data in the same way, and validated: a throw, or a result
-   * that is not plain data or does not fit the grammar, is `malformed`.
-   * Defaults to the identity.
-   *
-   * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
-   * trusted grammar-author code and must be synchronous. An `async` function
-   * (or async generator) is rejected with `TypeError` when the grammar is
-   * defined. A plain function that returns a promise fails closed at once
-   * (`normalize`: `malformed`; `riskOf`: `ScopeError`). The engine never awaits
-   * it: it applies the intrinsic `Promise.prototype.then` (captured at load)
-   * with a no-op rejection handler, which marks a native promise's rejection
-   * handled so it cannot surface as an unhandled rejection. When the species
-   * lookup inside `then` throws (a throwing `constructor` or
-   * `Symbol.species`), it retries once with the promise's `constructor`
-   * reading as `undefined`, decided by its own `constructor` descriptor (in
-   * any realm): absent on an extensible promise, configurable, or
-   * non-configurable writable data; then it restores the original, even
-   * when redefining it throws after applying the change. With no own
-   * `constructor`, the retry is skipped when the prototype is `null`, or
-   * `Object.prototype` while `Object.prototype.constructor` is the intrinsic
-   * `Object` and no `Symbol.species` is defined anywhere on `Object`'s
-   * prototype chain (`then` then failed on the brand check), so a plain
-   * record never takes it.
-   * Residual: a promise whose lookup throws and whose own `constructor` is a
-   * non-configurable accessor or non-configurable non-writable data, or a
-   * non-extensible promise with no own `constructor`, cannot be marked
-   * handled; only deliberately hostile callback code can build one, and the
-   * engine still fails closed. Any other returned
-   * value is left alone; a returned object's own `then` is never read or
-   * called.
-   */
-  readonly normalize?: (input: TInput) => ScopeShape<D>;
-  /**
-   * Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS};
-   * any other result, or a throw, makes `classifyRisk` throw `ScopeError`.
-   * See the callback boundary on `normalize`.
-   */
-  readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }
 
 /**
  * A defined scope grammar.
  *
- * Trust boundary: the grammar definition and its callbacks are trusted; every
- * request and envelope is untrusted data. The engine reads untrusted input
- * exactly once, as `structuredClone(input)`, and decides only from that clone:
- * own enumerable string-keyed data is what counts, getters run once during the
- * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
- * request), `isSubset` captures the envelope before any request getter or
- * `normalize` call runs, and anything that cannot be cloned (a Proxy, a promise, a
- * function) is `malformed`. Every engine-owned clone, the input's and the
- * re-cloned `normalize` result alike, must be plain JSON-like data before
- * anything reads it (see {@link ScopeGrammarDefinition.normalize}): a clone
- * holding a Map, Set, Date, SharedArrayBuffer, boxed value, an array with an
- * extra key, a cycle or a shared reference is `malformed`. The verdict
- * covers only that clone. A caller that mints a credential must mint from the
- * frozen `scope` that `isSubset` or `normalize` returns, and classify it with
- * `classifyScope`, never by reading the raw input again.
+ * The grammar definition is trusted; every request and envelope is untrusted.
+ * The engine reads each input through one structured clone and validates only
+ * that copy. Own enumerable string-keyed data counts, getters run once during
+ * cloning, and values that cannot be cloned or are not plain data are malformed.
+ * The envelope is captured before any request getter runs. A caller that mints
+ * a credential must use the frozen scope covered by the subset decision.
  */
-export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
+export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions> {
   readonly provider: string;
   /**
    * Frozen copies of the dimension definitions, as given (their `values`
@@ -320,37 +237,23 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInpu
    * Normalises and validates input without comparing it to anything. Never
    * throws: input that cannot be read yields a `malformed` violation.
    */
-  normalize(input: TInput): ScopeNormalizeResult<D>;
+  normalize(input: ScopeShape<D>): ScopeNormalizeResult<D>;
   /**
    * `ok` only when both inputs normalise and every requested item is inside
    * the envelope. A malformed or unreadable request or envelope is never
    * widened, and never throws: it yields `malformed` violations.
    */
-  isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D>;
-  /**
-   * Maximum `riskOf` over all requested items; `read` for an empty request.
-   * Throws `ScopeError` for a malformed request (with the clone or `normalize`
-   * error as `cause`, when there is one) or an invalid `riskOf` result.
-   */
-  classifyRisk(request: TInput): ScopeRisk;
-  /**
-   * `classifyRisk` for a frozen `scope` this grammar returned from `isSubset`
-   * or `normalize`, without reading any caller input again. Throws
-   * `ScopeError` for any other value or an invalid `riskOf` result.
-   */
-  classifyScope(scope: NormalizedScope<D>): ScopeRisk;
+  isSubset(request: ScopeShape<D>, envelope: ScopeShape<D>): ScopeSubsetResult<D>;
 }
 
 /**
- * Any scope grammar, whatever its dimensions and input type, with the widened
+ * Any scope grammar, whatever its dimensions, with the widened
  * types: for code that accepts every provider. Structural, so every
- * `ScopeGrammar<D, TInput>` is assignable to it.
+ * `ScopeGrammar<D>` is assignable to it.
  */
 export interface AnyScopeGrammar {
   readonly provider: string;
   readonly dimensions: PublishedScopeDimensions<ScopeDimensions>;
   normalize(input: unknown): ScopeNormalizeResult<ScopeDimensions>;
   isSubset(request: unknown, envelope: unknown): ScopeSubsetResult<ScopeDimensions>;
-  classifyRisk(request: unknown): ScopeRisk;
-  classifyScope(scope: WidenedScope): ScopeRisk;
 }
