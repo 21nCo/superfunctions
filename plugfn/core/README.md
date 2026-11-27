@@ -192,12 +192,16 @@ lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
 In the host application that contains your upgraded PlugFn dependency and
 migration config, install the Superfunctions CLI and TypeScript together.
-The published CLI 0.2.2 uses TypeScript to load the migration config.
+CLI 0.2.2 uses TypeScript to find the PlugFn initialization in your source files.
 
 ```sh
 npm install --save-dev @superfunctions/cli@0.2.2 typescript
 npx superfunctions generate-migration plugfn
 ```
+
+The command defaults to `superfunctions.config.js`. It accepts JavaScript
+(`.js`, `.mjs`, or `.cjs`) and JSON config files. For a different name, pass
+`--config <path>`. Compile a TypeScript config to JavaScript before passing it.
 
 Apply the generated schema version 9 migration with your adapter's migration
 runner before deploying upgraded HTTP or SDK ingress and retry workers, even if
