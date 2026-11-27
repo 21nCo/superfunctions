@@ -372,8 +372,9 @@ interface RecordEvidence {
   /** For such a delete: whether a read just before the statement found the row. */
   presentBefore?: boolean;
   /**
-   * For such a delete outside a transaction: the record's revision row as read
-   * before that read (revision 0 without one); unset when it was not read.
+   * Outside a transaction, for a write by one id: the record's revision row
+   * as read before its statement (revision 0 without one); unset when it was
+   * not read.
    */
   ledgerBefore?: StoredRevision;
   /** For such a delete: an earlier write of the same write that changed the row and left it live. */
@@ -480,10 +481,16 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
   const present = async (p: any): Promise<Set<string>> =>
     new Set((await db.findMany({ model: p.model, where: p.where, namespace: p.namespace }))
       .map((row) => String((row as { id?: unknown }).id)));
+  // Outside a transaction, the revision row of the one record a write names,
+  // read just before its statement (see raiseFromEvidence).
+  const ledgerAt = async (p: any, ids: readonly string[] | undefined) =>
+    !inTransaction && ids?.length === 1 ? { ledgerBefore: await revisionBefore(db, p, ids[0]) } : undefined;
   const writers: Record<string, (p: any, ...rest: unknown[]) => Promise<unknown>> = {
     async create(p) {
+      const ids = typeof p.data?.id === "string" ? [p.data.id as string] : undefined;
+      const before = await ledgerAt(p, ids);
       const out = await db.create(p);
-      if (typeof p.data?.id === "string") note(p.model, [p.data.id], false, "applied");
+      if (ids) note(p.model, ids, false, "applied", before);
       return out;
     },
     async createMany(p) {
@@ -492,14 +499,16 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
       return out;
     },
     async upsert(p) {
-      const out = await db.upsert(p);
       const id = idsOf(p.where, false) ?? (typeof p.create?.id === "string" ? [p.create.id] : []);
-      note(p.model, id, false, "applied");
+      const before = await ledgerAt(p, id);
+      const out = await db.upsert(p);
+      note(p.model, id, false, "applied", before);
       return out;
     },
     async update(p) {
       const ids = idsOf(p.where, false);
       if (!ids) return db.update(p);
+      const before = await ledgerAt(p, ids);
       let out: unknown;
       try {
         out = await db.update(p);
@@ -508,11 +517,11 @@ export function withWriteEvidence(db: Adapter, inTransaction: boolean, log: Writ
         throw error;
       }
       if (out !== null && out !== undefined) {
-        note(p.model, ids, false, updateResultIsCurrent(db) ? "applied" : "unverified");
+        note(p.model, ids, false, updateResultIsCurrent(db) ? "applied" : "unverified", before);
       } else if (snapshot) {
         note(p.model, ids, false, "unverified");
       } else {
-        note(p.model, ids, false, (await present(p)).size > 0 ? "applied" : "missed");
+        note(p.model, ids, false, (await present(p)).size > 0 ? "applied" : "missed", before);
       }
       return out;
     },
@@ -677,6 +686,21 @@ function countlessRemovedNothing(evidence: RecordEvidence, row: Record<string, u
   if (!changed) return true;
   if (!isTombstone(row)) return false;
   return deleteEvidenced(row) || before === undefined || !before.deleted;
+}
+
+/**
+ * Outside a transaction, for a write that left its row live and finds it
+ * removed: whether a count-less delete that raised nothing removed it, so
+ * this raise names the live state and that delete's tombstone, as the
+ * delete's own. Its intent is the latest mark (no raise since it was
+ * stamped), and no delete tombstone was raised since this write read the
+ * revision row before its statement: such a tombstone counts the removal of
+ * this write's row (the intent then belongs to a delete after it).
+ */
+function intentCounted(evidence: RecordEvidence, row: Record<string, unknown> | null): boolean {
+  const before = evidence.ledgerBefore;
+  if (!intentLatest(row) || before === undefined) return false;
+  return (row ? Number(row.rev) || 0 : 0) === before.rev || !deleteEvidenced(row);
 }
 
 /**
@@ -1140,11 +1164,7 @@ async function raiseFromEvidence(
     if (unproven && isTombstone(row)) return undefined;
     if (ownState) return { deleted: evidence.deleted, byDelete: evidence.deleted };
     const absent = await absentNow();
-    // Outside a transaction, a row this write left live that a delete removed
-    // while the delete's intent is the latest mark: that delete raised
-    // nothing (it found no row before its statement), so this raise names
-    // the live state and the delete's tombstone, as that delete's own.
-    if (absent && !evidence.deleted && !transactional && intentLatest(row)) {
+    if (absent && !evidence.deleted && !transactional && intentCounted(evidence, row)) {
       return { deleted: true, byDelete: true, skip: 1 };
     }
     return { deleted: absent, byDelete: absent && evidence.deleted };

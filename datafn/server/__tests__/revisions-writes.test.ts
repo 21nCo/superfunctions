@@ -1418,6 +1418,32 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       expect(await rev(base, "task", "task:1")).toEqual({ rev: 12, deleted: true });
     });
 
+    it("counts a merge once when a delete raised its removal before a later no-op delete stamped its intent", async () => {
+      for (const throws of [false, true]) {
+        const base = await insertedTask();
+        const merge = withWriteEvidence(countless(base), false);
+        await merge.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
+        // A delete removes the merged row and raises its tombstone (2).
+        const removing = withWriteEvidence(countless(base), false);
+        await removing.delete({ model: "task", where, namespace: NS } as any);
+        await assign(removing, deleteEntry());
+        // A later delete finds no row and stamps its intent, then removes
+        // nothing (or fails after the stamp).
+        const late = withWriteEvidence(overriding(countless(base), (target) => ({
+          delete: async (p: any) => {
+            if (throws) throw new Error("connection lost");
+            await target.delete(p);
+          },
+        })), false);
+        await late.delete({ model: "task", where, namespace: NS } as any).catch(() => undefined);
+        if (!throws) await assign(late, deleteEntry());
+        await assign(merge, [{ resource: "task", id: "task:1", op: "merge", record: null }]);
+
+        // insert (1), merge and delete: one revision each (3).
+        expect(await rev(base, "task", "task:1"), `throws=${throws}`).toEqual({ rev: 3, deleted: true });
+      }
+    });
+
     it("refuses to enable revisions for a schema whose relation writes the record id", () => {
       const writesId = {
         resources: [...schema.resources, { name: "comment", version: 1, fields: [] }],
