@@ -42,10 +42,23 @@ describe.skipIf(!url)("DATA-41 clone on a PostgreSQL server", { timeout: 60_000 
   });
 
   afterAll(async () => {
-    // The run's revision rows go with its table.
-    await adapter?.rawSql?.query(`DELETE FROM "__datafn_revisions" WHERE "namespace" = ?`, [namespace]);
-    await adapter?.rawSql?.execute(`DROP TABLE IF EXISTS "${taskTable}"`);
-    await kysely?.destroy();
+    // The run's revision rows go with its table. Each step runs even if the
+    // one before it failed, and the pool is always destroyed.
+    const failures: unknown[] = [];
+    const attempt = async (step: () => Promise<unknown> | undefined) => {
+      try {
+        await step();
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    try {
+      await attempt(() => adapter?.rawSql?.query(`DELETE FROM "__datafn_revisions" WHERE "namespace" = ?`, [namespace]));
+      await attempt(() => adapter?.rawSql?.execute(`DROP TABLE IF EXISTS "${taskTable}"`));
+    } finally {
+      await kysely?.destroy();
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "PostgreSQL cleanup failed");
   });
 
   it("never pairs a clone row with a revision a concurrent write committed after the row was read", async () => {

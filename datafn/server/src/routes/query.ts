@@ -1325,22 +1325,26 @@ function keepsRevision(wire: WireRow, slot: SlotTie | undefined, ties: RevisionT
 /**
  * DATA-41: whether a hook's copy of a row (no provenance) keeps its `$rev`.
  *
- * - In a revision-bearing slot it keeps it only if it equals a row the slot's
- *   own query returned, or a row an `application` slot returned with its
- *   declared `$rev`. A changed copy loses it, whatever `[id, $rev]` it
- *   equals, rather than risk pairing a record with a revision it was not
- *   certified with. This includes a declared `$rev` row a hook copied and
- *   edited into a versioned slot: values cannot tell it from a certified
- *   row whose id a hook rewrote.
- * - Where no query answers, it keeps it only if it equals an `application` row.
+ * - In a versioned slot a `$rev` stays only on a row that slot's query
+ *   certified, or on an `application` row object itself (by identity, see
+ *   keepsRevision). So a copy keeps it only if it equals a row the slot's own
+ *   query returned. Values cannot tell a copied declared row from a certified
+ *   row a hook rewrote to equal it, so a copy of an `application` row loses
+ *   its `$rev` there, unchanged or edited, rather than risk pairing a record
+ *   with a revision that slot's query never certified.
+ * - In an issuing slot, or where no query answers, it keeps it only if it
+ *   equals a row an `application` slot returned with its declared `$rev` (an
+ *   issuing query returns no `$rev` of its own).
  * - In an `application` slot the `$rev` is the row's declared field and is
  *   kept, edited or not, unless it is a server `$rev` moved into a foreign
- *   slot: its `[id, $rev]` is a pair a versioned query certified and its id
- *   is none of the ids the slot's own query returned with a `$rev`.
+ *   slot: its `[id, $rev]` is a pair a versioned query certified, its id is
+ *   none of the ids the slot's own query returned with a `$rev`, and it is not
+ *   an unchanged copy of an `application` row.
  */
 function keepsCopiedRevision({ row, canonical }: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
-  if (slot?.kind === "application") {
-    return !ties.certified.has(revisionPair(row)) || slot.ids.has(JSON.stringify(row.id ?? null));
-  }
-  return slot?.own.has(canonical) === true || ties.application.has(canonical);
+  if (slot?.kind === "versioned") return slot.own.has(canonical);
+  if (slot?.kind !== "application") return slot?.own.has(canonical) === true || ties.application.has(canonical);
+  return ties.application.has(canonical)
+    || !ties.certified.has(revisionPair(row))
+    || slot.ids.has(JSON.stringify(row.id ?? null));
 }

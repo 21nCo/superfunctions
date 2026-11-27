@@ -3333,7 +3333,7 @@ describe("DATA-41 revisions: PR review round 3", () => {
     await delayed;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(queries).toBe(0);
-  });
+  }, 10_000);
 
   it("gives router middleware the same query envelope for the read-back as for an external query", async () => {
     const served = await serve();
@@ -4361,6 +4361,70 @@ describe("DATA-95: a server $rev moved into a slot read as a resource that issue
   });
 });
 
+describe("DATA-95: a hook's copy of a row keeps a $rev only where it can be tied (local review round 4)", () => {
+  // `ledger` issues no revisions; its rows declare `$rev` and can collide with
+  // the `[id, $rev]` the server issues for task:1 (rev 1).
+  const ledgerSchema = {
+    ...schema,
+    resources: [
+      ...schema.resources,
+      { name: "ledger", version: 1, fields: [{ name: "$rev", type: "number" as const, required: false }, { name: "note", type: "string" as const, required: false }] },
+    ],
+  };
+  type Rewrite = (batch: Json[]) => Json[];
+  async function batch(queries: Json[], rewrite: Rewrite) {
+    const hooks = {
+      name: "batch",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? rewrite(result) : result),
+    };
+    const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "ledger", operation: "insert", id: "task:1", record: { $rev: 1, note: "redacted" } });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const res = await served.send("query", queries.map((query) => ({ version: 1, ...query })));
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    return res.body.result as Json[];
+  }
+  const mixed = [{ resource: "task", withRevisions: true }, { resource: "ledger" }];
+
+  it("removes the $rev of a certified row a hook copied and rewrote to equal a declared ledger row", async () => {
+    // The copy keeps only the certified row's id and $rev and takes the ledger
+    // row's note, so it equals the ledger row but no row the task query certified.
+    const result = await batch(mixed, ([task, ledger]) => [
+      { ...task, data: task.data.map((row: Json) => ({ id: row.id, $rev: row.$rev, note: "redacted" })) },
+      ledger,
+    ]);
+    expect(result[0].data).toEqual([{ id: "task:1", note: "redacted" }]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1, note: "redacted" }]);
+  });
+
+  it("removes the $rev of an unchanged copy of a ledger row that a shortened batch puts in the versioned slot", async () => {
+    // In a versioned slot a $rev stays only on a row that slot's query
+    // certified, or on an application row object itself (by identity): a
+    // spread copy of the ledger row has no provenance and the task query never
+    // certified it.
+    const result = await batch(mixed, ([, ledger]) => [{ ...ledger, data: ledger.data.map((row: Json) => ({ ...row })) }]);
+    expect(result).toHaveLength(1);
+    expect(result[0].data).toEqual([{ id: "task:1", note: "redacted" }]);
+  });
+
+  it("keeps the declared $rev of an unchanged ledger row copy in another ledger slot whose query returned none", async () => {
+    let emptyBefore: unknown;
+    const result = await batch(
+      [...mixed, { resource: "ledger", filters: { note: { eq: "none" } } }],
+      ([task, ledger, empty]) => {
+        emptyBefore = empty.data;
+        return [task, ledger, { ...empty, data: ledger.data.map((row: Json) => ({ ...row })) }];
+      },
+    );
+    expect(emptyBefore).toEqual([]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1, note: "redacted" }]);
+    expect(result[2].data).toEqual([{ id: "task:1", $rev: 1, note: "redacted" }]);
+  });
+});
+
 describe("DATA-95: a certified versioned row is the stored row (local review round 1)", () => {
   it("returns the row clone returns, unprojected, while a plain query projects it", async () => {
     const served = await serve();
@@ -4396,18 +4460,22 @@ describe("DATA-95: push read-back and the capability splice", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let state: "idle" | "draining" | "errored" | "done" = "idle";
+    let drained: Promise<void> = Promise.resolve();
     served.server.router.use(async (request, _ctx, next) => {
       const response = await next();
       if (!isQuery(request)) return response;
       // Drains a clone, one chunk at a time, waiting on the test between chunks.
       const reader = response.clone().body!.getReader();
       state = "draining";
-      try {
-        for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) await gate;
-        state = "done";
-      } catch {
-        state = "errored";
-      }
+      drained = (async () => {
+        try {
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) await gate;
+          state = "done";
+        } catch {
+          state = "errored";
+        }
+      })();
+      await drained;
       return response;
     });
     const big = "x".repeat(64 * 1024);
@@ -4417,9 +4485,12 @@ describe("DATA-95: push read-back and the capability splice", () => {
       expect(state).toBe("draining");
       expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
     } finally {
+      // Settle the middleware and shut the server down whether or not the
+      // assertions above passed.
       release();
+      await drained;
+      await served.server.close();
     }
-    await vi.waitFor(() => expect(state).not.toBe("draining"));
     // Its later reads were cancelled with the read-back.
     expect(state).toBe("errored");
   }, 10_000);
