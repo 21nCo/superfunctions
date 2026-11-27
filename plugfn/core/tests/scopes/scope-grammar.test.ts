@@ -1054,11 +1054,35 @@ describe('every record the engine hands out is its own (I7)', () => {
     ]);
   });
 
+  it('keeps combined violations flat when Symbol.isConcatSpreadable is polluted', () => {
+    const g = defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, riskOf });
+    for (const target of [Object.prototype, Array.prototype]) {
+      let facts: { length: number; nested: boolean[]; codes: unknown[]; sides: unknown[] };
+      try {
+        Object.defineProperty(target, Symbol.isConcatSpreadable, { value: false, configurable: true, writable: true });
+        const { violations } = g.isSubset({ names: 'x' } as never, { names: 7 } as never);
+        const nested: boolean[] = [];
+        const codes: unknown[] = [];
+        const sides: unknown[] = [];
+        for (let i = 0; i < violations.length; i++) {
+          nested[i] = Array.isArray(violations[i]);
+          codes[i] = (violations[i] as { code?: unknown }).code;
+          sides[i] = (violations[i] as { side?: unknown }).side;
+        }
+        facts = { length: violations.length, nested, codes, sides };
+      } finally {
+        delete (target as Record<symbol, unknown>)[Symbol.isConcatSpreadable];
+      }
+      expect(facts).toEqual({ length: 2, nested: [false, false], codes: ['malformed', 'malformed'], sides: ['request', 'envelope'] });
+    }
+  });
+
   it('builds returned records only through its constructors: no object literal is returned or pushed', () => {
     const source = readFileSync(fileURLToPath(new URL('../../src/scopes/grammar.ts', import.meta.url)), 'utf8');
     expect(source).not.toMatch(/return\s*\{/);
     expect(source).not.toMatch(/push\(\s*\{/);
     expect(source).not.toMatch(/\.\.\.\(/);
+    expect(source).not.toMatch(/\.concat\(/);
   });
 });
 
@@ -1272,36 +1296,127 @@ describe('normalize works on engine-owned copies (I2)', () => {
   });
 });
 
-describe('callbacks are synchronous and the engine never touches a promise (I5)', () => {
-  it('fails closed at once when a plain function returns a promise', async () => {
-    const pending: Promise<unknown>[] = [];
-    const keep = <T>(promise: Promise<T>): Promise<T> => {
-      // The rejection is the grammar author's to handle; this test handles it.
-      pending.push(promise.catch(() => undefined));
-      return promise;
-    };
-    const normalizeResults = [() => keep(Promise.resolve({ names: ['a'] })), () => keep(Promise.reject(new Error('normalize rejected')))];
-    for (const result of normalizeResults) {
-      const g = defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, normalize: result as never, riskOf });
-      expect(g.isSubset({ names: [] }, { names: [] }).violations).toEqual([
-        expect.objectContaining({ side: 'request', code: 'malformed' }),
-        expect.objectContaining({ side: 'envelope', code: 'malformed' }),
-      ]);
-      expect(g.normalize({ names: [] }).ok).toBe(false);
-    }
-    for (const result of [() => keep(Promise.resolve('read')), () => keep(Promise.reject(new Error('riskOf rejected')))]) {
-      const g = defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, riskOf: result as never });
-      expect(() => g.classifyRisk({ names: ['a'] })).toThrow(/unknown risk/);
-    }
-    await Promise.all(pending);
+/** Runs `run` synchronously, then lets Node report unhandled rejections; returns their reasons. */
+async function unhandledRejectionsOf(run: () => void): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const listener = (reason: unknown) => {
+    seen.push(reason);
+  };
+  process.on('unhandledRejection', listener);
+  try {
+    run();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
+  return seen;
+}
+
+describe('callbacks are synchronous and a returned promise is contained, never awaited (I5)', () => {
+  const names = { names: { kind: 'exactSet' } } as const;
+  const rejecting = (marker: string) => (input: { names: string[] }) =>
+    input.names[0] === marker ? Promise.reject(new Error('normalize rejected')) : input;
+  const asyncThrowing = async (): Promise<never> => {
+    throw new Error('async callback threw');
+  };
+
+  it('fails closed on a rejected promise from normalize on either side, with no unhandled rejection', async () => {
+    const g = defineScopeGrammar({ provider: 'p', dimensions: names, normalize: rejecting('reject') as never, riskOf });
+    const results: unknown[] = [];
+    const seen = await unhandledRejectionsOf(() => {
+      results.push(g.isSubset({ names: ['reject'] }, { names: [] }).violations);
+      results.push(g.isSubset({ names: [] }, { names: ['reject'] }).violations);
+      results.push(g.normalize({ names: ['reject'] }).ok);
+      results.push(thrownBy(() => g.classifyRisk({ names: ['reject'] })) instanceof ScopeError);
+    });
+    expect(seen).toEqual([]);
+    expect(results).toEqual([
+      [expect.objectContaining({ side: 'request', code: 'malformed' })],
+      [expect.objectContaining({ side: 'envelope', code: 'malformed' })],
+      false,
+      true,
+    ]);
   });
 
-  it('has no promise handling in the engine source', () => {
-    const dir = fileURLToPath(new URL('../../src/scopes/', import.meta.url));
-    for (const file of readdirSync(dir)) {
-      const source = readFileSync(`${dir}${file}`, 'utf8');
-      expect(source, file).not.toMatch(/\bawait\b|\.then\b|\bPromise\b/);
+  it('fails closed on an async normalize reached through a plain function, with no unhandled rejection', async () => {
+    const g = defineScopeGrammar({ provider: 'p', dimensions: names, normalize: (() => asyncThrowing()) as never, riskOf });
+    const results: unknown[] = [];
+    const seen = await unhandledRejectionsOf(() => {
+      results.push(g.isSubset({ names: [] }, { names: [] }).violations);
+      results.push(g.normalize({ names: [] }).ok);
+    });
+    expect(seen).toEqual([]);
+    expect(results).toEqual([
+      [expect.objectContaining({ side: 'request', code: 'malformed' }), expect.objectContaining({ side: 'envelope', code: 'malformed' })],
+      false,
+    ]);
+  });
+
+  it('throws ScopeError for a rejected or async-thrown riskOf result, with no unhandled rejection', async () => {
+    for (const result of [() => Promise.reject(new Error('riskOf rejected')), () => asyncThrowing()]) {
+      const g = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: result as never });
+      let error: unknown;
+      const seen = await unhandledRejectionsOf(() => {
+        error = thrownBy(() => g.classifyRisk({ names: ['a', 'b'] }));
+      });
+      expect(seen).toEqual([]);
+      expect(error).toBeInstanceOf(ScopeError);
+      expect((error as Error).message).toMatch(/unknown risk/);
     }
+  });
+
+  it('never calls the own then of a returned native promise or a plain thenable', async () => {
+    const ownThen = vi.fn();
+    const withOwnThen = () => Object.defineProperty(Promise.reject(new Error('own then')), 'then', { value: ownThen });
+    const thenable = () => ({ then: ownThen });
+    for (const make of [withOwnThen, thenable]) {
+      const viaNormalize = defineScopeGrammar({ provider: 'p', dimensions: names, normalize: make as never, riskOf });
+      const viaRisk = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: make as never });
+      const results: unknown[] = [];
+      const seen = await unhandledRejectionsOf(() => {
+        results.push(viaNormalize.isSubset({ names: [] }, { names: [] }).ok);
+        results.push(thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError);
+      });
+      expect(seen).toEqual([]);
+      expect(results).toEqual([false, true]);
+    }
+    expect(ownThen).not.toHaveBeenCalled();
+  });
+
+  it('uses the then captured at load, not a later Promise.prototype.then', async () => {
+    const g = defineScopeGrammar({ provider: 'p', dimensions: names, normalize: rejecting('reject') as never, riskOf });
+    const viaRisk = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: () => Promise.reject(new Error('riskOf rejected')) as never });
+    const original = Object.getOwnPropertyDescriptor(Promise.prototype, 'then')!;
+    const replacement = vi.fn();
+    const results: unknown[] = [];
+    const seen = await unhandledRejectionsOf(() => {
+      try {
+        Object.defineProperty(Promise.prototype, 'then', { ...original, value: replacement });
+        results.push(g.isSubset({ names: ['reject'] }, { names: [] }).ok);
+        results.push(thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError);
+      } finally {
+        Object.defineProperty(Promise.prototype, 'then', original);
+      }
+    });
+    expect(replacement).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+    expect(results).toEqual([false, true]);
+  });
+
+  it('never awaits or calls then in the engine source; the only Promise reference is the captured intrinsic', () => {
+    const dir = fileURLToPath(new URL('../../src/scopes/', import.meta.url));
+    let promiseReferences = 0;
+    for (const file of readdirSync(dir)) {
+      const code = readFileSync(`${dir}${file}`, 'utf8')
+        .split('\n')
+        .filter(line => !/^\s*(\*|\/\*\*|\/\/)/.test(line))
+        .join('\n');
+      expect(code, file).not.toMatch(/\bawait\b|\.then\(|\.catch\(|\bnew Promise\b/);
+      promiseReferences += (code.match(/\bPromise\b/g) ?? []).length;
+      if (file === 'grammar.ts') expect(code).toMatch(/Function\.prototype\.call\.bind\(\s*Promise\.prototype\.then,?\s*\)/);
+    }
+    expect(promiseReferences).toBe(1);
   });
 });
 
@@ -1329,7 +1444,13 @@ describe('radix trie insertion order', () => {
   it('has no comparison sort and no hashed child index in the glob trie', () => {
     const source = readFileSync(fileURLToPath(new URL('../../src/scopes/grammar.ts', import.meta.url)), 'utf8');
     expect(source).not.toMatch(/\.sort\(/);
-    const trie = source.slice(source.indexOf('interface RadixNode'), source.indexOf('function comparePrefixGlob'));
+    const start = source.indexOf('class RadixNode');
+    const end = source.indexOf('function comparePrefixGlob');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThanOrEqual(0);
+    expect(start).toBeLessThan(end);
+    const trie = source.slice(start, end);
+    expect(trie).toContain('RadixNode');
     expect(trie).not.toMatch(/\bMap\b|\bSet\b/);
   });
 

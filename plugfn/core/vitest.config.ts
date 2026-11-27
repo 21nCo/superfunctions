@@ -23,9 +23,11 @@ export default defineConfig({
       },
       {
         // Timing tests run alone, after every other file has finished (a
-        // higher group order), so no CPU-heavy suite runs beside them.
+        // higher group order), so no CPU-heavy suite runs beside them. They
+        // assert time ratios, not wall time, so a loaded host gets a longer
+        // timeout instead of a spurious failure.
         extends: true,
-        test: { name: 'performance', include: [PERFORMANCE_TESTS], sequence: { groupOrder: 1 } },
+        test: { name: 'performance', include: [PERFORMANCE_TESTS], sequence: { groupOrder: 1 }, testTimeout: 60_000 },
       },
     ],
     coverage: {

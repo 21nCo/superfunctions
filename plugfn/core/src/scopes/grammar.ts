@@ -18,7 +18,47 @@ export class ScopeError extends Error {
     const cause = typeof options === 'object' && options !== null && Object.hasOwn(options, 'cause') ? options.cause : undefined;
     super(message, ownRecord({ cause }));
     this.name = 'ScopeError';
-    this.violations = Object.freeze(Array.from(violations));
+    this.violations = frozenList(violations, []);
+  }
+}
+
+/**
+ * A fresh frozen array holding the entries of `first` and then `second`,
+ * copied by index: no `concat`, spread or iterator, so a polluted
+ * `Symbol.isConcatSpreadable` or `Symbol.iterator` cannot nest or drop entries.
+ */
+function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] {
+  const out: T[] = [];
+  for (let i = 0; i < first.length; i++) out[out.length] = first[i]!;
+  for (let i = 0; i < second.length; i++) out[out.length] = second[i]!;
+  return Object.freeze(out);
+}
+
+/**
+ * The intrinsic `Promise.prototype.then`, captured once at load and bound as
+ * `then.call`, so replacing `Promise`, its `then` or `Function.prototype.call`
+ * later changes nothing.
+ */
+const intrinsicThen: (value: unknown, onFulfilled: undefined, onRejected: () => void) => unknown = Function.prototype.call.bind(
+  Promise.prototype.then,
+) as never;
+const ignoreRejection = (): void => undefined;
+
+/**
+ * Contains a promise that a synchronous callback returned by mistake (an
+ * `async` normalize or riskOf, say): the intrinsic `then` marks a native
+ * promise's rejection handled, so it can never surface as an unhandled
+ * rejection; on any other object its brand check throws, which is swallowed.
+ * A primitive is never a promise and is skipped. The engine never reads or
+ * calls the value's own `then` and never awaits; the caller still fails
+ * closed on the value itself.
+ */
+function containPromise(value: unknown): void {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
+  try {
+    intrinsicThen(value, undefined, ignoreRejection);
+  } catch {
+    // Not a native promise: nothing to contain.
   }
 }
 
@@ -330,7 +370,7 @@ function malformed(side: Side, message: string, dimension?: string, item?: strin
  * branches (`undefined` on failure).
  */
 function scopeResult<D extends ScopeDimensions>(scope: NormalizedScope<D> | undefined, violations: readonly ScopeViolation[]): ScopeSubsetResult<D> {
-  return ownRecord({ ok: scope !== undefined, violations: Object.freeze(Array.from(violations)), scope }) as ScopeSubsetResult<D>;
+  return ownRecord({ ok: scope !== undefined, violations: frozenList(violations, []), scope }) as ScopeSubsetResult<D>;
 }
 
 function readBound(where: string, label: string, value: unknown, positiveInteger: boolean): number | undefined {
@@ -733,6 +773,8 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       } catch (error) {
         return fail(side, 'normalize threw', error);
       }
+      // A returned promise is marked handled, then fails the clone below.
+      containPromise(mapped);
       try {
         value = clone(mapped);
       } catch (error) {
@@ -763,6 +805,8 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
         } catch (error) {
           throw new ScopeError(`Scope grammar "${provider}": riskOf failed for dimension "${dim.name}"`, [], { cause: error });
         }
+        // A returned promise is marked handled, then is an unknown risk below.
+        containPromise(risk);
         const itemRank = RISK_RANK.get(risk);
         if (itemRank === undefined) {
           throw new ScopeError(`Scope grammar "${provider}": riskOf returned an unknown risk for dimension "${dim.name}"`);
@@ -785,7 +829,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D> {
       const req = parse(request, 'request');
       const env = parse(envelope, 'envelope');
-      if (!req.scope || !env.scope) return scopeResult<D>(undefined, req.violations.concat(env.violations));
+      if (!req.scope || !env.scope) return scopeResult<D>(undefined, frozenList(req.violations, env.violations));
       const out: ScopeViolation[] = [];
       for (const dim of dims) {
         const requested = req.scope.get(dim.name)!;

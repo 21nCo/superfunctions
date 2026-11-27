@@ -243,10 +243,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
    * trusted grammar-author code and must be synchronous. An `async` function
    * (or async generator) is rejected with `TypeError` when the grammar is
-   * defined. The engine never waits for, subscribes to or creates a promise: a
-   * plain function that returns a promise fails closed at once (`normalize`:
-   * `malformed`; `riskOf`: `ScopeError`), and handling that promise's
-   * rejection is the grammar author's responsibility.
+   * defined. A plain function that returns a promise fails closed at once
+   * (`normalize`: `malformed`; `riskOf`: `ScopeError`). The engine never awaits
+   * it: it applies the intrinsic `Promise.prototype.then` (captured at load)
+   * with a no-op rejection handler, which marks a native promise's rejection
+   * handled so it cannot surface as an unhandled rejection. Any other returned
+   * value is left alone; a returned object's own `then` is never read or
+   * called.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**
