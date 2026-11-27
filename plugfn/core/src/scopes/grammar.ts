@@ -35,14 +35,37 @@ function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] 
 }
 
 /**
- * The intrinsic `Promise.prototype.then`, captured once at load and bound as
- * `then.call`, so replacing `Promise`, its `then` or `Function.prototype.call`
- * later changes nothing.
+ * The intrinsic `Promise.prototype` and its `then`, captured once at load and
+ * bound as `then.call`, so replacing `Promise`, its `then` or
+ * `Function.prototype.call` later changes nothing.
  */
+const intrinsicPromisePrototype = Promise.prototype;
 const intrinsicThen: (value: unknown, onFulfilled: undefined, onRejected: () => void) => unknown = Function.prototype.call.bind(
-  Promise.prototype.then,
+  intrinsicPromisePrototype.then,
 ) as never;
 const ignoreRejection = (): void => undefined;
+/** A bound on the prototype walk, so a Proxy that invents prototypes cannot loop forever. */
+const MAX_PROTOTYPE_DEPTH = 1000;
+
+/** Applies the intrinsic `then` with a no-op rejection handler; `false` when it throws. */
+function markHandled(value: object): boolean {
+  try {
+    intrinsicThen(value, undefined, ignoreRejection);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the intrinsic `Promise.prototype` is on `value`'s prototype chain. */
+function inheritsFromPromise(value: object): boolean {
+  let proto: unknown = Object.getPrototypeOf(value);
+  for (let depth = 0; proto !== null && depth < MAX_PROTOTYPE_DEPTH; depth++) {
+    if (proto === intrinsicPromisePrototype) return true;
+    proto = Object.getPrototypeOf(proto as object);
+  }
+  return false;
+}
 
 /**
  * Contains a promise that a synchronous callback returned by mistake (an
@@ -52,13 +75,36 @@ const ignoreRejection = (): void => undefined;
  * A primitive is never a promise and is skipped. The engine never reads or
  * calls the value's own `then` and never awaits; the caller still fails
  * closed on the value itself.
+ *
+ * `then` looks up the species constructor (`constructor`, then
+ * `Symbol.species`) before it attaches the handler, and that lookup can throw.
+ * So when the first attempt throws on a value that inherits from
+ * `Promise.prototype` and is extensible, with no own `constructor` or a
+ * configurable one, an own `constructor: undefined` is defined for one retry,
+ * which makes `then` use the intrinsic `Promise` without reading the species,
+ * and the original own `constructor` is restored (or removed) afterwards. A
+ * plain object never takes this path. Residual: a non-extensible promise, or
+ * one with a non-configurable own `constructor` whose lookup throws, cannot be
+ * marked handled; the caller still fails closed.
  */
 function containPromise(value: unknown): void {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
+  if (markHandled(value)) return;
   try {
-    intrinsicThen(value, undefined, ignoreRejection);
+    if (!inheritsFromPromise(value) || !Object.isExtensible(value)) return;
+    const saved = Object.getOwnPropertyDescriptor(value, 'constructor');
+    if (saved !== undefined && !saved.configurable) return;
+    // Null-prototype descriptors: a polluted Object.prototype.get or .set cannot turn them into accessors.
+    const neutral = Object.assign(Object.create(null) as PropertyDescriptor, { value: undefined, writable: true, configurable: true });
+    Object.defineProperty(value, 'constructor', neutral);
+    try {
+      markHandled(value);
+    } finally {
+      if (saved === undefined) delete (value as { constructor?: unknown }).constructor;
+      else Object.defineProperty(value, 'constructor', Object.setPrototypeOf(saved, null) as PropertyDescriptor);
+    }
   } catch {
-    // Not a native promise: nothing to contain.
+    // A Proxy trap or a failed restore: nothing more can be done, and the caller fails closed.
   }
 }
 
@@ -141,8 +187,14 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
  * Iterative, so depth cannot overflow the call stack, and each object is
  * visited once: a second visit (a cycle or a shared reference) fails, so the
  * walk is linear in the clone's size.
+ *
+ * With `detach`, each record is given a null prototype once its keys are
+ * checked (arrays stay arrays), so a callback reading the clone can never see
+ * a field inherited from a polluted `Object.prototype`. The result is only
+ * meaningful when the whole walk passes; it is used only for the clone handed
+ * to `normalize`, which is never checked again.
  */
-function notPlainAt(root: unknown): string | null | undefined {
+function notPlainAt(root: unknown, detach = false): string | null | undefined {
   const seen = new Set<object>();
   // Objects still to visit, each with the top-level key it sits under.
   const pending: [object, string | null][] = [];
@@ -168,6 +220,7 @@ function notPlainAt(root: unknown): string | null | undefined {
         const under = value === root ? key : at;
         if (!accept(value[key], under)) return under;
       }
+      if (detach) Object.setPrototypeOf(value, null);
     } else {
       return at;
     }
@@ -765,8 +818,9 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     // anything reads it: normalize never sees memory shared with the caller,
     // and validation never meets an extra array key or a shared reference.
     if (normalize) {
-      // The input is provider-shaped, so its keys name no dimension.
-      if (notPlainAt(value) !== undefined) return fail(side, NOT_PLAIN_DATA, undefined);
+      // The input is provider-shaped, so its keys name no dimension. Every
+      // record of the clone normalize receives has a null prototype.
+      if (notPlainAt(value, true) !== undefined) return fail(side, NOT_PLAIN_DATA, undefined);
       let mapped: unknown;
       try {
         mapped = normalize(value as TInput);
@@ -827,8 +881,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     },
 
     isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D> {
-      const req = parse(request, 'request');
+      // The envelope is captured first, so no request getter or normalize
+      // call can change it; violations still list the request side first.
       const env = parse(envelope, 'envelope');
+      const req = parse(request, 'request');
       if (!req.scope || !env.scope) return scopeResult<D>(undefined, frozenList(req.violations, env.violations));
       const out: ScopeViolation[] = [];
       for (const dim of dims) {

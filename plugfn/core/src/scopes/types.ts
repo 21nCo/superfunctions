@@ -235,7 +235,9 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * shared references.
    * Any other clone (a SharedArrayBuffer, an ArrayBuffer or view, a Map, Set,
    * Date, RegExp, Error, Blob, boxed value or `undefined`) is `malformed` and
-   * `normalize` is not called. Its result is cloned again, checked to be
+   * `normalize` is not called. Every object in the clone it receives has a
+   * null prototype (arrays stay arrays), so a field inherited from a polluted
+   * `Object.prototype` never appears in the input. Its result is cloned again, checked to be
    * plain JSON-like data in the same way, and validated: a throw, or a result
    * that is not plain data or does not fit the grammar, is `malformed`.
    * Defaults to the identity.
@@ -247,7 +249,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * (`normalize`: `malformed`; `riskOf`: `ScopeError`). The engine never awaits
    * it: it applies the intrinsic `Promise.prototype.then` (captured at load)
    * with a no-op rejection handler, which marks a native promise's rejection
-   * handled so it cannot surface as an unhandled rejection. Any other returned
+   * handled so it cannot surface as an unhandled rejection. When the species
+   * lookup inside `then` throws (a throwing `constructor` or
+   * `Symbol.species`), it retries once with an own `constructor: undefined`
+   * on the promise, then restores the original. Residual: a non-extensible
+   * promise, or one with a non-configurable own `constructor` whose lookup
+   * throws, cannot be marked handled; only deliberately hostile callback code
+   * can build one, and the engine still fails closed. Any other returned
    * value is left alone; a returned object's own `then` is never read or
    * called.
    */
@@ -268,7 +276,8 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
  * exactly once, as `structuredClone(input)`, and decides only from that clone:
  * own enumerable string-keyed data is what counts, getters run once during the
  * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
- * request), and anything that cannot be cloned (a Proxy, a promise, a
+ * request), `isSubset` captures the envelope before any request getter or
+ * `normalize` call runs, and anything that cannot be cloned (a Proxy, a promise, a
  * function) is `malformed`. Every engine-owned clone, the input's and the
  * re-cloned `normalize` result alike, must be plain JSON-like data before
  * anything reads it (see {@link ScopeGrammarDefinition.normalize}): a clone

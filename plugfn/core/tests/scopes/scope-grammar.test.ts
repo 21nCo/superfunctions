@@ -1084,6 +1084,75 @@ describe('every record the engine hands out is its own (I7)', () => {
     expect(source).not.toMatch(/\.\.\.\(/);
     expect(source).not.toMatch(/\.concat\(/);
   });
+
+  it('hands normalize a clone whose records all have a null prototype, so a polluted Object.prototype grants nothing', () => {
+    const grant = ['test-write'];
+    const inputs: { access?: unknown; meta?: unknown; list?: unknown }[] = [];
+    const n = defineScopeGrammar({
+      provider: 'input-records',
+      dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'test-write'] } },
+      normalize: ((input: { access?: string[] }) => {
+        inputs.push(input);
+        return { perms: input.access ?? [] };
+      }) as never,
+      riskOf,
+    });
+    const before = n.isSubset({ access: grant } as never, {} as never).ok;
+    const objectProto = Object.prototype as Record<string, unknown>;
+    let polluted: { envelopeGrant: boolean; requestPerms: unknown };
+    try {
+      objectProto.access = grant;
+      polluted = {
+        envelopeGrant: n.isSubset({ access: grant } as never, {} as never).ok,
+        requestPerms: n.normalize({} as never).scope?.perms,
+      };
+    } finally {
+      delete objectProto.access;
+    }
+    expect(before).toBe(false);
+    expect(polluted).toEqual({ envelopeGrant: false, requestPerms: [] });
+
+    inputs.length = 0;
+    n.normalize({ access: [], meta: { nested: { deep: true } }, list: [{ inArray: 1 }] } as never);
+    const [input] = inputs as [{ meta: { nested: object }; list: object[] }];
+    expect([input, input.meta, input.meta.nested, input.list[0]].map(record => Object.getPrototypeOf(record))).toEqual([null, null, null, null]);
+    expect(Object.getPrototypeOf(input.list)).toBe(Array.prototype);
+  });
+});
+
+describe('isSubset captures the envelope before it reads the request', () => {
+  const g = defineScopeGrammar({ provider: 'order', dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'test-write'] } }, riskOf });
+
+  it('denies a request whose getter widens the envelope object', () => {
+    const plainEnvelope = { perms: ['test-read'] };
+    expect(g.isSubset({ perms: ['test-write'] }, plainEnvelope).ok).toBe(false);
+    const env = { perms: ['test-read'] };
+    const request = {
+      get perms() {
+        env.perms.push('test-write');
+        return ['test-write'];
+      },
+    };
+    const result = g.isSubset(request as never, env);
+    expect(result.ok).toBe(false);
+    expect(result.violations).toEqual([expect.objectContaining({ code: 'not_in_envelope', item: 'test-write' })]);
+  });
+
+  it('normalizes the envelope first and still lists request violations first', () => {
+    const sides: string[] = [];
+    const n = defineScopeGrammar({
+      provider: 'order',
+      dimensions: { perms: { kind: 'exactSet' } },
+      normalize: ((input: { side: string; perms: unknown }) => {
+        sides.push(input.side);
+        return { perms: input.perms };
+      }) as never,
+      riskOf,
+    });
+    const result = n.isSubset({ side: 'request', perms: 'bad' } as never, { side: 'envelope', perms: 'bad' } as never);
+    expect(sides).toEqual(['envelope', 'request']);
+    expect(result.violations.map(v => v.side)).toEqual(['request', 'envelope']);
+  });
 });
 
 describe('the returned snapshot (I4)', () => {
@@ -1404,6 +1473,108 @@ describe('callbacks are synchronous and a returned promise is contained, never a
     expect(results).toEqual([false, true]);
   });
 
+  describe('when the species lookup inside then throws', () => {
+    const throwingConstructor = () => {
+      const promise = Promise.reject(new Error('species rejected'));
+      Object.defineProperty(promise, 'constructor', {
+        configurable: true,
+        get() {
+          throw new Error('constructor lookup threw');
+        },
+      });
+      return promise;
+    };
+    class ThrowingSpecies extends Promise<never> {
+      static get [Symbol.species](): never {
+        throw new Error('species threw');
+      }
+    }
+    class NonConstructorSpecies extends Promise<never> {
+      static get [Symbol.species](): PromiseConstructor {
+        return 5 as never;
+      }
+    }
+    const makers: [string, () => object][] = [
+      ['an own throwing constructor getter', throwingConstructor],
+      ['a subclass whose species getter throws', () => ThrowingSpecies.reject(new Error('species rejected'))],
+      ['a subclass whose species is not a constructor', () => NonConstructorSpecies.reject(new Error('species rejected'))],
+    ];
+
+    /** Every path: normalize on either side, normalize() and classifyRisk, and riskOf. */
+    function runAll(make: () => object, made: [object, PropertyDescriptor | undefined][]) {
+      const record = () => {
+        const value = make();
+        made.push([value, Object.getOwnPropertyDescriptor(value, 'constructor')]);
+        return value;
+      };
+      const viaNormalize = defineScopeGrammar({
+        provider: 'p',
+        dimensions: names,
+        normalize: ((input: { names: string[] }) => (input.names[0] === 'reject' ? record() : input)) as never,
+        riskOf,
+      });
+      const viaRisk = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: record as never });
+      return [
+        viaNormalize.isSubset({ names: ['reject'] }, { names: [] }).violations.map(v => v.side),
+        viaNormalize.isSubset({ names: [] }, { names: ['reject'] }).violations.map(v => v.side),
+        viaNormalize.normalize({ names: ['reject'] }).ok,
+        thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError,
+      ];
+    }
+
+    it.each(makers)('contains %s on every path and restores the own constructor exactly', async (_label, make) => {
+      const made: [object, PropertyDescriptor | undefined][] = [];
+      let results: unknown[] = [];
+      const seen = await unhandledRejectionsOf(() => {
+        results = runAll(make, made);
+      });
+      expect(seen).toEqual([]);
+      expect(results).toEqual([['request'], ['envelope'], false, true]);
+      expect(made).toHaveLength(4);
+      for (const [value, before] of made) {
+        const after = Object.getOwnPropertyDescriptor(value, 'constructor');
+        expect(after).toEqual(before);
+        expect(after?.get).toBe(before?.get);
+      }
+    });
+
+    it('contains a plain rejected promise after Promise[Symbol.species] is redefined to throw', async () => {
+      const original = Object.getOwnPropertyDescriptor(Promise, Symbol.species)!;
+      const made: [object, PropertyDescriptor | undefined][] = [];
+      let results: unknown[] = [];
+      const seen = await unhandledRejectionsOf(() => {
+        Object.defineProperty(Promise, Symbol.species, {
+          configurable: true,
+          get() {
+            throw new Error('species threw');
+          },
+        });
+        try {
+          results = runAll(() => Promise.reject(new Error('species rejected')), made);
+        } finally {
+          Object.defineProperty(Promise, Symbol.species, original);
+        }
+      });
+      expect(seen).toEqual([]);
+      expect(results).toEqual([['request'], ['envelope'], false, true]);
+      expect(made).toHaveLength(4);
+      for (const [value] of made) expect(Object.hasOwn(value, 'constructor')).toBe(false);
+    });
+
+    it('still fails closed on the documented residual: a non-configurable or non-extensible promise', () => {
+      const nonConfigurable = () =>
+        Object.defineProperty(Promise.resolve('settled'), 'constructor', {
+          get() {
+            throw new Error('constructor lookup threw');
+          },
+        });
+      const nonExtensible = () => Object.preventExtensions(ThrowingSpecies.resolve('settled' as never));
+      for (const make of [nonConfigurable, nonExtensible]) {
+        expect(runAll(make, [])).toEqual([['request'], ['envelope'], false, true]);
+      }
+    });
+  });
+
   it('never awaits or calls then in the engine source; the only Promise reference is the captured intrinsic', () => {
     const dir = fileURLToPath(new URL('../../src/scopes/', import.meta.url));
     let promiseReferences = 0;
@@ -1414,7 +1585,10 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         .join('\n');
       expect(code, file).not.toMatch(/\bawait\b|\.then\(|\.catch\(|\bnew Promise\b/);
       promiseReferences += (code.match(/\bPromise\b/g) ?? []).length;
-      if (file === 'grammar.ts') expect(code).toMatch(/Function\.prototype\.call\.bind\(\s*Promise\.prototype\.then,?\s*\)/);
+      if (file === 'grammar.ts') {
+        expect(code).toMatch(/const intrinsicPromisePrototype = Promise\.prototype;/);
+        expect(code).toMatch(/Function\.prototype\.call\.bind\(\s*intrinsicPromisePrototype\.then,?\s*\)/);
+      }
     }
     expect(promiseReferences).toBe(1);
   });
