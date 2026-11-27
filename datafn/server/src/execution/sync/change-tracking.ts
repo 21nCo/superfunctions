@@ -96,7 +96,11 @@ export async function recordChangesWithRetry(
  * Assignment has its own retries (a retry raises no record twice), then each
  * entry, in serverSeq order as base recorded them, has its own (a retry
  * records no entry twice; see recordChanges), so a failing entry never
- * spends another entry's retries (see withChangeRetry).
+ * spends another entry's retries (see withChangeRetry). Outside a
+ * transaction every entry is attempted before the first failure is thrown,
+ * and `onRecorded` names each entry stored. Only the entries in `record` are
+ * recorded when it is given: the others (changes left without a sequence)
+ * still raise their records' revisions.
  */
 export async function recordWriteChangesWithRetry(
   changeTracking: ChangeTrackingService,
@@ -104,6 +108,7 @@ export async function recordWriteChangesWithRetry(
   writeDb: Adapter,
   maxRetries = 2,
   logger?: DatafnLogger,
+  options: { record?: ReadonlySet<ChangeEntryInput>; onRecorded?: (entry: ChangeEntryInput) => void } = {},
 ): Promise<void> {
   await withChangeRetry(
     changeTracking,
@@ -113,7 +118,19 @@ export async function recordWriteChangesWithRetry(
     "Revision assignment retry",
     { entryCount: entries.length },
   );
-  for (const entry of entries) await recordChangeWithRetry(changeTracking, entry, maxRetries, logger);
+  let failure: { error: unknown } | undefined;
+  for (const entry of entries) {
+    if (options.record && !options.record.has(entry)) continue;
+    try {
+      await recordChangeWithRetry(changeTracking, entry, maxRetries, logger);
+    } catch (error) {
+      if (changeTracking.inTransaction) throw error;
+      failure ??= { error };
+      continue;
+    }
+    options.onRecorded?.(entry);
+  }
+  if (failure) throw failure.error;
 }
 
 /** DATA-41: change entries whose insert was sent (see unstoredChanges). */

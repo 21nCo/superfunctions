@@ -1517,23 +1517,35 @@ export async function executePush(
         let changeTrackingFailed = false;
         let mutationRevision: DatafnPushRevision | undefined;
         try {
-          const recorded: ChangeEntryInput[] = [];
+          const entries: ChangeEntryInput[] = [];
+          const sequenced = new Set<ChangeEntryInput>();
           let sequencingFailure: { error: unknown } | undefined;
-          try {
-            for (const change of changes) {
+          for (const change of changes) {
+            try {
               const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
-              latestSeq = Math.max(latestSeq, seq);
-              resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-              recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
+              const entry = { serverSeq: seq, resource: change.resource, id: change.id, op, record };
+              entries.push(entry);
+              sequenced.add(entry);
+            } catch (error) {
+              // DATA-41: the write has committed. Every other change is still
+              // sequenced and recorded, and a change left without a sequence
+              // still raises its record's revision, before the failure is
+              // reported.
+              sequencingFailure ??= { error };
+              entries.push({ serverSeq: 0, resource: change.resource, id: change.id, op: change.op, record: change.record });
             }
-          } catch (error) {
-            // DATA-41: the changes already sequenced are still recorded, as
-            // base recorded each in turn, before the failure is reported.
-            sequencingFailure = { error };
           }
-          // DATA-41: the write has committed; revisions and change rows are
-          // retried on these entries, never replaying the write.
-          await recordWriteChangesWithRetry(changeTracking, recorded, writeDb, 2, logger);
+          // DATA-41: revisions and change rows are retried on these entries,
+          // never replaying the write. The cursors cover only stored changes.
+          const recorded: ChangeEntryInput[] = [];
+          await recordWriteChangesWithRetry(changeTracking, entries, writeDb, 2, logger, {
+            record: sequenced,
+            onRecorded: (entry) => {
+              recorded.push(entry);
+              latestSeq = Math.max(latestSeq, entry.serverSeq);
+              resourceSeqs[entry.resource] = Math.max(resourceSeqs[entry.resource] || 0, entry.serverSeq);
+            },
+          });
           if (sequencingFailure) throw sequencingFailure.error;
           noteBatchRevisions(recorded);
           mutationRevision = await postWriteRevision(mut, db, recorded, false);
