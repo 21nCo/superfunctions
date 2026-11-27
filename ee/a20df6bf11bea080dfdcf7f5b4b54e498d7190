@@ -1,0 +1,31 @@
+plugfn/CHANGELOG.md
+  s_192d8000f9c548::t_2d3ea1d2f71f1c 3,5-9
+package-lock.json
+  s_192d8000f9c548::t_f7e6b7ddef7593 59520,59577,59619,59622,59631,60622,60628
+plugfn/admin/package.json
+  s_192d8000f9c548::t_cac17c4e3529a9 43
+plugfn/cli/package.json
+  s_192d8000f9c548::t_9f66d692e18b2a 3
+plugfn/client/package.json
+  s_192d8000f9c548::t_3f027be24202b1 3,31
+plugfn/core/package.json
+  s_192d8000f9c548::t_53247601b66ebb 3
+plugfn/providers/package.json
+  s_192d8000f9c548::t_527574f5ed9746 3,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eea20df6bf11bea080dfdcf7f5b4b54e498d7190",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

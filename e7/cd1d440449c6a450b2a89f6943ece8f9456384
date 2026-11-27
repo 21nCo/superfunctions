@@ -1,0 +1,29 @@
+plugfn/cli/src/index.ts
+  s_192d8000f9c548::t_c560d9ea708420 4,17-18,24
+plugfn/CHANGELOG.md
+  s_192d8000f9c548::t_e4fed6965a3371 6-7,10-12
+plugfn/core/README.md
+  s_192d8000f9c548::t_fa4bff5e78d16b 8,166-167,170-172
+plugfn/docs/content/docs/getting-started.md
+  s_192d8000f9c548::t_3a01d86dcb367b 9
+plugfn/docs/getting-started.md
+  s_192d8000f9c548::t_2ff78046248419 8
+plugfn/docs/static/llms-full.txt
+  s_192d8000f9c548::t_a7b9bcc218d841 103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7cd1d440449c6a450b2a89f6943ece8f9456384",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
