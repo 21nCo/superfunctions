@@ -774,16 +774,21 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     expect(entries.map((entry) => entry[0].rev)).toEqual([2, undefined]);
   });
 
-  it("raises once for two count-less deletes of the same row", async () => {
+  it("raises each of two count-less deletes of the same row once without a transaction", async () => {
     for (const firstRaisesFirst of [true, false]) {
       const base = await insertedTask();
       const dbs = [withWriteEvidence(countless(base), false), withWriteEvidence(countless(base), false)];
       for (const db of dbs) await db.delete({ model: "task", where, namespace: NS } as any);
-      for (const db of firstRaisesFirst ? dbs : [...dbs].reverse()) {
-        await assignWriteRevisions(db, NS, deleteEntry() as any, () => false, schema, false);
+      const entries = [deleteEntry(), deleteEntry()];
+      for (const i of firstRaisesFirst ? [0, 1] : [1, 0]) {
+        await assignWriteRevisions(dbs[i], NS, entries[i] as any, () => false, schema, false);
       }
 
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+      // Option A (DATA-41 owner amendment 2026-11-27): without a count the
+      // delete that removed nothing raises its tombstone too, skipping a
+      // value (3); no value names two states.
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: true });
+      expect(entries.map((entry) => entry[0].rev).sort()).toEqual([2, 3]);
     }
   });
 
@@ -1063,7 +1068,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       }
     });
 
-    it("counts a merge and a delete once each, and a delete that found no row never, in every raise order", async () => {
+    it("counts a merge and a delete once each, and a delete that found no row once more, in every raise order", async () => {
       const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
       for (const order of orders) {
         const base = await insertedTask();
@@ -1075,9 +1080,11 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         const entries = [mergeEntry(), deleteEntry(), deleteEntry()];
         for (const i of order) await assign(dbs[i], entries[i]);
 
-        // insert (1), the merge (2), the delete (3).
-        expect(await rev(base, "task", "task:1"), `order=${order}`).toEqual({ rev: 3, deleted: true });
-        expect(entries[2][0].rev, `order=${order}`).toBeUndefined();
+        // insert (1), the merge (2), the delete (3), and one skipped value
+        // for the count-less delete that removed nothing (4, Option A).
+        expect(await rev(base, "task", "task:1"), `order=${order}`).toEqual({ rev: 4, deleted: true });
+        const deleteRevs = [entries[1][0].rev, entries[2][0].rev];
+        expect(new Set(deleteRevs).size, `order=${order}`).toBe(2);
       }
     });
 
@@ -1128,7 +1135,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       expect(await rev(base, "task", "task:1")).toEqual({ rev: 4, deleted: true });
     });
 
-    it("raises once for two count-less deletes that both found the row, in either raise order", async () => {
+    it("raises each of two count-less deletes that both found the row once, in either raise order", async () => {
       for (const firstRaisesFirst of [true, false]) {
         const base = await insertedTask();
         // Both deletes read the row before either statement runs; the second removes nothing.
@@ -1146,7 +1153,8 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         await Promise.all(writes.map((db) => db.delete({ model: "task", where, namespace: NS } as any)));
         for (const db of firstRaisesFirst ? writes : [...writes].reverse()) await assign(db, deleteEntry());
 
-        expect(await rev(base, "task", "task:1"), `firstRaisesFirst=${firstRaisesFirst}`).toEqual({ rev: 2, deleted: true });
+        // Option A: the delete that removed nothing skips a value (3).
+        expect(await rev(base, "task", "task:1"), `firstRaisesFirst=${firstRaisesFirst}`).toEqual({ rev: 3, deleted: true });
       }
     });
 
@@ -1164,12 +1172,11 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       })), false);
       await first.delete({ model: "task", where, namespace: NS } as any);
       await assign(first, deleteEntry());
-      // `late` reads no row under a tombstone, then removes the re-inserted row.
+      // `late` removes the re-inserted row.
       await late.delete({ model: "task", where, namespace: NS } as any);
       await assign(reinsert!, insertEntry());
-      // The re-insert finds its row removed under `late`'s intent: it counts
-      // its live state (3) and that delete's tombstone (4).
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 4, deleted: true });
+      // The re-insert finds its row removed: it raises the latest state (3).
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: true });
       await assign(late, deleteEntry());
 
       // insert (1), delete (2), re-insert (3), its delete (4).
@@ -1247,33 +1254,20 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     });
 
   describe("PR review round 10", () => {
-    it("counts a delete that removed a re-insert it found absent when the re-insert raises after it, on every route", async () => {
+    it("counts a delete that removed a re-insert written after another delete, on every route", async () => {
       for (const route of ["push", "mutation", "transact"] as const) {
         const base = await insertedTask();
         let phase = 0;
         let reinsert: Adapter | undefined;
         const db = withoutTransactions(overriding(base, (target) => ({
-          internal: new Proxy(target.internal as any, {
-            get(internal, key, receiver) {
-              const value = Reflect.get(internal, key, receiver);
-              if (typeof value !== "function") return value;
-              if (key !== "findMany") return value.bind(internal);
-              return async (table: string, ...args: unknown[]) => {
-                if (table === "__datafn_revisions" && phase === 1) {
-                  phase = 2;
-                  // Before the delete's reads, another request deletes the task and raises its tombstone (2).
-                  await target.delete({ model: "task", where, namespace: NS } as any);
-                  await bumpTombstone(target, NS, "task", "task:1", false);
-                }
-                return value.apply(internal, [table, ...args]);
-              };
-            },
-          }),
           async delete(p: any) {
-            if (phase === 2 && p.model === "task") {
-              phase = 3;
-              // After the delete's reads found no row, a third request
-              // re-inserts the task; this delete's statement removes it.
+            if (phase === 1 && p.model === "task") {
+              phase = 2;
+              // Just before this delete's statement, another request deletes
+              // the task and raises its tombstone (2), then a third request
+              // re-inserts it; this delete's statement removes the re-insert.
+              await target.delete({ model: "task", where, namespace: NS } as any);
+              await bumpTombstone(target, NS, "task", "task:1", false);
               reinsert = withWriteEvidence(countless(base), false);
               await reinsert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
             }
@@ -1284,31 +1278,47 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         phase = 1;
         const deleted = await send({ resource: "task", operation: "delete", id: "task:1" });
 
-        expect(phase, route).toBe(3);
+        expect(phase, route).toBe(2);
         expect(okOf(route, deleted.body), `${route} ${JSON.stringify(deleted.body).slice(0, 300)}`).toBe(true);
-        // The delete found no row and its revision row unchanged: it raised nothing.
-        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 2, deleted: true });
-        // The re-insert raises after the delete decided, and counts that delete.
+        // The delete left the row absent: it raised its tombstone (3).
+        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 3, deleted: true });
         await assign(reinsert!, insertEntry());
-        // insert (1), delete (2), re-insert (3), delete (4): no revision names two states.
-        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 4, deleted: true });
+        // insert (1), delete (2), re-insert and delete (4 or more, never 3).
+        const final = await rev(base, "task", "task:1");
+        expect(final?.deleted, route).toBe(true);
+        expect(final?.rev, route).toBeGreaterThanOrEqual(4);
       }
     });
 
-    it("keeps a revision for a delete that found no row and removed nothing", async () => {
-      const base = await insertedTask();
-      const first = withWriteEvidence(countless(base), false);
-      await first.delete({ model: "task", where, namespace: NS } as any);
-      await assign(first, deleteEntry());
-      const again = withWriteEvidence(countless(base), false);
-      await again.delete({ model: "task", where, namespace: NS } as any);
-      await assign(again, deleteEntry());
-      // A later write that finds the row present is raised once, live.
-      const insert = withWriteEvidence(countless(base), false);
-      await insert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
-      await assign(insert, insertEntry());
+    it("raises a zero-row count-less delete's tombstone once without a transaction, and nothing inside one", async () => {
+      for (const transactional of [false, true]) {
+        const base = await insertedTask();
+        const label = `transactional=${transactional}`;
+        // Deletes whose adapter reports no count; the second finds no row.
+        const run = async (write: (db: Adapter) => Promise<void>) => {
+          if (!transactional) return write(withWriteEvidence(countless(base), false));
+          const db = overriding(base, (target) => ({ delete: async (p: any) => void (await target.deleteMany(p)) }));
+          await db.transaction(async (tx: Adapter) => write(withWriteEvidence(tx, true)));
+        };
+        const removeTask = (entry: Json[]) => run(async (db) => {
+          await db.delete({ model: "task", where, namespace: NS } as any);
+          await assignWriteRevisions(db, NS, entry as any, () => false, schema, transactional);
+        });
+        const entries = [deleteEntry(), deleteEntry()];
+        await removeTask(entries[0]);
+        await removeTask(entries[1]);
 
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: false });
+        // Option A outside a transaction: the zero-row delete skips a value
+        // (3), never reusing one; inside one the row lock shows the row was
+        // already removed, so it raises nothing.
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: transactional ? 2 : 3, deleted: true });
+        expect(entries.map((entry) => entry[0].rev), label).toEqual(transactional ? [2, undefined] : [2, 3]);
+        await run(async (db) => {
+          await db.create({ model: "task", data: { id: "task:1", title: "b" }, namespace: NS } as any);
+          await assign(db, insertEntry());
+        });
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: transactional ? 3 : 4, deleted: false });
+      }
     });
 
     it("issues no revision read before a delete's statement inside a transaction, on every route", async () => {
@@ -1361,86 +1371,113 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
       }
     });
 
-    it("raises once for two deletes that found the row when a later delete stamps its intent in between", async () => {
+    it("runs no statement before a count-less delete's own statement without a transaction, on every route", async () => {
+      for (const route of ["push", "mutation", "transact"] as const) {
+        const base = await insertedTask();
+        const early: string[] = [];
+        let removed = false;
+        const db = withoutTransactions(overriding(base, (target) => ({
+          internal: new Proxy(target.internal as any, {
+            get(internal, key, receiver) {
+              const value = Reflect.get(internal, key, receiver);
+              if (typeof value !== "function") return value;
+              return async (table: string, ...args: unknown[]) => {
+                if (!removed && table === "__datafn_revisions" && key !== "ensureTable") early.push(`${String(key)}:${table}`);
+                return value.apply(internal, [table, ...args]);
+              };
+            },
+          }),
+          async delete(p: any) {
+            const out = await target.delete(p);
+            if (p.model === "task") removed = true;
+            return out;
+          },
+        })));
+        const send = await nonAtomicRoutes(db, route);
+        const result = await send({ resource: "task", operation: "delete", id: "task:1" });
+
+        expect(okOf(route, result.body), route).toBe(true);
+        expect(early, route).toEqual([]);
+        expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 2, deleted: true });
+      }
+    });
+
+    it("never leaves a re-insert uncounted when a count-less delete removes it before its swap", async () => {
       const base = await insertedTask();
+      const first = withWriteEvidence(countless(base), false);
+      await first.delete({ model: "task", where, namespace: NS } as any);
+      await assign(first, deleteEntry());
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
-      let statements = 0;
-      const paused = overriding(countless(base), (target) => ({
+      const late = withWriteEvidence(overriding(countless(base), (target) => ({
         delete: async (p: any) => {
-          if (++statements === 2) release();
           await gate;
           await target.delete(p);
         },
-      }));
-      const [a, b] = [withWriteEvidence(paused, false), withWriteEvidence(paused, false)];
-      await Promise.all([a, b].map((db) => db.delete({ model: "task", where, namespace: NS } as any)));
-      await assign(a, deleteEntry());
-      // A third delete finds no row and stamps its intent before `b` raises.
-      const third = withWriteEvidence(countless(base), false);
-      await third.delete({ model: "task", where, namespace: NS } as any);
-      await assign(b, deleteEntry());
-      await assign(third, deleteEntry());
+      })), false);
+      // The delete runs up to its statement while the row is absent.
+      const deleting = late.delete({ model: "task", where, namespace: NS } as any)
+        .then(() => assign(late, deleteEntry()));
+      // The re-insert writes its row and reads tombstone 2; before its swap
+      // the delete removes the row and raises.
+      let raced = false;
+      const reinsert = withWriteEvidence(overriding(countless(base), (target) => ({
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "update") return value.bind(internal);
+            return async (table: string, ...args: unknown[]) => {
+              if (table === "__datafn_revisions" && !raced) {
+                raced = true;
+                release();
+                await deleting;
+              }
+              return value.apply(internal, [table, ...args]);
+            };
+          },
+        }),
+      })), false);
+      await reinsert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
+      await assign(reinsert, insertEntry());
 
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+      expect(raced).toBe(true);
+      expect(await base.findOne({ model: "task", where, namespace: NS } as any)).toBeNull();
+      // insert (1), delete (2), re-insert and its delete: 4 or more, never 3.
+      const final = await rev(base, "task", "task:1");
+      expect(final?.deleted).toBe(true);
+      expect(final?.rev).toBeGreaterThanOrEqual(4);
     });
 
-    it("leaves the revision of a delete that found no row unchanged when its intent cannot be stamped", async () => {
-      const base = await insertedTask();
-      const first = withWriteEvidence(countless(base), false);
-      await first.delete({ model: "task", where, namespace: NS } as any);
-      await assign(first, deleteEntry());
-      let failing = true;
-      const again = withWriteEvidence(failingInternal(countless(base), "__datafn_revisions", () => failing), false);
-      await again.delete({ model: "task", where, namespace: NS } as any);
-      failing = false;
-      await assign(again, deleteEntry());
-
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
-    });
-
-    it("keeps every raise mark when a delete stamps its intent", async () => {
-      const base = await insertedTask();
-      const first = withWriteEvidence(countless(base), false);
-      await first.delete({ model: "task", where, namespace: NS } as any);
-      await assign(first, deleteEntry());
-      for (let i = 0; i < 10; i++) await bumpTombstone(base, NS, "task", "task:1", false);
-      const marks = async () => {
-        const [row] = await base.internal.findMany("__datafn_revisions", []);
-        return String(row.updated_at).split("#")[1].split(" ");
-      };
-      const raised = await marks();
-      const late = withWriteEvidence(countless(base), false);
-      await late.delete({ model: "task", where, namespace: NS } as any);
-
-      expect(raised).toHaveLength(12);
-      expect((await marks()).slice(1)).toEqual(raised);
-      expect(await rev(base, "task", "task:1")).toEqual({ rev: 12, deleted: true });
-    });
-
-    it("counts a merge once when a delete raised its removal before a later no-op delete stamped its intent", async () => {
-      for (const throws of [false, true]) {
+    it("counts merges around a real delete and a later count-less delete once each, never twice", async () => {
+      for (const outcome of ["removedNothing", "failed"] as const) {
         const base = await insertedTask();
-        const merge = withWriteEvidence(countless(base), false);
-        await merge.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
+        const label = `late delete ${outcome}`;
+        const merges = [withWriteEvidence(countless(base), false), withWriteEvidence(countless(base), false)];
+        for (const [i, merge] of merges.entries()) {
+          await merge.update({ model: "task", where, data: { title: `m${i}` }, namespace: NS } as any);
+        }
         // A delete removes the merged row and raises its tombstone (2).
         const removing = withWriteEvidence(countless(base), false);
         await removing.delete({ model: "task", where, namespace: NS } as any);
         await assign(removing, deleteEntry());
-        // A later delete finds no row and stamps its intent, then removes
-        // nothing (or fails after the stamp).
+        await assign(merges[0], mergeEntry());
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 3, deleted: true });
+        // A later delete finds no row to remove (or fails before its statement).
         const late = withWriteEvidence(overriding(countless(base), (target) => ({
           delete: async (p: any) => {
-            if (throws) throw new Error("connection lost");
+            if (outcome === "failed") throw new Error("connection lost");
             await target.delete(p);
           },
         })), false);
         await late.delete({ model: "task", where, namespace: NS } as any).catch(() => undefined);
-        if (!throws) await assign(late, deleteEntry());
-        await assign(merge, [{ resource: "task", id: "task:1", op: "merge", record: null }]);
+        if (outcome === "removedNothing") await assign(late, deleteEntry());
+        await assign(merges[1], mergeEntry());
 
-        // insert (1), merge and delete: one revision each (3).
-        expect(await rev(base, "task", "task:1"), `throws=${throws}`).toEqual({ rev: 3, deleted: true });
+        // insert (1), delete (2), the merges (3, then 4 or 5): the delete that
+        // removed nothing skips one value (Option A); a failed one raises
+        // nothing. Each merge raises exactly once.
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: outcome === "failed" ? 4 : 5, deleted: true });
       }
     });
 
