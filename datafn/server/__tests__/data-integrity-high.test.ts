@@ -362,7 +362,10 @@ describe("transaction-bound runtime state", () => {
           get(target, property, receiver) {
             if (property === "create" || property === "createMany") {
               return async (table: string, data: Record<string, unknown> | Record<string, unknown>[]) => {
-                if (table === "__datafn_changes" && changeWriteFailures < 3) {
+                // DATA-41: change tracking makes one attempt inside a
+                // transaction (a failed statement may have aborted it), so
+                // one failure rolls the first mutation back.
+                if (table === "__datafn_changes" && changeWriteFailures < 1) {
                   changeWriteFailures += 1;
                   throw new Error("forced change-write failure");
                 }

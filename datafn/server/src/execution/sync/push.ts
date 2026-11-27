@@ -19,7 +19,7 @@ import {
   type MutationResult,
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
-import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
+import { ChangeTrackingService, recordWriteChangesWithRetry } from "./change-tracking.js";
 import { canonicalRow, issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD, withWriteEvidence } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
@@ -1420,12 +1420,9 @@ export async function executePush(
             pendingChangeEvents.push(seq);
           }
           // DATA-41: the mutation is one write: each record it changes gets
-          // one revision, on its last change row.
-          await txChangeTracking.assignRevisions(recorded);
-          for (const entry of recorded) {
-            // FIX-REL-002: retry within transaction
-            await recordChangeWithRetry(txChangeTracking, entry, 2, logger);
-          }
+          // one revision, on its last change row. Inside the transaction a
+          // failure rolls the whole write back (no retry in an aborted one).
+          await recordWriteChangesWithRetry(txChangeTracking, recorded, txDb, 2, logger);
           mutationRevision = await postWriteRevision(mut, txDb, recorded, true);
         });
         sequenceAllocation.initialBatchAllocated = txSequenceAllocation.initialBatchAllocated;
@@ -1527,11 +1524,10 @@ export async function executePush(
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
           }
-          await changeTracking.assignRevisions(recorded, writeDb);
+          // DATA-41: the write has committed; revisions and change rows are
+          // retried together on these entries, never replaying the write.
+          await recordWriteChangesWithRetry(changeTracking, recorded, writeDb, 2, logger);
           noteBatchRevisions(recorded);
-          for (const entry of recorded) {
-            await recordChangeWithRetry(changeTracking, entry, 2, logger);
-          }
           mutationRevision = await postWriteRevision(mut, db, recorded, false);
         } catch (error) {
           logger?.error("Change tracking failed in push after retries", { error: String(error), operation: "push.changeTracking" });

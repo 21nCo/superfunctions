@@ -129,23 +129,49 @@ export function registerAdapterWrapper(wrapper: object, adapter: object): void {
   adapterTargets.set(wrapper, adapterIdentity(adapter));
 }
 
-const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
+const changesRevColumnReady = new WeakMap<object, { ready: Promise<boolean>; at: number }>();
+
+/** How long a finding that the columns are missing is kept before probing again. */
+export const CHANGES_REV_COLUMN_RECHECK_MS = 60_000;
 
 /**
  * Adds the `rev` and `rev_certified` columns to a `__datafn_changes` table
  * created before DATA-41 and resolves whether change rows may carry them.
  * Stores without a fixed schema keep any column; a SQL database without raw
- * SQL access is probed. Runs once per adapter, outside any transaction (a
- * failed probe would abort a PostgreSQL transaction).
+ * SQL access is probed. Runs outside any transaction (a failed probe would
+ * abort a PostgreSQL transaction). Columns found are kept for the adapter's
+ * lifetime; a finding that they are missing is probed again after
+ * CHANGES_REV_COLUMN_RECHECK_MS, so a migration that adds them later is
+ * picked up without recreating the adapter.
  */
-export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
-  let ready = changesRevColumnReady.get(adapterIdentity(adapter));
-  if (!ready) {
-    ready = addChangesRevColumns(adapter);
-    changesRevColumnReady.set(adapterIdentity(adapter), ready);
-    ready.catch(() => changesRevColumnReady.delete(adapterIdentity(adapter)));
-  }
-  return ready;
+export function ensureChangesRevColumn(adapter: Adapter, now: number = Date.now()): Promise<boolean> {
+  const key = adapterIdentity(adapter);
+  const cached = changesRevColumnReady.get(key);
+  if (cached) return cached.ready.then((ok) => ok || now - cached.at < CHANGES_REV_COLUMN_RECHECK_MS
+    ? ok
+    : reprobeChangesRevColumns(adapter, key, cached, now));
+  return startChangesRevProbe(adapter, key, now);
+}
+
+function startChangesRevProbe(adapter: Adapter, key: object, now: number): Promise<boolean> {
+  const entry = { ready: addChangesRevColumns(adapter), at: now };
+  changesRevColumnReady.set(key, entry);
+  entry.ready.catch(() => {
+    if (changesRevColumnReady.get(key) === entry) changesRevColumnReady.delete(key);
+  });
+  return entry.ready;
+}
+
+function reprobeChangesRevColumns(
+  adapter: Adapter,
+  key: object,
+  stale: { ready: Promise<boolean>; at: number },
+  now: number,
+): Promise<boolean> {
+  // A concurrent caller may have started the probe already.
+  const current = changesRevColumnReady.get(key);
+  if (current && current !== stale) return current.ready;
+  return startChangesRevProbe(adapter, key, now);
 }
 
 /** A filter on a column name no table has, to tell a real probe from a lax one. */
@@ -170,10 +196,8 @@ async function addChangesRevColumns(adapter: Adapter): Promise<boolean> {
       }
     };
     if (await probe(ABSENT_COLUMN)) return false;
-    for (const column of CHANGES_REVISION_COLUMNS) {
-      if (!(await probe(column))) return false;
-    }
-    return true;
+    const found = await Promise.all(CHANGES_REVISION_COLUMNS.map(probe));
+    return found.every(Boolean);
   }
   for (const column of CHANGES_REVISION_COLUMNS) await addChangesColumn(rawSql, column);
   return true;

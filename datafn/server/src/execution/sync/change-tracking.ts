@@ -16,7 +16,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
 import { adapterIdentity, ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
-import { assignWriteRevisions, ensureRevisionsTable, isRevisionAssignmentFailure, issuesRevisions, revisionsEnabled } from "../revisions.js";
+import { assignWriteRevisions, ensureRevisionsTable, issuesRevisions, revisionsEnabled } from "../revisions.js";
 import type { DatafnSchema } from "../../core-types.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
@@ -25,10 +25,41 @@ import { withAdapterNamespaceLock } from "./namespace-lock.js";
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
+ * FIX-REL-002: runs one change-tracking step with up to `maxRetries` retries
+ * (50ms/100ms backoff), and throws the last failure so the caller treats the
+ * mutation as failed.
+ *
+ * DATA-41: only outside a database transaction. A service recording inside
+ * the write's transaction makes one attempt: a failed statement may have
+ * aborted that transaction (PostgreSQL), so the failure propagates, the whole
+ * write rolls back, and the mutation stays retryable under its id. Outside a
+ * transaction the write has committed and is never replayed: the same entries
+ * are assigned and recorded again, keeping the revisions already raised.
+ */
+async function withChangeRetry(
+  changeTracking: ChangeTrackingService,
+  step: () => Promise<void>,
+  maxRetries: number,
+  logger: DatafnLogger | undefined,
+  message: string,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  const retries = changeTracking.inTransaction ? 0 : maxRetries;
+  for (let i = 0; ; i++) {
+    try {
+      await step();
+      return;
+    } catch (e) {
+      if (i >= retries) throw e;
+      logger?.warn(message, { attempt: i + 1, maxRetries, ...context, error: String(e) });
+      await sleep(50 * (i + 1)); // 50ms, 100ms
+    }
+  }
+}
+
+/**
  * FIX-REL-002: Shared retry helper for change-tracking writes.
- * Retries up to `maxRetries` times with 50ms/100ms backoff.
  * Used by both execute-mutation and push paths for parity.
- * On final failure, throws so the caller can treat the mutation as failed.
  */
 export async function recordChangeWithRetry(
   changeTracking: ChangeTrackingService,
@@ -36,22 +67,11 @@ export async function recordChangeWithRetry(
   maxRetries = 2,
   logger?: DatafnLogger,
 ): Promise<void> {
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      await changeTracking.recordChange(params);
-      return;
-    } catch (e) {
-      // DATA-41: a failed revision raise aborts the write; it is not retried.
-      if (i === maxRetries || isRevisionAssignmentFailure(e)) throw e;
-      logger?.warn("Change tracking retry", { attempt: i + 1, maxRetries, error: String(e) });
-      await sleep(50 * (i + 1)); // 50ms, 100ms
-    }
-  }
+  await withChangeRetry(changeTracking, () => changeTracking.recordChange(params), maxRetries, logger, "Change tracking retry");
 }
 
 /**
  * FIX-REL-002: Shared retry helper for bulk change-tracking writes.
- * Retries up to `maxRetries` times with 50ms/100ms backoff.
  */
 export async function recordChangesWithRetry(
   changeTracking: ChangeTrackingService,
@@ -60,22 +80,39 @@ export async function recordChangesWithRetry(
   logger?: DatafnLogger,
 ): Promise<void> {
   if (entries.length === 0) return;
+  await withChangeRetry(
+    changeTracking,
+    () => changeTracking.recordChanges(entries),
+    maxRetries,
+    logger,
+    "Change tracking retry (bulk)",
+    { entryCount: entries.length },
+  );
+}
 
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      await changeTracking.recordChanges(entries);
-      return;
-    } catch (e) {
-      if (i === maxRetries || isRevisionAssignmentFailure(e)) throw e;
-      logger?.warn("Change tracking retry (bulk)", {
-        attempt: i + 1,
-        maxRetries,
-        entryCount: entries.length,
-        error: String(e),
-      });
-      await sleep(50 * (i + 1)); // 50ms, 100ms
+/**
+ * DATA-41: records one write's change entries one by one, after raising the
+ * revisions of the records they change (on the evidence `writeDb` recorded).
+ * Assignment and recording are retried together on the same entries (see
+ * withChangeRetry): a retry raises no record twice and records no entry twice.
+ */
+export async function recordWriteChangesWithRetry(
+  changeTracking: ChangeTrackingService,
+  entries: ChangeEntryInput[],
+  writeDb: Adapter,
+  maxRetries = 2,
+  logger?: DatafnLogger,
+): Promise<void> {
+  const recorded = new WeakSet<ChangeEntryInput>();
+  await withChangeRetry(changeTracking, async () => {
+    await changeTracking.assignRevisions(entries, writeDb);
+    for (const entry of entries) {
+      if (recorded.has(entry)) continue;
+      // In serverSeq order, one at a time, as base recorded them.
+      await changeTracking.recordChange(entry);
+      recorded.add(entry);
     }
-  }
+  }, maxRetries, logger, "Change tracking retry", { entryCount: entries.length });
 }
 
 /**
@@ -100,7 +137,7 @@ export interface ChangeEntry {
 
 /** DATA-41: a change row's revision and its write-time provenance, when it recorded one. */
 function storedRev(row: Record<string, unknown>): { rev?: number; certified?: true } {
-  const rev = row.rev === null || row.rev === undefined ? NaN : Number(row.rev);
+  const rev = row.rev === null || row.rev === undefined ? Number.NaN : Number(row.rev);
   if (!Number.isInteger(rev) || rev <= 0) return {};
   return Number(row.rev_certified) === 1 ? { rev, certified: true } : { rev };
 }
@@ -153,6 +190,11 @@ export class ChangeTrackingService {
    * records are certified as the state at their revision.
    */
   private writesCertified = false;
+
+  /** DATA-41: whether this service records inside the write's database transaction. */
+  get inTransaction(): boolean {
+    return this.writesCertified;
+  }
   /**
    * DATA-41: record each change's revision on its change row. Set from the
    * server's `revisions.enabled` option; revisions are bumped either way.
