@@ -34,7 +34,7 @@
   "license": "MIT",
   "dependencies": {
     "@superfunctions/oauth-core": "0.2.1",
-    "@superfunctions/oauth-flow": "0.1.1",
+    "@superfunctions/oauth-flow": "0.1.2",
     "@superfunctions/oauth-http": "0.2.1",
     "@superfunctions/oauth-providers": "0.1.1",
     "@superfunctions/oauth-storage": "0.1.2",

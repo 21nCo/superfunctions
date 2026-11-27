@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/oauth-flow",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "High-level OAuth orchestration contracts for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",

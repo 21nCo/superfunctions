@@ -32,7 +32,7 @@
     "@authfn/two-factor": "0.2.1",
     "@docsfn/cli": "0.0.2",
     "@superfunctions/db": "0.3.4",
-    "@superfunctions/oauth-flow": "0.1.1",
+    "@superfunctions/oauth-flow": "0.1.2",
     "@superfunctions/observability": "0.0.4",
     "@sveltejs/adapter-auto": "^3.0.0",
     "@sveltejs/adapter-cloudflare": "^7.0.0",

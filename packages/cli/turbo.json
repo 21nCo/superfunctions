@@ -31,6 +31,7 @@
       ]
     },
     "test": {
+      "dependsOn": ["^build", "authfn#build"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/authfn/api-keys/src/**",
