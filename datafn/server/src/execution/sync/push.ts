@@ -2,6 +2,7 @@
  * Push implementation - upload local mutations with change tracking
  */
 
+import { runBounded } from "../../routes/query/batch-executor.js";
 import type { DatafnSchema } from "../../core-types.js";
 import {
   coerceDateFieldsToEpoch,
@@ -12,12 +13,16 @@ import {
 import type { Adapter } from "@superfunctions/db";
 import {
   isRetryableMutationResult,
+  replayedRevision,
   scopeIdempotencyStore,
   type IdempotencyStore,
   type MutationResult,
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
-import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
+import { ChangeTrackingService, recordWriteChangesWithRetry } from "./change-tracking.js";
+import { canonicalRow, issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD, withWriteEvidence } from "../revisions.js";
+import type { ChangeEntryInput } from "./change-tracking.js";
+import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   applyInactivePropagation,
   applyRelationDeletePolicies,
@@ -48,6 +53,7 @@ import {
 import type { DatafnLogger } from "../../logger.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import { validateShareableOperationAccess } from "../../validation/authz.js";
+import type { DatafnPushRevision } from "@datafn/core";
 import {
   deferFailedShareCompensation,
   discardPermissionDirectorySync,
@@ -75,6 +81,12 @@ export interface PushResult {
   cursor: string;
   cursorBefore?: string; // global seq before this push started; absent on early-exit error paths
   cursors?: Record<string, string>; // per-resource max serverSeq after this push
+  /**
+   * DATA-41: per applied mutation id, the mutated record's revision after the
+   * write, with its complete post-write row when the caller may read every
+   * field (or `deleted` for a delete). Present only when revisions are on.
+   */
+  revisions?: Record<string, DatafnPushRevision>;
 }
 
 function formatUnknownError(error: unknown): string {
@@ -233,6 +245,19 @@ function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
 }
 
 /**
+ * DATA-41: reads records back through the caller's own `/query` route, with
+ * all of its admission (route tickets, plugin and host authorization, query
+ * hooks), and returns the rows that query returned by id. Rows it withholds
+ * or returns without `$rev` are absent or unrevisioned in the result.
+ */
+export type PostWriteRowReader = (
+  resource: string,
+  ids: readonly string[],
+  /** The namespace the push wrote in, as already resolved for the write. */
+  namespace: string,
+) => Promise<ReadonlyMap<string, Record<string, unknown>>>;
+
+/**
  * Execute push operation - apply mutations with change tracking
  */
 export async function executePush(
@@ -246,7 +271,9 @@ export async function executePush(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  postWriteRead?: { read: PostWriteRowReader; concurrency: number },
 ): Promise<PushResult> {
+  const readPostWriteRows = postWriteRead?.read;
   // DFN-01: idempotency records belong to the request's namespace and actor.
   idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
   // Validate clientId at request level - this is a critical error
@@ -300,12 +327,15 @@ export async function executePush(
 
   // Create change tracking service with user/tenant namespace and optional sequence store
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore, onChange);
+  changeTracking.useRevisionsOf(schema);
   // Capture the global sequence counter BEFORE any mutations are processed so the client
   // can determine whether foreign changes exist (cursorBefore == localCursor → no foreign changes)
   const cursorBeforeSeq = await changeTracking.getCurrentServerSeq();
   let latestSeq = 0;
   // Track per-resource max serverSeq so the client can advance per-table cursors (FIX-B)
   const resourceSeqs: Record<string, number> = {};
+  // DATA-41: set once a write outside a transaction sends its change rows.
+  let recordingAttempted = false;
 
   if (
     multiRegionRuntime &&
@@ -346,6 +376,7 @@ export async function executePush(
   } else {
     await changeTracking.ensureReady();
   }
+  await changeTracking.ensureRevisionsReady();
 
   type SequenceAllocationState = {
     initialBatchAllocated: boolean;
@@ -435,6 +466,121 @@ export async function executePush(
     }));
   }
 
+  // Keyed by client mutation ids, so no inherited keys (`__proto__`).
+  const revisions: Record<string, DatafnPushRevision> = Object.create(null);
+  /**
+   * DATA-41: the highest revision each record reached in this push, across
+   * every committed mutation's changes, its side effects (cascades, setNull,
+   * inherited-inactive updates) included.
+   */
+  const batchRevisions = new Map<string, number>();
+  const revisionKey = (resource: string, id: string) => JSON.stringify([resource, id]);
+  const noteBatchRevisions = (recorded: ChangeEntryInput[]) => {
+    for (const entry of recorded) {
+      if (entry.rev === undefined) continue;
+      const key = revisionKey(entry.resource, entry.id);
+      batchRevisions.set(key, Math.max(batchRevisions.get(key) ?? 0, entry.rev));
+    }
+  };
+  /**
+   * DATA-41: a mutation's post-write row (or tombstone) is returned only when
+   * no later mutation of this push changed the record again, so the client
+   * never installs a state a later write of its own batch replaced; a
+   * superseded entry keeps only its revision.
+   */
+  /**
+   * DATA-41: a mutation id the batch used for more than one record; its
+   * single response slot cannot say which record a revision belongs to,
+   * so it carries none.
+   */
+  const revisionTargets = new Map<string, string>();
+  const ambiguousRevisionIds = new Set<string>();
+  /**
+   * DATA-41: a post-write row is disclosed only when the caller's own query
+   * of that record, run after every write of the push (so no write of the
+   * batch can make the decision stale) and outside any write transaction,
+   * returns exactly that row at the same revision.
+   * Without a reader (direct handler use, where no host read policy applies)
+   * the row read in the write's transaction is returned.
+   */
+  const settledRevisions = async (): Promise<Record<string, DatafnPushRevision>> => {
+    const settled: Record<string, DatafnPushRevision> = Object.create(null);
+    const readBackIds = new Map<string, Set<string>>();
+    for (const [mutationId, revision] of Object.entries(revisions)) {
+      if (ambiguousRevisionIds.has(mutationId)) continue;
+      const latest = batchRevisions.get(revisionKey(revision.resource, revision.id)) ?? revision.rev;
+      settled[mutationId] = latest > revision.rev
+        ? { resource: revision.resource, id: revision.id, rev: revision.rev }
+        : revision;
+      if (latest <= revision.rev && revision.record && readPostWriteRows) {
+        const ids = readBackIds.get(revision.resource) ?? new Set<string>();
+        readBackIds.set(revision.resource, ids.add(revision.id));
+      }
+    }
+    if (!readPostWriteRows || readBackIds.size === 0) return settled;
+    const readBack = new Map<string, ReadonlyMap<string, Record<string, unknown>>>();
+    // Bounded like a batch query (limits.maxBatchQueryConcurrency).
+    await runBounded([...readBackIds].map(([resource, ids]) => async () => {
+      try {
+        readBack.set(resource, await readPostWriteRows(resource, [...ids], namespace));
+      } catch {
+        // Fail closed: the revision is returned without a row.
+      }
+    }), postWriteRead?.concurrency ?? 20);
+    // The query proves only that the caller may read the row: the row
+    // returned is the one read in the write's transaction, and only when the
+    // query returned exactly that row (a hook that redirects, rewrites or
+    // trims it leaves the revision alone).
+    for (const [mutationId, revision] of Object.entries(settled)) {
+      if (!revision.record) continue;
+      const row = readBack.get(revision.resource)?.get(revision.id);
+      if (!row || canonicalRow(row) !== canonicalRow(revision.record)) {
+        settled[mutationId] = { resource: revision.resource, id: revision.id, rev: revision.rev };
+      }
+    }
+    return settled;
+  };
+
+  /**
+   * DATA-41: the mutated record's revision and complete row after the write,
+   * read on `targetDb` (the write's transaction when there is one). Without
+   * a transaction (`inTransaction` false) the write and its revision commit
+   * separately, so another write may land between them and the row read
+   * here: the result carries the revision alone, with no row or tombstone.
+   */
+  async function postWriteRevision(
+    mut: any,
+    targetDb: Adapter,
+    recorded: ChangeEntryInput[],
+    inTransaction: boolean,
+  ): Promise<DatafnPushRevision | undefined> {
+    if (typeof mut.id !== "string" || !issuesRevisions(schema, mut.resource)) return undefined;
+    const rev = recordedRevision(recorded, mut.resource, mut.id);
+    if (rev === undefined) return undefined;
+    const base = { resource: mut.resource as string, id: mut.id as string, rev };
+    if (!inTransaction) return base;
+    const last = [...recorded].reverse().find((entry) => entry.resource === mut.resource && entry.id === mut.id);
+    if (last?.op === "delete") return { ...base, deleted: true };
+    const row = (await targetDb.findOne({
+      model: mut.resource,
+      where: [{ field: "id", operator: "eq", value: mut.id }],
+      namespace,
+    })) as Record<string, unknown> | null;
+    if (!row || !canReadEveryField(schema, mut.resource, row)) return base;
+    // Record-level access was checked before the write; a grant revoked
+    // since then must not let the reply disclose the row, so it is checked
+    // again in the write's transaction.
+    if (
+      isPrivateShareableResource(schema, mut.resource) &&
+      !(await resolveAccessLevel(targetDb, schema, mut.resource, mut.id, actorId, namespace))
+    ) {
+      return base;
+    }
+    // The row carries its revision as `$rev` metadata, so a host filter that
+    // trims the row and drops `$rev` leaves the client without a revision.
+    return { ...base, record: { ...row, [REVISION_FIELD]: rev } };
+  }
+
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
   const batchLocalSeen = new Map<string, boolean>();
 
@@ -458,6 +604,14 @@ export async function executePush(
           code: "DFQL_INVALID",
           message: `Field is read-only: ${systemField} on ${mut.resource}`,
           path: `record.${systemField}`,
+        };
+      }
+      if (recordIdMismatch(schema, mut)) {
+        return {
+          ok: false,
+          code: "DFQL_INVALID",
+          message: `Invalid DFQL: record.id must equal the mutation id on ${mut.resource}`,
+          path: "record.id",
         };
       }
     }
@@ -1045,11 +1199,13 @@ export async function executePush(
   /**
    * Record a mutation as successfully applied.
    */
-  async function recordMutationSuccess(mut: any) {
+  async function recordMutationSuccess(mut: any, revision?: DatafnPushRevision) {
     applied.push(mut.mutationId);
     const result: MutationResult = {
       ok: true, mutationId: mut.mutationId, affectedIds: [mut.id], errors: [], deduped: false,
+      ...(revision ? { rev: revision.rev, revTarget: { resource: revision.resource, id: revision.id } } : {}),
     };
+    if (revision) revisions[mut.mutationId] = revision;
     await idempotencyStore.set(mut.clientId, mut.mutationId, result);
     batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, true);
   }
@@ -1124,6 +1280,10 @@ export async function executePush(
     }
 
     const batchKey = `${mut.clientId}:${mut.mutationId}`;
+    // A mutation without a record id (a scope operation) never matches a record's key.
+    const target = JSON.stringify([mut.resource ?? null, typeof mut.id === "string" ? mut.id : null]);
+    if ((revisionTargets.get(mut.mutationId) ?? target) !== target) ambiguousRevisionIds.add(mut.mutationId);
+    revisionTargets.set(mut.mutationId, target);
 
     // Intra-batch dedup
     if (batchLocalSeen.has(batchKey)) {
@@ -1136,6 +1296,13 @@ export async function executePush(
     if (cached) {
       if (cached.ok) {
         applied.push(mut.mutationId);
+        // A deduplicated reply carries the stored revision without a row, so
+        // it discloses nothing the caller cannot read now, and only to a
+        // retry of the record that revision belongs to.
+        const replayRev = replayedRevision(cached, mut);
+        if (replayRev !== undefined && issuesRevisions(schema, mut.resource)) {
+          revisions[mut.mutationId] = { resource: mut.resource, id: mut.id, rev: replayRev };
+        }
         batchLocalSeen.set(batchKey, true);
         continue;
       } else if (
@@ -1209,10 +1376,14 @@ export async function executePush(
         pool: [...sequenceAllocation.pool],
       };
       let mutationLatestSeq = 0;
+      let mutationRevision: DatafnPushRevision | undefined;
+      let mutationRecorded: ChangeEntryInput[] = [];
       const mutationResourceSeqs: Record<string, number> = {};
       const pendingChangeEvents: number[] = [];
       try {
-        await (db as any).transaction(async (txDb: Adapter) => {
+        await (db as any).transaction(async (txAdapter: Adapter) => {
+          // DATA-41: the write's own statements decide which revisions it raises.
+          const txDb = withWriteEvidence(txAdapter, true);
           // Execute operation inside transaction
           const opResult = await executeMutationOp(mut, txDb);
           if (!opResult.ok) {
@@ -1232,7 +1403,9 @@ export async function executePush(
           const changes = opResult.changes;
           // Change notifications describe committed state, so suppress the
           // transaction-bound service callback and publish only after commit.
-          const txChangeTracking = changeTracking.withDb(txDb, false);
+          const txChangeTracking = changeTracking.withDb(txDb, false, true);
+          const recorded: ChangeEntryInput[] = [];
+          mutationRecorded = recorded;
           for (const change of changes) {
             const { seq, op, record } = await sequenceChange(
               change,
@@ -1245,12 +1418,14 @@ export async function executePush(
               mutationResourceSeqs[change.resource] || 0,
               seq,
             );
-            // FIX-REL-002: retry within transaction
-            await recordChangeWithRetry(txChangeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            }, 2, logger);
+            recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
             pendingChangeEvents.push(seq);
           }
+          // DATA-41: the mutation is one write: each record it changes gets
+          // one revision, on its last change row. Inside the transaction a
+          // failure rolls the whole write back (no retry in an aborted one).
+          await recordWriteChangesWithRetry(txChangeTracking, recorded, txDb, 2, logger);
+          mutationRevision = await postWriteRevision(mut, txDb, recorded, true);
         });
         sequenceAllocation.initialBatchAllocated = txSequenceAllocation.initialBatchAllocated;
         sequenceAllocation.pool = txSequenceAllocation.pool;
@@ -1288,11 +1463,13 @@ export async function executePush(
       }
 
       if (mutationSucceeded) {
+        noteBatchRevisions(mutationRecorded);
         await reconcilePermissionDirectoryAfterSettlement(true);
-        await recordMutationSuccess(mut);
+        await recordMutationSuccess(mut, mutationRevision);
       }
     } else {
       // Non-transaction path: execute operation, then record changes separately (best-effort)
+      const writeDb = withWriteEvidence(db, false);
       let opResult: ExecuteMutationResult;
       let failedShareCompensationDeferred = false;
       try {
@@ -1308,7 +1485,7 @@ export async function executePush(
             { pending: true },
           );
         }
-        opResult = await executeMutationOp(mut, db);
+        opResult = await executeMutationOp(mut, writeDb);
       } catch (error) {
         const failedShareCompensation = getFailedShareCompensation(error);
         if (
@@ -1340,15 +1517,44 @@ export async function executePush(
         // Record changes (non-atomic — best-effort with retry)
         const changes = opResult.changes;
         let changeTrackingFailed = false;
+        let mutationRevision: DatafnPushRevision | undefined;
         try {
+          const entries: ChangeEntryInput[] = [];
+          const sequenced = new Set<ChangeEntryInput>();
+          let sequencingFailure: { error: unknown } | undefined;
           for (const change of changes) {
-            const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
-            latestSeq = Math.max(latestSeq, seq);
-            resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-            await recordChangeWithRetry(changeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            }, 2, logger);
+            try {
+              // Changes after a failed one are not sequenced: a sequence taken
+              // later could follow a concurrent foreign change in the cursors.
+              if (sequencingFailure) throw sequencingFailure.error;
+              const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
+              const entry = { serverSeq: seq, resource: change.resource, id: change.id, op, record };
+              entries.push(entry);
+              sequenced.add(entry);
+            } catch (error) {
+              // DATA-41: the write has committed. The changes already
+              // sequenced are recorded, and a change left without a sequence
+              // still raises its record's revision, before the failure is
+              // reported.
+              sequencingFailure ??= { error };
+              entries.push({ serverSeq: 0, resource: change.resource, id: change.id, op: change.op, record: change.record });
+            }
           }
+          // DATA-41: revisions and change rows are retried on these entries,
+          // never replaying the write. The cursors cover only stored changes.
+          const recorded: ChangeEntryInput[] = [];
+          recordingAttempted = true;
+          await recordWriteChangesWithRetry(changeTracking, entries, writeDb, 2, logger, {
+            record: sequenced,
+            onRecorded: (entry) => {
+              recorded.push(entry);
+              latestSeq = Math.max(latestSeq, entry.serverSeq);
+              resourceSeqs[entry.resource] = Math.max(resourceSeqs[entry.resource] || 0, entry.serverSeq);
+            },
+          });
+          if (sequencingFailure) throw sequencingFailure.error;
+          noteBatchRevisions(recorded);
+          mutationRevision = await postWriteRevision(mut, db, recorded, false);
         } catch (error) {
           logger?.error("Change tracking failed in push after retries", { error: String(error), operation: "push.changeTracking" });
           changeTrackingFailed = true;
@@ -1358,7 +1564,7 @@ export async function executePush(
         if (changeTrackingFailed) {
           await recordMutationFailure(mut, "INTERNAL", "Change tracking failed", "$");
         } else {
-          await recordMutationSuccess(mut);
+          await recordMutationSuccess(mut, mutationRevision);
         }
       } else {
         if (mut.operation === "share" && !failedShareCompensationDeferred) {
@@ -1398,9 +1604,12 @@ export async function executePush(
     }
   }
 
-  // Retrieve latest cursor if not updated during loop (e.g. all deduped or empty)
+  // Retrieve latest cursor if not updated during loop (e.g. all deduped or empty).
+  // DATA-41: when a write's changes were sent but none was stored, the
+  // allocator's current value is not this push's progress: keep the cursor
+  // this push started from, so concurrent foreign changes stay pullable.
   if (latestSeq === 0) {
-    latestSeq = await changeTracking.getCurrentServerSeq();
+    latestSeq = recordingAttempted ? cursorBeforeSeq : await changeTracking.getCurrentServerSeq();
   }
 
   // Build per-resource cursors map for client to advance per-table cursors (FIX-B)
@@ -1416,5 +1625,6 @@ export async function executePush(
     cursor: String(latestSeq),
     cursorBefore: String(cursorBeforeSeq),
     cursors,
+    ...(Object.keys(revisions).length > 0 ? { revisions: await settledRevisions() } : {}),
   };
 }

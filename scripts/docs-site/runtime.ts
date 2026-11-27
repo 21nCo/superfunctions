@@ -21,6 +21,7 @@ import {
   type DocsSourceEntry,
 } from "@docsfn/core";
 import { assertDocsBlogMount } from "./blog";
+import { assertYamlFrontMatter } from "./front-matter.mjs";
 
 export interface DocsSiteSource {
   siteRoot: string;
@@ -419,7 +420,7 @@ function createMarkdownEntry(
   source: string,
   sourcePath: string,
 ): DocsSourceEntry {
-  const parsed = parseFrontmatter(source);
+  const parsed = parseFrontmatter(source, sourcePath);
   return {
     id: createSourceEntryId(collection, relativePath),
     collection,
@@ -494,10 +495,12 @@ function createAssetEntry(
   };
 }
 
-function parseFrontmatter(source: string): {
+function parseFrontmatter(source: string, sourcePath: string): {
   body: string;
   frontmatter: Record<string, unknown>;
 } {
+  // gray-matter evaluates `---js` blocks; only YAML may reach it.
+  assertYamlFrontMatter(source, sourcePath);
   const parsed = matter(source);
   return { body: parsed.content, frontmatter: parsed.data };
 }

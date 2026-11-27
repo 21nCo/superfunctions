@@ -811,7 +811,8 @@ export function describeDrizzleSqliteConformance(
         const wrap = (adapter: Adapter) => new Proxy(adapter, {
           get(target, property, receiver) {
             const original = Reflect.get(target, property, receiver);
-            if (property !== kind) return original;
+            // A delete by id runs as a counted deleteMany (its revision evidence).
+            if (property !== kind && !(kind === "delete" && property === "deleteMany")) return original;
             return async (params: { model: string; where?: Array<{ field: string }> }) => {
               const result = await (original as (p: unknown) => Promise<unknown>).call(target, params);
               const plain = params.model === "kv" && !params.where?.some((clause) => clause.field === "value");

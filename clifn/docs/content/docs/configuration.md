@@ -23,7 +23,28 @@ const loaded = await loadConfig<{ target: string }>({
 });
 ```
 
-The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, or `CLIFN_CONFIG_UNSUPPORTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, `CLIFN_CONFIG_UNSUPPORTED`, or (under the data-only policy below) `CLIFN_CONFIG_UNTRUSTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+
+### Data-only config for untrusted workspaces
+
+TS, JS, MJS and CJS configs run code when they are loaded. A CLI that runs in workspaces it does not trust, such as a cloned repository, passes `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` keeps the behaviour above):
+
+- Discovery reads only `.json` candidates. `config.json` is loaded even when `config.ts` sits beside it, and no TS, JS, MJS or CJS candidate is imported. When no JSON candidate exists but an executable one does, the error is `CLIFN_CONFIG_UNTRUSTED` and names the file.
+- An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before the file is checked or imported, unless the host passes `trustExecutableConfig: true`. That is the explicit, non-interactive trust signal, typically set from a flag the user passed. Only the boolean `true` trusts; the loader never prompts, and discovery stays JSON-only even with trust.
+- An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read.
+
+```ts
+import { loadConfig } from "@clifn/core/config-loader";
+
+const loaded = await loadConfig({
+  cwd: process.cwd(),
+  configPath: flags.config,
+  policy: "data-only",
+  trustExecutableConfig: flags.trustConfig === true,
+});
+```
+
+Catch `CLIFN_CONFIG_UNTRUSTED` to name your CLI's trust flag in the message you show.
 
 ## Store project settings
 

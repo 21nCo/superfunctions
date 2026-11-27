@@ -267,6 +267,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
 - `@clifn/core/config-loader`
   - shared config discovery and typed loading contract for TS/JS/MJS/CJS/JSON configs
   - uses the same Jiti-informed `.ts` loading path already established in `packages/cli` and `apifn/cli`
+  - `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` is unchanged) for config from untrusted workspaces: discovery reads only `.json` candidates, so `config.json` is loaded even when `config.ts` sits beside it, and a TS, JS, MJS or CJS file is never imported (when no JSON candidate exists, a discovered executable file raises `CLIFN_CONFIG_UNTRUSTED`, naming it). An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before it is checked or imported unless the host passes `trustExecutableConfig: true`, its explicit non-interactive trust signal (such as a `--trust-config` flag); only the boolean `true` trusts, the loader never prompts, and discovery stays JSON-only with trust. An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read
 - `@clifn/core/env`
   - generic environment readers for strings, integers, and booleans
   - explicit missing, invalid, and out-of-range error codes for shared CLI callers
@@ -399,6 +400,7 @@ If `extfn/cli` needs a generic capability that is not yet exported by `clifn`, t
 - `clifn` is designed for public imports only; no private/internal path imports are required.
 - The generic modules prefer repository-shared mechanisms, including the existing `packages/cli` loader pattern, before introducing new runtime dependencies.
 - `@clifn/core/config-loader` rejects remote config URLs and unsupported extensions with explicit error codes.
+- `@clifn/core/config-loader` with `policy: "data-only"` never runs a discovered config and runs an explicit TS/JS/MJS/CJS config only with `trustExecutableConfig: true` (`CLIFN_CONFIG_UNTRUSTED` otherwise).
 - `@clifn/core/env` uses explicit `CLIFN_ENV_*` error codes for missing, invalid, and out-of-range values.
 
 ## Conduct v0.3 compatibility note
