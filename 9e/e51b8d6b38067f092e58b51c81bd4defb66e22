@@ -1,0 +1,65 @@
+apifn/README.md
+  s_33e358440f2b72::t_03826c702cdd7c 24,27,29-31,34
+apifn/admin/package.json
+  s_33e358440f2b72::t_349685631e5a37 3,47
+apifn/cli/package.json
+  s_33e358440f2b72::t_fe75848394d742 3,26
+apifn/collections/package.json
+  s_33e358440f2b72::t_de5be7b7dae024 3
+apifn/collections/src/runner/reporters/console.ts
+  s_33e358440f2b72::t_2f6393ee9a4bea 7,60-61
+apifn/collections/src/runner/reporters/json.ts
+  s_33e358440f2b72::t_4166cf7480f1b4 7,22
+apifn/collections/src/runner/reporters/junit.ts
+  s_33e358440f2b72::t_4a8aa58ae8ef31 2,20-21
+apifn/collections/src/runner/runner.ts
+  s_33e358440f2b72::t_18478bd969e034 14,171-180,218-219,222,308-309,313-314,320,350-351,355,359,372
+apifn/contracts/__tests__/catalog.test.ts
+  s_33e358440f2b72::t_32e31f3213ff14 19,456,578,1218
+apifn/contracts/__tests__/credentials.test.ts
+  s_33e358440f2b72::t_33b6575f14be6e 13,19-20,70,74,103,1191
+apifn/contracts/__tests__/failure-event.test.ts
+  s_33e358440f2b72::t_c0430a93760d0e 6,43,45,200
+apifn/contracts/__tests__/helpers.ts
+  s_33e358440f2b72::t_fc7bf491081997 9-17
+apifn/contracts/__tests__/release.test.ts
+  s_33e358440f2b72::t_1ca0bd6918d221 12,205,212-214
+apifn/contracts/__tests__/schemas.test.ts
+  s_33e358440f2b72::t_652834b2da4bb4 24,382
+apifn/python/tests/test_collections.py
+  s_33e358440f2b72::t_d6544ef05e049b 74-138
+package-lock.json
+  s_33e358440f2b72::t_f1333185002eb4 93,99,110,113,137
+apifn/collections/README.md
+  s_3041ea55f14891::t_0241f015d0a28a 138-144
+apifn/collections/__tests__/redaction.test.ts
+  s_3041ea55f14891::t_1d58a59001661e 1-343
+apifn/collections/src/runner/redact.ts
+  s_3041ea55f14891::t_72699c3ba0357a 1-304
+apifn/python/apifn/collections.py
+  s_3041ea55f14891::t_98eec21a34a378 13-65,156,164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ee51b8d6b38067f092e58b51c81bd4defb66e22",
+  "prompts": {},
+  "sessions": {
+    "s_3041ea55f14891": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3041ea55f14891",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_33e358440f2b72": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21dd9-6ff6-7c70-91df-6110f2a2b304",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
