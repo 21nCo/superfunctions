@@ -338,10 +338,10 @@ async function reservedSequenceInterleave(
 }
 
 /** Applies a canonical pull as clients do: rows, then patches, then deletes. */
-function applyCanonical(cache: Map<string, Json>, result: Json): void {
-  for (const row of result.records?.task ?? []) cache.set(row.id, { ...row });
-  for (const patch of result.merged?.task ?? []) cache.set(patch.id, { ...(cache.get(patch.id) ?? {}), ...patch });
-  for (const id of result.deleted?.task ?? []) cache.delete(id);
+function applyCanonical(cache: Map<string, Json>, result: Json, resource = "task"): void {
+  for (const row of result.records?.[resource] ?? []) cache.set(row.id, { ...row });
+  for (const patch of result.merged?.[resource] ?? []) cache.set(patch.id, { ...(cache.get(patch.id) ?? {}), ...patch });
+  for (const id of result.deleted?.[resource] ?? []) cache.delete(id);
 }
 
 describe("DATA-41 revisions: canonical pull follows commit order", () => {
@@ -371,11 +371,62 @@ describe("DATA-41 revisions: canonical pull follows commit order", () => {
     expect(recreated.body.result.revisions[recreated.mutationId].rev).toBe(3);
     const pull = await send("pull", { clientId: "client:c", cursors: { task: "0" } });
     // Every change is delivered in its base bucket; nothing is reordered or
-    // dropped. The patch carries no revision, so a client pairs none.
+    // dropped. The patch carries no revision (`$rev: null`, unknown), so a
+    // client pairs none.
     expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
-    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "again" }]);
+    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "again", $rev: null }]);
     expect(pull.body.result.deleted.task).toEqual(["task:1"]);
     expect(pull.body.result.deletedRevisions).toEqual({ task: { "task:1": 2 } });
+  });
+
+  // DATA-41 (amended 2026-11-28): a merge patch on a resource that issues
+  // revisions carries `$rev: null`, so a client merging it (upsert rows, then
+  // merge patches) keeps no older revision on the patched row.
+  it("leaves no stale $rev after an insert and a merge pulled in one page", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const pull = await send("pull", { clientId: "client:c", cursors: { task: "0" } });
+    expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", $rev: 1 })]);
+    const cache = new Map<string, Json>();
+    applyCanonical(cache, pull.body.result);
+    expect(cache.get("task:1")).toEqual(expect.objectContaining({ title: "b", $rev: null }));
+  });
+
+  it("leaves no stale $rev after an insert and a merge pulled in two pages", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const cache = new Map<string, Json>();
+    const first = await send("pull", { clientId: "client:c", cursors: { task: "0" } });
+    applyCanonical(cache, first.body.result);
+    expect(cache.get("task:1")?.$rev).toBe(1);
+    await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const second = await send("pull", { clientId: "client:c", cursors: first.body.result.cursors });
+    expect(second.body.result.records.task ?? []).toEqual([]);
+    applyCanonical(cache, second.body.result);
+    expect(cache.get("task:1")).toEqual(expect.objectContaining({ title: "b", $rev: null }));
+  });
+
+  it("with revisions off, sends a merge patch with no $rev key", async () => {
+    const { send, push } = await serve({ enabled: false });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const pull = await send("pull", { clientId: "client:c", cursors: { task: "0" } });
+    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "b" }]);
+    expect(JSON.stringify(pull.body.result)).not.toContain("$rev");
+  });
+
+  it("keeps a non-issuing resource's own $rev through a merge patch in a later page", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "legacy", operation: "insert", id: "legacy:1", record: { $rev: "v1" } });
+    const cache = new Map<string, Json>();
+    const first = await send("pull", { clientId: "client:c", cursors: { legacy: "0" } });
+    applyCanonical(cache, first.body.result, "legacy");
+    await push({ resource: "legacy", operation: "merge", id: "legacy:1", record: { $rev: "m1" } });
+    const second = await send("pull", { clientId: "client:c", cursors: first.body.result.cursors });
+    expect(second.body.result.merged.legacy).toEqual([{ id: "legacy:1", $rev: "m1" }]);
+    applyCanonical(cache, second.body.result, "legacy");
+    expect(cache.get("legacy:1")?.$rev).toBe("m1");
   });
 });
 
@@ -408,8 +459,8 @@ describe("DATA-41 revisions: wire format", () => {
     ]);
     expect(pull.body.result.deleted.task).toEqual(["task:2"]);
     // A partial patch never carries a revision: clients pair one only with a
-    // complete row.
-    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "m" }]);
+    // complete row. Its `$rev: null` (unknown) clears an earlier one on merge.
+    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "m", $rev: null }]);
     expect(pull.body.result.deletedRevisions).toEqual({ task: { "task:2": 2 } });
 
     const query = await send("query", { resource: "task", version: 1, withRevisions: true });
@@ -448,7 +499,7 @@ describe("DATA-41 revisions: wire format", () => {
     const pull = await on.send("pull", { clientId: "client:b", cursors: { task: "0" } });
     expect(pull.body.capabilities).toEqual({ revisions: true });
     expect(pull.body.result.records.task[0].$rev).toBeUndefined();
-    expect(pull.body.result.merged.task[0].$rev).toBeUndefined();
+    expect(pull.body.result.merged.task[0].$rev).toBeNull();
   });
 
   it("returns rev without the row when the caller cannot read every field, also on a replay", async () => {
@@ -1253,7 +1304,7 @@ describe("DATA-41 revisions: round 3", () => {
     expect(rows.length).toBeGreaterThan(0);
     const last = rows[rows.length - 1];
     expect(last.value).toEqual({ a: 2 });
-    expect(last).not.toHaveProperty("$rev");
+    expect(last.$rev ?? null).toBeNull();
   });
 
   it("delivers a KV delete and a later complete KV write as base pull does, each with its own revision", async () => {
@@ -1574,9 +1625,9 @@ describe("DATA-41 revisions: legacy $rev values are never revisions (round 8)", 
     const current = await evolve();
     const canonical = await current.send("pull", { clientId: "client:b", cursors: { evolving: "0" } });
     expect(canonical.body.ok).toBe(true);
-    for (const bucket of ["records", "merged"] as const) {
-      for (const row of canonical.body.result[bucket].evolving ?? []) expect(row).not.toHaveProperty("$rev");
-    }
+    for (const row of canonical.body.result.records.evolving ?? []) expect(row).not.toHaveProperty("$rev");
+    // A merge patch carries `$rev: null` (unknown), never the legacy value.
+    for (const row of canonical.body.result.merged.evolving ?? []) expect(row.$rev).toBeNull();
     expect(canonical.body.result.records.evolving).toHaveLength(1);
     const global = await current.send("pull", { clientId: "client:b", cursor: "0" });
     expect(global.body.ok).toBe(true);

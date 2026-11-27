@@ -9,6 +9,7 @@ import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
 import {
   issuesRevisions,
   isRevisionCertified,
+  REVISION_FIELD,
   revisionsEnabled,
   tracksRevisions,
   wireChange,
@@ -1268,7 +1269,11 @@ async function executePullCanonical(
       if (certify) coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
     }
     for (const [id, parts] of coalesced) {
-      byId.set(id, certifyCoalesced(byId.get(id)!, id, parts));
+      // DATA-41 (amended): a merge patch that certifies no revision carries
+      // `$rev: null` (revision unknown), so a client merging it clears a
+      // `$rev` an earlier row or page left on the record.
+      const row = certifyCoalesced(byId.get(id)!, id, parts);
+      byId.set(id, REVISION_FIELD in row ? row : { ...row, [REVISION_FIELD]: null });
     }
     merged[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),
