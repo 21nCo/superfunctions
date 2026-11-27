@@ -3,9 +3,15 @@
  *
  * A scope grammar describes the dimensions a provider credential request can
  * carry. Requests and envelopes are both expressed in that grammar, and the
- * engine answers whether a request stays inside an envelope. It supports only
- * the four dimension kinds below.
+ * engine answers whether a request stays inside an envelope and, for a
+ * callback grammar, how risky the request is. It supports only the four
+ * dimension kinds below.
  */
+
+/** Risk levels, ordered from least to most risky. Frozen; the engine keeps its own copy. */
+export const SCOPE_RISK_LEVELS = Object.freeze(['read', 'write', 'destructive'] as const);
+
+export type ScopeRisk = (typeof SCOPE_RISK_LEVELS)[number];
 
 /**
  * Input bounds. A set with more items, or a member with more characters, does
@@ -196,7 +202,16 @@ export type ScopeSubsetResult<D extends ScopeDimensions = ScopeDimensions> =
 /** The result of `normalize`; the same shape as {@link ScopeSubsetResult}. */
 export type ScopeNormalizeResult<D extends ScopeDimensions> = ScopeSubsetResult<D>;
 
-export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
+/** One requested item, as passed to `riskOf`: a frozen record with a null prototype. */
+export interface ScopeItem<D extends ScopeDimensions = ScopeDimensions> {
+  readonly dimension: IsExactDimensions<D> extends true ? keyof D & string : string;
+  readonly kind: ScopeDimensionKind;
+  /** A set member (string) or a scalar value (number). */
+  readonly value: string | number;
+}
+
+/** The fields every grammar definition has. */
+interface ScopeGrammarDefinitionBase<D extends ScopeDimensions> {
   /** Provider identifier, for example `github`. */
   readonly provider: string;
   /**
@@ -213,6 +228,96 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
    * change what the grammar enforces.
    */
   readonly dimensions: D;
+}
+
+/**
+ * A data-only grammar definition: no callbacks. `defineScopeGrammar` returns a
+ * {@link ScopeGrammar} for it. `normalize` and `riskOf` may only be absent or
+ * `undefined`; a definition with a callback is a
+ * {@link ScopeCallbackGrammarDefinition}.
+ */
+export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends ScopeGrammarDefinitionBase<D> {
+  readonly normalize?: undefined;
+  readonly riskOf?: undefined;
+}
+
+/**
+ * A callback grammar definition: a required per-item `riskOf` and an optional
+ * provider-shaped `normalize`. `defineScopeGrammar` returns a
+ * {@link ScopeCallbackGrammar} for it. A `normalize` without `riskOf` makes
+ * `defineScopeGrammar` throw `TypeError`.
+ *
+ * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
+ * trusted grammar-author code and must be synchronous. An `async` function
+ * (or async generator) is rejected with `TypeError` when the grammar is
+ * defined. A plain function that returns a promise fails closed at once
+ * (`normalize`: `malformed`; `riskOf`: `ScopeError`). The engine never awaits
+ * it and never reads or calls a returned object's own `then`: it applies the
+ * intrinsic `Promise.prototype.then` (captured at load) with a no-op
+ * rejection handler, which marks a native promise's rejection handled so it
+ * cannot surface as an unhandled rejection.
+ *
+ * `then` looks up the species constructor (`constructor`, then
+ * `Symbol.species`) before it attaches the handler, and that lookup can run
+ * code that changes state and then throws. So, before that first `then`, the
+ * engine decides whether a failed `then` may be retried, from state it can
+ * read without running caller code: the value's own `constructor` descriptor
+ * and prototype, and the ambient `Object` species state, read only from the
+ * identity-pinned `Object`, `Function.prototype` and `Object.prototype`
+ * captured at load. The retry is skipped only when that state proves `then`
+ * could fail only on its brand check: no own `constructor` and a prototype of
+ * `null`, or of `Object.prototype` while `Object.prototype.constructor` is
+ * the intrinsic `Object` as data, `Object`'s prototype chain is exactly
+ * `Function.prototype` then `Object.prototype`, and none of the three defines
+ * `Symbol.species`. So a plain record keeps the fast path and never sees a
+ * `defineProperty`; anything else, or state that cannot be read, takes the
+ * retry. The retry reads the value's current own `constructor` descriptor
+ * (after the first `then`), makes `constructor` read as `undefined` (so
+ * `then` uses the intrinsic `Promise` without a species lookup), applies
+ * `then` once more and restores that descriptor, even when redefining it
+ * throws after applying the change: an absent one is defined on an
+ * extensible value and deleted afterwards, a configurable one (data or
+ * accessor) is redefined and restored, and non-configurable writable data has
+ * its value set to `undefined` and back.
+ * Residual: a promise whose lookup throws and whose current own `constructor`
+ * is a non-configurable accessor or non-configurable non-writable data, or a
+ * non-extensible promise with no own `constructor`, cannot be marked handled;
+ * only deliberately hostile callback code can build one, and the engine still
+ * fails closed.
+ */
+export interface ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
+  /**
+   * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
+   * envelopes alike. It receives the engine's structured clone of the input,
+   * never the caller's object, and only when that clone is plain JSON-like
+   * data: objects (prototype `Object.prototype`), dense arrays without extra
+   * keys, strings, finite numbers, booleans and `null`, without cycles or
+   * shared references. Any other clone (a SharedArrayBuffer, an ArrayBuffer
+   * or view, a Map, Set, Date, RegExp, Error, Blob, boxed value or
+   * `undefined`) is `malformed` and `normalize` is not called. The engine
+   * detaches every record and array of the clone it receives from the shared
+   * realm: every record has a null prototype, and every array (still an
+   * array, `length` own) has a frozen null-prototype prototype holding the
+   * standard `Array.prototype` methods captured at load (a fixed list of
+   * method names plus `Symbol.iterator`, each copied only when it is an own
+   * data property whose value is a function), without `constructor`. So a
+   * field inherited from a polluted `Object.prototype` or `Array.prototype`
+   * never appears in the input.
+   * Boundary: primitive values (read through the `String`, `Number` and
+   * `Boolean` prototypes) and every object `normalize` builds itself belong
+   * to the callback's realm, so a polluted realm can change what `normalize`
+   * computes from them. Its result is cloned again, checked to be plain
+   * JSON-like data in the same way, and validated: a throw, a promise, or a
+   * result that is not plain data or does not fit the grammar, is
+   * `malformed`. Defaults to the identity. See the callback boundary above.
+   */
+  readonly normalize?: (input: TInput) => ScopeShape<D>;
+  /**
+   * Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS};
+   * any other result (a promise included), or a throw, makes `classifyRisk`
+   * and `classifyScope` throw `ScopeError`. See the callback boundary above.
+   */
+  readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }
 
 /**
@@ -245,8 +350,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
  * has the caller's own authority and is outside this boundary. An input
  * getter is same-realm caller code: the engine guarantees only that it runs
  * once, during the clone, with the envelope captured first.
+ *
+ * A callback grammar adds trusted, synchronous callbacks (see
+ * {@link ScopeCallbackGrammarDefinition}): `isSubset` clones, checks and
+ * normalizes the envelope before it clones the request, and a caller that
+ * classifies risk must classify the frozen snapshot with `classifyScope`.
  */
-export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions> {
+export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
   /**
    * Frozen copies of the dimension definitions, as given (their `values`
@@ -258,23 +368,46 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions> {
    * Normalises and validates input without comparing it to anything. Never
    * throws: input that cannot be read yields a `malformed` violation.
    */
-  normalize(input: ScopeShape<D>): ScopeNormalizeResult<D>;
+  normalize(input: TInput): ScopeNormalizeResult<D>;
   /**
    * `ok` only when both inputs normalise and every requested item is inside
    * the envelope. A malformed or unreadable request or envelope is never
    * widened, and never throws: it yields `malformed` violations.
    */
-  isSubset(request: ScopeShape<D>, envelope: ScopeShape<D>): ScopeSubsetResult<D>;
+  isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D>;
+}
+
+/** A grammar defined with callbacks: a {@link ScopeGrammar} that also classifies risk. */
+export interface ScopeCallbackGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammar<D, TInput> {
+  /**
+   * Maximum `riskOf` over all requested items; `read` for an empty request.
+   * Throws `ScopeError` for a malformed request (with the clone or `normalize`
+   * error as `cause`, when there is one) or an invalid `riskOf` result.
+   */
+  classifyRisk(request: TInput): ScopeRisk;
+  /**
+   * `classifyRisk` for a frozen `scope` this same grammar returned from
+   * `isSubset` or `normalize`, without reading any caller input again. Throws
+   * `ScopeError` for any other value (a copy, or a snapshot of another
+   * grammar) or an invalid `riskOf` result.
+   */
+  classifyScope(scope: NormalizedScope<D>): ScopeRisk;
 }
 
 /**
- * Any scope grammar, whatever its dimensions, with the widened
+ * Any scope grammar, whatever its dimensions and input type, with the widened
  * types: for code that accepts every provider. Structural, so every
- * `ScopeGrammar<D>` is assignable to it.
+ * `ScopeGrammar<D, TInput>` is assignable to it.
  */
 export interface AnyScopeGrammar {
   readonly provider: string;
   readonly dimensions: PublishedScopeDimensions<ScopeDimensions>;
   normalize(input: unknown): ScopeNormalizeResult<ScopeDimensions>;
   isSubset(request: unknown, envelope: unknown): ScopeSubsetResult<ScopeDimensions>;
+}
+
+/** Any callback grammar, with the widened types. Every `ScopeCallbackGrammar<D, TInput>` is assignable to it. */
+export interface AnyScopeCallbackGrammar extends AnyScopeGrammar {
+  classifyRisk(request: unknown): ScopeRisk;
+  classifyScope(scope: WidenedScope): ScopeRisk;
 }

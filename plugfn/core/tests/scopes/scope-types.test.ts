@@ -14,10 +14,15 @@ const fixtureName = fileURLToPath(new URL('./__scope-types-fixture__.ts', import
 const fixture = `
 import {
   defineScopeGrammar,
+  type AnyScopeCallbackGrammar,
   type AnyScopeGrammar,
   type NormalizedScope,
+  type ScopeCallbackGrammar,
   type ScopeDimension,
   type ScopeDimensions,
+  type ScopeGrammar,
+  type ScopeItem,
+  type ScopeRisk,
   type ScopeShape,
 } from '../../src/scopes/index.js';
 
@@ -192,6 +197,67 @@ const mixedNormalized: NormalizedScope<Mixed>['d'] = ['a'];
 void mixedSet;
 void mixedNumber;
 void mixedNormalized;
+
+// A data-only definition keeps SFNS-110's grammar: no risk methods.
+const dataOnly: ScopeGrammar<{ readonly names: { kind: 'exactSet' } }> = defineScopeGrammar({
+  provider: 'data-only',
+  dimensions: { names: { kind: 'exactSet' } },
+});
+// @ts-expect-error a data-only grammar has no classifyRisk
+dataOnly.classifyRisk({ names: [] });
+// @ts-expect-error normalize needs riskOf
+defineScopeGrammar({ provider: 'no-risk', dimensions: { names: { kind: 'exactSet' } }, normalize: (input: { names: string[] }) => input });
+
+// A callback grammar: riskOf sees the exact dimension names, and normalize sets the input type.
+const callbacks = defineScopeGrammar({
+  provider: 'callbacks',
+  dimensions: { names: { kind: 'exactSet' }, ttl: { kind: 'ttlMax' } },
+  riskOf: item => {
+    const exact: Equal<typeof item.dimension, 'names' | 'ttl'> = true;
+    void exact;
+    return 'read';
+  },
+});
+const callbackRisk: ScopeRisk = callbacks.classifyRisk({ names: ['a'], ttl: 60 });
+void callbackRisk;
+const callbackScope = callbacks.normalize({ names: ['a'], ttl: 60 });
+if (callbackScope.ok) callbacks.classifyScope(callbackScope.scope);
+// @ts-expect-error a scalar dimension is required by the default input type
+callbacks.classifyRisk({ names: ['a'] });
+interface ProviderInput {
+  readonly repos: string[];
+}
+const shaped = defineScopeGrammar({
+  provider: 'shaped',
+  dimensions: { repos: { kind: 'prefixGlobSet' } },
+  normalize: (input: ProviderInput) => ({ repos: input.repos }),
+  riskOf: () => 'write',
+});
+const shapedGrammar: ScopeCallbackGrammar<{ readonly repos: { kind: 'prefixGlobSet' } }, ProviderInput> = shaped;
+void shapedGrammar;
+shaped.isSubset({ repos: ['org/a'] }, { repos: ['org/*'] });
+// @ts-expect-error input follows normalize's parameter, not the scope shape
+shaped.classifyRisk({ repositories: ['org/a'] });
+// @ts-expect-error riskOf returns a closed risk level
+defineScopeGrammar({ provider: 'bad-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'admin' });
+const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;
+void optionalItem;
+const widenedItems: [
+  Equal<ScopeItem<ScopeDimensions>['dimension'], string>,
+  Equal<ScopeItem<typeof mixed>['dimension'], string>,
+  Equal<ScopeItem<typeof templated>['dimension'], string>,
+  Equal<ScopeItem<typeof union>['dimension'], string>,
+] = [true, true, true, true];
+void widenedItems;
+const widenedCallbacks = defineScopeGrammar({ provider: 'widened-callbacks', dimensions: widened, riskOf: () => 'read' });
+// Every callback grammar is accepted where any callback grammar, or any grammar, is.
+const anyCallbacks: AnyScopeCallbackGrammar[] = [callbacks, shaped, widenedCallbacks];
+const anyGrammars: AnyScopeGrammar[] = [callbacks, shaped, widenedCallbacks, dataOnly];
+void anyCallbacks;
+void anyGrammars;
+// @ts-expect-error a data-only grammar is not a callback grammar
+const notCallbacks: AnyScopeCallbackGrammar = dataOnly;
+void notCallbacks;
 `;
 
 function diagnosticsFor(source: string): string[] {
