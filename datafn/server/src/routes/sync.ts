@@ -10,7 +10,7 @@ import { getBodyFromContext } from "../http/json.js";
 import { errorResponse } from "../http/errors.js";
 import { executeClone } from "../execution/sync/clone.js";
 import { executePull } from "../execution/sync/pull.js";
-import { executePush, type PostWriteRowReader } from "../execution/sync/push.js";
+import { executePush } from "../execution/sync/push.js";
 import { executeReconcile } from "../execution/sync/reconcile.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import { logRequest } from "../logging.js";
@@ -30,8 +30,6 @@ export interface PushHandlerOpts extends MutationValidationOpts {
   allowUnknownResources?: boolean;
   /** FIX-SEC-006: Max batch size for push mutations (default 500) */
   maxBatchSize?: number;
-  /** DATA-41: post-write read-backs in flight at once (limits.maxBatchQueryConcurrency, default 20). */
-  maxPostWriteReadConcurrency?: number;
 }
 
 /**
@@ -269,14 +267,7 @@ export function createPushHandler(
   handlerOpts?: PushHandlerOpts,
   logger?: DatafnLogger,
 ) {
-  // DATA-41: the server's auth wrapper passes `readPostWriteRows`, the
-  // caller's own query of a written record; without it (direct handler use)
-  // no host read policy applies.
-  return async (
-    req: Request,
-    ctx?: { parsedBody?: unknown },
-    options: { readPostWriteRows?: PostWriteRowReader } = {},
-  ): Promise<Response> => {
+  return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
     const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -465,9 +456,6 @@ export function createPushHandler(
         actorId,
         logger,
         getDatafnMultiRegionRuntimeConfig(plugins),
-        options.readPostWriteRows
-          ? { read: options.readPostWriteRows, concurrency: handlerOpts?.maxPostWriteReadConcurrency ?? 20 }
-          : undefined,
         );
 
         timer?.startPhase("changeLog");

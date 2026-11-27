@@ -26,13 +26,7 @@ import { normalizeObservability, type ObservabilityInput, type ObservationLogger
 import type { SequenceStore, SequenceStorePolicy } from "./execution/sync/sequence-store.js";
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
-import { createQueryHandler, type PostWriteReadProbe } from "./routes/query.js";
-import {
-  configureRevisions,
-  relationWritingPrimaryKey,
-  revisionsEnabled,
-  type DatafnRevisionsConfig,
-} from "./execution/revisions.js";
+import { createQueryHandler } from "./routes/query.js";
 import { createMutationHandler } from "./routes/mutation.js";
 import { createTransactHandler } from "./routes/transact.js";
 import {
@@ -41,7 +35,6 @@ import {
   createPushHandler,
   createReconcileHandler,
 } from "./routes/sync.js";
-import type { PostWriteRowReader } from "./execution/sync/push.js";
 import { createSeedHandler } from "./routes/seed.js";
 import { createSearchHandler } from "./routes/search.js";
 import { executeCrossResourceSearch } from "./execution/search/cross-resource.js";
@@ -79,7 +72,6 @@ import {
 } from "./plugins/public-links.js";
 import { getDatafnMultiRegionRuntimeConfig } from "./plugins/multi-region.js";
 import {
-  DATAFN_ROUTING_ASSERTION_HEADER,
   DatafnRoutingError,
   prepareDatafnRoutingRequest,
   type PreparedDatafnRoutingRequest,
@@ -399,14 +391,6 @@ export interface DatafnServerConfig<TContext = any> {
    * When provided, search routes and mutation index updates use this provider.
    */
   searchProvider?: SearchProvider;
-
-  /**
-   * DATA-41: per-record revisions. Every write bumps revisions; with
-   * `enabled: true` the server also issues them (`rev`, `$rev`) and announces
-   * `capabilities: { revisions: true }` on its responses. Enable only once
-   * every worker writing to the database runs this release. Default: off.
-   */
-  revisions?: DatafnRevisionsConfig;
 }
 
 /**
@@ -457,229 +441,6 @@ export interface DatafnServer<TContext = any> {
 /**
  * Create a DataFn server
  */
-/** DATA-41: a push read-back's abort signal and deadline. */
-type ReadBackGuard = { signal: AbortSignal; deadline: number };
-
-const readBackExpiredError = () => new Error("DATA-41: post-write read-back deadline passed");
-const guardExpired = (guard?: ReadBackGuard) =>
-  guard !== undefined && (guard.signal.aborted || Date.now() >= guard.deadline);
-
-/**
- * Reads a whole body. Under a read-back guard, each chunk is read only while
- * the guard holds, and a body read past it is cancelled (a cancel that fails
- * changes nothing).
- */
-async function readBodyBytes(reader: ReadableStreamDefaultReader<Uint8Array>, guard?: ReadBackGuard): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let onAbort: (() => void) | undefined;
-  const aborted = guard && new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(readBackExpiredError());
-    guard.signal.addEventListener("abort", onAbort, { once: true });
-  });
-  aborted?.catch(() => undefined);
-  try {
-    for (;;) {
-      if (guardExpired(guard)) throw readBackExpiredError();
-      const chunk = await (aborted ? Promise.race([reader.read(), aborted]) : reader.read());
-      if (chunk.done) break;
-      chunks.push(chunk.value);
-    }
-  } catch (error) {
-    cancelQuietly(reader);
-    throw error;
-  } finally {
-    if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
-  }
-  const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.byteLength, 0));
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-}
-
-/** Cancels a body or reader no one reads any more; a failed cancel changes nothing. */
-function cancelQuietly(body: { cancel(): Promise<void> } | null | undefined): void {
-  try {
-    body?.cancel().catch(() => undefined);
-  } catch {
-    // Already released or closed.
-  }
-}
-
-/**
- * The closing brace of the envelope's top-level `capabilities` object
- * (opening `{` at `open`); null when that key holds anything other than an
- * object, undefined when there is no such key.
- */
-function capabilitiesObjectEnd(text: string, open: number): number | null | undefined {
-  let depth = 0;
-  let inValue = false;
-  let capabilities = false;
-  for (let i = open; i < text.length; i++) {
-    const c = text[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
-      if (depth === 1 && !inValue) {
-        try {
-          capabilities = JSON.parse(text.slice(i, j + 1)) === "capabilities";
-        } catch {
-          capabilities = false;
-        }
-      } else if (depth === 1 && capabilities) {
-        return null;
-      }
-      i = j;
-    } else if (c === "{" || c === "[") {
-      if (depth === 1 && inValue && capabilities && c === "[") return null;
-      depth++;
-    } else if (c === "}" || c === "]") {
-      depth--;
-      if (depth === 1 && inValue && capabilities) return i;
-      if (depth === 0) return undefined;
-    } else if (depth === 1 && c === ":") {
-      inValue = true;
-    } else if (depth === 1 && c === ",") {
-      inValue = false;
-      capabilities = false;
-    } else if (depth === 1 && inValue && capabilities && !/\s/.test(c)) {
-      return null;
-    }
-  }
-  return undefined;
-}
-
-/**
- * The JSON envelope with `capabilities.revisions` set, as text: the body is
- * never parsed and serialized again, so payload values keep their exact
- * tokens. Leading whitespace and byte order marks are skipped. An envelope
- * that already has a capabilities object gets the flag added to it (one
- * with a non-object capabilities value is left as it is); any other object
- * gets the key spliced in. A body that is not an object is left as it is.
- */
-function spliceRevisionCapability(text: string): string {
-  const body = text.trimStart();
-  if (!body.startsWith("{")) return text;
-  const close = capabilitiesObjectEnd(body, 0);
-  if (close === null) return text;
-  if (close !== undefined) {
-    const empty = body.slice(0, close).trimEnd().endsWith("{");
-    return `${body.slice(0, close)}${empty ? "" : ","}"revisions":true${body.slice(close)}`;
-  }
-  return `{"capabilities":{"revisions":true}${/^\{\s*\}/.test(body) ? "" : ","}${body.slice(1)}`;
-}
-
-/**
- * The upstream JSON body with the revision capability spliced in, read only
- * when the body is first pulled, so router middleware gets the Response
- * (status and headers) at once. Under a read-back guard, the upstream is read
- * and the result served in slices only while the guard holds; once it
- * expires, the stream (and every branch teed from it) is errored and the
- * upstream cancelled.
- */
-function splicedBody(upstream: ReadableStream<Uint8Array>, guard?: ReadBackGuard): ReadableStream<Uint8Array> {
-  const slice = guard ? 16 * 1024 : Number.POSITIVE_INFINITY;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  let bytes: Uint8Array | undefined;
-  let offset = 0;
-  let onAbort: (() => void) | undefined;
-  const release = () => {
-    if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
-  };
-  const cancelUpstream = () => cancelQuietly(reader ?? upstream);
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      if (!guard) return;
-      onAbort = () => {
-        controller.error(readBackExpiredError());
-        cancelUpstream();
-      };
-      if (guard.signal.aborted) onAbort();
-      else guard.signal.addEventListener("abort", onAbort, { once: true });
-    },
-    async pull(controller) {
-      if (guardExpired(guard)) {
-        release();
-        cancelUpstream();
-        controller.error(readBackExpiredError());
-        return;
-      }
-      if (!bytes) {
-        reader = upstream.getReader();
-        const raw = await readBodyBytes(reader, guard);
-        let text: string | undefined;
-        try {
-          text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
-        } catch {
-          text = undefined;
-        }
-        bytes = text === undefined ? raw : new TextEncoder().encode(spliceRevisionCapability(text));
-      }
-      if (offset < bytes.byteLength) controller.enqueue(bytes.subarray(offset, offset + slice));
-      offset += slice;
-      if (offset >= bytes.byteLength) {
-        release();
-        controller.close();
-      }
-    },
-    cancel() {
-      release();
-      cancelUpstream();
-    },
-  }, { highWaterMark: 0 });
-}
-
-/**
- * Create a DataFn server
- */
-/**
- * DATA-41: with revisions on, every JSON envelope a DataFn route returns
- * (success or error, including auth and validation errors) announces
- * `capabilities: { revisions: true }`, so a client can tell a
- * revision-aware server from an older one. External requests and a push's
- * own read-back get the envelope from the same splice, so router middleware
- * sees the same body for both. A body with a Content-Encoding, or one that
- * is not UTF-8, is passed through unchanged, without the capability. The
- * Response is returned as soon as the handler answers; its body is spliced
- * when first read. A read-back's body is read and served only until its
- * deadline, and is errored once the push stops waiting for it.
- */
-function withRevisionCapability<A extends unknown[]>(
-  schema: DatafnSchema,
-  handler: (...args: A) => Promise<Response>,
-  readBackGuard?: (...args: A) => ReadBackGuard | undefined,
-): (...args: A) => Promise<Response> {
-  if (!revisionsEnabled(schema)) return handler;
-  return async (...args: A) => {
-    const response = await handler(...args);
-    const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
-    const guard = readBackGuard?.(...args);
-    if (
-      !response.body || !response.headers.get("content-type")?.includes("application/json") ||
-      (encoding && encoding !== "identity")
-    ) {
-      if (!guard || !response.body) return response;
-      // A read-back body passed through as it is still ends at the deadline.
-      const passThrough = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          if (guardExpired(guard)) controller.error(readBackExpiredError());
-          else controller.enqueue(chunk);
-        },
-      });
-      return new Response(response.body.pipeThrough(passThrough, { signal: guard.signal }), {
-        status: response.status, statusText: response.statusText, headers: response.headers,
-      });
-    }
-    const headers = new Headers(response.headers);
-    headers.delete("content-length");
-    return new Response(splicedBody(response.body, guard), {
-      status: response.status, statusText: response.statusText, headers,
-    });
-  };
-}
-
 export async function createDatafnServer<TContext = any>(
   config: DatafnServerConfig<TContext>,
 ): Promise<DatafnServer<TContext>> {
@@ -735,7 +496,6 @@ export async function createDatafnServer<TContext = any>(
 
   const schemaWithBuiltins = ensureBuiltinTemporal(ensureBuiltinKv(schemaValidation.result));
   const validatedSchema = excludeInternalResources(schemaWithBuiltins, internalResourceNames);
-  configureRevisions(validatedSchema, config.revisions);
 
   // Detailed errors are opt-in. Unset stays off in every environment, including an unset NODE_ENV.
   const debugMode = config.debug === true;
@@ -783,7 +543,6 @@ export async function createDatafnServer<TContext = any>(
   const hasNamespaceProvider = !!config.namespaceProvider;
   const shouldWrapNamespace = db && schemaIsNamespaced && config.rowLevelNamespace !== false
     && (adapterHasSchemaConstraints || hasNamespaceProvider || (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace));
-  let rowsPartitionedByNamespace = false;
   if (shouldWrapNamespace) {
     const rlnConfig: RowLevelNamespaceConfig =
       typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace
@@ -791,48 +550,11 @@ export async function createDatafnServer<TContext = any>(
         : { enabled: true, columnName: '__ns', mandatory: true };
 
     if (rlnConfig.enabled && db) {
-      rowsPartitionedByNamespace = true;
       const internal = db.internal; // preserve original internal (already bypassed by wrapper, but be explicit)
       db = wrapWithRowLevelNamespace(db, rlnConfig);
       // Ensure internal is the original unwrapped internal
       (db as any).internal = internal;
     }
-  }
-  // DATA-41: revisions are keyed by namespace, so they are issued only where
-  // each namespace's rows are its own: row-level namespace isolation is on, or
-  // every request uses the one default namespace. With rows shared across
-  // namespaces (`rowLevelNamespace: false`, or a namespace provider without
-  // row-level isolation), a write from one namespace would change a row whose
-  // revision another namespace holds without raising it.
-  const rowsSharedAcrossNamespaces =
-    !!configuredDatabase &&
-    !rowsPartitionedByNamespace &&
-    (hasNamespaceProvider || config.rowLevelNamespace === false ||
-      (typeof config.rowLevelNamespace === 'object' && !!config.rowLevelNamespace && !config.rowLevelNamespace.enabled));
-  if (rowsSharedAcrossNamespaces && config.revisions?.enabled === true) {
-    throw new Error(
-      "DataFn revisions.enabled requires row-level namespace isolation: rows shared across namespaces " +
-        "(rowLevelNamespace: false, or a namespaceProvider without row-level isolation) cannot carry per-namespace revisions",
-    );
-  }
-  if (rowsSharedAcrossNamespaces) {
-    // Its writes bump revisions under the request's namespace, not the one a
-    // revision-issuing server keys the same row by, so they would leave that
-    // server's revision naming two states. Enforcing this needs coordination
-    // between servers; it is an operator contract (docs: sync/revisions).
-    logger.warn(
-      "DataFn rows are shared across namespaces: this server must not write to tables a server with " +
-        "revisions.enabled also serves (keep it read-only there, or enable row-level namespace isolation)",
-      { operation: "revisions-partition" },
-    );
-  }
-  // DATA-41: a relation write that sets a record's primary key would move the
-  // record to another id while its revision is raised under the old one.
-  const idWritingRelation = config.revisions?.enabled === true ? relationWritingPrimaryKey(validatedSchema) : undefined;
-  if (idWritingRelation) {
-    throw new Error(
-      `DataFn revisions.enabled requires relations that never write a record's id: ${idWritingRelation} is "id"`,
-    );
   }
   if (db && observabilityScope) {
     db = instrumentAdapter(db, {
@@ -1232,7 +954,6 @@ export async function createDatafnServer<TContext = any>(
       maxBatchSize: limits.maxBatchSize,
       allowUnknownResources,
       debug: debugMode,
-      maxPostWriteReadConcurrency: limits.maxBatchQueryConcurrency,
     },
     logger,
   );
@@ -1426,79 +1147,18 @@ export async function createDatafnServer<TContext = any>(
     return { ok: true };
   };
 
-  // DATA-41: a push's read-back requests, keyed by the Request object the push
-  // created, so no header or body field a caller sends can mark a request.
-  const postWriteReads = new WeakMap<Request, { probe: PostWriteReadProbe; deadline: number; abort: AbortController }>();
-  /**
-   * DATA-41: the read-back re-enters the router while the push is still in
-   * flight, so router middleware that serializes requests (a lock held across
-   * next()) would queue it behind the push. Every read-back of one push must
-   * answer within this time; otherwise the push returns its revisions alone.
-   */
-  const POST_WRITE_READ_TIMEOUT_MS = 2_000;
-  /**
-   * Dispatches a read-back through the router and reads its JSON body, both
-   * before `deadline`. Undefined for a non-2xx answer, an unreadable body or
-   * a missed deadline. Its single exit aborts the read-back request whatever
-   * the outcome, so every body it produced, including clones or tee branches
-   * router middleware kept, is errored and abort-aware middleware is told.
-   */
-  const readBackWithin = async (request: Request, deadline: number, abort: AbortController): Promise<unknown> => {
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    // Ready chunks resume in microtasks that can starve the timer, so the
-    // clock is also checked on every chunk and after the parse.
-    const late = () => abort.signal.aborted || Date.now() >= deadline;
-    const read = async (): Promise<unknown> => {
-      const response = await router.handle(request);
-      if (late() || !response.ok || !response.body) {
-        cancelQuietly(response.body);
-        return undefined;
-      }
-      reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let text = "";
-      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-        if (late()) return undefined;
-        text += decoder.decode(chunk.value, { stream: true });
-      }
-      if (late()) return undefined;
-      const parsed = JSON.parse(text + decoder.decode()) as unknown;
-      return late() ? undefined : parsed;
-    };
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()));
-    });
-    try {
-      return await Promise.race([read().catch(() => undefined), timeout]);
-    } finally {
-      clearTimeout(timer);
-      abort.abort();
-      cancelQuietly(reader);
-    }
-  };
-
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
-  const withAuthUnannounced = (
+  const withAuth = (
     action: DataFnAction,
     handler: (
       req: Request,
       ctx: TContext & { parsedBody?: unknown },
-      options?: { readPostWriteRows?: PostWriteRowReader; postWriteReadProbe?: PostWriteReadProbe },
     ) => Promise<Response> | Response,
     origin: "http" | "executor" = "http",
     rest = false,
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
-      // DATA-41: only a push's own read-back request (marked in process, never
-      // by anything the caller sends) gets a probe (a handler option; the
-      // caller's context is never touched), skips the query rate limit (the
-      // push was limited) and the caller body limit (its body is generated).
-      const postWriteRead = action === "query" && req ? postWriteReads.get(req) : undefined;
-      // A read-back that reaches admission after its push stopped waiting does nothing.
-      const readBackExpired = () => postWriteRead !== undefined && Date.now() >= postWriteRead.deadline;
-      const maxPayloadBytes = postWriteRead ? undefined : limits.maxPayloadBytes;
       const parseBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
       const verifyHttpPlacement = multiRegionRuntime?.placement && origin === "http" && action !== "status";
       let placementRequest: Request | undefined;
@@ -1517,12 +1177,11 @@ export async function createDatafnServer<TContext = any>(
         });
       }
 
-      if (readBackExpired()) return new Response(null, { status: 504 });
       // Track in-flight request for graceful shutdown drain
       inFlightCount++;
       try {
         // Rate limiting — applied BEFORE JSON parsing and authorization (RATE-001)
-        if (rateLimitMiddleware && !postWriteRead) {
+        if (rateLimitMiddleware) {
           const rateLimitResponse = await rateLimitMiddleware(action, enrichedCtx);
           if (rateLimitResponse) {
             await emitDataFnEvent({
@@ -1544,8 +1203,8 @@ export async function createDatafnServer<TContext = any>(
         }
 
         // Enforce payload limits (LIMIT-001) — single inline check, no sentinel pattern
-        if (maxPayloadBytes) {
-          const limitError = checkPayloadLimit(req, maxPayloadBytes);
+        if (limits.maxPayloadBytes) {
+          const limitError = checkPayloadLimit(req, limits.maxPayloadBytes);
           if (limitError) {
             await emitDataFnEvent({
               domain: "datafn",
@@ -1572,12 +1231,12 @@ export async function createDatafnServer<TContext = any>(
 
         // For POST/PUT/PATCH endpoints, parse JSON body FIRST before authorization
         // AUTH-001: Invalid JSON must return DFQL_INVALID, never FORBIDDEN
-        if (verifyHttpPlacement && (!parseBody || !maxPayloadBytes)) {
+        if (verifyHttpPlacement && (!parseBody || !limits.maxPayloadBytes)) {
           placementRequest = req.clone();
         }
         if (parseBody) {
-          if (maxPayloadBytes) {
-            const bodyResult = await readLimitedBody(req, maxPayloadBytes, logger);
+          if (limits.maxPayloadBytes) {
+            const bodyResult = await readLimitedBody(req, limits.maxPayloadBytes, logger);
             if (!bodyResult.ok) {
               return completeDatafnResponse({
                 action,
@@ -1769,72 +1428,12 @@ export async function createDatafnServer<TContext = any>(
           }
         }
 
-        // DATA-41: push returns a post-write row only when the caller's own
-        // `/query` of that record returns it. The reader dispatches a versioned
-        // query for the written ids through the DataFn router's current handle
-        // function, exactly as an external request: router middleware
-        // (including middleware added later with router.use), the context
-        // factory, placement and route-ticket validation with the query scope,
-        // plugin and host authorization and query hooks all apply. The push
-        // compares the response the router returns. A routing assertion is
-        // bound to the push request's path and body and cannot admit that
-        // query, so a push the gateway's assertion admitted gets revisions only.
-        const assertionAdmitted = Boolean(verifyHttpPlacement) && Boolean(
-          req.headers.get(multiRegionRuntime?.placement?.assertionHeader ?? DATAFN_ROUTING_ASSERTION_HEADER)?.trim(),
-        );
-        let readDeadline: number | undefined;
-        const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
-          ? async (resource, ids, pushNamespace) => {
-            readDeadline ??= Date.now() + POST_WRITE_READ_TIMEOUT_MS;
-            const rows = new Map<string, Record<string, unknown>>();
-            if (assertionAdmitted) return rows;
-            const readUrl = new URL(req.url);
-            let pushPath = readUrl.pathname;
-            while (pushPath.endsWith("/")) pushPath = pushPath.slice(0, -1);
-            if (!pushPath.endsWith("/push")) return rows;
-            readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
-            const chunkSize = Math.max(1, limits.maxLimit ?? ids.length);
-            for (let offset = 0; offset < ids.length && Date.now() < readDeadline; offset += chunkSize) {
-              const chunk = ids.slice(offset, offset + chunkSize);
-              const readPayload = {
-                version: 1, resource, withRevisions: true, filters: { id: { $in: chunk } }, limit: chunk.length,
-                // A written record may be trashed, archived or under an inactive ancestor.
-                metadata: { includeTrashed: true, includeArchived: true, includeAncestorInactive: true },
-              };
-              const headers = new Headers(req.headers);
-              headers.delete("content-length");
-              const abort = new AbortController();
-              const readRequest = new Request(readUrl, {
-                method: "POST", headers, body: JSON.stringify(readPayload), signal: abort.signal,
-              });
-              const probe: PostWriteReadProbe = {};
-              postWriteReads.set(readRequest, { probe, deadline: readDeadline, abort });
-              const body = (await readBackWithin(readRequest, readDeadline, abort)) as
-                { ok?: boolean; result?: { data?: unknown } } | undefined;
-              const executed = probe.executed;
-              const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
-              if (
-                executed?.namespace !== pushNamespace || query?.resource !== resource ||
-                query.accessMode === "sharedWithMe" || query.namespaceFilter
-              ) continue;
-              if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
-              for (const row of body.result.data as Array<Record<string, unknown>>) {
-                if (row && typeof row.id === "string" && chunk.includes(row.id)) rows.set(row.id, row);
-              }
-            }
-            return rows;
-          }
-          : undefined;
-
-        if (readBackExpired()) return new Response(null, { status: 504 });
         return completeDatafnResponse({
           action,
           request: req,
           context: enrichedCtx,
           payload,
-          response: await (readPostWriteRows || postWriteRead
-            ? handler(req, enrichedCtx, readPostWriteRows ? { readPostWriteRows } : { postWriteReadProbe: postWriteRead?.probe })
-            : handler(req, enrichedCtx)),
+          response: await handler(req, enrichedCtx),
         });
       } catch (error) {
         await emitDataFnEvent({
@@ -1861,12 +1460,6 @@ export async function createDatafnServer<TContext = any>(
       }
     };
   };
-  // DATA-41: every DataFn route announces its capabilities, auth errors included.
-  const withAuth = (...args: Parameters<typeof withAuthUnannounced>) =>
-    withRevisionCapability(validatedSchema, withAuthUnannounced(...args), (req) => {
-      const read = req ? postWriteReads.get(req) : undefined;
-      return read && { signal: read.abort.signal, deadline: read.deadline };
-    });
 
   const executeInProcess = async <TResult>(
     action: "query" | "mutation" | "transact" | "search",

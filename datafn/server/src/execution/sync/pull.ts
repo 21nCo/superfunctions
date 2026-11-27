@@ -6,15 +6,6 @@ import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
-import {
-  issuesRevisions,
-  isRevisionCertified,
-  revisionsEnabled,
-  tracksRevisions,
-  wireChange,
-  withoutUncertifiedRevision,
-} from "../revisions.js";
-import { readRowRevision, withoutRowRevision } from "@datafn/core";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   canonicalizeActorPrincipal,
@@ -62,8 +53,6 @@ export interface PullResultGlobalCursor {
     op: "upsert" | "delete";
     record: Record<string, unknown> | null;
     reason?: "revoked" | "grant_backfill";
-    /** DATA-41: the record's revision after this change, when it recorded one. */
-    rev?: number;
   }>;
   nextCursor: string | null;
   actorFeed?: ActorFeedEntry[];
@@ -88,12 +77,6 @@ export interface PullResultCanonical {
   records: Record<string, Array<Record<string, unknown>>>;
   merged?: Record<string, Array<Record<string, unknown>>>; // partial records applied via mergeRecord (FIX-A)
   deleted: Record<string, string[]>;
-  /**
-   * DATA-41: per resource, the tombstone revision of each deleted id whose
-   * delete change recorded one. `records` and `merged` rows carry theirs as
-   * `$rev`.
-   */
-  deletedRevisions?: Record<string, Record<string, number>>;
   joins?: Record<string, {
     upsert: Array<Record<string, unknown>>;
     delete: Array<{ from: string; to: string }>;
@@ -157,14 +140,8 @@ function isFeedResource(resource: string): boolean {
   return ACTOR_FEED_RESOURCES.includes(resource as (typeof ACTOR_FEED_RESOURCES)[number]);
 }
 
-/**
- * Whether `resource` is a data resource (not a join store or an internal
- * table). Join stores are recognized from the schema's many-many relations,
- * never by prefix alone, so a declared resource named `join_*` gets its data
- * bucket and its access checks; an undeclared `join_*` key keeps base routing.
- */
-function isDataResourceKey(resource: string, schema: DatafnSchema): boolean {
-  return tracksRevisions(resource, schema);
+function isDataResourceKey(resource: string): boolean {
+  return !resource.startsWith("join_") && !resource.startsWith("__datafn_");
 }
 
 function validateCursor(cursor: string): boolean {
@@ -808,10 +785,6 @@ async function executePullGlobalCursor(
   }
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
-  // DATA-41: a recorded row certifies its revision only when its writer
-  // committed it together with that revision (the change row's write-time
-  // provenance), whatever adapter reads it now.
-  const pairable = (change: ChangeEntry): boolean => revisionsEnabled(schema) && change.certified === true;
   const sinceSeq = parseInt(request.cursor, 10);
   const rawChanges = await changeTracking.getGlobalChanges({
     sinceSeq,
@@ -837,7 +810,7 @@ async function executePullGlobalCursor(
     }
 
     if (
-      isDataResourceKey(change.resource, schema) &&
+      isDataResourceKey(change.resource) &&
       isPrivateShareableResource(schema, change.resource)
     ) {
       if (!actorId) {
@@ -851,11 +824,6 @@ async function executePullGlobalCursor(
           id: change.id,
           op: "delete",
           record: null,
-          // DATA-41: a tombstone revision only where the delete committed
-          // together with it (see wireChange).
-          ...(pairable(change) && change.rev !== undefined && issuesRevisions(schema, change.resource)
-            ? { rev: change.rev }
-            : {}),
         });
         continue;
       }
@@ -872,16 +840,12 @@ async function executePullGlobalCursor(
       }
     }
 
-    // DATA-41: a complete row carries its revision as `$rev`; `rev` is the
-    // record's revision after any change that recorded one.
-    const wire = wireChange(schema, change.resource, change, pairable(change));
     visibleChanges.push({
       serverSeq: change.serverSeq,
       resource: change.resource,
       id: change.id,
       op: change.op === "delete" ? "delete" : "upsert",
-      record: change.op === "delete" ? null : wire.record,
-      ...(wire.rev !== undefined ? { rev: wire.rev } : {}),
+      record: change.op === "delete" ? null : change.record,
     });
   }
 
@@ -905,12 +869,7 @@ async function executePullGlobalCursor(
         resource: synthetic.resource,
         id: synthetic.id,
         op: synthetic.op,
-        // DATA-41: a visibility row recorded no revision, so a stored `$rev`
-        // on a resource that issues revisions is not sent as one.
-        record:
-          synthetic.record && issuesRevisions(schema, synthetic.resource)
-            ? withoutUncertifiedRevision(synthetic.record)
-            : synthetic.record,
+        record: synthetic.record,
         reason: synthetic.reason,
       });
     }
@@ -938,39 +897,6 @@ async function executePullGlobalCursor(
     nextCursor,
     actorFeed,
   };
-}
-
-/**
- * DATA-41: a canonical entry (one or several changes of one id combined in
- * serverSeq order, as before DATA-41) keeps `$rev` only when it describes the
- * stored record its revision belongs to: every combined change carried one,
- * the last has the highest, the combined row is that last complete row, and
- * no change's stored id differs from the entry's (trimmed) id. serverSeq
- * order is not commit order, so otherwise the entry goes without a revision.
- * A part's `$rev` counts only when the server paired it with that part's
- * change (a legacy stored `$rev` value never does). Called only for
- * resources that issue revisions, so a resource's own `$rev` field is never
- * touched.
- */
-function certifyCoalesced(
-  combined: Record<string, unknown>,
-  id: string,
-  parts: ReadonlyArray<Record<string, unknown>>,
-): Record<string, unknown> {
-  const last = parts[parts.length - 1];
-  const lastRev = isRevisionCertified(last) ? readRowRevision(last) : undefined;
-  const certified =
-    lastRev !== undefined &&
-    parts.every((part) => {
-      const rev = isRevisionCertified(part) ? readRowRevision(part) : undefined;
-      return (
-        part.id === id &&
-        rev !== undefined &&
-        rev <= lastRev &&
-        Object.keys(part).every((key) => key in last)
-      );
-    });
-  return certified ? combined : withoutRowRevision(combined);
 }
 
 async function executePullCanonical(
@@ -1031,10 +957,6 @@ async function executePullCanonical(
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
   const actorId = normalizeNonEmptyString((request as { actorId?: string }).actorId) ?? undefined;
-  // DATA-41: a recorded row certifies its revision only when its writer
-  // committed it together with that revision (the change row's write-time
-  // provenance), whatever adapter reads it now.
-  const pairable = (change: ChangeEntry): boolean => revisionsEnabled(schema) && change.certified === true;
 
   const requestedResourceKeys = Object.keys(request.cursors).filter(
     (resource) => resource !== ACTOR_FEED_CURSOR_KEY,
@@ -1043,21 +965,11 @@ async function executePullCanonical(
   const records: Record<string, Array<Record<string, unknown>>> = Object.create(null);
   const merged: Record<string, Array<Record<string, unknown>>> = Object.create(null);
   const deleted: Record<string, string[]> = Object.create(null);
-  const deletedRevisions: Record<string, Record<string, number>> = Object.create(null);
-  // DATA-41: a change's row as it goes on the wire; a complete row carries
-  // its revision as `$rev` (see wireChange).
-  const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
-    wireChange(schema, resource, change, pairable(change)).record!;
-  const revisionOf = (resource: string, change: ChangeEntry): number | undefined =>
-    change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
-  // DATA-41: ids with a delete that recorded no revision get no tombstone
-  // revision in this page.
-  const unrevisionedDeletes = new Set<string>();
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = Object.create(null);
   const cursors: Record<string, string> = Object.create(null);
 
   for (const resource of requestedResourceKeys) {
-    if (isDataResourceKey(resource, schema)) {
+    if (!resource.startsWith("join_") && !resource.startsWith("__datafn_")) {
       records[resource] = [];
       deleted[resource] = [];
     }
@@ -1089,7 +1001,7 @@ async function executePullCanonical(
   } = mergeCanonicalChangeStreamsBounded(allResourceChanges, limit);
 
   for (const { resource, change } of limitedChanges) {
-    if (resource.startsWith("join_") && !isDataResourceKey(resource, schema)) {
+    if (resource.startsWith("join_")) {
       if (!joins[resource]) {
         joins[resource] = { upsert: [], delete: [] };
       }
@@ -1105,7 +1017,7 @@ async function executePullCanonical(
       continue;
     }
 
-    if (!isDataResourceKey(resource, schema)) {
+    if (!isDataResourceKey(resource)) {
       continue;
     }
 
@@ -1131,7 +1043,7 @@ async function executePullCanonical(
       if (!merged[resource]) {
         merged[resource] = [];
       }
-      merged[resource].push(withRev(resource, change));
+      merged[resource].push(change.record);
       continue;
     }
 
@@ -1149,35 +1061,20 @@ async function executePullCanonical(
           continue;
         }
       }
-      records[resource].push(withRev(resource, change));
+      records[resource].push(change.record);
       continue;
     }
 
     if (change.op === "delete") {
       deleted[resource].push(change.id);
-      // DATA-41: the tombstone revision, kept only when every delete of the
-      // id in this page recorded one, and only where a delete commits together
-      // with its revision (pairable): otherwise the revision may name a state
-      // other than the absence it is sent with.
-      const rev = pairable(change) ? revisionOf(resource, change) : undefined;
-      if (rev === undefined) {
-        unrevisionedDeletes.add(`${resource}\u0000${change.id}`);
-      } else {
-        const revisions = (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>);
-        revisions[change.id] = Math.max(revisions[change.id] ?? 0, rev);
-      }
     }
-  }
-  for (const key of unrevisionedDeletes) {
-    const [resource, id] = key.split("\u0000");
-    if (deletedRevisions[resource]) delete deletedRevisions[resource][id];
   }
 
   let actorFeed: ActorFeedEntry[] | undefined;
   let feedHasMore = false;
   if (actorId) {
     const requestedResources = new Set(
-      requestedResourceKeys.filter((resource) => isDataResourceKey(resource, schema)),
+      requestedResourceKeys.filter((resource) => isDataResourceKey(resource)),
     );
     const actorFeedCursor = request.cursors[ACTOR_FEED_CURSOR_KEY]
       ?? Object.values(request.cursors).sort((a, b) => Number(a) - Number(b))[0]
@@ -1211,16 +1108,9 @@ async function executePullCanonical(
         deleted[synthetic.resource] = [];
       }
       if (synthetic.op === "upsert" && synthetic.record) {
-        // DATA-41: a visibility row is not a change that recorded a
-        // revision, so it carries none (certifyCoalesced strips any stored
-        // `$rev`; non-issuing resources keep it as application data).
         records[synthetic.resource].push(synthetic.record);
       } else if (synthetic.op === "delete") {
         deleted[synthetic.resource].push(synthetic.id);
-        // DATA-41: a visibility delete (a revoked grant or a lost
-        // membership) records no tombstone revision, so an id it collapses
-        // into carries none.
-        if (deletedRevisions[synthetic.resource]) delete deletedRevisions[synthetic.resource][synthetic.id];
       }
     }
 
@@ -1234,19 +1124,13 @@ async function executePullCanonical(
   }
 
   for (const resource of Object.keys(records)) {
-    const certify = issuesRevisions(schema, resource);
     const byId = new Map<string, Record<string, unknown>>();
-    const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of records[resource]) {
       const id = normalizeNonEmptyString(record.id);
       if (!id) {
         continue;
       }
       byId.set(id, { ...record, id });
-      if (certify) coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
-    }
-    for (const [id, parts] of coalesced) {
-      byId.set(id, certifyCoalesced(byId.get(id)!, id, parts));
     }
     records[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),
@@ -1254,9 +1138,7 @@ async function executePullCanonical(
   }
 
   for (const resource of Object.keys(merged)) {
-    const certify = issuesRevisions(schema, resource);
     const byId = new Map<string, Record<string, unknown>>();
-    const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of merged[resource]) {
       const id = normalizeNonEmptyString(record.id);
       if (!id) {
@@ -1264,10 +1146,6 @@ async function executePullCanonical(
       }
       const existing = byId.get(id) ?? { id };
       byId.set(id, { ...existing, ...record, id });
-      if (certify) coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
-    }
-    for (const [id, parts] of coalesced) {
-      byId.set(id, certifyCoalesced(byId.get(id)!, id, parts));
     }
     merged[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),
@@ -1303,10 +1181,6 @@ async function executePullCanonical(
 
   if (Object.keys(merged).length > 0) {
     result.merged = merged;
-  }
-
-  if (Object.keys(deletedRevisions).length > 0) {
-    result.deletedRevisions = deletedRevisions;
   }
 
   if (request.includeJoins && Object.keys(joins).length > 0) {

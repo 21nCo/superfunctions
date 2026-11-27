@@ -23,18 +23,9 @@ import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import {
   isNamespaceOwnerActor,
   isPrivateShareableResource,
-  canReadEveryField,
-  withoutHiddenDeclaredFields,
   resolveAccessLevel,
   validateQueryAuthz,
 } from "../validation/authz.js";
-import {
-  REVISION_FIELD,
-  canonicalRow,
-  isRevisionCertified,
-  issuesRevisions,
-  readWithRevisionsOrPlain,
-} from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery, relationQuerySelectTokens } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
@@ -46,7 +37,6 @@ import {
   getSpv2MigrationRuntimeConfig,
 } from "../execution/migration/spv2.js";
 import { hasTemporalGrouping } from "@datafn/core";
-import { projectFieldsPushdown } from "../execution/query/pushdown.js";
 import {
   getDatafnMultiRegionRuntimeConfig,
   queryDatafnPermissionGrants,
@@ -78,38 +68,6 @@ type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
 /**
  * Create query validation + execution route handler
  */
-/**
- * DATA-41: a query sent with `withRevisions: true` returns each complete row
- * of its own resource with its revision as `$rev`. Only a plain row read
- * qualifies: a relation traversal (rows of another resource), a projection
- * (`select` other than `*`, `omit`), grouping, aggregation or a temporal
- * clause gets none, and so does a resource whose fields the caller may not
- * all read.
- */
-/**
- * DATA-41: the server passes a push's post-write read a probe as a handler
- * option; the handler records the namespace and queries it actually executed
- * (after every hook), so the push can tell the read selected the written
- * record.
- */
-export interface PostWriteReadProbe {
-  executed?: {
-    namespace: string;
-    queries: ReadonlyArray<{ resource: unknown; accessMode: unknown; namespaceFilter: boolean }>;
-  };
-}
-
-function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema): boolean {
-  if (query.withRevisions !== true || typeof query.resource !== "string") return false;
-  if (!issuesRevisions(schema, query.resource) || !canReadEveryField(schema, query.resource)) return false;
-  if (query.relation !== undefined || query.temporal !== undefined) return false;
-  const select = query.select;
-  if (Array.isArray(select) && !(select.length === 1 && select[0] === "*")) return false;
-  if (Array.isArray(query.omit) && query.omit.length > 0) return false;
-  return !query.groupBy && !query.aggregations && !hasTemporalGrouping(query);
-}
-
-
 export function createQueryHandler(
   validatedSchema: DatafnSchema,
   maxLimit: number,
@@ -138,13 +96,10 @@ export function createQueryHandler(
     namespace: string,
     actorId: string | undefined,
     cache: RequestPrincipalResolutions,
-    // DATA-41: a versioned query resolves access on its revision snapshot.
-    accessDb: Adapter | undefined = db,
   ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
-    if (!accessDb || !isPrivateShareableResource(validatedSchema, resource)) {
+    if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
     }
-    const db = accessDb;
     if (!actorId) {
       return { shareableAccessIds: [] };
     }
@@ -192,7 +147,7 @@ export function createQueryHandler(
     }
 
     if (readMode !== "v1") {
-      const principals = await resolveActorPrincipals(namespace, actorId, cache, db);
+      const principals = await resolveActorPrincipals(namespace, actorId, cache);
       let hasScopeGrant = false;
       for (const principalId of principals) {
         const permissionRows = await db.findMany({
@@ -275,12 +230,10 @@ export function createQueryHandler(
     namespace: string,
     actorId: string,
     cache: RequestPrincipalResolutions,
-    principalDb: Adapter | undefined = db,
   ): Promise<string[]> => {
-    if (!principalDb) {
+    if (!db) {
       return [];
     }
-    const db = principalDb;
     const key = JSON.stringify([namespace, actorId]);
     const cached = cache.get(key);
     if (cached) return cached;
@@ -671,11 +624,7 @@ export function createQueryHandler(
     });
   };
 
-    return async (
-      req: Request,
-      ctx?: { parsedBody?: unknown },
-      options?: { postWriteReadProbe?: PostWriteReadProbe },
-    ): Promise<Response> => {
+    return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
       const startTime = Date.now();
       let resource: string | undefined;
       const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -838,21 +787,6 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           const namespace = await extractNamespace(ctx);
-          const readProbe = options?.postWriteReadProbe;
-          // Copied now: a later hook may change the query objects.
-          if (readProbe) {
-            readProbe.executed = {
-              namespace,
-              queries: transformedQueries.map((q) => {
-                const query = q as { resource?: unknown; metadata?: { accessMode?: unknown; namespaceFilter?: unknown } };
-                return {
-                  resource: query.resource,
-                  accessMode: query.metadata?.accessMode,
-                  namespaceFilter: query.metadata?.namespaceFilter !== undefined,
-                };
-              }),
-            };
-          }
           const actorId = extractActorId ? await extractActorId(ctx) : undefined;
           // Membership and hierarchy are written by the host, outside this
           // handler, so a cache kept on the handler would survive revocation.
@@ -910,43 +844,24 @@ export function createQueryHandler(
                   principalResolverCache,
                 ).then((result) => {
                   queryDurations.push(Date.now() - queryStart);
-                  // DATA-41: shared rows come from other namespaces, whose
-                  // revisions a client cannot pair with its own records, so
-                  // they get none; a versioned read still never returns a
-                  // field the read policy withholds.
-                  if (query.withRevisions === true && query.relation === undefined && typeof query.resource === "string") {
-                    const rows = (result as { data?: unknown })?.data;
-                    if (Array.isArray(rows)) {
-                      rows.forEach((row, index) => {
-                        rows[index] = withoutHiddenDeclaredFields(validatedSchema, String(query.resource), row);
-                      });
-                    }
-                  }
                   return result;
                 });
               }
 
-              // Access fields are the server's to set: a client-supplied
-              // hasShareableScopeAccess or shareableAccessIds must never
-              // widen or replace the access filter.
-              const {
-                shareableAccessIds: _clientAccessIds,
-                hasShareableScopeAccess: _clientScopeAccess,
-                ...clientMetadata
-              } = (metadata ?? {}) as QueryEnvelopeMetadata;
-              const run = async (
-                readDb: Adapter,
-                projectRecords = true,
-                accessDb: Adapter = readDb,
-                cache: RequestPrincipalResolutions = principalResolverCache,
-              ) => {
-                const shareableAccess = await resolveShareableAccessIds(
-                  String(query.resource),
-                  namespace,
-                  actorId,
-                  cache,
-                  accessDb,
-                );
+              return resolveShareableAccessIds(
+                String(query.resource),
+                namespace,
+                actorId,
+                principalResolverCache,
+              ).then((shareableAccess) => {
+                // Access fields are the server's to set: a client-supplied
+                // hasShareableScopeAccess or shareableAccessIds must never
+                // widen or replace the access filter.
+                const {
+                  shareableAccessIds: _clientAccessIds,
+                  hasShareableScopeAccess: _clientScopeAccess,
+                  ...clientMetadata
+                } = (metadata ?? {}) as QueryEnvelopeMetadata;
                 const queryWithMetadata = {
                   ...query,
                   metadata: {
@@ -961,80 +876,16 @@ export function createQueryHandler(
                 return executeSingleQuery(
                   queryWithAutoFilters as unknown as Record<string, unknown>,
                   validatedSchema,
-                  readDb,
+                  db,
                   namespace,
                   actorId,
                   searchProvider,
                   logger,
                   timer,
                   multiRegionRuntime,
-                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true, projectRecords },
+                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true },
                 );
-              };
-              return (async () => {
-                const rowsOf = (result: unknown) => {
-                  const rows = (result as { data?: unknown })?.data;
-                  return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
-                };
-                const resourceName = String(query.resource);
-                if (!isVersionedQuery(query, validatedSchema)) {
-                  if (query.withRevisions !== true || query.relation !== undefined) return run(db);
-                  // DATA-41: a query sent with `withRevisions` that does not
-                  // qualify returns no revision, and never a field of its
-                  // resource that the read policy withholds. Only declared
-                  // fields are removed, so aggregation aliases survive.
-                  return run(db).then((result) => {
-                    const rows = rowsOf(result);
-                    rows?.forEach((row, index) => {
-                      rows[index] = withoutHiddenDeclaredFields(validatedSchema, resourceName, row);
-                    });
-                    return result;
-                  });
-                }
-                // DATA-41: the query itself, including its row-level access
-                // (owned rows, grants and principal memberships of a private
-                // shareable resource, resolved without the request's cache),
-                // runs inside the revision snapshot and returns its stored
-                // rows unprojected (as clone returns them), so each row it
-                // selected is paired with the revision read in that same
-                // snapshot. A row the server did not pair with a revision (an
-                // unreadable field, a tombstone, no verified pairing, or a
-                // stored legacy `$rev` value) is returned as the plain query
-                // projects it, without `$rev`. If revision setup or any read
-                // inside the snapshot fails (thrown, or swallowed by a
-                // push-down or in-memory fallback, which on PostgreSQL aborts
-                // the transaction), the query is run again outside it,
-                // without revisions, and with access resolved afresh too: an
-                // earlier query of the batch may have cached a membership
-                // revoked since.
-                const readable = (row: Record<string, unknown>) =>
-                  canReadEveryField(validatedSchema, resourceName, row);
-                const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
-                let plain = false;
-                return readWithRevisionsOrPlain(
-                  db,
-                  namespace,
-                  resourceName,
-                  (readDb) => run(readDb, false, readDb, new Map()),
-                  () => {
-                    plain = true;
-                    return run(db, true, db, new Map());
-                  },
-                  rowsOf,
-                  readable,
-                ).then((result) => {
-                  if (plain) return result;
-                  const rows = rowsOf(result);
-                  rows?.forEach((row, index) => {
-                    if (!isRevisionCertified(row)) {
-                      const projected = projectFieldsPushdown(row, resourceName, validatedSchema, select, undefined);
-                      delete projected[REVISION_FIELD];
-                      rows[index] = projected;
-                    }
-                  });
-                  return result;
-                });
-              })().then((result) => {
+              }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;
               });
@@ -1063,29 +914,9 @@ export function createQueryHandler(
           timer?.startPhase("materialize");
           let result = isBatch ? results : results[0];
 
-          // DATA-41: a `$rev` belongs to the exact row it was certified with.
-          // After the afterQuery hooks, a row of a versioned query that they
-          // changed or added keeps no `$rev`; an unchanged row (even a copy)
-          // keeps it. Hook output is not modified: changed results are copied.
-          const versioned = transformedQueries.map((q) => isVersionedQuery(q as Record<string, unknown>, validatedSchema));
-          const rowsWithRevision = (value: unknown) => {
-            const rows = (value as { data?: unknown } | null)?.data;
-            return Array.isArray(rows) ? rows : [];
-          };
-          const hasRevision = (row: unknown): row is Record<string, unknown> =>
-            Boolean(row) && typeof row === "object" && REVISION_FIELD in (row as object);
-          const certifiedBefore = (isBatch ? results : [results[0]]).map((value, index) =>
-            new Set(versioned[index] ? rowsWithRevision(value).filter(hasRevision).map(canonicalRow) : []));
-
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
 
-          // The response envelope is serialized once, exactly as okResponse
-          // would send it, so every serializer (toJSON) sees its wire key. An
-          // uncertified `$rev` is removed from that wire form, which is sent.
-          if (versioned.some(Boolean)) {
-            result = withCertifiedRevisionsOnly(result, isBatch, versioned, certifiedBefore);
-          }
           if (timingEmitter && timer) {
             timingEmitter(timer.build("/datafn/query", resource, "query"));
           }
@@ -1129,39 +960,3 @@ export function createQueryHandler(
           }, logger);
       }
     };}
-
-/**
- * DATA-41: serialize `{ ok: true, result }` once and keep `$rev` only on rows
- * of a versioned query whose wire form equals a row certified before the
- * afterQuery hooks. If the hooks changed the batch's shape, no result can be
- * tied to the query that certified it, so every row loses its `$rev`. Only the
- * rows of `data` arrays are checked; nested values are left as they are, and
- * results of other queries keep their own `$rev` fields. The returned value
- * is plain JSON, so okResponse re-serializes it byte-identically.
- */
-function withCertifiedRevisionsOnly(
-  result: unknown,
-  isBatch: boolean,
-  versioned: boolean[],
-  certifiedBefore: Array<Set<string>>,
-): unknown {
-  const wire = JSON.parse(JSON.stringify({ ok: true, result })) as { result?: unknown };
-  const entries = isBatch ? wire.result : [wire.result];
-  if (!Array.isArray(entries) || entries.length !== versioned.length) {
-    for (const entry of Array.isArray(entries) ? entries : [entries]) keepCertifiedRevisions(entry, new Set());
-    return wire.result;
-  }
-  for (let index = 0; index < entries.length; index++) {
-    if (versioned[index]) keepCertifiedRevisions(entries[index], certifiedBefore[index]);
-  }
-  return wire.result;
-}
-
-function keepCertifiedRevisions(entry: unknown, kept: Set<string>): void {
-  const rows = entry !== null && typeof entry === "object" ? (entry as { data?: unknown }).data : undefined;
-  if (!Array.isArray(rows)) return;
-  for (const row of rows) {
-    if (row === null || typeof row !== "object" || !(REVISION_FIELD in row)) continue;
-    if (!kept.has(canonicalRow(row as Record<string, unknown>))) delete (row as Record<string, unknown>)[REVISION_FIELD];
-  }
-}

@@ -138,7 +138,6 @@ This document is intended for large language models and agentic developer tools.
 - [Sync Overview](https://datafn.dev/docs/documentation/sync/overview): Understand the DataFn synchronization architecture.
 - [Pull and Push](https://datafn.dev/docs/documentation/sync/pull-push): Incremental synchronization between client and server.
 - [Retry and Backoff](https://datafn.dev/docs/documentation/sync/retry-and-backoff): How the DataFn client retries failed sync operations, and how to tune it.
-- [Record revisions](https://datafn.dev/docs/documentation/sync/revisions): A server-managed revision for every record, returned on clone, pull, push and versioned queries.
 - [Schema Migration](https://datafn.dev/docs/documentation/sync/schema-migration): Evolving the schema while clients are connected — adding, renaming, deprecating fields.
 - [Sequence Store](https://datafn.dev/docs/documentation/sync/sequence-store): Where serverSeq lives, why it matters, and how to pick the right backend.
 - [Sharing Sync Lifecycle](https://datafn.dev/docs/documentation/sync/sharing-sync-lifecycle): How offline clients observe grant, revoke, backfill, push, and pull behavior in Sharing Permissions V2.

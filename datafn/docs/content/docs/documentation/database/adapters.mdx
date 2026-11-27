@@ -254,10 +254,9 @@ DataFn uses several internal tables managed via the `adapter.internal` API:
 | Table | Purpose |
 |-------|---------|
 | `__datafn_meta` | Stores `next_server_seq` per namespace |
-| `__datafn_changes` | Change log entries for incremental sync (a `rev` column is added on first use when revisions are on) |
+| `__datafn_changes` | Change log entries for incremental sync |
 | `__datafn_idempotency` | Mutation deduplication records |
 | `__datafn_seed` | Seed tracking metadata |
-| `__datafn_revisions` | Per-record [revisions](/docs/documentation/sync/revisions) and delete tombstones; never pruned, keep it when copying or backing up a namespace |
 
 Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`.
 
