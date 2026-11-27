@@ -870,19 +870,25 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const secret = ["racing", "fixture", "credential"].join("-");
     const versions = ["1.2.3", `1.2.3+build.${secret}`];
     let release!: () => void;
+    let started!: () => void;
     const both = new Promise<void>(resolve => { release = resolve; });
+    const firstProbe = new Promise<void>(resolve => { started = resolve; });
     let probes = 0;
     const runner: CommandRunner = async (_command, args) => {
       if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
       const stdout = `fake-cli version ${versions[probes]}\n`;
-      if ((probes += 1) === 2) release();
+      probes += 1;
+      (probes === 1 ? started : release)();
       await both;
       return { code: 0, signal: null, stdout, stderr: "", timedOut: false, canceled: false };
     };
     const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
     const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
     const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
-    const [first, second] = await Promise.all([harness.run(input(allowlisted)), harness.run(input(designated))]);
+    // The second run starts once the first is reading the version, so the probes overlap in a fixed order.
+    const running = harness.run(input(allowlisted));
+    await firstProbe;
+    const [first, second] = await Promise.all([running, harness.run(input(designated))]);
     expect(second.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
     expect(first.observed?.harnessVersion).toBe("1.2.3");
     expect(JSON.stringify(first)).not.toContain(secret);
@@ -901,10 +907,77 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
     expect((await harness.preflight(allowlisted)).resolved?.harnessVersion).toBe(`1.2.3+build.${secret}`);
     const output = await harness.run(input(designated));
-    expect(probes).toBe(1);
+    // The run's own secrets refuse the cached observation, so it reads the version again and is refused on its own probe.
+    expect(probes).toBe(2);
     expect(output.terminal).toBe("failed");
     expect(output.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
     expect(JSON.stringify(output)).not.toContain(secret);
+  });
+
+  it("publishes a version token core redaction leaves as written, a label it keeps before a redacted value included", async () => {
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    const runner: CommandRunner = async (_command, args) => ({ code: 0, signal: null, stdout: args.includes("--version") ? "tool version 1.2.3-token linux-x64\n" : `${answer}\n`, stderr: "", timedOut: false, canceled: false });
+    const harness = new CliHarnessAdapter({ environment: environment(), runner });
+    expect((await harness.preflight(configuration(profile()))).resolved?.harnessVersion).toBe("1.2.3-token");
+    const base = input(configuration(profile()));
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run({ ...base, slot: { ...base.slot!, harness: { ...base.slot!.harness, version: "1.2.3-token" } } });
+    expect(output.observed?.harnessVersion).toBe("1.2.3-token");
+    expect(output.error ?? "").not.toContain("pinned");
+  });
+
+  it("refuses a version token a credential shape reaches only once a registered secret is redacted before it", async () => {
+    const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout: "test-bannerBearer 1.2.3+build.test\n", stderr: "", timedOut: false, canceled: false });
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: "test-banner" }, runner });
+    const result = await harness.preflight(configuration(profile()));
+    const output = await harness.run(input(configuration(profile())));
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map(item => item.message)).toContain("The CLI reported a version that overlaps a registered secret, so it was refused.");
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
+    for (const text of [JSON.stringify(result), JSON.stringify(output)]) for (const hidden of ["build.test", "test-banner"]) expect(text).not.toContain(hidden);
+  });
+
+  it("caches only an accepted version: a refusal neither sticks nor replaces an accepted observation", async () => {
+    const secret = ["refused", "fixture", "credential"].join("-");
+    const reported = [`1.2.3+build.${secret}`, "1.2.3", `1.2.3+build.${secret}`];
+    let probes = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: `fake-cli version ${reported[Math.min((probes += 1) - 1, 2)]}\n`, stderr: "", timedOut: false, canceled: false };
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+    const config = configuration(profile());
+    const first = await harness.run(input(config));
+    expect(first.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
+    // No preflight in between: the refusal was not cached, so the next run reads the version again.
+    expect((await harness.run(input(config))).observed?.harnessVersion).toBe("1.2.3");
+    expect(probes).toBe(2);
+    // A refused refresh leaves the accepted observation in place for the next run.
+    expect((await harness.preflight(config)).ok).toBe(false);
+    const third = await harness.run(input(config));
+    expect(third.observed?.harnessVersion).toBe("1.2.3");
+    expect(probes).toBe(3);
+    for (const output of [first, third]) expect(JSON.stringify(output)).not.toContain(secret);
+  });
+
+  it("ends canceled an aborted run whose cached version its own secrets refuse, as on a cold cache", async () => {
+    const secret = ["aborted", "fixture", "credential"].join("-");
+    const runner: CommandRunner = async (_command, args, options) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: `fake-cli version 1.2.3+build.${secret}\n`, stderr: "", timedOut: false, canceled: options.signal?.aborted ?? false }
+      : { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
+    const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
+    const controller = new AbortController();
+    controller.abort();
+    const results: Array<[string, string | undefined]> = [];
+    for (const warm of [false, true]) {
+      const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+      if (warm) expect((await harness.preflight(allowlisted)).ok).toBe(true);
+      const output = await harness.run(input(designated, { signal: controller.signal }));
+      results.push([output.terminal, output.error]);
+      expect(JSON.stringify(output)).not.toContain(secret);
+    }
+    expect(results).toEqual([["canceled", "The CLI run was canceled while its version was read."], ["canceled", "The CLI run was canceled while its version was read."]]);
   });
 
   it("keeps an ordinary version with pre-release and build suffixes exact next to a registered secret", async () => {
