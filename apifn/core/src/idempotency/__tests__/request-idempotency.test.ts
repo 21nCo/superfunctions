@@ -2602,6 +2602,73 @@ describe("createRequestIdempotency PR round-3 delta regressions", () => {
     expect(result).toEqual({ outcome: "conflict" });
   });
 
+  it("never confirms a receipt read before a newer copy's version took the key", async () => {
+    const store = new HookedStore();
+    const database = new FakeOrderDatabase();
+    let afterLookup: (() => Promise<void>) | undefined;
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey: string) => {
+        const found = await database.receipts.find(storeKey);
+        const run = afterLookup;
+        afterLookup = undefined;
+        if (run) await run();
+        return found;
+      },
+    };
+    const w = { ...world(store, receipts), database };
+    const token = acquired(await w.make().claim(orderRequest()));
+    await database.createOrder(token, "book");
+    let newer: IdempotencyToken | undefined;
+    let newerResponse: IdempotentResponse | undefined;
+    store.arm(token.version, async () => {
+      expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      // The reader's recheck returns A; meanwhile A expires, B commits, and a crashed reader leaves a copy of B.
+      afterLookup = async () => {
+        ({ token: newer, response: newerResponse } = await newerCommit(w, orderRequest(), false));
+        store.records.set(token.storeKey, {
+          state: "completed",
+          version: "test-provisional-version",
+          generation: newer.generation,
+          fingerprint: newer.fingerprint,
+          recovery: "receipt",
+          response: newerResponse,
+          expiresAt: w.clock.time + 60_000,
+          fromReceipt: true,
+          receiptClaimId: newer.claimId,
+          provisional: true,
+        } as IdempotencyRecord);
+      };
+    });
+    expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", response: { body: newerResponse?.body } });
+    expect(store.records.get(token.storeKey)).toMatchObject({ receiptClaimId: newer?.claimId });
+    expect(store.records.get(token.storeKey)).not.toHaveProperty("provisional");
+  });
+
+  it.each(["settle", "release"] as const)("%s reports a conflict when a failed write ends on another body's confirmed copy", async (action) => {
+    const w = world(new FakeAtomicStore());
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = { status: 200, headers: {}, body: "{}" };
+    w.database.receiptsByKey.set(token.storeKey, { ...token, claimId: "test-a-claim", fingerprint: "test-a-fingerprint", response });
+    vi.spyOn(w.store, "compareAndSet").mockImplementationOnce(async () => {
+      // A later commit of another body is confirmed and its receipt pruned; this write then fails unapplied.
+      const pending = w.store.records.get(token.storeKey);
+      w.store.records.set(token.storeKey, {
+        ...pending,
+        state: "completed",
+        version: "test-newer-version",
+        fingerprint: "test-b-fingerprint",
+        response,
+        fromReceipt: true,
+        receiptClaimId: "test-b-claim",
+      } as IdempotencyRecord);
+      w.database.receiptsByKey.clear();
+      throw new Error("store write failed");
+    });
+    const result = action === "settle" ? await holder.settle(token, response) : await holder.release(token);
+    expect(result).toEqual({ outcome: "conflict" });
+  });
+
   it("frees its unused claim when the receipt it found is gone after a failed write", async () => {
     const producer = world(new FakeAtomicStore());
     const holder = acquired(await producer.make().claim(orderRequest()));
