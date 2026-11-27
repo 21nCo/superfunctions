@@ -1,0 +1,19 @@
+apifn/core/README.md
+  s_b184bb5b23dfc6::t_f2522bdc466ae3 213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b55fa2eabc6954e9b1f19844a3272a9b4027e979",
+  "prompts": {},
+  "sessions": {
+    "s_b184bb5b23dfc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b11f6ba5-11b1-4d8b-a935-c5696bdb8f33",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
