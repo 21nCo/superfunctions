@@ -457,7 +457,9 @@ describe("createRequestIdempotency receipt reconciliation", () => {
 
       const result = finish === "settle" ? await idempotency.settle(holder, committed) : await idempotency.release(holder);
       expect(result).toEqual({ outcome: finish === "settle" ? "settled" : "committed", response: committed });
-      expect([...store.records.values()][0]).toEqual(recorded);
+      // The reader wrote nothing; settle records the result it reported over the holder's own version.
+      if (finish === "release") expect([...store.records.values()][0]).toEqual(recorded);
+      else expect([...store.records.values()][0]).toMatchObject({ state: "completed", generation: holder.generation, response: committed });
       expect(database.orders).toEqual(["book"]);
     },
   );
@@ -510,8 +512,8 @@ describe("createRequestIdempotency receipt reconciliation", () => {
     });
 
     expect(await large.settle(holder, { status: 500 })).toEqual({ outcome: "settled", response });
-    // The store never records the receipt, so nothing is bounded: a replay reads the full response from the receipt.
-    expect([...store.records.values()][0]).toMatchObject({ state: "pending", version: holder.version });
+    // The settled record is bounded, but a replay reads the full response from the receipt while it is readable.
+    expect([...store.records.values()][0]).toMatchObject({ state: "completed", response: { omitted: ["body"] } });
     expect(await large.claim(orderRequest())).toEqual({ outcome: "replay", source: "receipt", response });
     expect(await large.recover(orderRequest())).toEqual({ outcome: "replay", source: "receipt", response });
   });
@@ -1291,7 +1293,7 @@ class BumpingStore extends FakeAtomicStore {
 }
 
 describe("createRequestIdempotency round-7 regressions", () => {
-  it("classifies from a validated receipt with no store write, so a newer record is never touched", async () => {
+  it("classifies from a validated receipt when every store write loses, and never overwrites the newer record", async () => {
     const store = new BumpingStore();
     const { idempotency, database, clock } = setup({ store });
     const own = acquired(await idempotency.claim(orderRequest()));
@@ -1308,11 +1310,10 @@ describe("createRequestIdempotency round-7 regressions", () => {
     const before = structuredClone([...store.records.entries()]);
     const writes = store.writes;
 
-    // Every pending record stays exactly as its writer wrote it: a receipt decides with no store write.
+    // Every record stays exactly as its newest writer wrote it: a receipt decides whether or not a write wins.
     const expectUntouched = () => {
       expect(store.writes).toBe(writes);
-      expect(store.bumps).toBe(0);
-      expect([...store.records.entries()]).toEqual(before);
+      for (const [key, record] of before) expect(store.records.get(key)).toEqual(store.newest.get(key) ?? record);
     };
 
     expect(await idempotency.settle(own, committed)).toEqual({ outcome: "settled", response: committed });
@@ -1593,24 +1594,23 @@ describe("createRequestIdempotency round-9 regressions", () => {
       newerRecord = structuredClone(store.records.get(newer.storeKey));
     };
 
-    // The receipt read first is the holder's own commit: it decides with no write, so the newer claim stays as it is.
-    expect(await idempotency.settle(stale, response)).toEqual({ outcome: "settled", response });
+    // The holder's write loses to the newer claim and its receipt is gone by then: stale, and the newer claim is untouched.
+    expect(await idempotency.settle(stale, response)).toEqual({ outcome: "stale" });
     expect(newer).toBeDefined();
     expect(store.records.get(stale.storeKey)).toEqual(newerRecord);
 
     const newerResponse = await database.createOrder(newer!, "book");
     expect(await idempotency.settle(newer!, newerResponse)).toEqual({ outcome: "settled", response: newerResponse });
-    // The newer claim's own receipt decides with no write, so its record stays as it wrote it.
-    expect(store.records.get(stale.storeKey)).toEqual(newerRecord);
+    expect(store.records.get(stale.storeKey)).toMatchObject({ state: "completed", generation: newerRecord!.generation, response: newerResponse });
     expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: newerResponse, source: "receipt" });
   });
 
-  it("replays a newer commit of the same body after the older receipt was pruned, with no store write", async () => {
+  it("replays a newer commit of the same body over an older settled record, and never writes over that record", async () => {
     const { idempotency, database, store } = setup();
     const first = acquired(await idempotency.claim(orderRequest()));
     await idempotency.settle(first, await database.createOrder(first, "book"));
     const recorded = structuredClone(store.records.get(first.storeKey));
-    expect(recorded).toMatchObject({ state: "pending", version: first.version });
+    expect(recorded).toMatchObject({ state: "completed", generation: first.generation });
     // The receipt store purged the first commit and a later claim of the same body committed again.
     database.receiptsByKey.clear();
     const later = { ...first, version: "test-version-later", claimId: "test-claim-later" };
@@ -1783,10 +1783,10 @@ describe("createRequestIdempotency PR round-5 architecture reset: the receipt is
     expect(await idempotency.claim(orderRequest({ body: otherBody }))).toEqual({ outcome: "conflict" });
     expect(store.log.length).toBe(writes);
 
-    // The holder's settle and release over its own commit decide from the receipt with no write either.
+    // The holder's settle records the result it reports over its own version; a later release writes nothing.
     expect(await idempotency.settle(holder, { status: 500 })).toEqual({ outcome: "settled", response: committed });
     expect(await idempotency.release(holder)).toEqual({ outcome: "committed", response: committed });
-    expect(store.log.length).toBe(writes);
+    expect(store.log.length).toBe(writes + 1);
 
     // Every write was an acquire (pending), a holder's settle (completed) or a release (released), each over the
     // version its claim saw or wrote.
@@ -1797,6 +1797,7 @@ describe("createRequestIdempotency PR round-5 architecture reset: the receipt is
     await idempotency.release(released);
     expect(store.log).toEqual([
       { expectedVersion: null, state: "pending", written: true },
+      { expectedVersion: holder.version, state: "completed", written: true },
       { expectedVersion: null, state: "pending", written: true },
       { expectedVersion: settled.version, state: "completed", written: true },
       { expectedVersion: null, state: "pending", written: true },
@@ -1966,5 +1967,104 @@ describe("createRequestIdempotency PR round-5 architecture reset: the receipt is
     source.state.mode = "ok";
     await expect(idempotency.claim(orderRequest())).rejects.toThrow("different key");
     await expect(idempotency.recover(orderRequest())).rejects.toThrow("different key");
+  });
+});
+
+/** Atomic store that runs a hook after the first claim write and another before the first release write. */
+class EpochDuringCleanupStore extends FakeAtomicStore {
+  onAcquire?: (storeKey: string, next: IdempotencyRecord) => void;
+  onCleanup?: () => Promise<void>;
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const cleanup = next?.state === "released" ? this.onCleanup : undefined;
+    if (cleanup) {
+      this.onCleanup = undefined;
+      await cleanup();
+    }
+    const written = await super.compareAndSet(storeKey, expectedVersion, next);
+    const acquire = next?.state === "pending" ? this.onAcquire : undefined;
+    if (acquire && next) {
+      this.onAcquire = undefined;
+      acquire(storeKey, next);
+    }
+    return written;
+  }
+}
+
+describe("createRequestIdempotency PR round-5 delta regressions", () => {
+  const otherBody = { item: "pen", quantity: 2 };
+  const earlier = { status: 201, headers: { "content-type": "text/plain" }, body: "earlier commit" };
+
+  it("keeps a settled commit replaying after its receipt is pruned, until the settled record's own retention ends", async () => {
+    const { idempotency, database, clock } = setup();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const committed = await database.createOrder(holder, "book");
+    expect(await idempotency.settle(holder, { status: 500 })).toEqual({ outcome: "settled", response: committed });
+    clock.advance(1_001);
+    database.receiptsByKey.clear();
+
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "store" });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "store" });
+    expect(await idempotency.claim(orderRequest({ body: otherBody }))).toEqual({ outcome: "conflict" });
+    expect(await idempotency.release(holder)).toEqual({ outcome: "stale" });
+    expect(await idempotency.settle(holder, { status: 500 })).toEqual({ outcome: "stale" });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "store" });
+    expect(database.orders).toEqual(["book"]);
+  });
+
+  it.each([
+    ["the same body", "committed"],
+    ["another body", "conflict"],
+  ] as const)("retires its settled fallback when another commit of %s lands during the write", async (bodyCase, expected) => {
+    const store = new HookedStore();
+    const database = new FakeOrderDatabase();
+    const source = switchableReceipts(database);
+    const { idempotency } = setup({ store, receipts: source.receipts });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    store.arm(holder.version, async () => {
+      // An expired earlier holder commits while this holder writes its fallback.
+      const fingerprint = bodyCase === "the same body" ? holder.fingerprint : "test-other-body-fingerprint";
+      database.receiptsByKey.set(holder.storeKey, { ...holder, fingerprint, claimId: "test-claim-earlier", response: earlier });
+    });
+
+    const result = await idempotency.settle(holder, { status: 503, body: "fallback" });
+    expect(result).toEqual(expected === "committed" ? { outcome: "committed", response: earlier } : { outcome: "conflict" });
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "released", recovery: "receipt" });
+
+    // The fallback never replays: an outage throws, and once the receipt is pruned the key is free.
+    source.state.mode = "outage";
+    await expect(idempotency.claim(orderRequest())).rejects.toThrow("receipt source unavailable");
+    source.state.mode = "ok";
+    database.receiptsByKey.clear();
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "acquired" });
+  });
+
+  it.each([
+    ["the same body", "replay"],
+    ["another body", "conflict"],
+  ] as const)("decides from the newer commit (%s) when releasing its unused claim loses to a later retention epoch", async (bodyCase, expected) => {
+    const store = new EpochDuringCleanupStore();
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock();
+    const { idempotency } = setup({ store, receipts: database.receipts, clock });
+    store.onAcquire = (storeKey, next) => {
+      // Receipt A lands during the claim write.
+      database.receiptsByKey.set(storeKey, { storeKey, fingerprint: next.fingerprint, generation: 1, claimId: "test-claim-a", response: earlier });
+    };
+    let newer: IdempotencyToken | undefined;
+    let newerResponse: IdempotentResponse | undefined;
+    store.onCleanup = async () => {
+      // Before the cleanup write: retention ends, A is pruned, the claim is evicted and B claims and commits.
+      clock.advance(60_001);
+      database.receiptsByKey.clear();
+      store.records.clear();
+      newer = acquired(await idempotency.claim(orderRequest(bodyCase === "the same body" ? {} : { body: otherBody })));
+      newerResponse = await database.createOrder(newer, "newer");
+    };
+
+    const result = await idempotency.claim(orderRequest());
+    expect(result).toEqual(expected === "replay" ? { outcome: "replay", response: newerResponse, source: "receipt" } : { outcome: "conflict" });
+    expect(store.records.get(newer!.storeKey)).toMatchObject({ state: "pending", version: newer!.version });
+    expect(database.receiptsByKey.get(newer!.storeKey)).toMatchObject({ claimId: newer!.claimId });
   });
 });
