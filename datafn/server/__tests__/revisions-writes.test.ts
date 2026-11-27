@@ -622,7 +622,9 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
 });
 
 const okOf = (route: string, body: Json) =>
-  route === "transact" ? body.ok !== false && !body.error && body.result?.steps?.[0]?.ok !== false : body.ok;
+  route === "transact"
+    ? body.ok !== false && !body.error && body.result?.ok !== false && body.result?.results?.[0]?.ok !== false
+    : body.ok;
 
 /** Sends one mutation by `route` to a server on `db`; /transact applies its step without an atomic transaction. */
 async function nonAtomicRoutes(db: Adapter, route: "push" | "mutation" | "transact", serverSchema: unknown = schema) {
@@ -933,6 +935,39 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     // Round 9: the change left without a sequence still raises its record.
     expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
     expect(await rev(base, "comment", "comment:1")).toEqual({ rev: 2, deleted: true });
+  });
+
+  it("raises every record a committed write changed when its sequence allocation fails, on every route", async () => {
+    for (const route of ["push", "mutation", "transact"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let armed = false;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        async delete(p: any) {
+          const out = await target.delete(p);
+          // After the write, every sequence allocation fails.
+          if (p.model === "task") armed = true;
+          return out;
+        },
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "create" && key !== "update") return value.bind(internal);
+            return async (table: string, ...args: unknown[]) => {
+              if (table === "__datafn_meta" && armed) throw new Error("forced sequence failure");
+              return value.apply(internal, [table, ...args]);
+            };
+          },
+        }),
+      })));
+      const routes = await cascadeServer(db);
+      const result = await routes[route]({ resource: "task", operation: "delete", id: "task:1" });
+
+      expect(armed, route).toBe(true);
+      expect(okOf(route, result.body), `${route} ${JSON.stringify(result.body).slice(0, 400)}`).toBeFalsy();
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 2, deleted: true });
+      expect(await rev(base, "comment", "comment:1"), route).toEqual({ rev: 2, deleted: true });
+    }
   });
 
   describe("PR review round 9", () => {

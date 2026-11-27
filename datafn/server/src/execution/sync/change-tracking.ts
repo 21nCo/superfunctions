@@ -105,7 +105,8 @@ export async function recordChangesWithRetry(
 export async function recordWriteChangesWithRetry(
   changeTracking: ChangeTrackingService,
   entries: ChangeEntryInput[],
-  writeDb: Adapter,
+  /** The write's evidence adapter; the service's own adapter when undefined. */
+  writeDb: Adapter | undefined,
   maxRetries = 2,
   logger?: DatafnLogger,
   options: { record?: ReadonlySet<ChangeEntryInput>; onRecorded?: (entry: ChangeEntryInput) => void } = {},

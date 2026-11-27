@@ -1524,13 +1524,16 @@ export async function executePush(
           let sequencingFailure: { error: unknown } | undefined;
           for (const change of changes) {
             try {
+              // Changes after a failed one are not sequenced: a sequence taken
+              // later could follow a concurrent foreign change in the cursors.
+              if (sequencingFailure) throw sequencingFailure.error;
               const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
               const entry = { serverSeq: seq, resource: change.resource, id: change.id, op, record };
               entries.push(entry);
               sequenced.add(entry);
             } catch (error) {
-              // DATA-41: the write has committed. Every other change is still
-              // sequenced and recorded, and a change left without a sequence
+              // DATA-41: the write has committed. The changes already
+              // sequenced are recorded, and a change left without a sequence
               // still raises its record's revision, before the failure is
               // reported.
               sequencingFailure ??= { error };

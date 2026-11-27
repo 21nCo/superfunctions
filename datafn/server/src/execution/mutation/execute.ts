@@ -44,7 +44,13 @@ import {
 } from "./share.js";
 import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
-import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
+import {
+  ChangeTrackingService,
+  recordChangeWithRetry,
+  recordChangesWithRetry,
+  recordWriteChangesWithRetry,
+  type ChangeEntryInput,
+} from "../sync/change-tracking.js";
 import { issuesRevisions, recordedRevision, recordIdMismatch, withWriteEvidence } from "../revisions.js";
 import {
   applyRelationInheritanceForRelate,
@@ -1033,7 +1039,8 @@ async function executeMutationCore(
         }
         const allDeltas = [...deltaByRecord.values()];
         if (allDeltas.length > 0) {
-          const seqs = await changeTracking.getNextServerSeqBatch(allDeltas.length);
+          const seqs = await sequencedOrRaised(changeTracking, allDeltas, () =>
+            changeTracking.getNextServerSeqBatch(allDeltas.length), logger);
           const entries = allDeltas.map((delta, i) => ({
             serverSeq: seqs[i],
             resource: delta.resource,
@@ -1088,7 +1095,8 @@ async function executeMutationCore(
           primaryChange.record = snapshot.record;
         };
         if (allChanges.length > 1) {
-          const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
+          const seqs = await sequencedOrRaised(changeTracking, allChanges, () =>
+            changeTracking.getNextServerSeqBatch(allChanges.length), logger);
           await snapshotPrimaryKvChange();
           recordedEntries = allChanges.map((change, i) => ({
             serverSeq: seqs[i],
@@ -1099,7 +1107,8 @@ async function executeMutationCore(
           }));
           await recordChangesWithRetry(changeTracking, recordedEntries, 2, logger);
         } else {
-          const serverSeq = await changeTracking.getNextServerSeq();
+          const serverSeq = await sequencedOrRaised(changeTracking, allChanges, () =>
+            changeTracking.getNextServerSeq(), logger);
           await snapshotPrimaryKvChange();
           // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
           const entry: ChangeEntryInput = { serverSeq, ...primaryChange };
@@ -1118,6 +1127,30 @@ async function executeMutationCore(
   }
 
   return result;
+}
+
+/**
+ * DATA-41: allocates the sequences of a write's changes. Outside a
+ * transaction the write has committed, so when allocation fails the records
+ * its changes name still raise their revisions (with their own retries)
+ * before the failure is reported; no change row is recorded for them.
+ */
+async function sequencedOrRaised<T>(
+  changeTracking: ChangeTrackingService,
+  changes: ReadonlyArray<Omit<ChangeEntryInput, "serverSeq">>,
+  allocate: () => Promise<T>,
+  logger: DatafnLogger | undefined,
+): Promise<T> {
+  try {
+    return await allocate();
+  } catch (error) {
+    if (!changeTracking.inTransaction) {
+      const entries = changes.map((change) => ({ ...change, serverSeq: 0 }));
+      await recordWriteChangesWithRetry(changeTracking, entries, undefined, 2, logger, { record: new Set() })
+        .catch((raiseError) => logger?.error("Revision assignment failed after a sequence failure", { error: String(raiseError) }));
+    }
+    throw error;
+  }
 }
 
 /**
