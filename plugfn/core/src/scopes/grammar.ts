@@ -66,6 +66,27 @@ function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
   return descriptor;
 }
 
+/** `Object` and `Object.prototype`, captured once at load. */
+const IntrinsicObject = Object;
+const intrinsicObjectPrototype: object = IntrinsicObject.prototype;
+
+/**
+ * Whether `then` on a promise whose prototype is `Object.prototype` (with no
+ * own `constructor`) uses the default species: `Object.prototype.constructor`
+ * is still the intrinsic `Object` as a data property, and `Object` has no
+ * `Symbol.species`. When it holds, a failed `then` was the brand check, so
+ * the retry is skipped and a plain record never sees a `defineProperty`.
+ */
+function ambientSpeciesIsDefault(): boolean {
+  const constructor = Object.getOwnPropertyDescriptor(intrinsicObjectPrototype, 'constructor');
+  return (
+    constructor !== undefined &&
+    Object.hasOwn(constructor, 'value') &&
+    constructor.value === IntrinsicObject &&
+    Object.getOwnPropertyDescriptor(IntrinsicObject, Symbol.species) === undefined
+  );
+}
+
 /**
  * Contains a promise that a synchronous callback returned by mistake (an
  * `async` normalize or riskOf, say): the intrinsic `then` marks a native
@@ -82,37 +103,44 @@ function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
  * `Promise` without reading the species, decided by the value's actual own
  * `constructor` descriptor (whatever its realm):
  * - absent: on an extensible value, an own `constructor: undefined` is
- *   defined for the retry and deleted afterwards;
+ *   defined for the retry and deleted afterwards. It is skipped when the
+ *   prototype is `null`, or `Object.prototype` while the ambient species is
+ *   the default (`Object.prototype.constructor` is the intrinsic `Object`
+ *   and `Object` has no `Symbol.species`), since `then` then failed on the
+ *   brand check; so a plain record never takes the retry;
  * - configurable (data or accessor): it is redefined to that data property
  *   for the retry and the saved descriptor is restored afterwards;
  * - non-configurable writable data: its value is set to `undefined` for the
  *   retry and set back afterwards.
- * A value with no own `constructor` whose prototype is `Object.prototype` or
- * `null` (a plain record) never takes the retry. Residual: a non-configurable
- * accessor, a non-configurable non-writable `constructor`, or a non-extensible
- * promise with no own `constructor`, whose lookup throws, cannot be marked
- * handled; the caller still fails closed.
+ * The restore runs in a `finally` around both the redefinition and the retry,
+ * so a `defineProperty` that applies the change and then throws is undone too.
+ * Residual: a promise whose lookup throws and whose own `constructor` is a
+ * non-configurable accessor or non-configurable non-writable data, or a
+ * non-extensible promise with no own `constructor`, cannot be marked handled;
+ * the caller still fails closed.
  */
 function containPromise(value: unknown): void {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
   if (markHandled(value)) return;
   try {
     const saved = Object.getOwnPropertyDescriptor(value, 'constructor');
+    let neutral: PropertyDescriptor;
     let restore: () => void;
     if (saved === undefined) {
+      if (!Object.isExtensible(value)) return;
       const proto: unknown = Object.getPrototypeOf(value);
-      if (proto === Object.prototype || proto === null || !Object.isExtensible(value)) return;
-      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, true));
+      if (proto === null || (proto === intrinsicObjectPrototype && ambientSpeciesIsDefault())) return;
+      neutral = dataDescriptor(undefined, true);
       restore = () => {
         delete (value as { constructor?: unknown }).constructor;
       };
     } else if (saved.configurable) {
-      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, true));
+      neutral = dataDescriptor(undefined, true);
       restore = () => {
         Object.defineProperty(value, 'constructor', Object.setPrototypeOf(saved, null) as PropertyDescriptor);
       };
     } else if (Object.hasOwn(saved, 'value') && saved.writable === true) {
-      Object.defineProperty(value, 'constructor', dataDescriptor(undefined, false));
+      neutral = dataDescriptor(undefined, false);
       restore = () => {
         Object.defineProperty(value, 'constructor', dataDescriptor(saved.value, false));
       };
@@ -120,6 +148,7 @@ function containPromise(value: unknown): void {
       return;
     }
     try {
+      Object.defineProperty(value, 'constructor', neutral);
       markHandled(value);
     } finally {
       restore();
@@ -129,21 +158,31 @@ function containPromise(value: unknown): void {
   }
 }
 
+/** Whether `key` is an array index: a canonical integer string below 2^32 - 1. */
+function isArrayIndex(key: string): boolean {
+  if (!/^(?:0|[1-9]\d{0,9})$/.test(key)) return false;
+  return Number(key) < 4294967295;
+}
+
 /**
  * The prototype of every array the engine hands to `normalize`: a frozen
- * null-prototype copy of the own `Array.prototype` members (string and symbol
- * keys, `Symbol.iterator` included) captured once at load, without
- * `constructor`. Array methods work as usual, but nothing added to or
- * replaced on `Array.prototype` or `Object.prototype` later is visible, and
+ * null-prototype object holding the `Array.prototype` methods captured once
+ * at load: only own data properties whose value is a function, under symbol
+ * keys or non-index string keys, without `constructor`. Accessors, other
+ * data (`length`, `Symbol.unscopables`) and index keys are left out, so data
+ * pollution present even before load (`Array.prototype[0]`, say) is never
+ * copied. Array methods work as usual, nothing added to or replaced on
+ * `Array.prototype` or `Object.prototype` later is visible, and
  * `ArraySpeciesCreate` sees no `constructor`, so `map` and friends create
  * intrinsic arrays.
  */
 const NORMALIZE_ARRAY_PROTOTYPE: object = (() => {
   const proto = Object.create(null) as object;
   for (const key of Reflect.ownKeys(Array.prototype)) {
-    if (key === 'constructor') continue;
+    if (key === 'constructor' || (typeof key === 'string' && isArrayIndex(key))) continue;
     const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key)!;
-    Object.defineProperty(proto, key, Object.setPrototypeOf(descriptor, null) as PropertyDescriptor);
+    if (!Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') continue;
+    Object.defineProperty(proto, key, dataDescriptor(descriptor.value, true));
   }
   return Object.freeze(proto);
 })();

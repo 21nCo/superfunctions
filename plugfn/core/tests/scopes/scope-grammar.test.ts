@@ -1179,6 +1179,44 @@ describe('every record the engine hands out is its own (I7)', () => {
       expect(seen).toEqual([[shape, shape, shape], ['A', 'B'], ['a'], true, ['a', 'b'], true]);
     });
 
+    it('copy only Array.prototype methods at load, never data polluted before load', async () => {
+      const arrayPrototype = Array.prototype as unknown as Record<string, unknown>;
+      const prototypes: object[] = [];
+      let results: { ok: boolean; perms: unknown };
+      vi.resetModules();
+      try {
+        arrayPrototype[0] = { permissions: ['admin'] };
+        arrayPrototype.testPollutedField = 'test-polluted';
+        const fresh = await import('../../src/scopes/grammar.js');
+        const g = fresh.defineScopeGrammar({
+          provider: 'preload-arrays',
+          dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'admin'] } },
+          normalize: ((input: { rules: { permissions?: string[] }[] }) => {
+            prototypes.push(Object.getPrototypeOf(input.rules) as object);
+            return { perms: input.rules[0]?.permissions ?? [] };
+          }) as never,
+          riskOf,
+        });
+        results = {
+          ok: g.isSubset({ rules: [{ permissions: ['admin'] }] } as never, { rules: [] } as never).ok,
+          perms: g.normalize({ rules: [] } as never).scope?.perms,
+        };
+      } finally {
+        delete arrayPrototype[0];
+        delete arrayPrototype.testPollutedField;
+        vi.resetModules();
+      }
+      expect(results).toEqual({ ok: false, perms: [] });
+      expect(prototypes.length).toBeGreaterThan(0);
+      for (const proto of prototypes) {
+        expect(Object.hasOwn(proto, '0')).toBe(false);
+        expect(Object.hasOwn(proto, 'testPollutedField')).toBe(false);
+        const nonFunctions = Reflect.ownKeys(proto).filter(key => typeof Object.getOwnPropertyDescriptor(proto, key)!.value !== 'function');
+        expect(nonFunctions).toEqual([]);
+        expect(Object.hasOwn(proto, 'map') && Object.hasOwn(proto, Symbol.iterator)).toBe(true);
+      }
+    });
+
     it('call the Array.prototype methods captured at load, not a later replacement', () => {
       const original = Array.prototype.map;
       const inputArrays = new Set<unknown>();
@@ -1672,6 +1710,84 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         );
       expect(runAll(proxied, [])).toEqual([['request'], ['envelope'], false, true]);
       expect(defines).toBe(0);
+    });
+
+    /** Restores every own descriptor `target` had for `key` when `run` started. */
+    function withAmbient(target: object, key: PropertyKey, descriptor: PropertyDescriptor, run: () => void) {
+      const original = Object.getOwnPropertyDescriptor(target, key);
+      Object.defineProperty(target, key, descriptor);
+      try {
+        run();
+      } finally {
+        if (original === undefined) delete (target as Record<PropertyKey, unknown>)[key];
+        else Object.defineProperty(target, key, original);
+      }
+    }
+
+    it.each([
+      ['Object.prototype.constructor is not a constructor', Object.prototype, 'constructor', { value: 'test-not-a-constructor', writable: true, configurable: true }],
+      [
+        'Object[Symbol.species] throws',
+        Object,
+        Symbol.species,
+        {
+          configurable: true,
+          get() {
+            throw new Error('species threw');
+          },
+        },
+      ],
+    ] as [string, object, PropertyKey, PropertyDescriptor][])(
+      'contains a promise reparented to Object.prototype when %s',
+      async (_label, target, key, descriptor) => {
+        const made: [object, PropertyDescriptor | undefined][] = [];
+        let results: unknown[] = [];
+        const seen = await unhandledRejectionsOf(() => {
+          withAmbient(target, key, descriptor, () => {
+            results = runAll(() => Object.setPrototypeOf(Promise.reject(new Error('reparented rejected')), Object.prototype) as object, made);
+          });
+        });
+        expect(seen).toEqual([]);
+        expect(results).toEqual([['request'], ['envelope'], false, true]);
+        expect(made).toHaveLength(4);
+        for (const [value] of made) expect(Object.hasOwn(value, 'constructor')).toBe(false);
+      },
+    );
+
+    it.each([
+      [
+        'restores a configurable own constructor',
+        () =>
+          Object.defineProperty(Object.create(Promise.prototype), 'constructor', {
+            configurable: true,
+            get() {
+              throw new Error('constructor lookup threw');
+            },
+          }) as object,
+      ],
+      ['deletes the constructor it defined', () => Object.create(Promise.prototype) as object],
+    ])('%s when a defineProperty trap applies the change and then throws', (_label, makeTarget) => {
+      const targets: [object, PropertyDescriptor | undefined][] = [];
+      let traps = 0;
+      const proxied = () => {
+        const target = makeTarget();
+        targets.push([target, Object.getOwnPropertyDescriptor(target, 'constructor')]);
+        return new Proxy(target, {
+          defineProperty(t, key, descriptor) {
+            traps++;
+            Reflect.defineProperty(t, key, descriptor);
+            throw new Error('defineProperty trap threw');
+          },
+        });
+      };
+      expect(runAll(proxied, [])).toEqual([['request'], ['envelope'], false, true]);
+      expect(traps).toBeGreaterThan(0);
+      expect(targets).toHaveLength(4);
+      for (const [target, before] of targets) {
+        const after = Object.getOwnPropertyDescriptor(target, 'constructor');
+        expect(after).toEqual(before);
+        expect(after?.get).toBe(before?.get);
+      }
     });
 
     it('contains a plain rejected promise after Promise[Symbol.species] is redefined to throw', async () => {

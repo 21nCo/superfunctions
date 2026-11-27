@@ -239,7 +239,9 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * the clone it receives from the shared realm: every record has a null
    * prototype, and every array (still an array, `length` own) has a frozen
    * null-prototype prototype holding the `Array.prototype` methods captured
-   * at load, without `constructor`. So a field inherited from a polluted
+   * at load (only own data properties whose value is a function, under
+   * symbol or non-index string keys, so data present on `Array.prototype`
+   * even before load is never copied), without `constructor`. So a field inherited from a polluted
    * `Object.prototype` or `Array.prototype` never appears in the input.
    * Boundary: primitive values (read through the `String`, `Number` and
    * `Boolean` prototypes) and every object `normalize` builds itself belong
@@ -261,7 +263,12 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * `Symbol.species`), it retries once with the promise's `constructor`
    * reading as `undefined`, decided by its own `constructor` descriptor (in
    * any realm): absent on an extensible promise, configurable, or
-   * non-configurable writable data; then it restores the original.
+   * non-configurable writable data; then it restores the original, even
+   * when redefining it throws after applying the change. With no own
+   * `constructor`, the retry is skipped when the prototype is `null`, or
+   * `Object.prototype` while `Object.prototype.constructor` is the intrinsic
+   * `Object` and `Object` has no `Symbol.species` (`then` then failed on the
+   * brand check), so a plain record never takes it.
    * Residual: a promise whose lookup throws and whose own `constructor` is a
    * non-configurable accessor or non-configurable non-writable data, or a
    * non-extensible promise with no own `constructor`, cannot be marked
