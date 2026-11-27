@@ -14,10 +14,17 @@ const fixtureName = fileURLToPath(new URL('./__scope-types-fixture__.ts', import
 const fixture = `
 import {
   defineScopeGrammar,
+  type AnyScopeCallbackGrammar,
   type AnyScopeGrammar,
   type NormalizedScope,
+  type ScopeCallbackGrammar,
+  type ScopeCallbackGrammarDefinition,
+  type ScopeCallbackGrammarFields,
   type ScopeDimension,
   type ScopeDimensions,
+  type ScopeGrammar,
+  type ScopeItem,
+  type ScopeRisk,
   type ScopeShape,
 } from '../../src/scopes/index.js';
 
@@ -192,6 +199,232 @@ const mixedNormalized: NormalizedScope<Mixed>['d'] = ['a'];
 void mixedSet;
 void mixedNumber;
 void mixedNormalized;
+
+// A data-only definition keeps SFNS-110's grammar: no risk methods.
+const dataOnly: ScopeGrammar<{ readonly names: { kind: 'exactSet' } }> = defineScopeGrammar({
+  provider: 'data-only',
+  dimensions: { names: { kind: 'exactSet' } },
+});
+// @ts-expect-error a data-only grammar has no classifyRisk
+dataOnly.classifyRisk({ names: [] });
+// @ts-expect-error normalize needs riskOf
+defineScopeGrammar({ provider: 'no-risk', dimensions: { names: { kind: 'exactSet' } }, normalize: (input: { names: string[] }) => input });
+
+// A callback grammar: riskOf sees the exact dimension names, and normalize sets the input type.
+const callbacks = defineScopeGrammar({
+  provider: 'callbacks',
+  dimensions: { names: { kind: 'exactSet' }, ttl: { kind: 'ttlMax' } },
+  riskOf: item => {
+    const exact: Equal<typeof item.dimension, 'names' | 'ttl'> = true;
+    void exact;
+    return 'read';
+  },
+});
+const callbackRisk: ScopeRisk = callbacks.classifyRisk({ names: ['a'], ttl: 60 });
+void callbackRisk;
+const callbackScope = callbacks.normalize({ names: ['a'], ttl: 60 });
+if (callbackScope.ok) callbacks.classifyScope(callbackScope.scope);
+// @ts-expect-error a scalar dimension is required by the default input type
+callbacks.classifyRisk({ names: ['a'] });
+interface ProviderInput {
+  readonly repos: string[];
+}
+const shaped = defineScopeGrammar({
+  provider: 'shaped',
+  dimensions: { repos: { kind: 'prefixGlobSet' } },
+  normalize: (input: ProviderInput) => ({ repos: input.repos }),
+  riskOf: () => 'write',
+});
+const shapedGrammar: ScopeCallbackGrammar<{ readonly repos: { kind: 'prefixGlobSet' } }, ProviderInput> = shaped;
+void shapedGrammar;
+shaped.isSubset({ repos: ['org/a'] }, { repos: ['org/*'] });
+// @ts-expect-error input follows normalize's parameter, not the scope shape
+shaped.classifyRisk({ repositories: ['org/a'] });
+// A provider-shaped input type needs normalize; without one the input is the scope shape.
+interface SecondsInput {
+  readonly seconds: number;
+}
+type TtlDims = { readonly ttl: { kind: 'ttlMax' } };
+const ttlDims: TtlDims = { ttl: { kind: 'ttlMax' } };
+// @ts-expect-error an explicit provider-shaped input type without normalize
+defineScopeGrammar<TtlDims, SecondsInput>({ provider: 'no-normalize', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error an expected provider-shaped grammar without normalize
+const contextualNoNormalize: ScopeCallbackGrammar<TtlDims, SecondsInput> = defineScopeGrammar({
+  provider: 'no-normalize',
+  dimensions: ttlDims,
+  riskOf: () => 'read',
+});
+void contextualNoNormalize;
+const riskOnly: ScopeCallbackGrammar<TtlDims> = defineScopeGrammar({ provider: 'risk-only', dimensions: ttlDims, riskOf: () => 'read' });
+riskOnly.classifyRisk({ ttl: 60 });
+const explicitNormalize = defineScopeGrammar<TtlDims, SecondsInput>({
+  provider: 'explicit-normalize',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+});
+explicitNormalize.classifyRisk({ seconds: 60 });
+const contextualNormalize: ScopeCallbackGrammar<TtlDims, SecondsInput> = defineScopeGrammar({
+  provider: 'contextual-normalize',
+  dimensions: ttlDims,
+  normalize: (input: SecondsInput) => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+});
+contextualNormalize.isSubset({ seconds: 60 }, { seconds: 300 });
+// An unannotated normalize takes the scope shape.
+const unannotated = defineScopeGrammar({
+  provider: 'unannotated',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.ttl }),
+  riskOf: () => 'read',
+});
+const unannotatedInput: Equal<Parameters<typeof unannotated.classifyRisk>[0], ScopeShape<TtlDims>> = true;
+void unannotatedInput;
+// An explicit scope-shape input type needs no normalize.
+const explicitShape: ScopeCallbackGrammar<TtlDims> = defineScopeGrammar<TtlDims, ScopeShape<TtlDims>>({
+  provider: 'explicit-shape',
+  dimensions: ttlDims,
+  riskOf: () => 'read',
+});
+void explicitShape;
+// The definition type requires normalize for a provider-shaped input and keeps that input when stored.
+const storedShaped: ScopeCallbackGrammarDefinition<TtlDims, SecondsInput> = {
+  provider: 'stored-shaped',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+};
+defineScopeGrammar(storedShaped).classifyRisk({ seconds: 60 });
+const storedRiskOnly: ScopeCallbackGrammarDefinition<TtlDims> = { provider: 'stored-risk-only', dimensions: ttlDims, riskOf: () => 'read' };
+defineScopeGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
+// @ts-expect-error a stored provider-shaped definition without normalize
+const storedNoNormalize: ScopeCallbackGrammarDefinition<TtlDims, SecondsInput> = { provider: 'stored', dimensions: ttlDims, riskOf: () => 'read' };
+void storedNoNormalize;
+// A subtype of the scope shape adds fields the grammar rejects, so it needs normalize too.
+type SecondsAndTtl = ScopeShape<TtlDims> & { readonly seconds: number };
+// @ts-expect-error a scope-shape subtype without normalize
+defineScopeGrammar<TtlDims, SecondsAndTtl>({ provider: 'subtype', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error an expected scope-shape subtype grammar without normalize
+const contextualSubtype: ScopeCallbackGrammar<TtlDims, SecondsAndTtl> = defineScopeGrammar({ provider: 'subtype', dimensions: ttlDims, riskOf: () => 'read' });
+void contextualSubtype;
+// So does an input that adds only an optional field, in every form.
+type OptionalSeconds = { readonly ttl: number; readonly seconds?: number };
+// @ts-expect-error an explicit input with an optional extra field, without normalize
+defineScopeGrammar<TtlDims, OptionalSeconds>({ provider: 'optional-extra', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error a stored definition with an optional extra field, without normalize
+const storedOptional: ScopeCallbackGrammarDefinition<TtlDims, OptionalSeconds> = { provider: 'optional-extra', dimensions: ttlDims, riskOf: () => 'read' };
+void storedOptional;
+type SecondsOrMinutes = { readonly ttl: number; readonly seconds?: number } | { readonly ttl: number; readonly minutes?: number };
+// @ts-expect-error a union input whose members add fields, without normalize
+defineScopeGrammar<TtlDims, SecondsOrMinutes>({ provider: 'union-extra', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error a stored union input whose members add fields, without normalize
+const storedUnion: ScopeCallbackGrammarDefinition<TtlDims, SecondsOrMinutes> = { provider: 'union-extra', dimensions: ttlDims, riskOf: () => 'read' };
+void storedUnion;
+// Broad input types admit non-scope values even when every dimension is optional.
+type NamesDims = { readonly names: { kind: 'exactSet' } };
+const namesDims: NamesDims = { names: { kind: 'exactSet' } };
+// @ts-expect-error an empty-object input, without normalize
+defineScopeGrammar<NamesDims, {}>({ provider: 'broad', dimensions: namesDims, riskOf: () => 'read' });
+// @ts-expect-error an object input, without normalize
+defineScopeGrammar<NamesDims, object>({ provider: 'broad', dimensions: namesDims, riskOf: () => 'read' });
+// @ts-expect-error a union with a broad member, without normalize
+const storedBroad: ScopeCallbackGrammarDefinition<NamesDims, ScopeShape<NamesDims> | {}> = { provider: 'broad', dimensions: namesDims, riskOf: () => 'read' };
+void storedBroad;
+// A narrowed canonical input, such as a literal TTL, needs no normalize.
+const literalTtl: ScopeCallbackGrammar<TtlDims, { readonly ttl: 60 }> = defineScopeGrammar({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
+literalTtl.classifyRisk({ ttl: 60 });
+defineScopeGrammar<TtlDims, { readonly ttl: 60 }>({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
+// Omitting an optional set dimension keeps the input canonical; omitting a required one does not.
+type TtlNamesDims = { readonly ttl: { kind: 'ttlMax' }; readonly names: { kind: 'exactSet' } };
+const ttlNamesDims: TtlNamesDims = { ttl: { kind: 'ttlMax' }, names: { kind: 'exactSet' } };
+type TtlOnly = { readonly ttl: 60 };
+defineScopeGrammar<TtlNamesDims, TtlOnly>({ provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' });
+const storedOmitSet: ScopeCallbackGrammarDefinition<TtlNamesDims, TtlOnly | ScopeShape<TtlNamesDims>> = { provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' };
+defineScopeGrammar(storedOmitSet).classifyRisk({ ttl: 60 });
+const contextualOmitSet: ScopeCallbackGrammar<TtlNamesDims, TtlOnly> = defineScopeGrammar({ provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' });
+contextualOmitSet.classifyRisk({ ttl: 60 });
+// Each union member may name a different optional set dimension.
+type LeftRightDims = { readonly left: { kind: 'exactSet' }; readonly right: { kind: 'exactSet' } };
+const leftRightDims: LeftRightDims = { left: { kind: 'exactSet' }, right: { kind: 'exactSet' } };
+type LeftOrRight = { readonly left: readonly string[] } | { readonly right: readonly string[] };
+defineScopeGrammar<LeftRightDims, LeftOrRight>({ provider: 'left-or-right', dimensions: leftRightDims, riskOf: () => 'read' });
+const storedLeftOrRight: ScopeCallbackGrammarDefinition<LeftRightDims, LeftOrRight> = { provider: 'left-or-right', dimensions: leftRightDims, riskOf: () => 'read' };
+void storedLeftOrRight;
+// @ts-expect-error a union with a keyless member, without normalize
+defineScopeGrammar<LeftRightDims, { readonly left: readonly string[] } | {}>({ provider: 'keyless', dimensions: leftRightDims, riskOf: () => 'read' });
+// @ts-expect-error an input without the required ttl, without normalize
+defineScopeGrammar<TtlNamesDims, { readonly names?: readonly string[] }>({ provider: 'omit-ttl', dimensions: ttlNamesDims, riskOf: () => 'read' });
+// Generic factories build risk-only definitions with the canonical input.
+function riskOnlyFor<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar({ provider: 'generic', dimensions, riskOf: () => 'read' });
+}
+function riskOnlyExplicit<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar<GD, ScopeShape<GD>>({ provider: 'generic', dimensions, riskOf: () => 'read' });
+}
+function riskOnlyDefinition<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammarDefinition<GD> {
+  return { provider: 'generic', dimensions, riskOf: () => 'read' };
+}
+riskOnlyFor(ttlDims).classifyRisk({ ttl: 60 });
+riskOnlyExplicit(ttlDims).classifyRisk({ ttl: 60 });
+defineScopeGrammar(riskOnlyDefinition(ttlDims)).classifyRisk({ ttl: 60 });
+// A generic consumer forwards a definition and keeps its input type.
+function buildGrammar<GD extends ScopeDimensions, GInput>(definition: ScopeCallbackGrammarDefinition<GD, GInput>): ScopeCallbackGrammar<GD, GInput> {
+  return defineScopeGrammar(definition);
+}
+buildGrammar(storedShaped).classifyRisk({ seconds: 60 });
+buildGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
+// A generic interface for the canonical input extends the fields with the default input.
+interface ConsumerDefinition<GD extends ScopeDimensions> extends ScopeCallbackGrammarFields<GD> {
+  readonly provider: 'consumer';
+}
+function buildConsumer<GD extends ScopeDimensions>(definition: ConsumerDefinition<GD>): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar(definition);
+}
+buildConsumer({ provider: 'consumer', dimensions: ttlDims, riskOf: () => 'read' }).classifyRisk({ ttl: 60 });
+// The fields interface keeps normalize optional for any input, but defineScopeGrammar still requires it for a provider-shaped one.
+const fieldsNoNormalize: ScopeCallbackGrammarFields<TtlDims, SecondsInput> = { provider: 'fields', dimensions: ttlDims, riskOf: () => 'read' };
+// @ts-expect-error a provider-shaped fields value without normalize
+defineScopeGrammar(fieldsNoNormalize);
+// @ts-expect-error a provider-shaped fields value without normalize, with explicit type arguments
+defineScopeGrammar<TtlDims, SecondsInput>(fieldsNoNormalize);
+// @ts-expect-error a provider-shaped fields value without normalize, through a generic consumer
+buildGrammar(fieldsNoNormalize);
+// A generic interface over any input that extends the fields does not satisfy the requirement either.
+interface AnyInputConsumerDefinition<GD extends ScopeDimensions, GInput> extends ScopeCallbackGrammarFields<GD, GInput> {
+  readonly provider: 'any-input-consumer';
+}
+function buildAnyInputConsumer<GD extends ScopeDimensions, GInput>(definition: AnyInputConsumerDefinition<GD, GInput>): ScopeCallbackGrammar<GD, GInput> {
+  // @ts-expect-error a fields interface over an unconstrained input may lack the required normalize
+  return defineScopeGrammar(definition);
+}
+void buildAnyInputConsumer;
+// A generic definition type extends the definition by intersection and keeps the normalize requirement.
+type TaggedDefinition<GD extends ScopeDimensions, GInput> = ScopeCallbackGrammarDefinition<GD, GInput> & { readonly provider: 'tagged' };
+const tagged: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, normalize: input => ({ ttl: input.seconds }), riskOf: () => 'read' };
+buildGrammar(tagged).classifyRisk({ seconds: 60 });
+// @ts-expect-error a tagged provider-shaped definition without normalize
+const taggedNoNormalize: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, riskOf: () => 'read' };
+void taggedNoNormalize;
+// @ts-expect-error riskOf returns a closed risk level
+defineScopeGrammar({ provider: 'bad-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'admin' });
+const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;
+void optionalItem;
+const widenedItems: [
+  Equal<ScopeItem<ScopeDimensions>['dimension'], string>,
+  Equal<ScopeItem<typeof mixed>['dimension'], string>,
+  Equal<ScopeItem<typeof templated>['dimension'], string>,
+  Equal<ScopeItem<typeof union>['dimension'], string>,
+] = [true, true, true, true];
+void widenedItems;
+const widenedCallbacks = defineScopeGrammar({ provider: 'widened-callbacks', dimensions: widened, riskOf: () => 'read' });
+// Every callback grammar is accepted where any callback grammar, or any grammar, is.
+const anyCallbacks: AnyScopeCallbackGrammar[] = [callbacks, shaped, widenedCallbacks];
+const anyGrammars: AnyScopeGrammar[] = [callbacks, shaped, widenedCallbacks, dataOnly];
+void anyCallbacks;
+void anyGrammars;
+// @ts-expect-error a data-only grammar is not a callback grammar
+const notCallbacks: AnyScopeCallbackGrammar = dataOnly;
+void notCallbacks;
 `;
 
 function diagnosticsFor(source: string): string[] {

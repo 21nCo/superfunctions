@@ -83,8 +83,10 @@ describe('defineScopeGrammar', () => {
       { provider: 'p', dimensions: {} },
       { provider: 'p', dimensions: [] },
       { provider: 'p' },
+      // normalize needs riskOf: only a callback grammar takes callbacks.
       { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, normalize: (value: unknown) => value },
-      { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' },
+      { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf: 'read' },
+      { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf: () => 'read', normalize: {} },
       { provider: 'p', dimensions: { 'bad name': { kind: 'prefixGlobSet' } } },
       { provider: 'p', dimensions: { __proto__x: { kind: 'prefixGlobSet' } } },
       { provider: 'p', dimensions: { d: { kind: 'exactSet', values: ['repo*'] } } },
