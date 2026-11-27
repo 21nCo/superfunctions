@@ -1,0 +1,22 @@
+plugfn/core/README.md
+  s_192d8000f9c548::t_0c405cfcddf9d0 195,202-204
+  s_192d8000f9c548::t_dca6e31e752cb7 205
+plugfn/CHANGELOG.md
+  s_192d8000f9c548::t_f75a749209c048 6,12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "774b3158113536c74617bfbdefb4767528602326",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+plugfn/core/package.json
+  s_192d8000f9c548::t_6df658d498486e 37
+packages/oauth-testing/package.json
+  s_192d8000f9c548::t_6df658d498486e 42
+authfn/social-oauth/package.json
+  s_192d8000f9c548::t_6df658d498486e 37
+packages/cli/package.json
+  s_192d8000f9c548::t_6df658d498486e 41
+authfn/core/package.json
+  s_192d8000f9c548::t_6df658d498486e 85
+authfn/docs/package.json
+  s_192d8000f9c548::t_6df658d498486e 35
+packages/oauth-flow/package.json
+  s_192d8000f9c548::t_6df658d498486e 3
+packages/oauth-router/package.json
+  s_192d8000f9c548::t_6df658d498486e 42
+packages/cli/turbo.json
+  s_192d8000f9c548::t_c35231a4d975f2 34
+plugfn/CHANGELOG.md
+  s_192d8000f9c548::t_6df658d498486e 9-11,13
+package-lock.json
+  s_192d8000f9c548::t_a8528f66c9a857 1443,1530,4061,58451,59068,59186,59261,59681
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e835df5431d4622aa90e521e4b52fad8b8e5521",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
