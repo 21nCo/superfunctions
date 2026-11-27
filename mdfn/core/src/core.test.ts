@@ -526,6 +526,13 @@ describe("@mdfn/core", () => {
     expect(separately?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
   });
 
+  it("skips holes in a sparse ranges array when mapping anchors", () => {
+    const ranges: { from: number; to: number; insertedLength: number }[] = [];
+    ranges[1] = { from: 0, to: 0, insertedLength: 1 };
+    expect(mapAnchor({ from: 1, to: 2 }, ranges)).toEqual({ from: 2, to: 3 });
+    expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] }, ranges)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+  });
+
   it("reports sidecar changes caused by source anchor mapping", () => {
     const sidecar = {
       comments: [{ id: "thread", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "message", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00.000Z" }] }],
