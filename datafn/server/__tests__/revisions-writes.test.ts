@@ -689,6 +689,27 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
+  it("raises nothing for a delete that removed nothing after another delete's tombstone, in a transaction", async () => {
+    const base = await insertedTask();
+    // Deletes that report no count, in transactions: the second removes nothing.
+    const db = overriding(base, (target) => ({
+      delete: async (p: any) => {
+        await target.deleteMany(p);
+      },
+    }));
+    const entries = [deleteEntry(), deleteEntry()];
+    for (const entry of entries) {
+      await db.transaction(async (tx: Adapter) => {
+        const write = withWriteEvidence(tx);
+        await write.delete({ model: "task", where, namespace: NS } as any);
+        await assignWriteRevisions(write, NS, entry as any, () => false, schema, true);
+      });
+    }
+
+    expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect(entries.map((entry) => entry[0].rev)).toEqual([2, undefined]);
+  });
+
   it("raises once for two count-less deletes of the same row", async () => {
     for (const firstRaisesFirst of [true, false]) {
       const base = await insertedTask();
@@ -702,8 +723,8 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("never raises a write twice when its lost acknowledgement is followed by many other raises", async () => {
-    for (const others of [12, 30]) {
+  it("never raises a write twice, nor acknowledges it, when many other raises follow a lost acknowledgement", async () => {
+    for (const [others, applies] of [[12, true], [30, true], [13, false]] as const) {
       for (const route of ["push", "mutation"] as const) {
         const base = memoryAdapter() as Adapter;
         let loseAck = false;
@@ -714,13 +735,14 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
               if (typeof value !== "function") return value;
               if (key !== "update") return value.bind(internal);
               return async (table: string, ...args: unknown[]) => {
-                const out = await value.apply(internal, [table, ...args]);
-                if (table === "__datafn_revisions" && loseAck && "rev" in (args[1] as Json)) {
-                  loseAck = false;
-                  for (let i = 0; i < others; i++) await bumpRevision(target, NS, "task", "task:1", false);
-                  throw new Error("connection lost after commit");
+                if (table !== "__datafn_revisions" || !loseAck || !("rev" in (args[1] as Json))) {
+                  return value.apply(internal, [table, ...args]);
                 }
-                return out;
+                loseAck = false;
+                // The raise is applied (or not), then other writers raise the record before the failure is seen.
+                if (applies) await value.apply(internal, [table, ...args]);
+                for (let i = 0; i < others; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                throw new Error("connection lost");
               };
             },
           }),
@@ -730,11 +752,14 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         expect((await send({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok).toBe(true);
         loseAck = true;
         const merged = await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
-        const label = `${route} others=${others}`;
+        const label = `${route} others=${others} applies=${applies}`;
 
-        expect(merged.body.ok, label).toBe(true);
-        // insert (1), the merge whose acknowledgement was lost (2), the other raises.
-        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 2 + others, deleted: false });
+        // Whether the merge's raise applied is unknown: it is not raised
+        // again, its change is recorded, and it is not acknowledged.
+        expect(merged.body.ok, label).toBe(false);
+        expect(JSON.stringify(merged.body), label).toContain("INTERNAL");
+        // insert (1), the merge's raise if it applied, the other raises.
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 1 + (applies ? 1 : 0) + others, deleted: false });
         expect(await changeRows(base, "task:1"), label).toHaveLength(2);
       }
     }

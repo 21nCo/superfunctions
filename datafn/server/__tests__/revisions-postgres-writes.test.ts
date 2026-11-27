@@ -53,7 +53,8 @@ async function deleteWithTombstone(tx: Adapter, id: string): Promise<number | un
   const write = withWriteEvidence(tx);
   await write.delete({ model: "task", where: [{ field: "id", operator: "eq", value: id }], namespace: "datafn" } as any);
   const entry: { resource: string; id: string; op: string; record: null; rev?: number } = { resource: "task", id, op: "delete", record: null };
-  await assignWriteRevisions(write, "datafn", [entry], () => false);
+  // In the transaction, as push and /mutation raise inside theirs.
+  await assignWriteRevisions(write, "datafn", [entry], () => false, undefined, true);
   return entry.rev;
 }
 

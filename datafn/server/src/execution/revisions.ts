@@ -200,19 +200,19 @@ async function withCreateLock<T>(key: string, task: () => Promise<T>): Promise<T
 
 /** Inserts the first revision row of a record unless another writer did. */
 /**
- * Changes the revision row's timestamp, locking it and giving the transaction
- * its own version of the latest committed row. Under a snapshot-per-
- * transaction isolation (MySQL InnoDB REPEATABLE READ) a plain read after
- * this sees the latest committed revision. An update that leaves every value
- * as it is creates no such version, so two different timestamps are written:
- * at least one changes the row, and the second leaves the current time.
- * Returns the rows the updates affected (0 when the row does not exist).
+ * Writes the revision row, locking it and giving the transaction its own
+ * version of the latest committed row. Under a snapshot-per-transaction
+ * isolation (MySQL InnoDB REPEATABLE READ) a plain read after this sees the
+ * latest committed revision. An update that leaves every value as it is
+ * creates no such version, so the row's namespace is changed and then set
+ * back, which no other transaction sees. The rest of the row, its raise marks
+ * included, stays as the latest writer left it. Returns the rows the updates
+ * affected (0 when the row does not exist).
  */
-async function writeLatest(db: Adapter, id: unknown, updatedAt: string): Promise<number> {
+async function writeLatest(db: Adapter, id: unknown, namespace: string): Promise<number> {
   const where = [{ field: "id", op: "eq" as const, value: id }];
-  const later = new Date(Date.parse(updatedAt) + 1_000).toISOString();
-  return (await db.internal.update(REVISIONS_TABLE, where, { updated_at: later })) +
-    (await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt }));
+  return (await db.internal.update(REVISIONS_TABLE, where, { namespace: `${namespace}#locked` })) +
+    (await db.internal.update(REVISIONS_TABLE, where, { namespace }));
 }
 
 async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promise<boolean> {
@@ -244,7 +244,7 @@ async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promis
       // the statement); the caller reads it and retries the bump. A plain
       // read may not see that row in this transaction's snapshot, so check by
       // writing it. Any other failure is the write's failure.
-      if ((await writeLatest(db, row.id, String(row.updated_at).split("#")[0])) > 0) {
+      if ((await writeLatest(db, row.id, String(row.namespace))) > 0) {
         return false;
       }
       throw error;
@@ -537,6 +537,14 @@ type RaiseDecision = (row: Record<string, unknown> | null) => Promise<Decided | 
 
 const isTombstone = (row: Record<string, unknown> | null) => row !== null && Number(row.deleted) === 1;
 
+/** Entries whose raise ended `unknown` (see pendingOutcome). */
+const unresolvedEntries = new WeakSet<object>();
+
+/** DATA-41: whether the raise of any of `entries` may be missing; see pendingOutcome. */
+export function hasUnresolvedRevision(entries: ReadonlyArray<object>): boolean {
+  return entries.some((entry) => unresolvedEntries.has(entry));
+}
+
 /** A raise mark's suffix: the raise was a delete's own tombstone, or any other state. */
 const BY_DELETE = ":d";
 const OTHER = ":o";
@@ -565,8 +573,7 @@ interface PendingRaise {
 /**
  * How many raise marks a revision row keeps: more than the raises other
  * writers make while one write retries, and short enough for a 255-character
- * column. Only `writeLatest`, which runs inside transactions (where a failed
- * raise rolls back instead of being adopted), drops them.
+ * column.
  */
 const RAISE_HISTORY = 12;
 
@@ -580,11 +587,13 @@ function raiseMarks(row: Record<string, unknown> | null): string[] {
  * How the raise `pending` last sent ended, read from the record's revision
  * row: `raised` when its mark is kept; `lost` when the marks kept reach back
  * to its revision without it (the i-th mark is the raise to `rev - i`: each
- * raise prepends its mark to the ones it replaced, and only `writeLatest`
- * drops them, all at once), so another writer took that revision or none
- * committed; `unknown` when its mark may have been dropped. An `unknown`
- * raise is never sent again: the record is not raised twice for one write,
- * and its entry carries no revision.
+ * raise prepends its mark to the ones it replaced), so another writer took
+ * that revision or none committed; `unknown` when its mark may have been
+ * dropped (more than RAISE_HISTORY raises since). An `unknown` raise is never
+ * sent again, so the record is not raised twice for one write; its entry
+ * carries no revision, and the write's changes are recorded before the
+ * mutation reports a retryable failure (hasUnresolvedRevision), so it is never
+ * acknowledged with a raise that may be missing.
  */
 function pendingOutcome(row: Record<string, unknown> | null, pending: PendingRaise): "raised" | "lost" | "unknown" {
   const marks = raiseMarks(row);
@@ -622,7 +631,7 @@ async function raiseRevision(
     // A retry follows a write that committed after this transaction's read;
     // a plain read in a snapshot would return the same stale revision again.
     // A decision that depends on the latest row locks it before reading.
-    if ((attempt > 0 && transactionsUsable(db)) || options.lockFirst) await writeLatest(db, id, updatedAt);
+    if ((attempt > 0 && transactionsUsable(db)) || options.lockFirst) await writeLatest(db, id, namespace);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
     const decided = await decide(row);
     if (decided === undefined) return undefined;
@@ -991,6 +1000,7 @@ async function raiseFromEvidence(
   const outcome: BumpOutcome = {};
   const lockFirst = unproven && transactional;
   const raised = await raiseRevision(db, namespace, entry.resource, entry.id, decide, { lockFirst, outcome, pending });
+  if (raised?.unknown) unresolvedEntries.add(entry);
   entry.rev = !rewritten && !raised?.unknown && raised?.deleted === recordsDelete ? raised.rev : undefined;
   const unverified = evidence.state === "unverified" || evidence.before?.state === "unverified";
   if (raised && (entry.rev === undefined || outcome.staleView || unverified)) {
