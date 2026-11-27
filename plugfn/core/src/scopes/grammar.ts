@@ -59,21 +59,32 @@ function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] 
  * `Function.prototype.call` later changes nothing.
  */
 const intrinsicPromisePrototype = Promise.prototype;
-const intrinsicThen: (value: unknown, onFulfilled: undefined, onRejected: () => void) => unknown = Function.prototype.call.bind(
+const intrinsicThen: (value: unknown, onFulfilled: () => void, onRejected: () => void) => unknown = Function.prototype.call.bind(
   intrinsicPromisePrototype.then,
 ) as never;
+/**
+ * The handlers `markHandled` attaches. Both ignore their argument and return
+ * `undefined`, so the derived promise `then` creates always fulfills with
+ * `undefined`. An absent `onFulfilled` would instead resolve it with the
+ * fulfillment value, and resolving with an object reads that object's `then`,
+ * which may throw and leave the derived promise rejected and unhandled.
+ */
+const ignoreFulfillment = (): void => undefined;
 const ignoreRejection = (): void => undefined;
 
 /**
  * The intrinsics promise containment reads, captured once at load. `Object`,
  * `Function.prototype` and `Object.prototype` are pinned by identity: the
  * ambient species check compares the live chain against them, so a Proxy or
- * any other object put in their place is never read through.
+ * any other object put in their place is never read through. `Object.hasOwn`
+ * and the reflection functions below are captured too, so containment never
+ * looks anything up on the live global `Object`.
  */
 const IntrinsicObject = Object;
 const intrinsicObjectPrototype: object = Object.prototype;
 const intrinsicFunctionPrototype: object = Function.prototype;
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 const getPrototype = Object.getPrototypeOf;
 const setPrototype = Object.setPrototypeOf;
 const isExtensible = Object.isExtensible;
@@ -81,10 +92,13 @@ const speciesSymbol: symbol = Symbol.species;
 /** `Object.prototype.toString`, captured at load and bound as `call`. */
 const objectToString: (value: unknown) => string = Function.prototype.call.bind(Object.prototype.toString) as never;
 
-/** Applies the intrinsic `then` with a no-op rejection handler; `false` when it throws. */
+/**
+ * Applies the intrinsic `then` with no-op fulfillment and rejection handlers
+ * (neither reads its argument); `false` when it throws.
+ */
 function markHandled(value: object): boolean {
   try {
-    intrinsicThen(value, undefined, ignoreRejection);
+    intrinsicThen(value, ignoreFulfillment, ignoreRejection);
     return true;
   } catch {
     return false;
@@ -117,7 +131,7 @@ function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
 function ambientSpeciesIsDefault(): boolean {
   try {
     const constructor = getOwnDescriptor(intrinsicObjectPrototype, 'constructor');
-    if (constructor === undefined || !Object.hasOwn(constructor, 'value') || constructor.value !== IntrinsicObject) return false;
+    if (constructor === undefined || !hasOwn(constructor, 'value') || constructor.value !== IntrinsicObject) return false;
     if (getPrototype(IntrinsicObject) !== intrinsicFunctionPrototype || getPrototype(intrinsicFunctionPrototype) !== intrinsicObjectPrototype) return false;
     return (
       getOwnDescriptor(IntrinsicObject, speciesSymbol) === undefined &&
@@ -200,7 +214,7 @@ function containPromise(value: unknown): void {
       restore = () => {
         defineOwnProperty(value, 'constructor', saved);
       };
-    } else if (Object.hasOwn(current, 'value') && current.writable === true) {
+    } else if (hasOwn(current, 'value') && current.writable === true) {
       neutral = dataDescriptor(undefined, false);
       const savedValue: unknown = current.value;
       restore = () => {
@@ -1000,7 +1014,10 @@ function comparePrefixGlob(name: string, request: readonly string[], envelope: r
 /**
  * A definition callback, or `undefined` when it is absent. Throws `TypeError`
  * for anything but a function, and for an `async` function or async generator
- * (in any realm), because the engine never awaits a callback.
+ * (in any realm), because the engine never awaits a callback. The check reads
+ * the function's `Object.prototype.toString` tag, so it is a guard against
+ * mistakes, not a proof: trusted code can change the tag with
+ * `Symbol.toStringTag`, and a promise result still fails closed at call time.
  */
 function readCallback(provider: string, label: string, value: unknown): ((arg: never) => unknown) | undefined {
   if (value === undefined) return undefined;

@@ -889,6 +889,88 @@ describe('callbacks are synchronous and a returned promise is contained, never a
     }
   });
 
+  it('keeps the promise its then derives from rejecting when a fulfilled value has a then that throws on a later read', async () => {
+    // Promise.resolve reads `then` once (it is undefined then) and fulfills
+    // with the object. Containment must not resolve the derived promise with
+    // that object, which would read `then` again and reject it unhandled.
+    const reads: number[] = [];
+    const fulfilledWithLateThrowingThen = () => {
+      const index = reads.length;
+      reads.push(0);
+      return Promise.resolve({
+        get then() {
+          reads[index]!++;
+          if (reads[index]! > 1) throw new Error('then read again');
+          return undefined;
+        },
+      });
+    };
+    const viaNormalize = defineScopeGrammar({ provider: 'p', dimensions: names, normalize: fulfilledWithLateThrowingThen as never, riskOf });
+    const viaRisk = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: fulfilledWithLateThrowingThen as never });
+    const scope = viaRisk.normalize({ names: ['a'] }).scope!;
+    const results: unknown[] = [];
+    const seen = await unhandledRejectionsOf(() => {
+      results.push(viaNormalize.isSubset({ names: ['a'] }, { names: ['a'] }).violations);
+      results.push(viaNormalize.normalize({ names: ['a'] }).ok);
+      results.push(thrownBy(() => viaNormalize.classifyRisk({ names: ['a'] })) instanceof ScopeError);
+      results.push(thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError);
+      results.push(thrownBy(() => viaRisk.classifyScope(scope)) instanceof ScopeError);
+    });
+    expect(seen).toEqual([]);
+    expect(results).toEqual([
+      [expect.objectContaining({ side: 'request', code: 'malformed' }), expect.objectContaining({ side: 'envelope', code: 'malformed' })],
+      false,
+      true,
+      true,
+      true,
+    ]);
+    expect(reads).toEqual([1, 1, 1, 1, 1, 1]);
+  });
+
+  it('reads Object.hasOwn captured at load, not through a replaced global Object', async () => {
+    const RealObject = Object;
+    const prototypeConstructor = RealObject.getOwnPropertyDescriptor(RealObject.prototype, 'constructor')!;
+    let armed = false;
+    const viaRisk = defineScopeGrammar({
+      provider: 'p',
+      dimensions: names,
+      riskOf: (() => {
+        armed = true;
+        return RealObject.setPrototypeOf(Promise.reject(new Error('reparented rejected')), RealObject.prototype);
+      }) as never,
+    });
+    // Reading `hasOwn` from the live global arms a throwing
+    // Object.prototype.constructor getter that removes itself on first use,
+    // so a check that read through it would wrongly skip the retry.
+    const liveObject = new Proxy(RealObject, {
+      get(target, key, receiver) {
+        if (key === 'hasOwn' && armed) {
+          armed = false;
+          RealObject.defineProperty(RealObject.prototype, 'constructor', {
+            configurable: true,
+            get() {
+              RealObject.defineProperty(RealObject.prototype, 'constructor', prototypeConstructor);
+              throw new Error('species lookup threw');
+            },
+          });
+        }
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const results: unknown[] = [];
+    const seen = await unhandledRejectionsOf(() => {
+      (globalThis as { Object: unknown }).Object = liveObject;
+      try {
+        results.push(thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError);
+      } finally {
+        (globalThis as { Object: unknown }).Object = RealObject;
+        RealObject.defineProperty(RealObject.prototype, 'constructor', prototypeConstructor);
+      }
+    });
+    expect(seen).toEqual([]);
+    expect(results).toEqual([true]);
+  });
+
   it('never reads or calls the own then of a returned native promise or a plain thenable', async () => {
     const ownThen = vi.fn();
     const thenReads = vi.fn();

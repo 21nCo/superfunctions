@@ -250,12 +250,20 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
  * trusted grammar-author code and must be synchronous. An `async` function
  * (or async generator) is rejected with `TypeError` when the grammar is
- * defined. A plain function that returns a promise fails closed at once
- * (`normalize`: `malformed`; `riskOf`: `ScopeError`). The engine never awaits
- * it and never reads or calls a returned object's own `then`: it applies the
- * intrinsic `Promise.prototype.then` (captured at load) with a no-op
- * rejection handler, which marks a native promise's rejection handled so it
- * cannot surface as an unhandled rejection.
+ * defined; that check reads the function's `Object.prototype.toString` tag,
+ * so it catches mistakes and trusted code could defeat it with
+ * `Symbol.toStringTag`, but the result is still checked at call time. A
+ * function that returns a promise fails closed at once (`normalize`:
+ * `malformed`; `riskOf`: `ScopeError`). The engine never awaits it and never
+ * calls a returned object's own `then`: promise containment applies the
+ * intrinsic `Promise.prototype.then` (captured at load) with no-op
+ * fulfillment and rejection handlers, which marks a native promise's
+ * rejection handled so it cannot surface as an unhandled rejection, and the
+ * promise `then` derives always fulfills. Containment never reads an own
+ * `then` either; a `normalize` result is then copied with `structuredClone`,
+ * which, like any other own enumerable property, reads an own `then` getter
+ * on a non-promise object (a native promise cannot be cloned and fails
+ * before that).
  *
  * `then` looks up the species constructor (`constructor`, then
  * `Symbol.species`) before it attaches the handler, and that lookup can run
