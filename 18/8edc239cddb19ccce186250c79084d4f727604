@@ -1,0 +1,21 @@
+plugfn/core/src/scopes/types.ts
+  s_a95c1deb274c6c::t_772295e8baa379 345-348
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_a95c1deb274c6c::t_65b35842f42606 22,376-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "188edc239cddb19ccce186250c79084d4f727604",
+  "prompts": {},
+  "sessions": {
+    "s_a95c1deb274c6c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21edb-af99-7800-b9ce-84df62430856",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
