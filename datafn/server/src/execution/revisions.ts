@@ -250,6 +250,9 @@ async function createIfAbsent(
       // The insert may have been stored before the adapter failed: a row
       // carrying this insert's raise mark is this insert.
       const stored = await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }]);
+      // Inside a transaction a failed insert never committed on its own (and
+      // lock writes replace marks), so only a kept mark makes it this one.
+      if (stored && inTransaction) return raiseMarks(stored).includes(raiseMarks(row)[0]) ? "created" : "exists";
       if (stored) {
         const ended = pendingOutcome(stored, { rev: 1, mark: raiseMarks(row)[0] });
         if (ended === "raised") return "created";
