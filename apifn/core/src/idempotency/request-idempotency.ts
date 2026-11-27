@@ -1169,13 +1169,18 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   /**
    * The record the store holds now, for a write whose outcome is unknown: its
-   * version and whether it is live (neither released nor expired); undefined
-   * when it cannot be read.
+   * version, whether it has expired and whether it is live (neither released
+   * nor expired). Expiry is judged by the clock after the read returns, never
+   * a value taken before it. Undefined when the store cannot be read.
    */
-  const heldRecord = async (storeKey: string): Promise<{ version: string | null; live: boolean } | undefined> => {
+  const heldRecord = async (storeKey: string): Promise<{ version: string | null; expired: boolean; live: boolean } | undefined> => {
     try {
-      const live = await readLive(storeKey, now());
-      return live.kind === "present" ? { version: live.record.version, live: true } : { version: live.expectedVersion, live: false };
+      const raw = await store.get(storeKey);
+      if (raw === undefined || raw === null) return { version: null, expired: true, live: false };
+      const stored = parseRecord(raw);
+      if (!stored) return undefined;
+      const expired = stored.expiresAt <= now();
+      return { version: stored.version, expired, live: stored.state !== "released" && !expired };
     } catch {
       return undefined;
     }
@@ -1203,13 +1208,13 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * read after that write showed a commit the fallback does not hold.
    * Returns the receipt that decides, or undefined (stale) when a newer
    * writer won and no receipt is left. A rejected write is resolved by
-   * reading the store. When it holds the replacement, a receipt read now
-   * decides, and an empty or unreachable source leaves the receipt validated
-   * after the settle's write. When the fallback is still live, or the store
+   * reading the store. When it holds the replacement within its deadline, a
+   * receipt read now decides, and an empty or unreachable source leaves the
+   * receipt validated after the settle's write. When the fallback is still live, or the store
    * cannot be read, the contradicted fallback may stay live, so settle fails
-   * closed with the write's error. Otherwise (a newer writer, or the
-   * fallback released or expired) the receipt read now decides, and a
-   * failing read throws.
+   * closed with the write's error. Otherwise (a newer writer, the fallback
+   * released or expired, or the replacement expired) the receipt read now
+   * decides, and a failing read throws.
    */
   const replaceFallback = async (
     token: IdempotencyToken,
@@ -1222,7 +1227,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     } catch (error) {
       const held = await heldRecord(token.storeKey);
       if (held === undefined || (held.live && held.version === version)) throw error;
-      if (held.version === next.version) {
+      // The replacement applied and is still within its deadline; an expired one decides like a lost write.
+      if (held.version === next.version && !held.expired) {
         let raw: unknown;
         try {
           raw = await lookupReceipt(token.storeKey);

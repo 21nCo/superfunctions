@@ -2523,7 +2523,7 @@ describe("createRequestIdempotency PR round-7 live-version fence", () => {
     ["released", "rejecting"],
     ["expired", "empty"],
     ["expired", "rejecting"],
-  ] as const)("a rejected replacement over a fallback version that was %s, with an %s lookup, is stale or throws, never the earlier receipt", async (gone, lookup) => {
+  ] as const)("a rejected replacement over a fallback version that was %s, the lookup %s, is stale or throws, never the earlier receipt", async (gone, lookup) => {
     const store = new ScriptedStore();
     const { idempotency, database, clock, state } = world(store);
     const holder = acquired(await idempotency.claim(orderRequest()));
@@ -2567,6 +2567,67 @@ describe("createRequestIdempotency PR round-7 live-version fence", () => {
     });
     expect(await idempotency.settle(holder, { status: 201, body: "book" })).toEqual({ outcome: "stale" });
   });
+
+  it("a fallback that expires while the store read is in flight decides from the receipt, never by the pre-read clock", async () => {
+    class SlowReadStore extends ScriptedStore {
+      onGet: (() => void) | undefined;
+      override async get(storeKey: string) {
+        const record = await super.get(storeKey);
+        const run = this.onGet;
+        this.onGet = undefined;
+        run?.(); // the read completes at the fallback's exact deadline
+        return record;
+      }
+    }
+    const store = new SlowReadStore();
+    const { idempotency, database, clock } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    store.rules.push(
+      {
+        match: (expectedVersion) => expectedVersion === holder.version,
+        before: () => void database.receiptsByKey.set(holder.storeKey, { ...holder, claimId: "test-claim-a", response: earlier }),
+      },
+      {
+        match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version,
+        before: () => void (store.onGet = () => clock.advance(60_000)),
+        reject: "not applied",
+      },
+    );
+    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "committed", response: earlier });
+  });
+
+  it.each(["the holder's own late commit", "an earlier commit of another body"] as const)(
+    "an applied replacement over %s that expired before the store read decides like a lost write",
+    async (commit) => {
+      const store = new ScriptedStore();
+      const { idempotency, database, clock } = world(store);
+      const holder = acquired(await idempotency.claim(orderRequest()));
+      store.rules.push(
+        {
+          match: (expectedVersion) => expectedVersion === holder.version,
+          before: async () => {
+            if (commit === "the holder's own late commit") await database.createOrder(holder, "book");
+            else database.receiptsByKey.set(holder.storeKey, { ...holder, fingerprint: "test-other-body-fingerprint", claimId: "test-claim-a", response: earlier });
+          },
+        },
+        { match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version, reject: "applied" },
+      );
+      // The replacement applies but loses its acknowledgement; its deadline passes and the receipt is pruned before the store read.
+      const failing = store.compareAndSet.bind(store);
+      store.compareAndSet = async (storeKey, expectedVersion, next) => {
+        try {
+          return await failing(storeKey, expectedVersion, next);
+        } catch (error) {
+          if (expectedVersion !== holder.version) {
+            clock.advance(60_001);
+            database.receiptsByKey.clear();
+          }
+          throw error;
+        }
+      };
+      expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "stale" });
+    },
+  );
 
   it("an applied-then-rejected replacement still reports the receipt", async () => {
     const store = new ScriptedStore();
