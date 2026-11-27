@@ -333,6 +333,17 @@ void storedBroad;
 const literalTtl: ScopeCallbackGrammar<TtlDims, { readonly ttl: 60 }> = defineScopeGrammar({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
 literalTtl.classifyRisk({ ttl: 60 });
 defineScopeGrammar<TtlDims, { readonly ttl: 60 }>({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
+// Omitting an optional set dimension keeps the input canonical; omitting a required one does not.
+type TtlNamesDims = { readonly ttl: { kind: 'ttlMax' }; readonly names: { kind: 'exactSet' } };
+const ttlNamesDims: TtlNamesDims = { ttl: { kind: 'ttlMax' }, names: { kind: 'exactSet' } };
+type TtlOnly = { readonly ttl: 60 };
+defineScopeGrammar<TtlNamesDims, TtlOnly>({ provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' });
+const storedOmitSet: ScopeCallbackGrammarDefinition<TtlNamesDims, TtlOnly | ScopeShape<TtlNamesDims>> = { provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' };
+defineScopeGrammar(storedOmitSet).classifyRisk({ ttl: 60 });
+const contextualOmitSet: ScopeCallbackGrammar<TtlNamesDims, TtlOnly> = defineScopeGrammar({ provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' });
+contextualOmitSet.classifyRisk({ ttl: 60 });
+// @ts-expect-error an input without the required ttl, without normalize
+defineScopeGrammar<TtlNamesDims, { readonly names?: readonly string[] }>({ provider: 'omit-ttl', dimensions: ttlNamesDims, riskOf: () => 'read' });
 // Generic factories build risk-only definitions with the canonical input.
 function riskOnlyFor<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
   return defineScopeGrammar({ provider: 'generic', dimensions, riskOf: () => 'read' });
