@@ -2965,4 +2965,85 @@ describe("createRequestIdempotency PR round-4 regressions", () => {
     );
     expect(w.store.records.get(token.storeKey)).toMatchObject({ state: "completed", receiptClaimId: token.claimId });
   });
+
+  it.each([
+    ["claim", "replay"],
+    ["recover", "replay"],
+    ["settle", "settled"],
+    ["release", "committed"],
+  ] as const)("%s reports a receipt kept by its confirmed copy while that copy still holds the key", async (action, outcome) => {
+    class ReadHookStore extends AbsenceHookStore {
+      onRead?: () => void;
+      reads = 0;
+      override async get(storeKey: string): Promise<IdempotencyRecord | undefined> {
+        if (this.onRead && (this.reads += 1) === 2) this.onRead();
+        return super.get(storeKey);
+      }
+    }
+    let beforeNext: (() => void) | undefined;
+    let down = false;
+    const w = world(new ReadHookStore(), (database) => ({
+      find: async (storeKey: string) => {
+        const hook = beforeNext;
+        beforeNext = undefined;
+        hook?.();
+        if (down) throw new Error("receipt lookup failed");
+        return database.receipts.find(storeKey);
+      },
+    }));
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    w.store.records.clear();
+    w.store.beforeAbsenceWrite = async () => {
+      // A concurrent recovery confirms A, so this write loses; the host prunes A before the lookup after the write.
+      expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      beforeNext = () => w.database.receiptsByKey.clear();
+      // After the read that shows A's confirmed copy, A's copy expires, B of another body commits without settling
+      // and the receipt source goes down.
+      w.store.onRead = () => {
+        w.store.records.set(token.storeKey, { ...confirmedOther(w.clock.time), state: "pending", leaseExpiresAt: w.clock.time + 1_000 } as IdempotencyRecord);
+        w.database.receiptsByKey.set(token.storeKey, { ...(token as unknown as IdempotencyReceipt), claimId: "test-b-claim", fingerprint: "test-b-fingerprint", response });
+        down = true;
+      };
+    };
+    const result = await run(action === "claim" || action === "recover" ? w.make() : holder, action, token, response);
+    // A decides only while its confirmed copy still holds the key.
+    expect(result).toMatchObject({ outcome, response: { body: response.body } });
+    expect(w.store.records.get(token.storeKey)).toMatchObject({ receiptClaimId: token.claimId, fingerprint: token.fingerprint });
+  });
+
+  it.each([
+    ["settle", "settled"],
+    ["release", "committed"],
+  ] as const)("%s reports its commit when its last lost confirmation went to a confirmed copy of it whose receipt was pruned", async (action, outcome) => {
+    class SwappingStore extends BumpingStore {
+      receiptWrites = 0;
+      onWrite?: (count: number) => void;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+        if (next?.state === "completed" && next.fromReceipt === true) this.onWrite?.((this.receiptWrites += 1));
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const w = world(new SwappingStore());
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    const confirmed = w.store.records.get(token.storeKey) as IdempotencyRecord;
+    // A crashed writer's provisional copy of A holds the key, and every confirmation of it loses.
+    w.store.records.set(token.storeKey, { ...confirmed, provisional: true } as IdempotencyRecord);
+    let last = 0;
+    w.store.onWrite = (count) => {
+      last = count;
+      // The last confirmation of the final report loses to another reader that confirms A; then A is pruned.
+      if (count === 2 * 8) {
+        w.store.records.set(token.storeKey, confirmed);
+        w.database.receiptsByKey.clear();
+      }
+    };
+    w.store.bumping = true;
+    expect(await run(holder, action, token, response)).toMatchObject({ outcome, response: { body: response.body } });
+    expect(last).toBe(2 * 8);
+  });
 });

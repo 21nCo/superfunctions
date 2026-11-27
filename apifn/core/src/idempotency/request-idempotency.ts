@@ -964,22 +964,27 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * The receipt that decides after a write that lost or failed: the source's
    * answer now, so a newer commit always wins, or, when the source no longer
    * has a receipt or rejects the lookup, the receipt in hand only while the
-   * live record is a confirmed copy of that exact commit. Undefined when no
-   * receipt is left; a malformed receipt fails closed.
+   * live record is a confirmed copy of that exact commit (`looked: false`:
+   * that copy, read after the lookup, is the evidence, so it decides now and
+   * is never passed on as a freshly read receipt). Undefined when no receipt
+   * is left; a malformed receipt fails closed.
    */
-  const recheckReceipt = async (storeKey: string, receipt: ParsedReceipt): Promise<ParsedReceipt | undefined> => {
+  const recheckReceipt = async (
+    storeKey: string,
+    receipt: ParsedReceipt,
+  ): Promise<{ receipt: ParsedReceipt; looked: boolean } | undefined> => {
     const confirmedLive = async () => holdsReceipt(await readLive(storeKey, now()), receipt);
     let raw: unknown;
     try {
       raw = await lookupReceipt(storeKey);
     } catch (error) {
-      if (await confirmedLive()) return receipt;
+      if (await confirmedLive()) return { receipt, looked: false };
       throw error;
     }
     const latest = parseReceipt(storeKey, raw);
-    if (latest) return latest;
+    if (latest) return { receipt: latest, looked: true };
     // No receipt is left: a failed read leaves nothing to report, and the caller decides again from the store.
-    return (await confirmedLive().catch(() => false)) ? receipt : undefined;
+    return (await confirmedLive().catch(() => false)) ? { receipt, looked: false } : undefined;
   };
 
   /** The version a live read shows for the key, also for an expired or released record. */
@@ -1089,20 +1094,24 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       );
     }
     const mayHold = written !== false;
-    let latest: ParsedReceipt | undefined;
+    let rechecked: { receipt: ParsedReceipt; looked: boolean } | undefined;
     try {
       // The source's answer now, or, when it has no receipt or rejects, the receipt in hand while the live record is a
       // confirmed copy of that exact commit (a same-commit writer won the absence and the host then pruned the receipt).
-      latest = await recheckReceipt(storeKey, receipt);
+      rechecked = await recheckReceipt(storeKey, receipt);
     } catch (error) {
       if (mayHold) await retireQuietly(storeKey, version, receipt, generation);
       throw error;
     }
-    if (!latest) {
+    if (!rechecked) {
       // No commit is left: the provisional copy is retired, and a failed retire leaves it provisional.
       if (mayHold) await retireQuietly(storeKey, version, receipt, generation);
       return { kind: "gone" };
     }
+    // The live record, read after the lookup, is a confirmed copy of this exact commit (so not this step's provisional
+    // copy): it decides now, before the copy can expire and another commit take the key.
+    if (!rechecked.looked) return { kind: "failed", receipt: rechecked.receipt };
+    const latest = rechecked.receipt;
     // Confirms only the version this step wrote: the same commit promotes it, a newer one replaces it. Once it is
     // confirmed, the receipt validated after the write decides with no further read.
     if (mayHold && (await confirmCopy(storeKey, version, generation, latest, expiresAt))) {
@@ -1507,8 +1516,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     // decides only once it is read again after that write, or the live record confirms that exact commit.
     if (receipt !== undefined && unverified) {
       const reported = await reportable(token.storeKey, receipt, false);
-      // No receipt is left: like a pruned receipt above, the live record read now decides.
-      return reported === undefined ? decideFromLive(token, undefined) : decided(token, reported);
+      // No receipt is left, or every confirmation lost: like a pruned receipt above, the live record read now decides,
+      // and a confirmed copy of the receipt in hand still reports it.
+      return reported === undefined ? decideFromLive(token, receipt) : decided(token, reported);
     }
     return receipt === undefined ? undefined : decided(token, receipt);
   };
