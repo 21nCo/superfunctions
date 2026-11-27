@@ -2485,6 +2485,123 @@ describe("createRequestIdempotency PR round-3 delta regressions", () => {
     expect(result).toMatchObject({ outcome: "replay", source: "receipt", response: { body: response.body } });
   });
 
+  /** Expires the order key's copy, prunes its receipts and lets a newer claim commit `body` (and settle it). */
+  async function newerCommit(w: ReturnType<typeof world<FakeAtomicStore>>, request: IdempotencyRequest, settle = true) {
+    w.clock.advance(60_001);
+    w.database.receiptsByKey.clear();
+    const other = w.make();
+    const token = acquired(await other.claim(request));
+    const response = await w.database.createOrder(token, "pen");
+    if (settle) expect(await other.settle(token, response)).toMatchObject({ outcome: "settled" });
+    return { token, response };
+  }
+
+  const otherOrder = () => orderRequest({ body: { item: "pen", quantity: 2 } });
+
+  it.each([
+    ["its own copy after a lost acknowledgement", "the same body"],
+    ["its own copy after a lost acknowledgement", "another body"],
+    ["another writer's provisional copy", "the same body"],
+    ["another writer's provisional copy", "another body"],
+  ] as const)("reads the receipt again when confirming %s loses to a newer commit (%s)", async (copyCase, bodyCase) => {
+    const w = world(new AbsenceHookStore());
+    const { token, copy } = await provisionalCopy(w);
+    const newer = bodyCase === "the same body" ? orderRequest() : otherOrder();
+    let newerResponse: IdempotentResponse | undefined;
+    const original = w.store.compareAndSet.bind(w.store);
+    const confirmHook = async () => {
+      newerResponse = (await newerCommit(w, newer)).response;
+    };
+    if (copyCase === "another writer's provisional copy") {
+      w.store.beforeAbsenceWrite = async () => {
+        w.store.records.set(token.storeKey, structuredClone(copy));
+        beforeNextWrite(w.store, confirmHook);
+      };
+    } else {
+      vi.spyOn(w.store, "compareAndSet")
+        .mockImplementationOnce(async (...args) => {
+          await original(...args);
+          throw new Error("store acknowledgement lost");
+        })
+        .mockImplementationOnce(async (...args) => {
+          await confirmHook();
+          return original(...args);
+        });
+    }
+    const result = await w.make().recover(orderRequest());
+    if (bodyCase === "the same body") {
+      expect(result).toMatchObject({ outcome: "replay", source: "receipt", response: { body: newerResponse?.body } });
+    } else {
+      expect(result).toEqual({ outcome: "conflict" });
+    }
+  });
+
+  it("confirms another writer's provisional copy when its own write's acknowledgement was lost unwritten", async () => {
+    const w = world(new AbsenceHookStore());
+    const { token, copy } = await provisionalCopy(w);
+    vi.spyOn(w.store, "compareAndSet").mockImplementationOnce(async () => {
+      w.store.records.set(token.storeKey, structuredClone(copy));
+      throw new Error("store acknowledgement lost");
+    });
+    expect(await w.make().claim(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    expect(w.store.records.get(token.storeKey)).not.toHaveProperty("provisional");
+  });
+
+  it("confirms a newer commit's provisional copy found by the recheck after a lost write", async () => {
+    const w = world(new HookedStore());
+    const token = acquired(await w.make().claim(orderRequest()));
+    await w.database.createOrder(token, "book");
+    w.store.arm(token.version, async () => {
+      // B commits; its record is evicted and a crashed reader leaves an unconfirmed copy of B.
+      const { token: newer, response } = await newerCommit(w, orderRequest(), false);
+      w.store.records.set(token.storeKey, {
+        state: "completed",
+        version: "test-provisional-version",
+        generation: newer.generation,
+        fingerprint: newer.fingerprint,
+        recovery: "receipt",
+        response,
+        expiresAt: w.clock.time + 60_000,
+        fromReceipt: true,
+        receiptClaimId: newer.claimId,
+        provisional: true,
+      } as IdempotencyRecord);
+    });
+    expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    expect(w.store.records.get(token.storeKey)).not.toHaveProperty("provisional");
+    w.database.receiptsByKey.clear();
+    expect(await w.make().claim(orderRequest())).toMatchObject({ outcome: "replay", source: "store" });
+  });
+
+  it.each(["settle", "release"] as const)("%s never decides from a copy replaced while its lookup ran", async (action) => {
+    const store = new HookedStore();
+    let duringLookup: (() => Promise<void>) | undefined;
+    const database = new FakeOrderDatabase();
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey: string) => {
+        const run = duringLookup;
+        duringLookup = undefined;
+        if (run) await run();
+        return database.receipts.find(storeKey);
+      },
+    };
+    const w = { ...world(store, receipts), database };
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await database.createOrder(token, "book");
+    store.arm(token.version, async () => {
+      expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      // The holder's next lookup: the confirmed copy is replaced by a confirmed copy of another body, then pruned.
+      duringLookup = async () => {
+        const confirmed = store.records.get(token.storeKey);
+        store.records.set(token.storeKey, { ...confirmed, version: "test-newer-version", fingerprint: "test-other-fingerprint", receiptClaimId: "test-other-claim" } as IdempotencyRecord);
+        database.receiptsByKey.clear();
+      };
+    });
+    const result = action === "settle" ? await holder.settle(token, response) : await holder.release(token);
+    expect(result).toEqual({ outcome: "conflict" });
+  });
+
   it("frees its unused claim when the receipt it found is gone after a failed write", async () => {
     const producer = world(new FakeAtomicStore());
     const holder = acquired(await producer.make().claim(orderRequest()));
