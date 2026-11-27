@@ -23,6 +23,11 @@ const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
 const CONTROL_FILE_NAME = "meta.json";
 /** Every staging tree this prebuild creates is a temp directory with this name prefix. */
 const STAGING_PREFIX = "docs-llms-snapshot-";
+/**
+ * Each staging tree holds this marker file, written before anything else, so a leftover or concurrent
+ * tree is recognised by its contents; a source directory that merely shares the name prefix is content.
+ */
+export const STAGING_MARKER = { name: ".docs-llms-snapshot", contents: "docs-llms-snapshot staging tree\n" };
 
 /**
  * The provider lists Markdown with fast-glob, which returns every absolute path in forward-slash form.
@@ -34,6 +39,18 @@ function hasGlobRewrittenCharacter(path) {
   return sep === "/" && path.includes("\\");
 }
 
+/** @param {string} directory */
+function isStagingTree(directory) {
+  const marker = join(directory, STAGING_MARKER.name);
+  try {
+    const stats = lstatSync(marker);
+    return stats.isFile() && stats.size === Buffer.byteLength(STAGING_MARKER.contents)
+      && readFileSync(marker, "utf8") === STAGING_MARKER.contents;
+  } catch {
+    return false;
+  }
+}
+
 /** @param {string} path */
 function isDirectory(path) {
   try { return statSync(path).isDirectory(); } catch { return false; }
@@ -42,9 +59,10 @@ function isDirectory(path) {
 /**
  * Relative paths of regular files the provider would list: no dot segments, no symbolic links
  * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`). A staging tree of this
- * prebuild (left by an interrupted build or staged by another one) fails closed instead of being
- * listed as content. So does any entry name the provider's fast-glob listing would rewrite (on POSIX,
- * one containing a backslash, which it turns into a separator and can resolve outside the directory).
+ * prebuild (left by an interrupted build or staged by another one, recognised by its marker file)
+ * fails closed instead of being listed as content; a directory that only shares its name prefix is
+ * listed. So does any entry name the provider's fast-glob listing would rewrite (on POSIX, one
+ * containing a backslash, which it turns into a separator and can resolve outside the directory).
  * @param {string} directory real path of the directory to list
  * @param {{ key: string, sourceDirectory: string }} owner collection being listed, for the error
  * @param {string} [prefix]
@@ -58,7 +76,7 @@ function* listProviderFiles(directory, owner, prefix = "") {
     }
     if (entry.name.startsWith(".")) continue;
     if (entry.isDirectory()) {
-      if (entry.name.startsWith(STAGING_PREFIX)) {
+      if (entry.name.startsWith(STAGING_PREFIX) && isStagingTree(join(directory, entry.name))) {
         throw new Error(`The docs ${owner.key} ${owner.sourceDirectory} contains the LLM prebuild staging tree ${join(owner.sourceDirectory, relativePath)} from an interrupted or concurrent build; remove it and keep TMPDIR (TEMP or TMP on Windows) outside the docs content`);
       }
       yield* listProviderFiles(join(directory, entry.name), owner, relativePath);
@@ -191,6 +209,12 @@ function createCheckedContentSnapshot(root, content) {
   }
   assertStagingOutsideCollections(collections, stagingParent);
   const snapshotBase = mkdtempSync(join(stagingParent, STAGING_PREFIX));
+  try {
+    writeFileSync(join(snapshotBase, STAGING_MARKER.name), STAGING_MARKER.contents, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    rmSync(snapshotBase, { recursive: true, force: true });
+    throw error;
+  }
   const snapshotRoot = join(snapshotBase, "root");
   /** @type {Array<[string, string]>} */
   const prefixes = [[snapshotRoot, root]];

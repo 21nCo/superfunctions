@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { assertEntriesFromSnapshot, assertProviderContentInsideSnapshot, createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
+import { STAGING_MARKER, assertEntriesFromSnapshot, assertProviderContentInsideSnapshot, createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -374,6 +374,7 @@ describe("LLM loader front matter policy", () => {
     ["the assets directory", defaultLayout, "static/docs-llms-snapshot-old", "assetsDir"],
   ])("refuses a staging tree left in %s by an interrupted build", async (_name, content, stale, key) => {
     write("guide/index.md", "# Guide");
+    write(`${stale}/${STAGING_MARKER.name}`, STAGING_MARKER.contents);
     write(`${stale}/collections/docs/meta.json`, '{"title":"Staged"}');
     write(`${stale}/collections/docs/x.md`, "# Staged");
     writeSite(content);
@@ -381,6 +382,36 @@ describe("LLM loader front matter policy", () => {
     expect(error?.message).toContain(`The docs ${key} `);
     expect(error?.message).toContain(`staging tree ${join(cwd, ...stale.split("/"))} `);
     expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it("marks its staging tree so another build recognises it as one", async () => {
+    write("guide/index.md", "# Guide");
+    const markers = [];
+    class RecordingProvider extends FsContentProvider {
+      async listEntries(input) {
+        markers.push(readFileSync(join(input.config.content.root, "..", STAGING_MARKER.name), "utf8"));
+        return super.listEntries(input);
+      }
+    }
+    await loadLlmsSiteSource(cwd, { ...dependencies, FsContentProvider: RecordingProvider });
+    expect(markers).toEqual([STAGING_MARKER.contents]);
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it("publishes source content whose directories only share the staging tree name prefix", async () => {
+    write("guide/index.md", "# Guide");
+    write("guide/docs-llms-snapshot-notes/page.md", "---\ntitle: Notes\n---\nNotes body.");
+    write("guide/docs-llms-snapshot-notes/meta.json", '{"title":"Notes"}');
+    // A marker file name alone, without the staging contents, is not a staging tree either.
+    write(`guide/docs-llms-snapshot-marked/${STAGING_MARKER.name}`, "user content\n");
+    write("guide/docs-llms-snapshot-marked/page.md", "# Marked");
+    write("api/docs-llms-snapshot-schemas/openapi.json", JSON.stringify({ openapi: "3.0.3", info: { title: "Fixture API", version: "1.0.0" }, paths: {} }));
+    write("static/docs-llms-snapshot-images/logo.svg", "<svg/>");
+    const manifest = await expectProviderParity();
+    expect(manifest.pages["docs:docs-llms-snapshot-notes/page.md"]).toMatchObject({ title: "Notes", body: "Notes body." });
+    expect(manifest.pages["docs:docs-llms-snapshot-marked/page.md"]).toMatchObject({ body: "# Marked" });
+    expect(manifest.apis["api:docs-llms-snapshot-schemas/openapi.json"]).toMatchObject({ kind: "api" });
+    // Assets are not in the manifest: the build must simply list them instead of refusing them.
   });
 
   // POSIX only: on Windows a backslash is the separator the provider's fast-glob listing is meant to rewrite.
