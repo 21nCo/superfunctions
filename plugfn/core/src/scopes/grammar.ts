@@ -80,46 +80,50 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Whether an engine-owned clone is plain JSON-like data: objects whose
- * prototype is `Object.prototype`, dense arrays without extra keys, strings,
- * finite numbers, booleans and `null`. Anything else a structured clone can
- * hold (a SharedArrayBuffer, which stays shared with the caller, an
- * ArrayBuffer or view, a Map, Set, Date, RegExp, Error, Blob or boxed value,
- * `undefined` or a bigint) fails. Iterative, so depth cannot overflow the call
- * stack, and each object is visited once: a second visit (a cycle or a shared
- * reference) fails, so the walk is linear in the clone's size.
+ * Where an engine-owned clone stops being plain JSON-like data: `undefined`
+ * when it is plain, the top-level key whose value is not, or `null` for the
+ * root itself. Plain data is objects whose prototype is `Object.prototype`,
+ * dense arrays without extra keys, strings, finite numbers, booleans and
+ * `null`. Anything else a structured clone can hold (a SharedArrayBuffer,
+ * which stays shared with the caller, an ArrayBuffer or view, a Map, Set,
+ * Date, RegExp, Error, Blob or boxed value, `undefined` or a bigint) is not.
+ * Iterative, so depth cannot overflow the call stack, and each object is
+ * visited once: a second visit (a cycle or a shared reference) fails, so the
+ * walk is linear in the clone's size.
  */
-function isPlainData(root: unknown): boolean {
+function notPlainAt(root: unknown): string | null | undefined {
   const seen = new Set<object>();
-  const pending: unknown[] = [root];
+  const pending: [unknown, string | null][] = [[root, null]];
   while (pending.length > 0) {
-    const value = pending.pop();
+    const [value, at] = pending.pop()!;
     if (value === null || typeof value === 'string' || typeof value === 'boolean') continue;
     if (typeof value === 'number') {
       if (Number.isFinite(value)) continue;
-      return false;
+      return at;
     }
-    if (typeof value !== 'object' || seen.has(value)) return false;
+    if (typeof value !== 'object' || seen.has(value)) return at;
     seen.add(value);
     if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype || Object.keys(value).length !== value.length) return false;
+      if (Object.getPrototypeOf(value) !== Array.prototype || Object.keys(value).length !== value.length) return at;
       for (let i = 0; i < value.length; i++) {
-        if (!Object.hasOwn(value, i)) return false;
-        pending.push(value[i]);
+        if (!Object.hasOwn(value, i)) return at;
+        pending.push([value[i], at]);
       }
     } else if (isCloneRecord(value)) {
-      for (const key of Object.keys(value)) pending.push(value[key]);
+      for (const key of Object.keys(value)) pending.push([value[key], value === root ? key : at]);
     } else {
-      return false;
+      return at;
     }
   }
-  return true;
+  return undefined;
 }
 
 /**
  * The members of a cloned array, or why it is not a usable set. The length is
  * checked against {@link SCOPE_LIMITS} before any member is validated (the
  * clone has already copied them), and a hole is rejected rather than skipped.
+ * Scope input reaches this only after {@link notPlainAt}; the definition's
+ * `values` arrive here directly.
  */
 function readArray(value: unknown): readonly unknown[] | string {
   if (!Array.isArray(value)) return 'must be an array of strings';
@@ -149,6 +153,18 @@ function invalidMember(value: unknown, glob: boolean): string | undefined {
  */
 function own(record: object, key: string): unknown {
   return Object.hasOwn(record, key) ? (record as Record<string, unknown>)[key] : undefined;
+}
+
+/**
+ * Throws unless `copy` kept every own property of `raw`: `structuredClone`
+ * silently drops non-enumerable and symbol-keyed properties, and a dropped
+ * bound or dimension would weaken the grammar the types describe.
+ */
+function assertNothingDropped(where: string, raw: unknown, copy: object): void {
+  const keys = typeof raw === 'object' && raw !== null ? Reflect.ownKeys(raw) : undefined;
+  if (!keys || keys.length !== Object.keys(copy).length || keys.some(key => typeof key !== 'string' || !Object.hasOwn(copy, key))) {
+    throw new TypeError(`${where} must have only enumerable string-keyed own properties`);
+  }
 }
 
 /** A frozen null-prototype record holding exactly the given own fields. */
@@ -184,10 +200,11 @@ function compiledDimension(name: string, kind: ScopeDimensionKind, integer: bool
  * are absent. Only own properties are read, so a polluted prototype can never
  * supply a kind or an option.
  */
-function compileDimension(provider: string, name: string, def: unknown): CompileResult {
+function compileDimension(provider: string, name: string, def: unknown, raw: unknown): CompileResult {
   const where = `Scope grammar "${provider}": dimension "${name}"`;
   if (!DIMENSION_NAME.test(name)) throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
   if (!isCloneRecord(def)) throw new TypeError(`${where} must be an object`);
+  assertNothingDropped(where, raw, def);
   const kind = own(def, 'kind');
   if (typeof kind !== 'string' || !Object.hasOwn(DIMENSION_KEYS, kind)) {
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : typeof kind}`);
@@ -417,11 +434,12 @@ function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
 /**
  * A literal `v` is covered by the literal `v` or by a glob `p*` with `p` a
  * prefix of `v`. A glob `q*` is covered only by a glob `p*` with `p` a prefix
- * of `q`. The envelope prefixes are sorted by code unit and form a radix trie,
- * so every request item is checked with one walk over its own characters, each
- * step a bisection over at most 65,536 siblings: the cost of a lookup does not
- * depend on any hash function, and memory is linear in the number of envelope
- * globs.
+ * of `q`. Building the envelope index sorts its glob prefixes by code unit
+ * (O(E log E) comparisons for E envelope globs) and forms a radix trie; every
+ * request item is then checked with one walk over its own characters, each
+ * step a bisection over at most 65,536 siblings, so request evaluation is
+ * linear, the cost of a lookup does not depend on any hash function, and
+ * memory is linear in the number of envelope globs.
  */
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
@@ -476,6 +494,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   const clone = hostClone;
   if (!clone) throw new TypeError('Scope grammars need structuredClone, which this runtime does not provide');
   if (typeof definition !== 'object' || definition === null) throw new TypeError('Scope grammar definition must be an object');
+  // Every own key must be one Object.keys sees: nothing hidden is ignored.
+  if (Reflect.ownKeys(definition).length !== Object.keys(definition).length) {
+    throw new TypeError('Scope grammar definition must have only enumerable string-keyed own properties');
+  }
   for (const key of Object.keys(definition)) {
     if (!DEFINITION_KEYS.has(key)) throw new TypeError(`Scope grammar definition has unsupported option ${JSON.stringify(key)}`);
   }
@@ -495,7 +517,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     throw new TypeError(`Scope grammar "${provider}": dimensions must be plain data`, { cause: error });
   }
   if (!isCloneRecord(dimensionDefs)) throw new TypeError(`Scope grammar "${provider}": dimensions must be an object`);
-  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name)));
+  // The clone must keep every dimension and option the author wrote.
+  assertNothingDropped(`Scope grammar "${provider}": dimensions`, dimensions, dimensionDefs);
+  const rawDimensions = dimensions as Record<string, unknown>;
+  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name), rawDimensions[name]));
   if (results.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
@@ -517,9 +542,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   const fail = (side: Side, message: string, cause: unknown): ParseResult => parseResult(undefined, [malformed(side, message)], cause);
 
   /**
-   * Reads one untrusted input: one structured clone, `normalize` on that
-   * clone once it is checked to be plain data, one clone of its result, and plain validation of the engine-owned
-   * copy. Never throws; messages are fixed and never format a thrown value.
+   * Reads one untrusted input: one structured clone, checked to be plain data;
+   * then `normalize` on that clone and one clone of its result, checked the
+   * same way; then validation of the engine-owned copy. Never throws; messages
+   * are fixed and never format a thrown value.
    */
   const parse = (input: TInput, side: Side): ParseResult => {
     let value: unknown;
@@ -528,9 +554,12 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     } catch (error) {
       return fail(side, 'scope must be plain data that structuredClone can copy', error);
     }
+    // Every engine-owned clone is checked to be plain JSON-like data before
+    // anything reads it: normalize never sees memory shared with the caller,
+    // and validation never meets an extra array key or a shared reference.
     if (normalize) {
-      // normalize sees only plain JSON-like data: never memory shared with the caller.
-      if (!isPlainData(value)) return fail(side, NOT_PLAIN_DATA, undefined);
+      // The input is provider-shaped, so its keys name no dimension.
+      if (notPlainAt(value) !== undefined) return fail(side, NOT_PLAIN_DATA, undefined);
       let mapped: unknown;
       try {
         mapped = normalize(value as TInput);
@@ -542,6 +571,11 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       } catch (error) {
         return fail(side, 'normalize must return plain data that structuredClone can copy', error);
       }
+    }
+    const at = notPlainAt(value);
+    if (at !== undefined) {
+      if (at === null || !byName.has(at)) return fail(side, normalize ? `normalize result: ${NOT_PLAIN_DATA}` : NOT_PLAIN_DATA, undefined);
+      return parseResult(undefined, [malformed(side, `dimension "${at}" must be plain data (arrays, strings, finite numbers) without shared references`, at)]);
     }
     const parsed = parseScope(dims, byName, value, side);
     return Array.isArray(parsed) ? parseResult(undefined, parsed) : parseResult(parsed, []);

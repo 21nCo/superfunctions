@@ -205,21 +205,25 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   /** Provider identifier, for example `github`. */
   readonly provider: string;
   /**
-   * The dimension definitions, read once as their structured clone: own
-   * enumerable data only.
+   * The dimension definitions, read once as their structured clone. A
+   * non-enumerable or symbol-keyed property of this object or of any entry
+   * would be dropped by the clone, so it makes `defineScopeGrammar` throw
+   * `TypeError` instead.
    */
   readonly dimensions: D;
   /**
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
    * envelopes alike. It receives the engine's structured clone of the input,
    * never the caller's object, and only when that clone is plain JSON-like
-   * data: objects (prototype `Object.prototype`), dense arrays, strings,
-   * finite numbers, booleans and `null`, without cycles or shared references.
+   * data: objects (prototype `Object.prototype`), dense arrays without extra
+   * keys, strings, finite numbers, booleans and `null`, without cycles or
+   * shared references.
    * Any other clone (a SharedArrayBuffer, an ArrayBuffer or view, a Map, Set,
    * Date, RegExp, Error, Blob, boxed value or `undefined`) is `malformed` and
-   * `normalize` is not called. Its result is cloned again and validated:
-   * a throw, or a result that is not plain data or does not fit the grammar,
-   * is `malformed`. Defaults to the identity.
+   * `normalize` is not called. Its result is cloned again, checked to be
+   * plain JSON-like data in the same way, and validated: a throw, or a result
+   * that is not plain data or does not fit the grammar, is `malformed`.
+   * Defaults to the identity.
    *
    * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
    * trusted grammar-author code and must be synchronous. An `async` function
@@ -247,12 +251,11 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
  * own enumerable string-keyed data is what counts, getters run once during the
  * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
  * request), and anything that cannot be cloned (a Proxy, a promise, a
- * function) is `malformed`. A clone holding anything other than plain
- * objects, arrays, strings and numbers (a Map, Set, Date, SharedArrayBuffer or
- * boxed value) is `malformed`; with `normalize`, the clone is checked to be
- * plain JSON-like data before `normalize` sees it (see
- * {@link ScopeGrammarDefinition.normalize}), and its result is cloned again
- * and validated the same way. The verdict
+ * function) is `malformed`. Every engine-owned clone, the input's and the
+ * re-cloned `normalize` result alike, must be plain JSON-like data before
+ * anything reads it (see {@link ScopeGrammarDefinition.normalize}): a clone
+ * holding a Map, Set, Date, SharedArrayBuffer, boxed value, an array with an
+ * extra key, a cycle or a shared reference is `malformed`. The verdict
  * covers only that clone. A caller that mints a credential must mint from the
  * frozen `scope` that `isSubset` or `normalize` returns, and classify it with
  * `classifyScope`, never by reading the raw input again.

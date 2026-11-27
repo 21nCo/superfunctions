@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defineScopeGrammar, SCOPE_LIMITS, SCOPE_RISK_LEVELS, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
+import { defineScopeGrammar, SCOPE_LIMITS, SCOPE_RISK_LEVELS, ScopeError, type AnyScopeGrammar, type ScopeRisk } from '../../src/scopes/index.js';
 
 const grammar = defineScopeGrammar({
   provider: 'test-provider',
@@ -44,6 +44,8 @@ function thrownBy(run: () => unknown): ScopeError {
 }
 
 const riskOf = () => 'read' as const;
+const NOT_PLAIN_DATA = 'scope must be plain data (objects, arrays, strings, finite numbers, booleans, null) without cycles or shared references';
+const dimensionNotPlain = (name: string) => `dimension "${name}" must be plain data (arrays, strings, finite numbers) without shared references`;
 
 describe('defineScopeGrammar', () => {
   it('rejects any dimension kind outside the closed set', () => {
@@ -52,6 +54,32 @@ describe('defineScopeGrammar', () => {
         defineScopeGrammar({ provider: 'p', dimensions: { d: { kind } as never }, riskOf }),
       ).toThrow(TypeError);
     }
+  });
+
+  it('throws when the definition holds a property structuredClone would drop', () => {
+    const hidden = <T extends object>(target: T, key: PropertyKey, value: unknown): T =>
+      Object.defineProperty(target, key, { value, enumerable: false });
+    const definitions: [string, unknown][] = [
+      ['a non-enumerable maxSeconds', { ttl: hidden({ kind: 'ttlMax' }, 'maxSeconds', 30) }],
+      ['a non-enumerable max', { rate: hidden({ kind: 'numericMax' }, 'max', 10) }],
+      ['non-enumerable values', { names: hidden({ kind: 'exactSet' }, 'values', ['a']) }],
+      ['a non-enumerable kind', { names: hidden({}, 'kind', 'exactSet') }],
+      ['a non-enumerable dimension', hidden({ names: { kind: 'exactSet' } }, 'ttl', { kind: 'ttlMax', maxSeconds: 30 })],
+      ['a symbol-keyed option', { ttl: { kind: 'ttlMax', maxSeconds: 30, [Symbol('minSeconds')]: 10 } }],
+      ['a symbol-keyed dimension', { names: { kind: 'exactSet' }, [Symbol('ttl')]: { kind: 'ttlMax' } }],
+    ];
+    for (const [label, dimensions] of definitions) {
+      const error = thrownBy(() => defineScopeGrammar({ provider: 'p', dimensions: dimensions as never, riskOf }));
+      expect(error, label).toBeInstanceOf(TypeError);
+      expect(error.message, label).toMatch(/must have only enumerable string-keyed own properties/);
+    }
+    const definition = { provider: 'p', dimensions: { names: { kind: 'exactSet' as const } }, riskOf };
+    expect(() => defineScopeGrammar(hidden({ ...definition }, 'normalize', (x: unknown) => x) as never)).toThrow(TypeError);
+    expect(() => defineScopeGrammar({ ...definition, [Symbol('normalize')]: (x: unknown) => x } as never)).toThrow(TypeError);
+    // The same bounds written as ordinary properties are enforced.
+    const capped = defineScopeGrammar({ provider: 'p', dimensions: { ttl: { kind: 'ttlMax', maxSeconds: 30 } }, riskOf });
+    expect(capped.isSubset({ ttl: 120 }, { ttl: 120 }).ok).toBe(false);
+    expect(capped.dimensions.ttl).toEqual({ kind: 'ttlMax', maxSeconds: 30 });
   });
 
   it('rejects invalid definitions instead of building a permissive grammar', () => {
@@ -396,10 +424,12 @@ describe('fail closed', () => {
       ['an Error', Object.assign(new Error('scope'), base)],
       ['a boxed string', new String('scope')],
     ];
+    // A root that is plain data but not an object fails validation; any other root fails the plain-data check.
+    const notObject = expect.objectContaining({ code: 'malformed', side: 'request', message: 'scope must be a plain object' });
+    const notPlain = expect.objectContaining({ code: 'malformed', side: 'request', message: NOT_PLAIN_DATA });
     for (const [label, scope] of scopes) {
-      expect(violationsOf(scope as never).violations, label).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', message: 'scope must be a plain object' }),
-      ]);
+      const plainRoot = scope === null || typeof scope === 'string' || typeof scope === 'number' || Array.isArray(scope);
+      expect(violationsOf(scope as never).violations, label).toEqual([plainRoot ? notObject : notPlain]);
       expect(grammar.isSubset(base, scope as never).violations, label).toEqual([
         expect.objectContaining({ code: 'malformed', side: 'envelope' }),
       ]);
@@ -420,11 +450,52 @@ describe('fail closed', () => {
     const sparse = ['contents:read'];
     sparse.length = 2;
     expect(violationsOf({ ...base, permissions: sparse }).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions', message: 'dimension "permissions" item 1 is missing' }),
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions', message: dimensionNotPlain('permissions') }),
     ]);
     expect(violationsOf(base, { ...envelope, permissions: sparse }).violations).toEqual([
       expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
     ]);
+  });
+
+  it('rejects arrays with extra keys and shared arrays on either side, without normalize', () => {
+    const withShared = () => Object.assign(['alpha'], { extra: new SharedArrayBuffer(8) });
+    const withPlain = () => Object.assign(['alpha'], { extra: 'x' });
+    for (const labels of [withShared(), withPlain()]) {
+      const failure = (side: string) => expect.objectContaining({ code: 'malformed', side, dimension: 'labels', message: dimensionNotPlain('labels') });
+      expect(violationsOf({ ...base, labels }).violations).toEqual([failure('request')]);
+      expect(violationsOf({ ...base, labels: ['alpha'] }, { ...envelope, labels }).violations).toEqual([failure('envelope')]);
+      expect(grammar.normalize({ ...base, labels } as never)).toEqual({ ok: false, violations: [failure('request')] });
+      const error = thrownBy(() => grammar.classifyRisk({ ...base, labels } as never));
+      expect(error).toBeInstanceOf(ScopeError);
+      expect(error.violations).toEqual([failure('request')]);
+    }
+    // The reviewer's vector: a glob envelope carrying shared memory on an extra key never answers ok.
+    const globs = defineScopeGrammar({ provider: 'globs', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf });
+    const sharedEnvelope = { paths: Object.assign(['a'], { extra: new SharedArrayBuffer(8) }) };
+    expect(globs.isSubset({ paths: ['a'] }, sharedEnvelope).ok).toBe(false);
+    // One array object used for two dimensions is a shared reference.
+    const none: string[] = [];
+    const shared = violationsOf({ ...base, permissions: none, labels: none }).violations;
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({ code: 'malformed', side: 'request' });
+    expect(['permissions', 'labels']).toContain(shared[0]!.dimension);
+  });
+
+  it('checks the item limit on an oversized clone once, with one violation and one getter read', () => {
+    const tooMany: unknown[] = Array.from({ length: SCOPE_LIMITS.maxSetItems + 1 }, (_, i) => `l-${i}`);
+    tooMany[0] = 42;
+    let reads = 0;
+    Object.defineProperty(tooMany, 7, {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return 'l-7';
+      },
+    });
+    expect(violationsOf({ ...base, labels: tooMany }).violations).toEqual([
+      { code: 'malformed', side: 'request', dimension: 'labels', message: `dimension "labels" must have at most ${SCOPE_LIMITS.maxSetItems} items` },
+    ]);
+    expect(reads).toBe(1);
   });
 
   it('never fills a missing value from a polluted prototype', () => {
@@ -450,7 +521,7 @@ describe('fail closed', () => {
     const pollution: Record<string, unknown> = { kind: 'prefixGlobSet', values: ['other'], max: -1, integer: true, normalize: injected };
     Object.assign(objectProto, pollution);
     let missingKind: unknown;
-    let defined: ReturnType<typeof defineScopeGrammar> | undefined;
+    let defined: AnyScopeGrammar | undefined;
     try {
       missingKind = thrownBy(() => defineScopeGrammar({ provider: 'polluted', dimensions: { paths: {} } as never, riskOf }));
       defined = defineScopeGrammar({ provider: 'polluted', dimensions: { names: { kind: 'exactSet' }, rate: { kind: 'numericMax' } }, riskOf });
@@ -512,11 +583,11 @@ describe('fail closed', () => {
     expect(violationsOf({ ...base, labels: tooMany }).violations).toEqual([
       expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels' }),
     ]);
-    // A huge sparse array is rejected for its length, not walked hole by hole.
+    // A huge sparse array is rejected as not plain data from its own key count, not walked hole by hole.
     const huge: string[] = [];
     huge.length = 5_000_000;
     expect(violationsOf(base, { ...envelope, labels: huge }).violations).toEqual([
-      expect.objectContaining({ side: 'envelope', message: `dimension "labels" must have at most ${SCOPE_LIMITS.maxSetItems} items` }),
+      expect.objectContaining({ side: 'envelope', dimension: 'labels', message: dimensionNotPlain('labels') }),
     ]);
     const longest = 'a'.repeat(SCOPE_LIMITS.maxMemberLength);
     expect(violationsOf({ ...base, labels: [longest] }, { ...envelope, labels: [longest] }).ok).toBe(true);
@@ -782,7 +853,7 @@ describe('normalize works on engine-owned copies (I2)', () => {
     expect.objectContaining({
       code: 'malformed',
       side,
-      message: 'scope must be plain data (objects, arrays, strings, finite numbers, booleans, null) without cycles or shared references',
+      message: NOT_PLAIN_DATA,
     });
 
   it('passes only plain JSON-like data to normalize: shared memory and other clonable objects are malformed', () => {
@@ -829,6 +900,25 @@ describe('normalize works on engine-owned copies (I2)', () => {
     const plain = { names: ['a'], flag: true, none: null, count: 1, nested: { list: [{}] } };
     expect(g.normalize(plain as never).ok).toBe(true);
     expect(seen.at(-1)).toEqual(plain);
+  });
+
+  it('checks the re-cloned normalize result for extra array keys and shared arrays', () => {
+    const two = { names: { kind: 'exactSet' as const }, tags: { kind: 'exactSet' as const } };
+    const shared = ['a'];
+    const outputs: [string, unknown, string][] = [
+      ['an extra array key', { names: Object.assign(['a'], { extra: 1 }), tags: [] }, 'names'],
+      ['shared memory on an extra key', { names: Object.assign(['a'], { extra: new SharedArrayBuffer(8) }), tags: [] }, 'names'],
+    ];
+    for (const [label, output, dimension] of outputs) {
+      const g = defineScopeGrammar({ provider: 'out', dimensions: two, normalize: () => output as never, riskOf });
+      const failure = (side: string) => expect.objectContaining({ code: 'malformed', side, dimension, message: dimensionNotPlain(dimension) });
+      expect(g.isSubset({}, {}).violations, label).toEqual([failure('request'), failure('envelope')]);
+      expect(thrownBy(() => g.classifyRisk({})).violations, label).toEqual([failure('request')]);
+    }
+    const sharing = defineScopeGrammar({ provider: 'out', dimensions: two, normalize: () => ({ names: shared, tags: shared }), riskOf });
+    const result = sharing.normalize({});
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'request' })]);
   });
 
   it('rejects cycles and shared references before normalize, and survives deep nesting', () => {
@@ -1210,6 +1300,36 @@ describe('performance', () => {
     });
     expect(result?.ok).toBe(true);
     expect(globs.isSubset({ paths: [`${'a'.repeat(depth)}y`] }, { paths }).ok).toBe(false);
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  it('stays within 50 ms for 10k shuffled envelope globs sharing a 64-unit prefix', () => {
+    // Building the glob index sorts the envelope prefixes (O(E log E)
+    // comparisons); each comparison here first walks the 64-unit shared prefix.
+    const prefix = 'p'.repeat(64);
+    let seed = 0x5eed;
+    const random = () => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed / 2 ** 32;
+    };
+    const shuffled = <T>(items: T[]): T[] => {
+      const out = [...items];
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [out[i], out[j]] = [out[j]!, out[i]!];
+      }
+      return out;
+    };
+    const indexes = Array.from({ length: n }, (_, i) => i);
+    const envelopeGlobs = { paths: shuffled(indexes).map(i => `${prefix}${i}/*`) };
+    const sharedRequest = { paths: shuffled(indexes).map(i => `${prefix}${i}/repo`) };
+    const globs = defineScopeGrammar({ provider: 'shared-prefix', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const elapsed = bestOfThree(() => {
+      result = globs.isSubset(sharedRequest, envelopeGlobs);
+    });
+    expect(result?.ok).toBe(true);
+    expect(globs.isSubset({ paths: [`${prefix}${n}/repo`] }, envelopeGlobs).ok).toBe(false);
     expect(elapsed).toBeLessThan(50);
   });
 
