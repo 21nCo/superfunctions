@@ -639,14 +639,15 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         if (fragment.has(CODE_PARAM)) {
           return fail('malformed-callback', { handoffId, cleanUrl });
         }
-        // The callback query is not trusted: a request id that repeats the
-        // verifier is dropped like any other text that does.
+        // The callback query is not trusted: an error code or request id that
+        // repeats the verifier is dropped like any other text that does.
         const requestId = safeText(url.searchParams.get('auth_request_id'), REQUEST_ID_PATTERN, [record.verifier]);
+        const code = safeText(url.searchParams.get('auth_error_code'), ERROR_CODE_PATTERN, [record.verifier]);
         return fail('provider-error', {
           handoffId,
           cleanUrl,
           error: {
-            code: matching(url.searchParams.get('auth_error_code'), ERROR_CODE_PATTERN) ?? 'AUTHFN_OAUTH_CALLBACK_FAILED',
+            code: code ?? 'AUTHFN_OAUTH_CALLBACK_FAILED',
             message: 'Social sign-in did not complete'
           },
           ...(requestId ? { requestId } : {})
@@ -931,10 +932,6 @@ function compareAndSetSync(
     map.set(key, next);
   }
   return true;
-}
-
-function matching(value: string | null, pattern: RegExp): string | undefined {
-  return value !== null && pattern.test(value) ? value : undefined;
 }
 
 /**

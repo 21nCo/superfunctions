@@ -705,6 +705,49 @@ describe('createBrowserHandoff', () => {
     expect(JSON.stringify(result)).not.toContain(verifier.slice(5, 20));
   });
 
+  it('drops a provider-error code that repeats an uppercase run of the stored verifier', async () => {
+    const { make, store } = setup();
+    // A 32-byte verifier whose first six bytes encode an all-uppercase run, so
+    // a code that passes the error-code pattern can carry verifier text.
+    const realCrypto = globalThis.crypto;
+    const uppercaseRun = Uint8Array.from([0x00, 0x10, 0x83, 0x10, 0x51, 0x87]);
+    vi.stubGlobal('crypto', {
+      subtle: realCrypto.subtle,
+      getRandomValues: <T extends ArrayBufferView>(array: T): T => {
+        realCrypto.getRandomValues(array as unknown as Uint8Array);
+        if (array.byteLength === 32) {
+          (array as unknown as Uint8Array).set(uppercaseRun);
+        }
+        return array;
+      }
+    });
+    let begun: Awaited<ReturnType<ReturnType<typeof make>['begin']>>;
+    try {
+      begun = await make().begin({ returnTo: RETURN_TO });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const run = verifier.slice(0, 8);
+    expect(run).toMatch(/^[A-Z]{8}$/);
+    const url = new URL(begun.start.returnTo);
+    url.searchParams.set('auth_error', 'oauth_callback_failed');
+    url.searchParams.set('auth_error_code', `AUTHFN_${run}`);
+
+    const result = failed(await make().complete(url.href));
+
+    expect(result).toMatchObject({
+      reason: 'provider-error',
+      handoffId: begun.handoffId,
+      error: { code: 'AUTHFN_OAUTH_CALLBACK_FAILED' },
+      cleanUrl: RETURN_TO
+    });
+    const serialized = JSON.stringify(result);
+    for (let index = 0; index + 8 <= verifier.length; index += 1) {
+      expect(serialized).not.toContain(verifier.slice(index, index + 8));
+    }
+  });
+
   it('returns the two-factor challenge of the social callback and retires the handoff', async () => {
     const { make, server, events } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'region-a' });
@@ -1375,7 +1418,7 @@ describe('createBrowserHandoff', () => {
     expect(await redirectFor('mailto:someone@example.test')).toEqual({ status: 302 });
   });
 
-  it('keeps only a root-relative redirect when the request URL is not absolute', async () => {
+  it('keeps a relative redirect as sent when the request URL is not absolute', async () => {
     const redirectFor = async (location: string) => {
       const client = createAuthFnClient({
         baseUrl: '/auth',
@@ -1385,7 +1428,17 @@ describe('createBrowserHandoff', () => {
       return envelope.error.details;
     };
     expect(await redirectFor('/next')).toEqual({ status: 302, redirectTo: '/next' });
-    expect(await redirectFor('next')).toEqual({ status: 302 });
+    expect(await redirectFor('next')).toEqual({ status: 302, redirectTo: 'next' });
+    expect(await redirectFor('../continue')).toEqual({ status: 302, redirectTo: '../continue' });
+    expect(await redirectFor('?step=2')).toEqual({ status: 302, redirectTo: '?step=2' });
+    // An authority, a scheme or secret text is still dropped.
+    expect(await redirectFor('//elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('\\\\elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('/\\elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('mailto:someone@example.test')).toEqual({ status: 302 });
+    expect(await redirectFor('javascript:alert(1)')).toEqual({ status: 302 });
+    expect(await redirectFor(`next?c=${detailsInput.code}`)).toEqual({ status: 302 });
+    expect(await redirectFor(`../${percentEncoded(detailsInput.verifier.slice(10, 18))}`)).toEqual({ status: 302 });
   });
 
   it('keeps only the field of a validation error', async () => {

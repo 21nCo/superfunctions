@@ -446,7 +446,9 @@ function isAbsoluteHttpUrl(value: string): boolean {
  * relative to the request (a path, '../', '?query' or '#fragment' with no
  * scheme and no '//' authority) that resolves against `requestUrl` to such a
  * URL. The value is kept as sent, so the host resolves it as the server meant.
- * Without an absolute request URL only a root-relative path is kept.
+ * Without an absolute request URL it is checked against a placeholder http
+ * base: a reference with no scheme and no authority cannot leave whatever
+ * origin the host resolves it against, nor add credentials.
  */
 function isNavigationTarget(value: string, requestUrl?: string): boolean {
   if (isAbsoluteHttpUrl(value)) {
@@ -457,11 +459,8 @@ function isNavigationTarget(value: string, requestUrl?: string): boolean {
   if (!URL_TEXT_PATTERN.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || /^[/\\][/\\]/.test(value)) {
     return false;
   }
-  if (requestUrl === undefined) {
-    return value.startsWith('/');
-  }
   try {
-    const resolved = new URL(value, requestUrl);
+    const resolved = new URL(value, requestUrl ?? 'http://authfn.invalid/');
     return /^https?:$/.test(resolved.protocol) && !resolved.username && !resolved.password;
   } catch {
     return false;
