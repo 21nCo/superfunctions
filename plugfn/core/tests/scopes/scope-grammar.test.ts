@@ -31,6 +31,16 @@ function violationsOf(request: Record<string, unknown>, env: Record<string, unkn
   return grammar.isSubset(request as never, env as never);
 }
 
+/** An array whose descriptor for `key` cannot be read. */
+function throwingArray(key: string, error: () => unknown = () => new Error(`${key} descriptor failed`)): string[] {
+  return new Proxy(['alpha'], {
+    getOwnPropertyDescriptor(target, property) {
+      if (property === key) throw error();
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+}
+
 describe('defineScopeGrammar', () => {
   it('rejects any dimension kind outside the closed set', () => {
     for (const kind of ['regex', 'numericMin', 'suffixGlob', undefined]) {
@@ -99,8 +109,34 @@ describe('defineScopeGrammar', () => {
     const riskOf = () => 'read' as const;
     for (const length of [Number.NaN, -1, 1.5, SCOPE_LIMITS.maxSetItems + 1]) {
       const values = new Proxy(['a'], {
-        get: (target, key, receiver) => (key === 'length' ? length : (Reflect.get(target, key, receiver) as unknown)),
+        getOwnPropertyDescriptor: (target, key) =>
+          key === 'length' ? { value: length, writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(target, key),
       });
+      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
+    }
+  });
+
+  it('rejects definition keys that have no own data property instead of dropping them', () => {
+    // A Proxy may list a key in ownKeys and report no descriptor for it.
+    const hiding = <T extends object>(target: T, hidden: string) =>
+      new Proxy(target, {
+        getOwnPropertyDescriptor: (t, key) => (key === hidden ? undefined : Reflect.getOwnPropertyDescriptor(t, key)),
+      });
+    const riskOf = () => 'read' as const;
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: { ttl: hiding({ kind: 'ttlMax', maxSeconds: 60 }, 'maxSeconds') as never }, riskOf }),
+    ).toThrow(TypeError);
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: hiding({ ttl: { kind: 'ttlMax' as const } }, 'ttl'), riskOf }),
+    ).toThrow(TypeError);
+    const sparse = ['contents:read'];
+    sparse.length = 2;
+    const inherited = ['contents:read'];
+    inherited.length = 2;
+    Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype) as object, { 1: 'admin' }));
+    const accessor = ['contents:read'];
+    Object.defineProperty(accessor, 0, { get: () => 'admin' });
+    for (const values of [sparse, inherited, accessor]) {
       expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
     }
   });
@@ -142,7 +178,11 @@ describe('defineScopeGrammar', () => {
 
 describe('exactSet dimension', () => {
   it('accepts a subset', () => {
-    expect(violationsOf({ ...base, permissions: ['contents:read'] })).toEqual({ ok: true, violations: [] });
+    expect(violationsOf({ ...base, permissions: ['contents:read'] })).toEqual({
+      ok: true,
+      violations: [],
+      scope: { ...base, permissions: ['contents:read'] },
+    });
   });
 
   it('accepts an equal set, with duplicates and any order', () => {
@@ -307,9 +347,11 @@ describe('fail closed', () => {
   });
 
   it('rejects a set whose reported length is invalid instead of skipping it', () => {
+    // The length descriptor of an array target is writable, so a Proxy may report any value for it.
     const lying = (length: unknown) =>
       new Proxy(['admin'], {
-        get: (target, key, receiver) => (key === 'length' ? length : (Reflect.get(target, key, receiver) as unknown)),
+        getOwnPropertyDescriptor: (target, key) =>
+          key === 'length' ? { value: length, writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(target, key),
       });
     for (const length of [Number.NaN, -1, 0.5, '1', Number.POSITIVE_INFINITY, 5_000_000]) {
       const malformedLength = expect.objectContaining({ code: 'malformed', dimension: 'permissions' });
@@ -379,18 +421,9 @@ describe('fail closed', () => {
 });
 
 describe('unreadable input', () => {
-  function throwingArray(): string[] {
-    const items = ['alpha'];
-    Object.defineProperty(items, 0, {
-      get() {
-        throw new Error('index getter failed');
-      },
-    });
-    return items;
-  }
 
   const hostileScopes: Array<[string, () => unknown]> = [
-    ['an array with a throwing index getter', () => ({ ...base, labels: throwingArray() })],
+    ['an array whose index descriptor trap throws', () => ({ ...base, labels: throwingArray('0') })],
     [
       'a Proxy whose ownKeys trap throws',
       () =>
@@ -415,17 +448,18 @@ describe('unreadable input', () => {
           },
         ),
     ],
+    ['a set whose length descriptor trap throws', () => ({ ...base, labels: throwingArray('length') })],
     [
-      'a set whose length getter throws',
-      () => ({
-        ...base,
-        labels: new Proxy([], {
-          get(target, key, receiver) {
-            if (key === 'length') throw new Error('length getter failed');
-            return Reflect.get(target, key, receiver) as unknown;
+      'a Proxy whose property descriptor trap throws',
+      () =>
+        new Proxy(
+          { ...base },
+          {
+            getOwnPropertyDescriptor() {
+              throw new Error('getOwnPropertyDescriptor trap failed');
+            },
           },
-        }),
-      }),
+        ),
     ],
   ];
 
@@ -464,6 +498,183 @@ describe('unreadable input', () => {
   });
 });
 
+describe('snapshot reads', () => {
+  /** A scope that lists `permissions` in ownKeys but has no descriptor for it. */
+  function listedWithoutDescriptor(permissions: readonly string[]) {
+    return new Proxy(
+      { ...base, permissions },
+      { getOwnPropertyDescriptor: (target, key) => (key === 'permissions' ? undefined : Reflect.getOwnPropertyDescriptor(target, key)) },
+    );
+  }
+
+  it('rejects a listed key without an own data property instead of treating it as absent', () => {
+    const request = listedWithoutDescriptor(['admin']);
+    expect(request.permissions).toEqual(['admin']);
+    expect(violationsOf(request).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions' }),
+    ]);
+    expect(violationsOf(base, listedWithoutDescriptor(['contents:read'])).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
+    ]);
+    expect(grammar.normalize(request).ok).toBe(false);
+    expect(() => grammar.classifyRisk(request)).toThrow(ScopeError);
+  });
+
+  it('decides from the own length and elements, not from a Proxy get trap', () => {
+    // `get` claims an empty array; the own data properties hold ['admin'].
+    const hidden = new Proxy(['admin'], {
+      get: (target, key, receiver) => (key === 'length' ? 0 : (Reflect.get(target, key, receiver) as unknown)),
+    });
+    expect(violationsOf({ ...base, permissions: hidden }).violations).toEqual([
+      expect.objectContaining({ code: 'not_in_envelope', dimension: 'permissions', item: 'admin' }),
+    ]);
+    expect(grammar.classifyRisk({ ...base, permissions: hidden })).toBe('destructive');
+  });
+
+  it('rejects holes, inherited elements and accessor elements on either side', () => {
+    const sparse = ['alpha'];
+    sparse.length = 2;
+    const inherited = ['alpha'];
+    inherited.length = 2;
+    Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype) as object, { 1: 'gamma' }));
+    const accessor = ['alpha'];
+    Object.defineProperty(accessor, 0, { enumerable: true, get: () => 'alpha' });
+    for (const labels of [sparse, inherited, accessor]) {
+      expect(violationsOf({ ...base, labels }).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels', message: expect.stringContaining('own data property') }),
+      ]);
+      expect(violationsOf(base, { ...envelope, labels }).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'labels' }),
+      ]);
+      expect(() => grammar.classifyRisk({ ...base, labels })).toThrow(ScopeError);
+    }
+  });
+
+  it('returns the frozen snapshot it judged, which later reads of the input cannot change', () => {
+    // Reads benign the first time and admin on every later read.
+    let reads = 0;
+    const stateful = new Proxy(
+      { ...base },
+      {
+        getOwnPropertyDescriptor: (target, key) =>
+          key === 'permissions'
+            ? { value: reads++ === 0 ? ['contents:read'] : ['admin'], writable: true, enumerable: true, configurable: true }
+            : Reflect.getOwnPropertyDescriptor(target, key),
+      },
+    );
+    const result = grammar.isSubset(stateful as never, envelope);
+    expect(result.ok).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(stateful, 'permissions')?.value).toEqual(['admin']);
+    const scope = result.scope!;
+    expect(scope.permissions).toEqual(['contents:read']);
+    expect(Object.isFrozen(scope)).toBe(true);
+    expect(Object.isFrozen(scope.permissions)).toBe(true);
+    expect(grammar.classifyScope(scope)).toBe('read');
+    expect(grammar.classifyRisk(stateful as never)).toBe('destructive');
+  });
+
+  it('classifies only snapshots this grammar returned', () => {
+    const normalized = grammar.normalize({ ...base, permissions: ['contents:write'] });
+    expect(normalized.ok && grammar.classifyScope(normalized.scope)).toBe('write');
+    const other = defineScopeGrammar({ provider: 'other', dimensions: grammar.dimensions, riskOf: () => 'read' });
+    const foreign = other.normalize({ ...base, permissions: ['admin'] });
+    expect(foreign.ok).toBe(true);
+    for (const scope of [{ ...base, permissions: ['admin'] }, foreign.ok ? foreign.scope : undefined, null, 'scope']) {
+      expect(() => grammar.classifyScope(scope as never)).toThrow(ScopeError);
+    }
+  });
+});
+
+describe('asynchronous callbacks', () => {
+  /** Runs `body`, lets pending rejections surface, and returns every unhandled rejection Node reported. */
+  async function unhandledRejectionsDuring(body: () => void): Promise<unknown[]> {
+    const seen: unknown[] = [];
+    const listener = (reason: unknown) => seen.push(reason);
+    process.on('unhandledRejection', listener);
+    try {
+      body();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+    return seen;
+  }
+
+  it('rejects a promise from normalize without leaving an unhandled rejection', async () => {
+    const failing = defineScopeGrammar({
+      provider: 'async-normalize',
+      dimensions: { names: { kind: 'exactSet' } },
+      normalize: (async () => {
+        throw new Error('async normalize failed');
+      }) as never,
+      riskOf: () => 'read',
+    });
+    const seen = await unhandledRejectionsDuring(() => {
+      expect(failing.isSubset({}, {}).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
+        expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
+      ]);
+      expect(failing.normalize({}).ok).toBe(false);
+      expect(() => failing.classifyRisk({})).toThrow(ScopeError);
+    });
+    expect(seen).toEqual([]);
+    const resolving = defineScopeGrammar({
+      provider: 'async-normalize-ok',
+      dimensions: { names: { kind: 'exactSet' } },
+      normalize: (async () => ({ names: [] })) as never,
+      riskOf: () => 'read',
+    });
+    expect(resolving.isSubset({}, {}).ok).toBe(false);
+  });
+
+  it('rejects a promise from riskOf with a ScopeError without leaving an unhandled rejection', async () => {
+    const failing = defineScopeGrammar({
+      provider: 'async-risk',
+      dimensions: { names: { kind: 'exactSet' } },
+      riskOf: (async () => {
+        throw new Error('async riskOf failed');
+      }) as never,
+    });
+    const seen = await unhandledRejectionsDuring(() => {
+      expect(() => failing.classifyRisk({ names: ['a', 'b'] })).toThrow(ScopeError);
+    });
+    expect(seen).toEqual([]);
+    const resolving = defineScopeGrammar({
+      provider: 'async-risk-ok',
+      dimensions: { names: { kind: 'exactSet' } },
+      riskOf: (async () => 'read') as never,
+    });
+    expect(() => resolving.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
+  });
+
+  it('rejects hostile thenables without throwing', () => {
+    class HostilePromise extends Promise<unknown> {
+      static override get [Symbol.species](): PromiseConstructor {
+        throw new Error('species getter failed');
+      }
+    }
+    const thenGetter = Object.defineProperty({}, 'then', {
+      get() {
+        throw new Error('then getter failed');
+      },
+    });
+    for (const result of [HostilePromise.resolve({ names: [] }), thenGetter, { then: () => undefined }]) {
+      const hostile = defineScopeGrammar({
+        provider: 'hostile-thenable',
+        dimensions: { names: { kind: 'exactSet' } },
+        normalize: () => result as never,
+        riskOf: () => result as never,
+      });
+      expect(hostile.isSubset({}, {}).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request' }),
+        expect.objectContaining({ code: 'malformed', side: 'envelope' }),
+      ]);
+      const plain = defineScopeGrammar({ provider: 'hostile-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => result as never });
+      expect(() => plain.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
+    }
+  });
+});
+
 describe('unreadable error messages', () => {
   /** An error whose `message` getter returns the given values in turn. */
   function shiftingError(...reads: unknown[]): Error {
@@ -498,15 +709,7 @@ describe('unreadable error messages', () => {
   });
 
   it.each(cases)('formats a scope-reading error whose message reads as %s without throwing', (_label, make, text) => {
-    const hostile = () => {
-      const labels = ['alpha'];
-      Object.defineProperty(labels, 0, {
-        get: () => {
-          throw make();
-        },
-      });
-      return { ...base, labels };
-    };
+    const hostile = () => ({ ...base, labels: throwingArray('0', make) });
     expect(violationsOf(hostile()).violations).toEqual([
       expect.objectContaining({ code: 'malformed', side: 'request', message: `scope could not be read: ${text}` }),
     ]);
@@ -641,7 +844,8 @@ describe('performance', () => {
   // 5k ids + 4,999 paths + 1 ttl = 10k items.
   const request = { ids, paths: requestPaths, ttl: 60 };
   const env = { ids: [...ids].reverse(), paths: envelopePaths, ttl: 60 };
-  const uncovered = { ids, paths: [...requestPaths, 'team-0/last'], ttl: 60 };
+  // 5k ids + 4,999 paths + 1 ttl = 10k items, every one outside the envelope below.
+  const uncovered = { ids, paths: requestPaths, ttl: 61 };
   const writeLast = { ids: [...ids.slice(0, -1), 'w-last'], paths: requestPaths, ttl: 60 };
 
   /** Best of three timed runs after a warm-up, so scheduler noise from parallel suites does not decide the result. */
@@ -661,7 +865,7 @@ describe('performance', () => {
     const elapsed = bestOfThree(() => {
       result = big.isSubset(request, env);
     });
-    expect(result).toEqual({ ok: true, violations: [] });
+    expect(result).toEqual({ ok: true, violations: [], scope: expect.objectContaining({ ttl: 60 }) });
     expect(elapsed).toBeLessThan(50);
   });
 
@@ -723,6 +927,25 @@ describe('performance', () => {
     expect(result?.violations).toHaveLength(n);
     expect(globs.isSubset({ paths: [`${colliding[n - 1]}/repo`] }, collidingEnvelope).ok).toBe(true);
     expect(elapsed).toBeLessThan(50);
+  });
+
+  it('keeps long envelope globs cheap: memory and time follow the item count, not a node per character', () => {
+    // 1,000 envelope globs of the maximum member length (about 4M characters)
+    // and 1,000 maximum-length literals under them. A per-character trie
+    // allocates about 4M nodes here and takes seconds.
+    const count = 1_000;
+    const filler = 'x'.repeat(SCOPE_LIMITS.maxMemberLength - 5);
+    const prefixes = Array.from({ length: count }, (_, i) => `${String(i).padStart(4, '0')}${filler}`);
+    const globs = defineScopeGrammar({ provider: 'long-globs', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    const longEnvelope = { paths: prefixes.map(prefix => `${prefix}*`) };
+    const longRequest = { paths: prefixes.map(prefix => `${prefix}r`) };
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const elapsed = bestOfThree(() => {
+      result = globs.isSubset(longRequest, longEnvelope);
+    });
+    expect(result?.ok).toBe(true);
+    expect(globs.isSubset({ paths: [`${prefixes[0]!.slice(0, -1)}y`] }, longEnvelope).ok).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 
   it('classifies 10k items in under 50 ms', () => {

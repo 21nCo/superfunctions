@@ -135,10 +135,14 @@ export interface ScopeViolation {
   readonly message: string;
 }
 
-export interface ScopeSubsetResult {
-  readonly ok: boolean;
-  readonly violations: readonly ScopeViolation[];
-}
+/**
+ * The result of `isSubset`. When `ok`, `scope` is the engine's frozen snapshot
+ * of the request: exactly the values the verdict covers. Mint from it, never
+ * by reading the raw request again.
+ */
+export type ScopeSubsetResult<D extends ScopeDimensions = ScopeDimensions> =
+  | { readonly ok: true; readonly violations: readonly ScopeViolation[]; readonly scope: NormalizedScope<D> }
+  | { readonly ok: false; readonly violations: readonly ScopeViolation[]; readonly scope?: undefined };
 
 export type ScopeNormalizeResult<D extends ScopeDimensions> =
   | { readonly ok: true; readonly scope: NormalizedScope<D> }
@@ -150,17 +154,32 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   readonly dimensions: D;
   /**
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
-   * envelopes alike. Its output is validated; a throw or an output that does
-   * not fit the grammar is rejected. Defaults to the identity.
+   * envelopes alike. Its output is validated; a throw, a promise or an output
+   * that does not fit the grammar is rejected. Must be synchronous. Defaults
+   * to the identity.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**
-   * Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS};
-   * any other result, or a throw, makes `classifyRisk` throw `ScopeError`.
+   * Risk of one requested item. Must synchronously return one of
+   * {@link SCOPE_RISK_LEVELS}; any other result (a promise included), or a
+   * throw, makes `classifyRisk` throw `ScopeError`.
    */
   readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }
 
+/**
+ * A defined scope grammar.
+ *
+ * Trust boundary: every verdict covers only the snapshot the engine read.
+ * Inputs are expected to be plain data. The engine reads each object only
+ * through its own data properties, once each (a key listed without a data
+ * property, a hole, an inherited or accessor element, or an inconsistent
+ * array length is `malformed`), and never re-reads it. A caller that mints a
+ * credential must mint from the frozen `scope` that `isSubset` or `normalize`
+ * returns, and classify that same snapshot with `classifyScope`, never by
+ * reading the raw input again: a getter or Proxy may answer differently on
+ * the next read.
+ */
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
   /**
@@ -179,10 +198,16 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInpu
    * the envelope. A malformed or unreadable request or envelope is never
    * widened, and never throws: it yields `malformed` violations.
    */
-  isSubset(request: TInput, envelope: TInput): ScopeSubsetResult;
+  isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D>;
   /**
    * Maximum `riskOf` over all requested items; `read` for an empty request.
    * Throws `ScopeError` for a malformed request or an invalid `riskOf` result.
    */
   classifyRisk(request: TInput): ScopeRisk;
+  /**
+   * `classifyRisk` for a frozen `scope` this grammar returned from `isSubset`
+   * or `normalize`, without reading any caller input again. Throws
+   * `ScopeError` for any other value or an invalid `riskOf` result.
+   */
+  classifyScope(scope: NormalizedScope<D>): ScopeRisk;
 }

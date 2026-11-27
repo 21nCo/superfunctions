@@ -130,17 +130,18 @@ const grammar = defineScopeGrammar({
 grammar.isSubset(
   { permissions: ['contents:read'], repositories: ['org/app'], ttl: 900 },
   { permissions: ['contents:read'], repositories: ['org/*'], ttl: 3600 },
-); // { ok: true, violations: [] }
+); // { ok: true, violations: [], scope: { permissions: ['contents:read'], repositories: ['org/app'], ttl: 900 } }
 grammar.classifyRisk({ permissions: ['contents:write'], repositories: [], ttl: 900 }); // 'write'
 ```
 
 - Only four dimension kinds exist: `exactSet`, `prefixGlobSet` (a single trailing `*`), `numericMax` and `ttlMax` (whole seconds). An unknown kind, or an option a kind does not have (such as `max` on a `ttlMax` dimension), throws `TypeError` when the grammar is defined.
 - The grammar is frozen and evaluates from its own copy of the definition, so later changes to the definition object or `grammar.dimensions` cannot change a decision.
-- An optional `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit, a non-finite number, or input that throws while being read) is rejected as `malformed`, never widened. `isSubset` and `normalize` report this in their result and do not throw.
+- An optional synchronous `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit, a non-finite number, a promise, or input that throws while being read) is rejected as `malformed`, never widened. `isSubset` and `normalize` report this in their result and do not throw. A promise returned by `normalize` or `riskOf` gets a rejection handler, so it never becomes an unhandled rejection.
+- Trust boundary: a verdict covers only the snapshot the engine read. Inputs are expected to be plain data. The engine reads every object and array only through its own data properties, once each: a key listed without a data property, an accessor, a hole, an inherited element or an invalid own `length` is `malformed`, and a getter or Proxy `get` trap is never consulted. When `isSubset` succeeds it returns that frozen snapshot as `scope`. Mint from `scope` and classify it with `grammar.classifyScope(scope)`; never read the raw request again, because a getter or Proxy can answer differently the next time. `classifyScope` accepts only a snapshot the same grammar returned.
 - A dimension entry must be an object: an `undefined` dimension throws `TypeError` when the grammar is defined. Optional options left `undefined` are treated as absent.
 - `SCOPE_LIMITS` bounds the input: a set may hold at most `maxSetItems` (100,000) items and a member at most `maxMemberLength` (4,096) characters. A larger set, a member over the limit, or an array that reports an invalid length is `malformed`.
 - `classifyRisk` returns the highest `riskOf` result over every requested item. It calls `riskOf` for every item, so it throws `ScopeError` for a malformed request, or when `riskOf` throws or returns anything other than `read`, `write` or `destructive` for any item, whatever the item order.
-- Evaluation is linear in the input size; glob coverage uses a character trie, so it does not depend on hashing.
+- Evaluation is linear in the input size. Glob coverage uses a radix trie whose edges are ranges of the envelope strings, so it does not depend on hashing and its memory grows with the number of envelope globs, not their length.
 
 ## OAuth migration
 

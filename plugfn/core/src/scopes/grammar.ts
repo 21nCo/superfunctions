@@ -108,16 +108,59 @@ function describeError(error: unknown): string {
   return message.length > MAX_ERROR_MESSAGE_LENGTH ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}...` : message;
 }
 
+/** Marks a key that has no own data property. */
+const NO_DATA = Symbol('no own data property');
+
 /**
- * Reads an array's length once and checks it, so a Proxy cannot report a
- * length (NaN, negative, huge) that skips or inflates the member scan.
- * Returns the length, or why it is unusable.
+ * Reads one own data property, once, through its descriptor. Returns
+ * {@link NO_DATA} for a missing key, a hole, an inherited value or an
+ * accessor, so no getter or Proxy `get` trap ever runs.
  */
-function readSetLength(array: readonly unknown[]): number | string {
-  const length: unknown = array.length;
+function ownData(target: object, key: string | number): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  return descriptor !== undefined && 'value' in descriptor ? descriptor.value : NO_DATA;
+}
+
+/**
+ * Snapshots an array's members: its own data `length` (a safe integer within
+ * {@link SCOPE_LIMITS}) and an own data property at every index below it, each
+ * read once. Returns the copy, or why the array is unusable.
+ */
+function readOwnArray(array: object): unknown[] | string {
+  const length = ownData(array, 'length');
   if (!Number.isSafeInteger(length) || (length as number) < 0) return 'has an invalid length';
   if ((length as number) > MAX_SET_ITEMS) return `must have at most ${MAX_SET_ITEMS} items`;
-  return length as number;
+  const items: unknown[] = [];
+  for (let i = 0; i < (length as number); i++) {
+    const item = ownData(array, i);
+    if (item === NO_DATA) return `item ${i} must be an own data property`;
+    items.push(item);
+  }
+  return items;
+}
+
+/** Ignores a rejection; see {@link isNativePromise}. */
+function ignoreRejection(): void {
+  // Intentionally empty: the engine has already rejected the promise as a result.
+}
+
+/**
+ * Whether a callback result is a native promise. A rejection handler is
+ * attached first, so a rejecting async `normalize` or `riskOf` never becomes
+ * an unhandled rejection. Never throws: `Promise.prototype.then` brand-checks
+ * its receiver without running a trap, and any error from a hostile promise
+ * subclass is swallowed.
+ */
+function isNativePromise(value: unknown): boolean {
+  if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return false;
+  try {
+    Promise.prototype.then.call(value, undefined, ignoreRejection);
+    return true;
+  } catch {
+    // Not a native promise, or a promise subclass whose species constructor
+    // throws. Either way the value is not a valid result and is rejected.
+    return false;
+  }
 }
 
 function malformed(side: Side, message: string, dimension?: string, item?: string | number): ScopeViolation {
@@ -126,7 +169,8 @@ function malformed(side: Side, message: string, dimension?: string, item?: strin
 
 /**
  * Reads a definition object's own data properties once, rejecting any key
- * outside `allowed` (when given), symbol keys and accessors, so a mistyped
+ * outside `allowed` (when given), symbol keys, accessors and keys listed
+ * without a property (a Proxy can list one), so a mistyped
  * option (for example a `max` on a ttlMax dimension) fails at definition time
  * instead of being silently dropped. Keys whose value is `undefined` are kept:
  * callers treat an undefined option as absent, but a dimension entry must be
@@ -136,10 +180,9 @@ function readDefinitionFields(where: string, value: object, allowed?: ReadonlySe
   const fields = new Map<string, unknown>();
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== 'string') throw new TypeError(`${where} has unsupported option a symbol key`);
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) continue;
-    if (!('value' in descriptor)) throw new TypeError(`${where} option "${key}" must be a data property`);
-    fields.set(key, descriptor.value);
+    const field = ownData(value, key);
+    if (field === NO_DATA) throw new TypeError(`${where} option ${JSON.stringify(key)} must be an own data property`);
+    fields.set(key, field);
   }
   if (allowed !== undefined) {
     for (const key of fields.keys()) {
@@ -190,11 +233,10 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
       const values = fields.get('values');
       if (values === undefined) return { compiled: Object.freeze({ name, kind: 'exactSet', integer: false }), published: publish(published) };
       if (!Array.isArray(values)) throw new TypeError(`${where} values must be an array`);
-      const length = readSetLength(values);
-      if (typeof length === 'string') throw new TypeError(`${where} values ${length}`);
+      const members = readOwnArray(values);
+      if (typeof members === 'string') throw new TypeError(`${where} values ${members}`);
       const copy: string[] = [];
-      for (let i = 0; i < length; i++) {
-        const value: unknown = values[i];
+      for (const value of members) {
         const reason = invalidMember(value, false);
         if (reason) throw new TypeError(`${where} value ${reason}`);
         copy.push(value as string);
@@ -244,16 +286,16 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
     out.push(malformed(side, `dimension "${dim.name}" must be an array of strings`, dim.name));
     return undefined;
   }
-  const length = readSetLength(raw);
-  if (typeof length === 'string') {
-    out.push(malformed(side, `dimension "${dim.name}" ${length}`, dim.name));
+  const members = readOwnArray(raw);
+  if (typeof members === 'string') {
+    out.push(malformed(side, `dimension "${dim.name}" ${members}`, dim.name));
     return undefined;
   }
   const glob = dim.kind === 'prefixGlobSet';
   const seen = new Set<string>();
   const before = out.length;
-  for (let i = 0; i < length; i++) {
-    const value: unknown = raw[i];
+  for (let i = 0; i < members.length; i++) {
+    const value = members[i];
     const reason = invalidMember(value, glob);
     if (reason) {
       out.push(malformed(side, `dimension "${dim.name}" item ${i} ${reason}`, dim.name, typeof value === 'string' ? value : undefined));
@@ -282,28 +324,36 @@ function parseScalar(dim: CompiledDimension, raw: unknown, side: Side, out: Scop
   return raw as number;
 }
 
-/** Validates a normalised scope against the grammar. Never widens. May throw on hostile input; see `parse`. */
+/**
+ * Validates a normalised scope against the grammar. Never widens. Reads each
+ * listed key once, through its own data descriptor, and decides only from that
+ * snapshot. May throw on hostile input (a throwing Proxy trap); see `parse`.
+ */
 function parseScope(dims: readonly CompiledDimension[], byName: ReadonlyMap<string, CompiledDimension>, raw: unknown, side: Side): ParsedScope | ScopeViolation[] {
   if (!isPlainObject(raw)) return [malformed(side, 'scope must be a plain object')];
   const out: ScopeViolation[] = [];
+  const listed = new Set<string>();
+  const fields = new Map<string, unknown>();
   for (const key of Reflect.ownKeys(raw)) {
     if (typeof key !== 'string' || !byName.has(key)) {
       out.push(malformed(side, `unknown dimension ${typeof key === 'string' ? JSON.stringify(key) : 'with a symbol key'}`));
+      continue;
     }
+    listed.add(key);
+    const value = ownData(raw, key);
+    if (value === NO_DATA) out.push(malformed(side, `dimension "${key}" must be an own data property`, key));
+    else fields.set(key, value);
   }
   const scope: ParsedScope = new Map();
   for (const dim of dims) {
-    const descriptor = Object.getOwnPropertyDescriptor(raw, dim.name);
-    if (!descriptor) {
+    if (!fields.has(dim.name)) {
+      if (listed.has(dim.name)) continue;
       if (isSetKind(dim)) scope.set(dim.name, Object.freeze([]));
       else out.push(malformed(side, `dimension "${dim.name}" is required`, dim.name));
       continue;
     }
-    if (!('value' in descriptor)) {
-      out.push(malformed(side, `dimension "${dim.name}" must be a data property`, dim.name));
-      continue;
-    }
-    const value = isSetKind(dim) ? parseSet(dim, descriptor.value, side, out) : parseScalar(dim, descriptor.value, side, out);
+    const field = fields.get(dim.name);
+    const value = isSetKind(dim) ? parseSet(dim, field, side, out) : parseScalar(dim, field, side, out);
     if (value !== undefined) scope.set(dim.name, value);
   }
   return out.length > 0 ? out : scope;
@@ -318,75 +368,104 @@ function compareExact(name: string, request: readonly string[], envelope: readon
   }
 }
 
-/** A character trie over the envelope's glob prefixes. */
-interface PrefixNode {
-  /** Some envelope prefix ends at this node. */
-  end: boolean;
-  next: Map<number, PrefixNode> | undefined;
+/**
+ * A node of a compressed (radix) trie over the envelope's glob prefixes. The
+ * edge into a node is `source[start, end)`: a range of an envelope string, not
+ * a copy. Every node but the root ends at least one edge with two or more
+ * children or at a prefix, so the trie has at most two nodes per prefix and
+ * its memory does not grow with prefix length.
+ */
+interface RadixNode {
+  source: string;
+  start: number;
+  end: number;
+  /** Some envelope prefix ends at this node; it covers everything below. */
+  terminal: boolean;
+  children: Map<number, RadixNode> | undefined;
 }
 
-function buildPrefixTrie(prefixes: readonly string[]): PrefixNode {
-  const root: PrefixNode = { end: false, next: undefined };
-  for (const prefix of prefixes) {
-    let node = root;
-    for (let i = 0; i < prefix.length && !node.end; i++) {
-      const code = prefix.charCodeAt(i);
-      const next = (node.next ??= new Map());
-      let child = next.get(code);
-      if (!child) {
-        child = { end: false, next: undefined };
-        next.set(code, child);
-      }
+function radixNode(source: string, start: number, end: number, terminal: boolean): RadixNode {
+  return { source, start, end, terminal, children: undefined };
+}
+
+/** Adds the prefix `prefix[0, length)`. Linear in `length`. */
+function insertPrefix(root: RadixNode, prefix: string, length: number): void {
+  let node = root;
+  let i = 0;
+  for (;;) {
+    if (node.terminal) return;
+    if (i === length) {
+      // A shorter prefix covers everything below it; drop the subtree.
+      node.terminal = true;
+      node.children = undefined;
+      return;
+    }
+    const code = prefix.charCodeAt(i);
+    const children: Map<number, RadixNode> = (node.children ??= new Map());
+    const child = children.get(code);
+    if (!child) {
+      children.set(code, radixNode(prefix, i, length, true));
+      return;
+    }
+    let j = child.start;
+    while (j < child.end && i < length && child.source.charCodeAt(j) === prefix.charCodeAt(i)) {
+      j++;
+      i++;
+    }
+    if (j < child.end) {
+      // Split the edge where the new prefix leaves it (or ends inside it).
+      const middle = radixNode(child.source, child.start, j, false);
+      middle.children = new Map([[child.source.charCodeAt(j), child]]);
+      child.start = j;
+      children.set(code, middle);
+      node = middle;
+    } else {
       node = child;
     }
-    // A shorter prefix already covers everything below it; drop the subtree.
-    node.end = true;
-    node.next = undefined;
   }
-  return root;
 }
 
-/** Whether some envelope prefix is a prefix of `body`: one walk, at most `body.length` steps. */
-function hasPrefixIn(root: PrefixNode, body: string): boolean {
-  let node: PrefixNode | undefined = root;
-  for (let i = 0; ; i++) {
-    if (node.end) return true;
-    if (i === body.length || !node.next) return false;
-    node = node.next.get(body.charCodeAt(i));
-    if (!node) return false;
+/** Whether some prefix in the trie is a prefix of `body[0, length)`: at most `length` steps. */
+function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
+  let node = root;
+  let i = 0;
+  for (;;) {
+    if (node.terminal) return true;
+    if (i === length || !node.children) return false;
+    const child = node.children.get(body.charCodeAt(i));
+    if (!child) return false;
+    for (let j = child.start; j < child.end; j++, i++) {
+      if (i === length || child.source.charCodeAt(j) !== body.charCodeAt(i)) return false;
+    }
+    node = child;
   }
 }
 
 /**
  * A literal `v` is covered by the literal `v` or by a glob `p*` with `p` a
  * prefix of `v`. A glob `q*` is covered only by a glob `p*` with `p` a prefix
- * of `q`. The envelope prefixes form a character trie, so every request item
- * is checked with one walk over its own characters, and the whole comparison
- * is linear in the input size whatever the strings look like.
+ * of `q`. The envelope prefixes form a radix trie, so every request item is
+ * checked with one walk over its own characters: time is linear in the input
+ * size whatever the strings look like, and memory is linear in the number of
+ * envelope globs.
  */
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
-  const prefixes: string[] = [];
+  let trie: RadixNode | undefined;
   for (const pattern of envelope) {
-    if (pattern.endsWith('*')) prefixes.push(pattern.slice(0, -1));
+    if (pattern.endsWith('*')) insertPrefix((trie ??= radixNode('', 0, 0, false)), pattern, pattern.length - 1);
     else literals.add(pattern);
   }
-  const trie = prefixes.length > 0 ? buildPrefixTrie(prefixes) : undefined;
   for (const item of request) {
     const isGlob = item.endsWith('*');
     if (!isGlob && literals.has(item)) continue;
-    const covered = trie !== undefined && hasPrefixIn(trie, isGlob ? item.slice(0, -1) : item);
+    const covered = trie !== undefined && hasPrefixIn(trie, item, isGlob ? item.length - 1 : item.length);
     if (!covered) {
       out.push({ code: 'not_in_envelope', side: 'request', dimension: name, item, message: `"${item}" is not covered by the envelope for "${name}"` });
     }
   }
 }
 
-function toNormalized<D extends ScopeDimensions>(scope: ParsedScope): NormalizedScope<D> {
-  const result: Record<string, ScopeValue> = {};
-  for (const [name, value] of scope) result[name] = value;
-  return Object.freeze(result) as NormalizedScope<D>;
-}
 
 /**
  * Defines a provider scope grammar. Throws `TypeError` for an invalid
@@ -420,9 +499,20 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     Object.fromEntries(results.map(result => [result.compiled.name, result.published])),
   ) as PublishedScopeDimensions<D>;
 
+  /** The frozen snapshots this grammar returned, with their parsed form, for `classifyScope`. */
+  const snapshots = new WeakMap<object, ParsedScope>();
+  const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
+    const result: Record<string, ScopeValue> = {};
+    for (const [name, value] of scope) result[name] = value;
+    const frozen = Object.freeze(result);
+    snapshots.set(frozen, scope);
+    return frozen as NormalizedScope<D>;
+  };
+
   /**
    * Normalises and validates one input. Every failure, including a throwing
-   * normalizer, getter or Proxy trap, becomes a `malformed` violation.
+   * or asynchronous normalizer, getter or Proxy trap, becomes a `malformed`
+   * violation.
    */
   const parse = (input: TInput, side: Side): ParsedScope | ScopeViolation[] => {
     let raw: unknown;
@@ -431,11 +521,43 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     } catch (error) {
       return [malformed(side, `normalize failed: ${describeError(error)}`)];
     }
+    if (normalize && isNativePromise(raw)) {
+      return [malformed(side, 'normalize returned a promise; it must return a scope synchronously')];
+    }
     try {
       return parseScope(dims, byName, raw, side);
     } catch (error) {
       return [malformed(side, `scope could not be read: ${describeError(error)}`)];
     }
+  };
+
+  /**
+   * Every item is passed to riskOf and validated, even after the highest level
+   * is reached, so an invalid result fails whatever the item order.
+   */
+  const classify = (parsed: ParsedScope): ScopeRisk => {
+    let rank = 0;
+    for (const dim of dims) {
+      const value = parsed.get(dim.name)!;
+      const items = typeof value === 'number' ? [value] : value;
+      for (const item of items) {
+        let risk: unknown;
+        try {
+          risk = riskOf(Object.freeze({ dimension: dim.name, kind: dim.kind, value: item }) as ScopeItem<D>);
+        } catch (error) {
+          throw new ScopeError(`Scope grammar "${provider}": riskOf failed for dimension "${dim.name}"`, [], { cause: error });
+        }
+        if (isNativePromise(risk)) {
+          throw new ScopeError(`Scope grammar "${provider}": riskOf returned a promise for dimension "${dim.name}"; it must return a risk synchronously`);
+        }
+        const itemRank = RISK_RANK.get(risk);
+        if (itemRank === undefined) {
+          throw new ScopeError(`Scope grammar "${provider}": riskOf returned an unknown risk for dimension "${dim.name}"`);
+        }
+        if (itemRank > rank) rank = itemRank;
+      }
+    }
+    return RISK_ORDER[rank] as ScopeRisk;
   };
 
   const grammar: ScopeGrammar<D, TInput> = {
@@ -444,10 +566,10 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
 
     normalize(input: TInput): ScopeNormalizeResult<D> {
       const parsed = parse(input, 'request');
-      return Array.isArray(parsed) ? { ok: false, violations: parsed } : { ok: true, scope: toNormalized<D>(parsed) };
+      return Array.isArray(parsed) ? { ok: false, violations: parsed } : { ok: true, scope: snapshot(parsed) };
     },
 
-    isSubset(request: TInput, envelope: TInput): ScopeSubsetResult {
+    isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D> {
       const req = parse(request, 'request');
       const env = parse(envelope, 'envelope');
       if (Array.isArray(req) || Array.isArray(env)) {
@@ -472,33 +594,19 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
           });
         }
       }
-      return { ok: out.length === 0, violations: out };
+      return out.length === 0 ? { ok: true, violations: out, scope: snapshot(req) } : { ok: false, violations: out };
     },
 
     classifyRisk(request: TInput): ScopeRisk {
       const parsed = parse(request, 'request');
       if (Array.isArray(parsed)) throw new ScopeError(`Scope request for "${provider}" does not fit the grammar`, parsed);
-      // Every item is passed to riskOf and validated, even after the highest
-      // level is reached, so an invalid result fails whatever the item order.
-      let rank = 0;
-      for (const dim of dims) {
-        const value = parsed.get(dim.name)!;
-        const items = typeof value === 'number' ? [value] : value;
-        for (const item of items) {
-          let risk: unknown;
-          try {
-            risk = riskOf(Object.freeze({ dimension: dim.name, kind: dim.kind, value: item }) as ScopeItem<D>);
-          } catch (error) {
-            throw new ScopeError(`Scope grammar "${provider}": riskOf failed for dimension "${dim.name}"`, [], { cause: error });
-          }
-          const itemRank = RISK_RANK.get(risk);
-          if (itemRank === undefined) {
-            throw new ScopeError(`Scope grammar "${provider}": riskOf returned an unknown risk for dimension "${dim.name}"`);
-          }
-          if (itemRank > rank) rank = itemRank;
-        }
-      }
-      return RISK_ORDER[rank] as ScopeRisk;
+      return classify(parsed);
+    },
+
+    classifyScope(scope: NormalizedScope<D>): ScopeRisk {
+      const parsed = typeof scope === 'object' && scope !== null ? snapshots.get(scope) : undefined;
+      if (!parsed) throw new ScopeError(`Scope grammar "${provider}": classifyScope accepts only a scope this grammar returned`);
+      return classify(parsed);
     },
   };
   return Object.freeze(grammar);
