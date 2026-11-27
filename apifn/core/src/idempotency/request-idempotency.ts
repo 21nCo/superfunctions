@@ -1167,15 +1167,24 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   const isOwn = (token: IdempotencyToken, receipt: ParsedReceipt): boolean =>
     receipt.claimId === token.claimId && receipt.fingerprint === token.fingerprint;
 
-  /** Whether the store now holds one of `versions`, for a write whose outcome is unknown; undefined when it cannot be read. */
-  const holdsVersion = async (storeKey: string, ...versions: string[]): Promise<boolean | undefined> => {
+  /**
+   * The record the store holds now, for a write whose outcome is unknown: its
+   * version and whether it is live (neither released nor expired); undefined
+   * when it cannot be read.
+   */
+  const heldRecord = async (storeKey: string): Promise<{ version: string | null; live: boolean } | undefined> => {
     try {
       const live = await readLive(storeKey, now());
-      const held = live.kind === "present" ? live.record.version : live.expectedVersion;
-      return held !== null && versions.includes(held);
+      return live.kind === "present" ? { version: live.record.version, live: true } : { version: live.expectedVersion, live: false };
     } catch {
       return undefined;
     }
+  };
+
+  /** Whether the store now holds a live record at `version`; undefined when it cannot be read. A released or expired record is not held. */
+  const holdsVersion = async (storeKey: string, version: string): Promise<boolean | undefined> => {
+    const held = await heldRecord(storeKey);
+    return held === undefined ? undefined : held.live && held.version === version;
   };
 
   /**
@@ -1194,10 +1203,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * read after that write showed a commit the fallback does not hold.
    * Returns the receipt that decides, or undefined (stale) when a newer
    * writer won and no receipt is left. A rejected write is resolved by
-   * reading the store: while it holds the replacement or the fallback, no
-   * newer claim took the key, so a receipt read now decides, and an empty or
-   * unreachable source leaves the receipt validated after the settle's
-   * write. Otherwise a newer writer won: the receipt read now decides, and a
+   * reading the store. When it holds the replacement, a receipt read now
+   * decides, and an empty or unreachable source leaves the receipt validated
+   * after the settle's write. When the fallback is still live, or the store
+   * cannot be read, the contradicted fallback may stay live, so settle fails
+   * closed with the write's error. Otherwise (a newer writer, or the
+   * fallback released or expired) the receipt read now decides, and a
    * failing read throws.
    */
   const replaceFallback = async (
@@ -1208,8 +1219,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   ): Promise<ParsedReceipt | undefined> => {
     try {
       if (await store.compareAndSet(token.storeKey, version, next)) return after;
-    } catch {
-      if (await holdsVersion(token.storeKey, next.version, version)) {
+    } catch (error) {
+      const held = await heldRecord(token.storeKey);
+      if (held === undefined || (held.live && held.version === version)) throw error;
+      if (held.version === next.version) {
         let raw: unknown;
         try {
           raw = await lookupReceipt(token.storeKey);
@@ -1232,12 +1245,14 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * wrote is replaced over its exact version, keeping its deadline: by the
    * receipt's response (flagged) for the holder's own late commit, otherwise
    * by a tombstone that keeps the receipt contract, so a fallback never
-   * replays over a commit (see `replaceFallback`). Without a receipt, a won
+   * replays over a commit (see `replaceFallback`; a contradicted fallback
+   * that cannot be replaced makes settle throw). Without a receipt, a won
    * write is settled and a lost one stale; a lost write over the holder's own
    * commit writes nothing, so that commit replays only while its receipt is
    * retained. A rejected write is resolved by reading the exact version it
-   * attempted; without `own`, a receipt read then decides (a fallback it
-   * wrote is replaced as above), and with none the write's error stands.
+   * attempted, which counts as written only while it is live; without `own`,
+   * a receipt read then decides (a fallback it wrote is replaced as above),
+   * and with none the write's error stands.
    */
   const settleOwn = async (
     token: IdempotencyToken,

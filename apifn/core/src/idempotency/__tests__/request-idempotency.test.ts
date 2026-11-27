@@ -2218,7 +2218,7 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
     ["an earlier commit of the same body", "not applied"],
     ["an earlier commit of another body", "applied"],
     ["an earlier commit of another body", "not applied"],
-  ] as const)("R2: a rejected fallback replacement over %s (%s) never throws over the validated receipt", async (commit, reject) => {
+  ] as const)("R2: a rejected fallback replacement over %s (%s) reports the receipt once applied, and fails closed otherwise", async (commit, reject) => {
     const store = new ScriptedStore();
     const { idempotency, database, source } = world(store);
     const holder = acquired(await idempotency.claim(orderRequest()));
@@ -2237,10 +2237,12 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
       { match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version, reject },
     );
 
-    const result = await idempotency.settle(holder, { status: 503, body: "fallback" });
-    if (commit === "the holder's own late commit") expect(result).toEqual({ outcome: "settled", response: committed });
-    else if (commit === "an earlier commit of the same body") expect(result).toEqual({ outcome: "committed", response: earlier });
-    else expect(result).toEqual({ outcome: "conflict" });
+    const run = idempotency.settle(holder, { status: 503, body: "fallback" });
+    // Round 7: a contradicted fallback the store still holds live is never reported over; settle throws the write's error.
+    if (reject === "not applied") await expect(run).rejects.toThrow("store write failed");
+    else if (commit === "the holder's own late commit") expect(await run).toEqual({ outcome: "settled", response: committed });
+    else if (commit === "an earlier commit of the same body") expect(await run).toEqual({ outcome: "committed", response: earlier });
+    else expect(await run).toEqual({ outcome: "conflict" });
     expect(store.rules).toEqual([]);
 
     // The fallback never replays during an outage: only an applied replacement by the holder's own commit does.
@@ -2333,7 +2335,7 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
     expect(store.records.get(holder.storeKey)).toMatchObject({ state: "pending", version: newer!.version });
   });
 
-  it("R2: a rejected replacement whose fallback still holds the key decides from the receipt read now", async () => {
+  it("R2: a rejected replacement whose fallback still holds the key fails closed (round 7)", async () => {
     const store = new ScriptedStore();
     const { idempotency, database } = world(store);
     const holder = acquired(await idempotency.claim(orderRequest()));
@@ -2350,7 +2352,7 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
         reject: "not applied",
       },
     );
-    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "committed", response: earlier });
+    await expect(idempotency.settle(holder, { status: 503, body: "fallback" })).rejects.toThrow("store write failed");
   });
 
   it("R4: a rejected settle write whose version cannot be read still replaces an applied fallback over its exact version", async () => {
@@ -2468,4 +2470,116 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
       expect(await idempotency[operation](orderRequest())).toEqual({ outcome: "conflict" });
     },
   );
+});
+
+describe("createRequestIdempotency PR round-7 live-version fence", () => {
+  const earlier = { status: 201, headers: { "content-type": "text/plain" }, body: "earlier commit" };
+
+  /** A receipt source that keeps each receipt for `retainMs` after it lands, like a host's retention job. */
+  function world(store: FakeAtomicStore, retainMs = Number.POSITIVE_INFINITY) {
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock();
+    const landed = new Map<string, number>();
+    const state = { mode: "ok" as "ok" | "outage" };
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey) => {
+        if (state.mode === "outage") throw new Error("receipt source unavailable");
+        const found = await database.receipts.find(storeKey);
+        if (!found) return found;
+        if (!landed.has(storeKey)) landed.set(storeKey, clock.now());
+        return clock.now() - landed.get(storeKey)! < retainMs ? found : null;
+      },
+    };
+    const options = { store, receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce };
+    return { store, database, clock, state, idempotency: createRequestIdempotency(options) };
+  }
+
+  it("a commit landing in settle's empty lookup with an unapplied replacement fails closed, and a retained receipt keeps the fallback from replaying", async () => {
+    const store = new ScriptedStore();
+    // The README requirement: the receipt outlives any fallback deadline (2 x retentionMs after its commit).
+    const { idempotency, database, clock } = world(store, 120_000);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    clock.advance(30_000);
+    let committed: IdempotentResponse | undefined;
+    store.rules.push(
+      { match: (expectedVersion) => expectedVersion === holder.version, before: async () => void (committed = await database.createOrder(holder, "book")) },
+      { match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version, reject: "not applied" },
+    );
+    await expect(idempotency.settle(holder, { status: 503, body: "fallback" })).rejects.toThrow("store write failed");
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "completed", response: { status: 503 } });
+
+    // Past the commit's first retentionMs but before the fallback's deadline (settle + retentionMs): the receipt decides.
+    clock.advance(59_000);
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    // Once the fallback has expired, no 503 is ever replayed.
+    clock.advance(2_000);
+    const later = await idempotency.recover(orderRequest());
+    expect(later.outcome === "replay" ? later.response.status : undefined).not.toBe(503);
+  });
+
+  it.each([
+    ["released", "empty"],
+    ["released", "rejecting"],
+    ["expired", "empty"],
+    ["expired", "rejecting"],
+  ] as const)("a rejected replacement over a fallback version that was %s, with an %s lookup, is stale or throws, never the earlier receipt", async (gone, lookup) => {
+    const store = new ScriptedStore();
+    const { idempotency, database, clock, state } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    store.rules.push(
+      {
+        match: (expectedVersion) => expectedVersion === holder.version,
+        before: () => void database.receiptsByKey.set(holder.storeKey, { ...holder, fingerprint: "test-other-body-fingerprint", claimId: "test-claim-a", response: earlier }),
+      },
+      {
+        match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version,
+        before: () => {
+          // The fallback stops being live before the replacement is rejected unapplied, and the receipt is gone.
+          const record = store.records.get(holder.storeKey)!;
+          const { version, generation, fingerprint, recovery, expiresAt } = record;
+          if (gone === "released") store.records.set(holder.storeKey, { state: "released", version, generation, fingerprint, recovery, expiresAt });
+          else clock.advance(60_001);
+          database.receiptsByKey.clear();
+          if (lookup === "rejecting") state.mode = "outage";
+        },
+        reject: "not applied",
+      },
+    );
+    const run = idempotency.settle(holder, { status: 503, body: "fallback" });
+    if (lookup === "empty") expect(await run).toEqual({ outcome: "stale" });
+    else await expect(run).rejects.toThrow("receipt source unavailable");
+  });
+
+  it("a rejected first write whose attempted version has expired is stale once the receipt is gone", async () => {
+    const store = new ScriptedStore();
+    const { idempotency, database, clock } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    await database.createOrder(holder, "book");
+    store.rules.push({
+      match: (expectedVersion) => expectedVersion === holder.version,
+      before: () => {
+        // The applied write's record expires and the receipt is pruned before the store is read.
+        clock.advance(60_001);
+        database.receiptsByKey.clear();
+      },
+      reject: "applied",
+    });
+    expect(await idempotency.settle(holder, { status: 201, body: "book" })).toEqual({ outcome: "stale" });
+  });
+
+  it("an applied-then-rejected replacement still reports the receipt", async () => {
+    const store = new ScriptedStore();
+    const { idempotency, database } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    store.rules.push(
+      {
+        match: (expectedVersion) => expectedVersion === holder.version,
+        before: () => void database.receiptsByKey.set(holder.storeKey, { ...holder, claimId: "test-claim-a", response: earlier }),
+      },
+      { match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version, reject: "applied" },
+    );
+    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "committed", response: earlier });
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "released" });
+  });
 });
