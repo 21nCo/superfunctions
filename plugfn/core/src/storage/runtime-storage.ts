@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NotFoundError, type Adapter as DbAdapter, type WhereClause } from '@superfunctions/db';
 import type {
   PlugFnConnectionGrant,
@@ -9,11 +10,26 @@ import type {
   PlugFnSyncJob,
   PlugFnWebhookDelivery,
   PlugFnWebhookReceipt,
+  PlugFnWebhookReceiptNamespace,
 } from '../types/runtime.js';
 import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
+import {
+  assertWebhookReceiptProvider,
+  assertWebhookUpdateFields,
+  hasWebhookSignatureProof,
+  isBindingId,
+  normalizeWebhookStorageRow,
+  webhookBindingRequired,
+  webhookDeliveryReassignmentConflict,
+  WebhookHandlerError,
+  webhookRetryUpdates,
+} from '../webhooks/webhook-handler.js';
+
+export const webhookSignatureProof = Symbol('plugfn.webhookSignatureProof');
+export const webhookReceiptTenantId = Symbol('plugfn.webhookReceiptTenantId');
 
 export interface CreateProviderInstallationInput {
   provider: string;
@@ -30,10 +46,13 @@ export interface CreateConnectionGrantInput {
 }
 
 export interface CreateWebhookReceiptInput {
+  [webhookSignatureProof]?: boolean;
+  [webhookReceiptTenantId]?: string;
   provider: string;
   event: string;
   payloadHash: string;
   idempotencyKey?: string;
+  idempotencyNamespace?: PlugFnWebhookReceiptNamespace;
   connectionId?: string;
   owner?: PlugFnConnectionOwner;
   headersRedacted?: Record<string, string>;
@@ -42,6 +61,7 @@ export interface CreateWebhookReceiptInput {
 }
 
 export interface CreateWebhookDeliveryInput {
+  [webhookSignatureProof]?: boolean;
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
@@ -142,48 +162,96 @@ export class AdapterRuntimeStorage {
   }
 
   async createWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
-    if (!input.idempotencyKey) {
-      return this.persistWebhookReceipt(input);
-    }
+    const { provider, idempotencyKey, idempotencyNamespace = 'standalone' } = input;
+    if (idempotencyNamespace === 'workflow' && (
+      !idempotencyKey || !input[webhookSignatureProof] ||
+      !isBindingId(input[webhookReceiptTenantId]) || !isBindingId(input.connectionId)
+    )) throw webhookBindingRequired('verified workflow receipt admission required');
+    if (!idempotencyKey) return this.persistWebhookReceipt(input).then(normalizeWebhookStorageRow);
 
-    const claimKey = `${input.provider}:${input.idempotencyKey}`;
+    const claimKey = JSON.stringify([provider, idempotencyNamespace, idempotencyKey]);
     return this.withWebhookReceiptClaimLock(claimKey, async () => {
-      const existing = await this.adapter.findWebhookReceiptByIdempotencyKey(
-        input.provider,
-        input.idempotencyKey!
+      const existing = await this.findStoredWebhookReceipt(
+        provider,
+        idempotencyKey,
+        idempotencyNamespace
       );
       if (existing) {
-        return assertMatchingWebhookReceipt(existing, input.payloadHash);
+        return this.admitExistingWebhookReceipt(input, existing);
       }
 
       try {
         return await this.persistWebhookReceipt(input);
       } catch (error) {
-        // A unique provider/idempotency index arbitrates claims across runtime instances.
-        const concurrentlyCreated = await this.adapter.findWebhookReceiptByIdempotencyKey(
-          input.provider,
-          input.idempotencyKey!
+        // The unique index arbitrates claims in this namespace across runtime instances.
+        const concurrentlyCreated = await this.findStoredWebhookReceipt(
+          provider,
+          idempotencyKey,
+          idempotencyNamespace
         );
         if (concurrentlyCreated) {
-          return assertMatchingWebhookReceipt(concurrentlyCreated, input.payloadHash);
+          return this.admitExistingWebhookReceipt(input, concurrentlyCreated);
         }
         throw error;
       }
+    }).then(normalizeWebhookStorageRow);
+  }
+
+  private async admitExistingWebhookReceipt(input: CreateWebhookReceiptInput, receipt: PlugFnWebhookReceipt) {
+    if (input.idempotencyNamespace !== 'workflow' || hasWebhookSignatureProof(receipt)) {
+      return assertMatchingWebhookReceipt(receipt, input.payloadHash);
+    }
+    // A row without verified admission cannot reserve a workflow receipt key.
+    const now = new Date();
+    await this.adapter.database.updateMany({
+      model: this.adapter.models.webhookReceipts,
+      where: [
+        { field: 'id', operator: 'eq', value: receipt.id },
+        { field: 'provider', operator: 'eq', value: input.provider },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: receipt.workflowIdempotencyKey },
+        { field: 'signatureVerified', operator: 'eq', value: receipt.signatureVerified ?? null },
+      ],
+      data: {
+        event: input.event,
+        connectionId: input.connectionId,
+        workflowTenantId: input[webhookReceiptTenantId],
+        idempotencyKey: null,
+        ownerKind: null,
+        ownerId: null,
+        payloadHash: input.payloadHash,
+        headersRedacted: input.headersRedacted,
+        verificationStatus: 'verified',
+        signatureVerified: true,
+        createdAt: now,
+        receivedAt: now,
+        metadata: webhookReceiptMetadata(input),
+      },
     });
+    const admitted = await this.adapter.getWebhookReceipt(receipt.id);
+    if (!admitted || !hasWebhookSignatureProof(admitted)) {
+      throw new WebhookHandlerError('WEBHOOK_HANDLER_FAILED', 'could not admit workflow receipt', 503);
+    }
+    return assertMatchingWebhookReceipt(admitted, input.payloadHash);
   }
 
   private persistWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
     const now = new Date();
+    const { idempotencyKey } = input;
+    const receiptKey = input.idempotencyNamespace === 'workflow' && idempotencyKey
+      ? { workflowIdempotencyKey: workflowReceiptKey(input.provider, idempotencyKey) }
+      : { idempotencyKey };
     return this.adapter.createWebhookReceipt({
-      id: generateId('whrec'),
+      id: receiptKey.workflowIdempotencyKey ? `whrec_${receiptKey.workflowIdempotencyKey}` : generateId('whrec'),
       provider: input.provider,
       event: input.event,
-      idempotencyKey: input.idempotencyKey,
+      ...receiptKey,
+      ...(receiptKey.workflowIdempotencyKey ? { workflowTenantId: input[webhookReceiptTenantId] } : {}),
       connectionId: input.connectionId,
-      ...ownerFields(input.owner),
+      ...ownerFields(receiptKey.workflowIdempotencyKey ? undefined : input.owner),
       headersRedacted: input.headersRedacted,
       payloadHash: input.payloadHash,
       verificationStatus: input.verificationStatus ?? 'not-required',
+      ...(receiptKey.workflowIdempotencyKey && input[webhookSignatureProof] ? { signatureVerified: true } : {}),
       receivedAt: now,
       createdAt: now,
       metadata: webhookReceiptMetadata(input),
@@ -211,21 +279,62 @@ export class AdapterRuntimeStorage {
   }
 
   getWebhookReceipt(id: string): Promise<PlugFnWebhookReceipt | null> {
-    return this.adapter.getWebhookReceipt(id);
+    return this.adapter.getWebhookReceipt(id).then(normalizeWebhookStorageRow);
   }
 
   findWebhookReceiptByIdempotencyKey(
     provider: string,
-    idempotencyKey: string
+    idempotencyKey: string,
+    namespace: PlugFnWebhookReceiptNamespace = 'standalone'
   ): Promise<PlugFnWebhookReceipt | null> {
-    return this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+    return this.findStoredWebhookReceipt(provider, idempotencyKey, namespace).then(normalizeWebhookStorageRow);
+  }
+
+  private async findStoredWebhookReceipt(
+    provider: string,
+    idempotencyKey: string,
+    namespace: PlugFnWebhookReceiptNamespace,
+  ): Promise<PlugFnWebhookReceipt | null> {
+    if (namespace === 'standalone') {
+      const receipt = await this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+      return receipt?.workflowIdempotencyKey ? null : receipt;
+    }
+    return this.adapter.database.findOne<PlugFnWebhookReceipt>({
+      model: this.adapter.models.webhookReceipts,
+      where: [
+        { field: 'provider', operator: 'eq', value: provider },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: workflowReceiptKey(provider, idempotencyKey) },
+      ],
+    });
   }
 
   async updateWebhookReceipt(
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
+    assertWebhookUpdateFields(updates, 'receipt');
     const normalizedUpdates = { ...updates };
+    delete normalizedUpdates.signatureVerified;
+    delete normalizedUpdates.workflowIdempotencyKey;
+    delete normalizedUpdates.workflowTenantId;
+    let existing: PlugFnWebhookReceipt | null = null;
+    if (normalizedUpdates.provider === undefined) delete normalizedUpdates.provider;
+    if ('provider' in normalizedUpdates || 'connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates ||
+        'id' in normalizedUpdates || 'event' in normalizedUpdates || 'payloadHash' in normalizedUpdates ||
+        'ownerKind' in normalizedUpdates || 'ownerId' in normalizedUpdates) {
+      existing = await this.adapter.getWebhookReceipt(id);
+      if (existing) assertWebhookReceiptProvider(existing, normalizedUpdates.provider);
+      if (existing?.workflowIdempotencyKey) {
+        delete normalizedUpdates.provider;
+        delete normalizedUpdates.connectionId;
+        delete normalizedUpdates.idempotencyKey;
+        delete normalizedUpdates.id;
+        delete normalizedUpdates.event;
+        delete normalizedUpdates.payloadHash;
+        delete normalizedUpdates.ownerKind;
+        delete normalizedUpdates.ownerId;
+      }
+    }
     if (updates.metadata !== undefined) {
       const metadata: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(updates.metadata ?? {})) {
@@ -239,33 +348,61 @@ export class AdapterRuntimeStorage {
       metadata.updatedAt = new Date().toISOString();
       normalizedUpdates.metadata = metadata;
     }
-    return this.adapter.updateWebhookReceipt(id, normalizedUpdates);
+    if (Object.keys(normalizedUpdates).length === 0) {
+      const receipt = existing ?? await this.adapter.getWebhookReceipt(id);
+      if (!receipt) {
+        throw new NotFoundError(this.adapter.models.webhookReceipts, [{ field: 'id', operator: 'eq', value: id }]);
+      }
+      return normalizeWebhookStorageRow(receipt);
+    }
+    return this.adapter.updateWebhookReceipt(id, normalizedUpdates).then(normalizeWebhookStorageRow);
   }
 
-  createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+  async createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+    const workflowScoped = await this.workflowDeliveryScope(input.receiptId);
     const now = new Date();
     return this.adapter.createWebhookDelivery({
       id: generateId('whdel'),
       receiptId: input.receiptId,
       sinkId: input.sinkId,
       handlerName: input.handlerName,
+      ...(workflowScoped ? { workflowScoped } : {}),
+      ...(workflowScoped && input[webhookSignatureProof] ? { signatureVerified: true } : {}),
       status: input.status ?? 'pending',
       attempts: 0,
       nextAttemptAt: input.nextAttemptAt,
       metadata: input.metadata,
       createdAt: now,
       updatedAt: now,
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
-  updateWebhookDelivery(
+  async updateWebhookDelivery(
     id: string,
-    updates: Partial<PlugFnWebhookDelivery>
+    updates: Partial<PlugFnWebhookDelivery>,
   ): Promise<PlugFnWebhookDelivery> {
-    return this.adapter.updateWebhookDelivery(id, {
-      ...updates,
-      updatedAt: new Date(),
-    });
+    assertWebhookUpdateFields(updates, 'delivery');
+    const fields = { ...updates };
+    delete fields.workflowScoped;
+    delete fields.signatureVerified;
+    if (fields.receiptId === undefined) {
+      delete fields.receiptId;
+    } else {
+      const model = this.adapter.models.webhookDeliveries;
+      const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+      const existing = await this.adapter.database.findOne<PlugFnWebhookDelivery>({ model, where });
+      if (!existing) throw new NotFoundError(model, where);
+      if (existing.receiptId !== fields.receiptId && (
+        existing.workflowScoped || await this.workflowDeliveryScope(existing.receiptId) ||
+        await this.workflowDeliveryScope(fields.receiptId)
+      )) throw webhookDeliveryReassignmentConflict();
+    }
+    return this.adapter.updateWebhookDelivery(id, { ...fields, updatedAt: new Date() }).then(normalizeWebhookStorageRow);
+  }
+
+  private async workflowDeliveryScope(receiptId: string): Promise<true | null> {
+    const receipt = await this.adapter.getWebhookReceipt(receiptId);
+    return receipt?.workflowIdempotencyKey ? true : null;
   }
 
   updateClaimedWebhookDelivery(
@@ -274,17 +411,17 @@ export class AdapterRuntimeStorage {
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery | null> {
     return this.adapter.updateClaimedWebhookDelivery(id, claimToken, {
-      ...updates,
+      ...webhookRetryUpdates(updates),
       updatedAt: new Date(),
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   listWebhookDeliveries(receiptId: string): Promise<PlugFnWebhookDelivery[]> {
-    return this.adapter.listWebhookDeliveries(receiptId);
+    return this.adapter.listWebhookDeliveries(receiptId).then((rows) => rows.map(normalizeWebhookStorageRow));
   }
 
   listWebhookDeliveriesForRetry(now = new Date(), limit = 100, leaseMs?: number): Promise<PlugFnWebhookDelivery[]> {
-    return this.adapter.listWebhookDeliveriesForRetry(now, limit, leaseMs);
+    return this.adapter.listWebhookDeliveriesForRetry(now, limit, leaseMs).then((rows) => rows.map(normalizeWebhookStorageRow));
   }
 
   claimWebhookDeliveriesForRetry(
@@ -293,7 +430,7 @@ export class AdapterRuntimeStorage {
     workerId = generateId('webhook_worker'),
     leaseMs?: number
   ): Promise<PlugFnWebhookDelivery[]> {
-    return this.adapter.claimWebhookDeliveriesForRetry(now, limit, workerId, leaseMs);
+    return this.adapter.claimWebhookDeliveriesForRetry(now, limit, workerId, leaseMs).then((rows) => rows.map(normalizeWebhookStorageRow));
   }
 
   createSyncJob(input: CreateSyncJobInput): Promise<PlugFnSyncJob> {
@@ -561,12 +698,18 @@ function syncJobClaimLost(id: string): Error {
   return error;
 }
 
+function workflowReceiptKey(provider: string, idempotencyKey: string): string {
+  return createHash('sha256').update(JSON.stringify([provider, idempotencyKey])).digest('hex');
+}
+
 function assertMatchingWebhookReceipt(
   receipt: PlugFnWebhookReceipt,
   payloadHash: string
 ): PlugFnWebhookReceipt {
   if (receipt.payloadHash !== payloadHash) {
-    throw new Error('webhook idempotency key was reused with a different payload');
+    throw new WebhookHandlerError(
+      'WEBHOOK_IDEMPOTENCY_CONFLICT', 'webhook idempotency key was reused with a different payload', 409,
+    );
   }
   return receipt;
 }
