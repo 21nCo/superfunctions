@@ -50,6 +50,8 @@ export interface WorkflowDefinition {
 export interface WorkflowTrigger {
   provider: string;
   event: string;
+  /** Match this connection within the workflow's tenant for automatic webhook dispatch. */
+  connectionId?: string;
   filter?: WorkflowCondition;
 }
 
@@ -117,9 +119,11 @@ export interface WorkflowContext {
   workflowId: string;
   executionId: string;
   userId: string;
+  tenantId?: string;
   trigger: {
     provider: string;
     event: string;
+    connectionId?: string;
     payload: any;
   };
   data: Record<string, any>;

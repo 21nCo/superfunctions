@@ -840,12 +840,14 @@ export const githubProvider: Provider = {
     issues: {
       name: "issues",
       displayName: "Issue Event",
-      description: "Triggered when a GitHub issue is created or updated",
+      description: "GitHub issue events. Use issues.opened for issue creation in bound workflows.",
       type: TriggerType.Webhook,
 
       webhookConfig: {
         path: "/webhooks/github/issues",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) => {
           return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
@@ -902,6 +904,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/issues",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) => {
           return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
@@ -942,6 +946,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/pull-request",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) =>
           verifyGitHubSignatureRaw(payload, signature, secret, context),
       },
@@ -991,6 +997,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/pull-request",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) => {
           return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
@@ -1030,6 +1038,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/issue-comment",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) => {
           return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
@@ -1071,6 +1081,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/issue-comment",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) =>
           verifyGitHubSignatureRaw(payload, signature, secret, context),
       },
@@ -1114,6 +1126,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: "/webhooks/github/push",
         method: "POST",
+        getWorkflowSubject: readGitHubInstallationSubject,
+        getWorkflowEvent: readGitHubWorkflowEvent,
         verifySignature: async (payload, signature, secret, context) =>
           verifyGitHubSignatureRaw(payload, signature, secret, context),
       },
@@ -1154,6 +1168,67 @@ export const githubProvider: Provider = {
     window: 3600000, // 1 hour
   },
 };
+
+const githubInstallationPayload = z.object({ installation: z.object({ id: z.number().int().safe().positive() }) });
+
+function readGitHubInstallationSubject(payload: unknown): string | undefined {
+  const result = githubInstallationPayload.safeParse(payload);
+  return result.success ? String(result.data.installation.id) : undefined;
+}
+
+// Event families and actions are defined in GitHub's webhook payload reference.
+// https://docs.github.com/en/webhooks/webhook-events-and-payloads
+const githubIssueActions = new Set([
+  "assigned", "closed", "deleted", "demilestoned", "edited", "field_added",
+  "field_removed", "labeled", "locked", "milestoned", "opened", "pinned",
+  "reopened", "status_changed", "transferred", "typed", "unassigned", "unlabeled",
+  "unlocked", "unpinned", "untyped",
+]);
+const githubPullRequestActions = new Set([
+  "assigned", "auto_merge_disabled", "auto_merge_enabled", "closed",
+  "converted_to_draft", "demilestoned", "dequeued", "edited", "enqueued",
+  "labeled", "locked", "milestoned", "opened", "ready_for_review", "reopened",
+  "review_request_removed", "review_requested", "stacked", "synchronize",
+  "unassigned", "unlabeled", "unlocked",
+]);
+const githubIssueCommentActions = new Set(["created", "deleted", "edited", "pinned", "unpinned"]);
+
+function readGitHubWorkflowEvent(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || "review" in payload || "thread" in payload) {
+    return undefined;
+  }
+
+  const { action, issue, comment, pull_request: pullRequest, ref, commits } =
+    payload as Record<string, unknown>;
+  const issueEvent = Boolean(issue);
+  const pullRequestEvent = Boolean(pullRequest);
+  const pushEvent = typeof ref === "string" && Array.isArray(commits);
+  if ([issueEvent, pullRequestEvent, pushEvent].filter(Boolean).length !== 1) {
+    return undefined;
+  }
+  if (pushEvent) {
+    return action === undefined && !comment ? "push" : undefined;
+  }
+  if (typeof action !== "string") {
+    return undefined;
+  }
+  if (issueEvent && comment) {
+    return githubIssueCommentActions.has(action)
+      ? action === "created" ? "issue_comment.created" : "issue_comment"
+      : undefined;
+  }
+  if (comment) {
+    return undefined;
+  }
+  if (issueEvent) {
+    return githubIssueActions.has(action)
+      ? action === "opened" ? "issues.opened" : "issues"
+      : undefined;
+  }
+  return githubPullRequestActions.has(action)
+    ? action === "closed" ? "pull_request.closed" : "pull_request"
+    : undefined;
+}
 
 function verifyGitHubSignatureRaw(
   _payload: any,

@@ -65,17 +65,23 @@ export interface PlugFnConnectionGrant {
   expiresAt?: Date;
 }
 
+export type PlugFnWebhookReceiptNamespace = 'standalone' | 'workflow';
+
 export interface PlugFnWebhookReceipt {
   id: string;
   provider: string;
   event: string;
   idempotencyKey?: string;
+  workflowIdempotencyKey?: string;
+  workflowTenantId?: string;
   connectionId?: string;
   ownerKind?: PlugFnOwnerKind;
   ownerId?: string;
   headersRedacted?: Record<string, string>;
   payloadHash: string;
   verificationStatus: 'verified' | 'failed' | 'not-required';
+  /** Set by runtime ingress only after the provider verifier succeeds. */
+  signatureVerified?: true | null;
   receivedAt: Date;
   createdAt: Date;
   metadata?: Record<string, unknown>;
@@ -86,6 +92,8 @@ export interface PlugFnWebhookDelivery {
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
+  workflowScoped?: true | null;
+  signatureVerified?: true | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead-lettered';
   claimToken?: string;
   attempts: number;

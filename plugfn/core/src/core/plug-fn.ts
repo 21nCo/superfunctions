@@ -34,6 +34,7 @@ import type {
   PlugFnSyncJob,
   PlugFnWebhookDelivery,
   PlugFnWebhookReceipt,
+  PlugFnWebhookReceiptNamespace,
 } from '../types/runtime.js';
 import type { TriggerHandler } from '../types/trigger.js';
 import type { Workflow, WorkflowStats, ListWorkflowsOptions } from '../types/workflow.js';
@@ -46,7 +47,13 @@ import {
 import { ActionExecutor } from './action-executor.js';
 import { deriveCacheBindingKey } from '../middleware/caching.js';
 import { WorkflowEngine } from './workflow-engine.js';
-import { WebhookHandler } from '../webhooks/webhook-handler.js';
+import {
+  WebhookHandler,
+  copyWebhookBody,
+  prepareWebhookDelivery,
+  registerWebhookPreparation,
+} from '../webhooks/webhook-handler.js';
+import { deliverScopedWebhook, resolveWebhookRouteEvent } from '../router/http-router.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
 import {
   AdapterRuntimeStorage,
@@ -107,7 +114,11 @@ export interface PlugFn {
     webhooks: {
       createReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt>;
       getReceipt(id: string): Promise<PlugFnWebhookReceipt | null>;
-      findReceiptByIdempotencyKey(provider: string, idempotencyKey: string): Promise<PlugFnWebhookReceipt | null>;
+      findReceiptByIdempotencyKey(
+        provider: string,
+        idempotencyKey: string,
+        namespace?: PlugFnWebhookReceiptNamespace
+      ): Promise<PlugFnWebhookReceipt | null>;
       updateReceipt(id: string, updates: Partial<PlugFnWebhookReceipt>): Promise<PlugFnWebhookReceipt>;
       createDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery>;
       updateDelivery(id: string, updates: Partial<PlugFnWebhookDelivery>): Promise<PlugFnWebhookDelivery>;
@@ -192,7 +203,7 @@ export interface PlugFn {
       options?: {
         rawBody?: Uint8Array;
       }
-    ): Promise<any>;
+    ): ReturnType<WebhookHandler['verifyWebhook']>;
   };
 
   // Provider management
@@ -350,9 +361,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     }
   );
 
-  const webhookHandler = new WebhookHandler(providerRegistry, logger, {
-    verifySignatures: config.webhooks?.verifySignatures,
-  });
+  const webhookHandler = new WebhookHandler(providerRegistry, logger, config.webhooks);
 
   const workflowEngine = new WorkflowEngine(
     workflowStorage,
@@ -425,8 +434,8 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       webhooks: {
         createReceipt: (input) => runtimeStorage.createWebhookReceipt(input),
         getReceipt: (id) => runtimeStorage.getWebhookReceipt(id),
-        findReceiptByIdempotencyKey: (provider, idempotencyKey) =>
-          runtimeStorage.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey),
+        findReceiptByIdempotencyKey: (provider, idempotencyKey, namespace) =>
+          runtimeStorage.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey, namespace),
         updateReceipt: (id, updates) => runtimeStorage.updateWebhookReceipt(id, updates),
         createDelivery: (input) => runtimeStorage.createWebhookDelivery(input),
         updateDelivery: (id, updates) => runtimeStorage.updateWebhookDelivery(id, updates),
@@ -491,8 +500,32 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     webhooks: {
       on: (provider, event, handler) => webhookHandler.on(provider, event, handler),
       off: (provider, event, handler) => webhookHandler.off(provider, event, handler),
-      handle: (provider, event, payload, headers, secret, options) =>
-        webhookHandler.handleWebhook(provider, event, payload, headers, secret, options),
+      handle: async (provider, event, payload, headers, secret, options) => {
+        const suppliedBody = options?.rawBody;
+        const authorities = config.webhooks?.workflowBindings;
+        const requiresBinding = Boolean(authorities && Object.hasOwn(authorities, provider));
+        if (!requiresBinding) return webhookHandler.handleWebhook(provider, event, payload, headers, secret, options);
+        const rawBody = suppliedBody ? copyWebhookBody(suppliedBody) : undefined;
+        const routedEvent = requiresBinding && rawBody?.length && provider.toLowerCase() === 'github'
+          ? resolveWebhookRouteEvent(
+            provider, event.toLowerCase().replaceAll('-', '_'), headers, rawBody, providerRegistry.get(provider)?.triggers,
+          )
+          : event;
+        const verified = await webhookHandler[prepareWebhookDelivery](
+          provider, routedEvent, payload, headers, secret, { rawBody, standaloneEvent: event },
+        );
+        const admission = await verified.admit();
+        if (!admission.binding || !rawBody) {
+          return admission.dispatch();
+        }
+        const delivery = await deliverScopedWebhook(api, {
+          provider,
+          event: verified.triggerKey,
+          headers: verified.normalizedHeaders,
+          admission,
+        });
+        return 'duplicate' in delivery ? admission.event() : delivery.event;
+      },
       verify: (provider, event, payload, headers, secret, options) =>
         webhookHandler.verifyWebhook(provider, event, payload, headers, secret, options),
     },
@@ -838,6 +871,22 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         continue;
       }
 
+      // The standalone retry callback never receives scoped deliveries, even with a custom adapter.
+      if (receipt.workflowIdempotencyKey) {
+        const excluded = await updateClaimed({
+          status: 'dead-lettered',
+          error: 'scoped webhook retries require verified ingress',
+          metadata: withoutWebhookReplayBody(delivery.metadata),
+        });
+        if (excluded) {
+          deliveries.push(excluded);
+          deadLettered += 1;
+        } else {
+          failed += 1;
+        }
+        continue;
+      }
+
       const receiptDeliveries = await runtimeStorage.listWebhookDeliveries(receipt.id);
       if (
         receiptDeliveries.some(
@@ -975,6 +1024,8 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       )
     );
   }
+
+  registerWebhookPreparation(api.webhooks, webhookHandler[prepareWebhookDelivery].bind(webhookHandler), api.config);
 
   // Create dynamic provider proxies
   const proxyApi = new Proxy(api, {

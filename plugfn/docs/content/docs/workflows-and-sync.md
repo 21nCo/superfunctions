@@ -53,17 +53,25 @@ Resource identifiers are provider-defined; confirm them in that provider's sync 
 The high-level facade exposes listing, enable/disable/delete, statistics, and trigger rehydration for stored workflows. It does not expose a `plug.workflows.create()` or browser workflow execution method. Hosts can author stored definitions through `AdapterWorkflowStorage`, register serializable action names through `workflows.runtime`, and activate them with `plug.workflows.enable(id)`.
 
 ```ts
-import { AdapterWorkflowStorage, WorkflowStatus, type PlugFn, type PlugFnActor } from "plugfn";
+import { AdapterWorkflowStorage, WorkflowStatus, type PlugFn, type PlugFnActor, type WebhookWorkflowBinding } from "plugfn";
 import type { Adapter } from "@superfunctions/db";
 
-export async function createWorkflow(database: Adapter, plug: PlugFn, actor: PlugFnActor) {
+export async function createWorkflow(
+  database: Adapter,
+  plug: PlugFn,
+  actor: PlugFnActor,
+  binding: WebhookWorkflowBinding,
+) {
+  if (!actor.tenantId || actor.tenantId !== binding.tenantId) {
+    throw new Error("Workflow tenant does not own this installation");
+  }
   const storage = new AdapterWorkflowStorage(database);
   const workflow = await storage.create({
     userId: actor.userId, tenantId: actor.tenantId,
     name: "Handle a push",
     status: WorkflowStatus.Disabled,
     definition: {
-      trigger: { provider: "github", event: "push" },
+      trigger: { provider: "github", event: "push", connectionId: binding.connectionId },
       steps: [{ type: "action", id: "record-push", action: "recordPush" }],
     },
   });
@@ -72,4 +80,4 @@ export async function createWorkflow(database: Adapter, plug: PlugFn, actor: Plu
 }
 ```
 
-The setup factory registers `recordPush` to return the trigger event name; the workflow engine records that result. Replace it with your authorized application operation when needed. Keep implementations in trusted server code and references in the stored definition. The host must authorize workflow authoring; direct storage access is not an HTTP authorization boundary. Trigger activation also requires the provider's verified webhook setup. Test duplicate delivery and restart behavior before production adoption. Delay steps currently fail closed without durable scheduling.
+Load `binding` from the App's installation registry after authorizing the actor to use that connection. The [setup factory](/docs/getting-started) configures the signing authority and registers `recordPush`, which returns the trigger event name. Keep implementations in trusted server code and references in the stored definition. The host authorizes workflow authoring before using storage. Delay steps currently fail closed without durable scheduling.

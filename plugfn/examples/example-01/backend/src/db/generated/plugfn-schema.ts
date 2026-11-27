@@ -227,11 +227,15 @@ export const plugfn_webhook_receipts = pgTable(
   payloadHash: text('payload_hash').notNull(),
   provider: text('provider').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  signatureVerified: boolean('signature_verified'),
   verificationStatus: text('verification_status').notNull(),
+  workflowIdempotencyKey: text('workflow_idempotency_key'),
+  workflowTenantId: text('workflow_tenant_id'),
   },
   (table) => ({
     idx_plugfn_webhook_receipts_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_idempotency').on(table.provider, table.idempotencyKey),
-    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event)
+    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event),
+    idx_plugfn_webhook_receipts_workflow_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_workflow_idempotency').on(table.workflowIdempotencyKey)
   })
 );
 
@@ -248,9 +252,11 @@ export const plugfn_webhook_deliveries = pgTable(
   metadata: json('metadata'),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
   receiptId: text('receipt_id').notNull(),
+  signatureVerified: boolean('signature_verified'),
   sinkId: text('sink_id'),
   status: text('status').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  workflowScoped: boolean('workflow_scoped'),
   },
   (table) => ({
     idx_plugfn_webhook_deliveries_receipt: index('idx_plugfn_webhook_deliveries_receipt').on(table.receiptId),
