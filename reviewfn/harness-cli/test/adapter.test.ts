@@ -996,6 +996,27 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(JSON.stringify(output)).not.toContain(secret);
   });
 
+  it("caches nothing an interrupted version probe printed, so a later run probes again", async () => {
+    const secret = ["interrupted", "fixture", "credential"].join("-");
+    const controller = new AbortController();
+    let probes = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+      probes += 1;
+      if (probes === 1) return { code: 0, signal: null, stdout: `fake-cli version 1.2.3+build.${secret}\n`, stderr: "", timedOut: false, canceled: false };
+      // The replacement probe is interrupted, yet its CLI still prints a clean version and exits 0.
+      if (probes === 2) controller.abort();
+      return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: probes === 2 };
+    };
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+    const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
+    const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
+    expect((await harness.preflight(allowlisted)).ok).toBe(true);
+    expect((await harness.run(input(designated, { signal: controller.signal }))).terminal).toBe("canceled");
+    expect((await harness.run(input(designated))).observed?.harnessVersion).toBe("1.2.3");
+    expect(probes).toBe(3);
+  });
+
   it("ends canceled an aborted run whose cached version its own secrets refuse, as on a cold cache", async () => {
     const secret = ["aborted", "fixture", "credential"].join("-");
     const runner: CommandRunner = async (_command, args, options) => args.includes("--version")
