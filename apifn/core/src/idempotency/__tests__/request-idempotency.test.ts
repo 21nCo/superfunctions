@@ -2381,6 +2381,33 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
     expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "store" });
   });
 
+  it("R4: a rejected settle write the store shows unapplied decides from the validated receipt with no replacement", async () => {
+    const store = new ScriptedStore();
+    const database = new FakeOrderDatabase();
+    let lookups = 0;
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey) => {
+        lookups += 1;
+        // claim reads twice, and settle before and after its rejected write: any further read fails.
+        if (lookups > 4) throw new Error("receipt source unavailable");
+        return database.receipts.find(storeKey);
+      },
+    };
+    const { idempotency } = setup({ store, receipts });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    let committed: IdempotentResponse | undefined;
+    store.rules.push({
+      match: (expectedVersion) => expectedVersion === holder.version,
+      before: async () => {
+        committed = await database.createOrder(holder, "book");
+      },
+      reject: "not applied",
+    });
+    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "settled", response: committed });
+    expect(lookups).toBe(4);
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "pending", version: holder.version });
+  });
+
   it("R5: a completed record without the flag never replays during an outage, and a non-boolean flag fails closed", async () => {
     const { idempotency, database, source, store } = world(new FakeAtomicStore());
     const holder = acquired(await idempotency.claim(orderRequest()));

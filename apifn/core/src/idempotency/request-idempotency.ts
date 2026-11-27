@@ -1167,14 +1167,14 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   const isOwn = (token: IdempotencyToken, receipt: ParsedReceipt): boolean =>
     receipt.claimId === token.claimId && receipt.fingerprint === token.fingerprint;
 
-  /** Whether the store now holds one of `versions`, for a write whose outcome is unknown; a failing read is false. */
-  const holdsVersion = async (storeKey: string, ...versions: string[]): Promise<boolean> => {
+  /** Whether the store now holds one of `versions`, for a write whose outcome is unknown; undefined when it cannot be read. */
+  const holdsVersion = async (storeKey: string, ...versions: string[]): Promise<boolean | undefined> => {
     try {
       const live = await readLive(storeKey, now());
       const held = live.kind === "present" ? live.record.version : live.expectedVersion;
       return held !== null && versions.includes(held);
     } catch {
-      return false;
+      return undefined;
     }
   };
 
@@ -1259,13 +1259,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     });
     const version = nextVersion();
     let written = false;
+    let unknown = false;
     let rejection: { error: unknown } | undefined;
     try {
       const first = own ? completed(own.response, version, true) : completed(snapshot as ResponseSnapshot, version, false);
       written = await store.compareAndSet(token.storeKey, token.version, first);
     } catch (error) {
       // A lost acknowledgement: the store, read now, tells whether this exact version was written.
-      written = await holdsVersion(token.storeKey, version);
+      const held = await holdsVersion(token.storeKey, version);
+      written = held === true;
+      unknown = held === undefined;
       rejection = { error };
     }
     // Without its own receipt the holder has no result: a commit read now decides, and with none the error stands.
@@ -1275,8 +1278,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       // The caller sends its own full response, as validated before any await: never the object it may have changed since.
       return reported ?? { outcome: "settled", response: deliveryOf(snapshot as ResponseSnapshot) };
     }
-    // A rejected write may have applied even when its version could not be read: the replacement is fenced to it.
-    if ((written || rejection) && after.claimId !== own?.claimId) {
+    // A rejected write whose version could not be read may have applied: the replacement is fenced to that version.
+    if ((written || unknown) && after.claimId !== own?.claimId) {
       const next: IdempotencyRecord = isOwn(token, after)
         ? completed(after.response, nextVersion(), true)
         : {
