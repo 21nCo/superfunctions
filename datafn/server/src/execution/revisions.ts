@@ -268,7 +268,7 @@ export async function bumpRevision(
   recordId: string,
   deleted: boolean,
 ): Promise<number> {
-  return (await raiseRevision(db, namespace, resource, recordId, () => deleted))!.rev;
+  return (await raiseRevision(db, namespace, resource, recordId, () => ({ deleted, byDelete: deleted })))!.rev;
 }
 
 /**
@@ -289,7 +289,8 @@ export async function bumpTombstone(
   recordId: string,
   outcome?: BumpOutcome,
 ): Promise<number> {
-  return (await raiseRevision(db, namespace, resource, recordId, () => true, { outcome }))!.rev;
+  const decide = () => ({ deleted: true, byDelete: true });
+  return (await raiseRevision(db, namespace, resource, recordId, decide, { outcome }))!.rev;
 }
 
 /**
@@ -519,13 +520,30 @@ function takeWriteEvidence(db: Adapter): Map<string, RecordEvidence> {
 }
 
 /**
- * Decides, from the record's revision row as read (null when it has none),
- * whether a raise leaves it a tombstone (`true`), live (`false`), or raises
- * nothing (`undefined`).
+ * What a raise leaves: a tombstone (`deleted`) or a live record, and whether
+ * the tombstone is a delete statement's own evidence (`byDelete`) rather than
+ * an absence another write observed.
  */
-type RaiseDecision = (row: Record<string, unknown> | null) => Promise<boolean | undefined> | boolean | undefined;
+interface Decided {
+  deleted: boolean;
+  byDelete?: boolean;
+}
+
+/**
+ * Decides, from the record's revision row as read (null when it has none),
+ * what a raise leaves, or that it raises nothing (`undefined`).
+ */
+type RaiseDecision = (row: Record<string, unknown> | null) => Promise<Decided | undefined> | Decided | undefined;
 
 const isTombstone = (row: Record<string, unknown> | null) => row !== null && Number(row.deleted) === 1;
+
+/** A raise mark's suffix: the raise was a delete's own tombstone, or any other state. */
+const BY_DELETE = ":d";
+const OTHER = ":o";
+
+/** Whether `row`'s latest raise is a tombstone that a delete statement's own evidence raised. */
+const deleteEvidenced = (row: Record<string, unknown> | null) =>
+  isTombstone(row) && raiseMarks(row)[0]?.endsWith(BY_DELETE) === true;
 
 /**
  * The revision row write a raise last sent, kept by its caller across a
@@ -535,7 +553,8 @@ const isTombstone = (row: Record<string, unknown> | null) => row !== null && Num
  * on `rev` makes the marks it read the ones it replaces), so a write whose
  * outcome is unknown (the statement committed but the adapter then failed) is
  * found by its mark even after later writers raised the record, and a retry
- * adopts that revision instead of raising the record again.
+ * adopts that revision instead of raising the record again (see
+ * pendingOutcome).
  */
 interface PendingRaise {
   rev?: number;
@@ -557,9 +576,28 @@ function raiseMarks(row: Record<string, unknown> | null): string[] {
   return at < 0 ? [] : stamp.slice(at + 1).split(" ");
 }
 
+/**
+ * How the raise `pending` last sent ended, read from the record's revision
+ * row: `raised` when its mark is kept; `lost` when the marks kept reach back
+ * to its revision without it (the i-th mark is the raise to `rev - i`: each
+ * raise prepends its mark to the ones it replaced, and only `writeLatest`
+ * drops them, all at once), so another writer took that revision or none
+ * committed; `unknown` when its mark may have been dropped. An `unknown`
+ * raise is never sent again: the record is not raised twice for one write,
+ * and its entry carries no revision.
+ */
+function pendingOutcome(row: Record<string, unknown> | null, pending: PendingRaise): "raised" | "lost" | "unknown" {
+  const marks = raiseMarks(row);
+  if (marks.includes(pending.mark!)) return "raised";
+  const current = row ? Number(row.rev) || 0 : 0;
+  return current - marks.length < pending.rev! ? "lost" : "unknown";
+}
+
 interface Raised {
   rev: number;
   deleted: boolean;
+  /** The raise may have committed before its acknowledgement was lost; see pendingOutcome. */
+  unknown?: boolean;
 }
 
 async function raiseRevision(
@@ -575,20 +613,21 @@ async function raiseRevision(
   const snapshotReads = readsMayBeSnapshot(db);
   const pending = options.pending ?? {};
   if (pending.mark !== undefined) {
-    const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    if (raiseMarks(row).includes(pending.mark)) return { rev: pending.rev!, deleted: pending.deleted! };
+    const ended = pendingOutcome(await db.internal.findOne(REVISIONS_TABLE, where), pending);
+    if (ended !== "lost") return { rev: pending.rev!, deleted: pending.deleted!, unknown: ended === "unknown" };
   }
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
-    const mark = randomBytes(8).toString("hex");
     if (options.outcome) options.outcome.staleView = attempt > 0 && snapshotReads;
     // A retry follows a write that committed after this transaction's read;
     // a plain read in a snapshot would return the same stale revision again.
     // A decision that depends on the latest row locks it before reading.
     if ((attempt > 0 && transactionsUsable(db)) || options.lockFirst) await writeLatest(db, id, updatedAt);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    const deleted = await decide(row);
-    if (deleted === undefined) return undefined;
+    const decided = await decide(row);
+    if (decided === undefined) return undefined;
+    const { deleted } = decided;
+    const mark = randomBytes(6).toString("hex") + (decided.byDelete ? BY_DELETE : OTHER);
     const current = row ? Number(row.rev) || 0 : 0;
     Object.assign(pending, { rev: current + 1, deleted, mark });
     const stamp = `${updatedAt}#${[mark, ...raiseMarks(row)].slice(0, RAISE_HISTORY).join(" ")}`;
@@ -895,14 +934,19 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  * committed state:
  * - a proven write (a create, upsert, update returned by its statement, or a
  *   counted delete) always moves it;
- * - a write that may have changed nothing (a delete without a count, or an
- *   update re-selected from a possible snapshot) moves nothing over a
- *   tombstone, read after the revision row is locked;
- * - a delete without a count raises a tombstone only when a read finds the
- *   row absent (a transaction sees its own delete); when the row is present
- *   it may have removed nothing (a suppressed delete), and a writer that
- *   re-created it has raised past the deleted state, so it raises only for
- *   an earlier write of the same write that changed the row (`before`), live;
+ * - an update re-selected from a possible snapshot, which may have changed
+ *   nothing, moves nothing over a tombstone, read after the revision row is
+ *   locked;
+ * - a delete without a count raises a tombstone when a read finds the row
+ *   absent (a transaction sees its own delete), unless the latest raise is
+ *   already a delete's own tombstone (`deleteEvidenced`): then this delete may
+ *   have removed nothing. A tombstone another write raised from an absence it
+ *   observed never stands in for it, so where the two cannot be told apart
+ *   the revision may skip a value, but is never shared by two states. When
+ *   the row is present the delete may have removed nothing (a suppressed
+ *   delete), and a writer that re-created it has raised past the deleted
+ *   state, so it raises only for an earlier write of the same write that
+ *   changed the row (`before`), live;
  * - inside a transaction (`transactional`) the write's own row lock keeps the
  *   state its statement left;
  * - outside a transaction, or for an entry recording another state than the
@@ -913,7 +957,8 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  * The entry carries the revision only when it records the state its own
  * statement left and the raise left that state; a rewritten entry carries
  * none. `pending` is this record's last revision row write, so a retry
- * after an unknown outcome adopts it (see PendingRaise).
+ * after an unknown outcome adopts it (see PendingRaise), or leaves the entry
+ * without a revision when its mark may have been dropped (pendingOutcome).
  */
 async function raiseFromEvidence(
   db: Adapter,
@@ -934,16 +979,19 @@ async function raiseFromEvidence(
   const absentNow = evidence.absentNow ??
     (async () => (await db.findOne({ model: entry.resource, where, namespace })) === null);
   const decide: RaiseDecision = async (row) => {
+    if (countless) {
+      if (await absentNow()) return unproven && deleteEvidenced(row) ? undefined : { deleted: true, byDelete: true };
+      return evidence.before && !(unproven && isTombstone(row)) ? { deleted: false } : undefined;
+    }
     if (unproven && isTombstone(row)) return undefined;
-    if (ownState) return evidence.deleted;
+    if (ownState) return { deleted: evidence.deleted, byDelete: evidence.deleted };
     const absent = await absentNow();
-    if (countless && !absent) return evidence.before ? false : undefined;
-    return absent;
+    return { deleted: absent, byDelete: absent && evidence.deleted };
   };
   const outcome: BumpOutcome = {};
   const lockFirst = unproven && transactional;
   const raised = await raiseRevision(db, namespace, entry.resource, entry.id, decide, { lockFirst, outcome, pending });
-  entry.rev = !rewritten && raised?.deleted === recordsDelete ? raised.rev : undefined;
+  entry.rev = !rewritten && !raised?.unknown && raised?.deleted === recordsDelete ? raised.rev : undefined;
   const unverified = evidence.state === "unverified" || evidence.before?.state === "unverified";
   if (raised && (entry.rev === undefined || outcome.staleView || unverified)) {
     entry.revUncertified = true;

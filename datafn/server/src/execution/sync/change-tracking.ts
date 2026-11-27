@@ -93,8 +93,10 @@ export async function recordChangesWithRetry(
 /**
  * DATA-41: records one write's change entries one by one, after raising the
  * revisions of the records they change (on the evidence `writeDb` recorded).
- * Assignment and recording are retried together on the same entries (see
- * withChangeRetry): a retry raises no record twice and records no entry twice.
+ * Assignment has its own retries (a retry raises no record twice), then each
+ * entry, in serverSeq order as base recorded them, has its own (a retry
+ * records no entry twice; see recordChanges), so a failing entry never
+ * spends another entry's retries (see withChangeRetry).
  */
 export async function recordWriteChangesWithRetry(
   changeTracking: ChangeTrackingService,
@@ -103,17 +105,19 @@ export async function recordWriteChangesWithRetry(
   maxRetries = 2,
   logger?: DatafnLogger,
 ): Promise<void> {
-  const recorded = new WeakSet<ChangeEntryInput>();
-  await withChangeRetry(changeTracking, async () => {
-    await changeTracking.assignRevisions(entries, writeDb);
-    for (const entry of entries) {
-      if (recorded.has(entry)) continue;
-      // In serverSeq order, one at a time, as base recorded them.
-      await changeTracking.recordChange(entry);
-      recorded.add(entry);
-    }
-  }, maxRetries, logger, "Change tracking retry", { entryCount: entries.length });
+  await withChangeRetry(
+    changeTracking,
+    () => changeTracking.assignRevisions(entries, writeDb),
+    maxRetries,
+    logger,
+    "Revision assignment retry",
+    { entryCount: entries.length },
+  );
+  for (const entry of entries) await recordChangeWithRetry(changeTracking, entry, maxRetries, logger);
 }
+
+/** DATA-41: change entries whose insert was sent (see unstoredChanges). */
+const sentChanges = new WeakSet<ChangeEntryInput>();
 
 /**
  * Change entry representing a mutation effect
@@ -479,6 +483,28 @@ export class ChangeTrackingService {
     );
   }
 
+  /** A change entry's row id, derived from the entry alone. */
+  private changeRowId(params: ChangeEntryInput): string {
+    return `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`;
+  }
+
+  /**
+   * DATA-41: the entries whose rows are not stored yet. Outside a
+   * transaction an insert that failed may have stored its rows before the
+   * adapter failed (a lost acknowledgement), so an entry sent before is
+   * looked up by its row id and never inserted twice.
+   */
+  private async unstoredChanges(entries: ChangeEntryInput[]): Promise<ChangeEntryInput[]> {
+    if (this.writesCertified) return entries;
+    const unstored: ChangeEntryInput[] = [];
+    for (const entry of entries) {
+      const stored = sentChanges.has(entry) &&
+        (await this.db.internal.findOne("__datafn_changes", [{ field: "id", op: "eq", value: this.changeRowId(entry) }]));
+      if (!stored) unstored.push(entry);
+    }
+    return unstored;
+  }
+
   /**
    * Record a change entry for a mutation (delegates to recordChanges)
    */
@@ -516,9 +542,10 @@ export class ChangeTrackingService {
     const certifiesRecord = (resource: string): boolean =>
       recordRev && schema !== undefined && issuesRevisions(schema, resource);
 
+    const unstored = await this.unstoredChanges(entries);
     const now = new Date().toISOString();
-    const rows = entries.map((params) => ({
-      id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
+    const rows = unstored.map((params) => ({
+      id: this.changeRowId(params),
       namespace: this.namespace,
       server_seq: params.serverSeq,
       resource: params.resource,
@@ -534,13 +561,15 @@ export class ChangeTrackingService {
     // EXE-018: Batch capability detection — use createMany when available
     const hasBatchCapability = typeof this.db.internal.createMany === "function";
 
-    if (hasBatchCapability) {
+    for (const entry of unstored) sentChanges.add(entry);
+    // With no rows left, every row was stored by an earlier attempt.
+    if (rows.length > 0 && hasBatchCapability) {
       this.logger?.debug("recordChanges: using batch insert path", {
         operation: "recordChanges",
         entryCount: entries.length,
       });
       await this.db.internal.createMany!("__datafn_changes", rows);
-    } else {
+    } else if (rows.length > 0) {
       this.logger?.debug("recordChanges: batch insert unavailable, using sequential path", {
         operation: "recordChanges",
         entryCount: entries.length,

@@ -39,7 +39,7 @@ async function serve(database: Adapter, serverSchema: unknown = schema) {
     send("mutation", { version: 1, clientId: "client:a", mutationId, ...mutation });
   const transact = async (mutation: Json, mutationId = `t${++seq}`) =>
     send("transact", { atomic: true, steps: [{ mutation: { version: 1, clientId: "client:a", mutationId, ...mutation } }] });
-  return { push, mutate, transact };
+  return { push, mutate, transact, send };
 }
 
 const rev = async (db: Adapter, resource: string, id: string) =>
@@ -618,5 +618,240 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
       expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 3, deleted: false });
       expect(await changeRows(base, "task:1"), route).toHaveLength(2);
     }
+  });
+});
+
+describe("DATA-41 PR review round 8: non-transactional writes are counted and recorded exactly once", () => {
+  const where = [{ field: "id", operator: "eq" as const, value: "task:1" }];
+  /** An adapter without transactions whose delete reports no count. */
+  const countless = (base: Adapter) =>
+    withoutTransactions(overriding(base, (target) => ({
+      delete: async (p: any) => {
+        await target.deleteMany(p);
+      },
+    })));
+  const deleteEntry = () => [{ resource: "task", id: "task:1", op: "delete", record: null }] as Json[];
+  const mergeEntry = () => [{ resource: "task", id: "task:1", op: "merge", record: null }] as Json[];
+
+  async function insertedTask(): Promise<Adapter> {
+    const base = memoryAdapter() as Adapter;
+    await base.create({ model: "task", data: { id: "task:1", title: "a" }, namespace: NS } as any);
+    await bumpRevision(base, NS, "task", "task:1", false);
+    return base;
+  }
+
+  it("raises a count-less delete after a merge that observed its absence and raised first", async () => {
+    for (const mergeFirst of [true, false]) {
+      const base = await insertedTask();
+      const dbA = withWriteEvidence(countless(base));
+      const dbB = withWriteEvidence(countless(base));
+      await dbA.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
+      await dbB.delete({ model: "task", where, namespace: NS } as any);
+      const raises = [() => assignWriteRevisions(dbA, NS, mergeEntry() as any, () => false, schema, false),
+        () => assignWriteRevisions(dbB, NS, deleteEntry() as any, () => false, schema, false)];
+      for (const raise of mergeFirst ? raises : raises.reverse()) await raise();
+
+      // insert (1), the merge (2), the delete (3), in either raise order.
+      expect(await rev(base, "task", "task:1"), `mergeFirst=${mergeFirst}`).toEqual({ rev: 3, deleted: true });
+    }
+  });
+
+  it("raises a count-less delete that removed a row another request merged, on push and /mutation", async () => {
+    for (const resource of ["task", "kv"] as const) {
+      for (const route of ["push", "mutation"] as const) {
+        const base = memoryAdapter() as Adapter;
+        const id = resource === "kv" ? "kv:prefs" : "task:1";
+        const byId = [{ field: "id", operator: "eq" as const, value: id }];
+        let other: Adapter | undefined;
+        const db = overriding(countless(base), (target) => ({
+          ...Object.fromEntries(["update", "upsert"].map((name) => [name, async (p: any) => {
+            const out = await (target as any)[name](p);
+            if (p.model === resource && other === undefined) {
+              // Another request's count-less delete removes the row; it raises after this write.
+              other = withWriteEvidence(countless(base));
+              await other.delete({ model: resource, where: byId, namespace: NS } as any);
+            }
+            return out;
+          }])),
+        }));
+        const record = resource === "kv" ? { value: { a: 1 } } : { title: "a" };
+        await base.create({ model: resource, data: { id, ...record }, namespace: NS } as any);
+        await bumpRevision(base, NS, resource, id, false);
+        const served = await serve(db);
+        const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+        const merged = resource === "kv" ? { value: { b: 2 } } : { title: "b" };
+        expect((await send({ resource, operation: "merge", id, record: merged })).body.ok, `${resource} ${route}`).toBe(true);
+        await assignWriteRevisions(other!, NS, [{ resource, id, op: "delete", record: null }] as any, () => false, schema, false);
+
+        // insert (1), the merge (2), the other request's delete (3).
+        expect(await rev(base, resource, id), `${resource} ${route}`).toEqual({ rev: 3, deleted: true });
+      }
+    }
+  });
+
+  it("raises once for two count-less deletes of the same row", async () => {
+    for (const firstRaisesFirst of [true, false]) {
+      const base = await insertedTask();
+      const dbs = [withWriteEvidence(countless(base)), withWriteEvidence(countless(base))];
+      for (const db of dbs) await db.delete({ model: "task", where, namespace: NS } as any);
+      for (const db of firstRaisesFirst ? dbs : [...dbs].reverse()) {
+        await assignWriteRevisions(db, NS, deleteEntry() as any, () => false, schema, false);
+      }
+
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: true });
+    }
+  });
+
+  it("never raises a write twice when its lost acknowledgement is followed by many other raises", async () => {
+    for (const others of [12, 30]) {
+      for (const route of ["push", "mutation"] as const) {
+        const base = memoryAdapter() as Adapter;
+        let loseAck = false;
+        const db = withoutTransactions(overriding(base, (target) => ({
+          internal: new Proxy(target.internal as any, {
+            get(internal, key, receiver) {
+              const value = Reflect.get(internal, key, receiver);
+              if (typeof value !== "function") return value;
+              if (key !== "update") return value.bind(internal);
+              return async (table: string, ...args: unknown[]) => {
+                const out = await value.apply(internal, [table, ...args]);
+                if (table === "__datafn_revisions" && loseAck && "rev" in (args[1] as Json)) {
+                  loseAck = false;
+                  for (let i = 0; i < others; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                  throw new Error("connection lost after commit");
+                }
+                return out;
+              };
+            },
+          }),
+        })));
+        const served = await serve(db);
+        const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+        expect((await send({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok).toBe(true);
+        loseAck = true;
+        const merged = await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+        const label = `${route} others=${others}`;
+
+        expect(merged.body.ok, label).toBe(true);
+        // insert (1), the merge whose acknowledgement was lost (2), the other raises.
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 2 + others, deleted: false });
+        expect(await changeRows(base, "task:1"), label).toHaveLength(2);
+      }
+    }
+  });
+
+  const cascadeSchema = {
+    resources: [
+      ...schema.resources,
+      { name: "comment", version: 1, fields: [{ name: "body", type: "string", required: false }, { name: "taskId", type: "string", required: false }] },
+    ],
+    relations: [{ from: "comment", to: "task", type: "many-one", relation: "task", fkField: "taskId", onDelete: { to: "cascade" } }],
+  } as any;
+
+  /** Serves `db` with the cascade schema and inserts task:1 with comment:1. */
+  async function cascadeServer(db: Adapter) {
+    const served = await serve(db, cascadeSchema);
+    // Without database transactions, /transact applies its steps one at a time.
+    const transact = (mutation: Json) => served.send("transact", {
+      atomic: false,
+      steps: [{ mutation: { version: 1, clientId: "client:a", mutationId: "t-delete", ...mutation } }],
+    });
+    const routes = { push: served.push, mutation: served.mutate, transact };
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } });
+    return routes;
+  }
+
+  const deleteChanges = async (base: Adapter) =>
+    (await base.internal.findMany("__datafn_changes", []))
+      .filter((row: Json) => row.op === "delete")
+      .map((row: Json) => row.record_id)
+      .sort();
+
+  const okOf = (route: string, body: Json) =>
+    route === "transact" ? body.ok !== false && !body.error : body.ok;
+
+  it("gives each change of a write its own retries, recording a cascade delete's every change", async () => {
+    for (const route of ["push", "mutation", "transact"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let call = 0;
+      let armed = false;
+      // While armed, change inserts #1, #2 and #4 fail.
+      const db = failingInternal(withoutTransactions(base), "__datafn_changes", () => armed && [1, 2, 4].includes(++call));
+      const routes = await cascadeServer(db);
+      armed = true;
+      const result = await routes[route]({ resource: "task", operation: "delete", id: "task:1" });
+      armed = false;
+
+      expect(okOf(route, result.body), `${route} ${JSON.stringify(result.body).slice(0, 200)}`).toBe(true);
+      expect(await deleteChanges(base), route).toEqual(["comment:1", "task:1"]);
+    }
+  });
+
+  it("records a change whose insert was stored before the adapter failed once, on every route", async () => {
+    for (const route of ["push", "mutation", "transact"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let armed = false;
+      let inserts = 0;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "create" && key !== "createMany") return value.bind(internal);
+            return async (table: string, data: Json | Json[]) => {
+              if (table !== "__datafn_changes") return value.apply(internal, [table, data]);
+              for (const row of Array.isArray(data) ? data : [data]) {
+                if (await internal.findOne(table, [{ field: "id", op: "eq", value: row.id }])) {
+                  throw new Error(`duplicate key ${row.id}`);
+                }
+              }
+              const out = await value.apply(internal, [table, data]);
+              // The last insert of the write is stored, then its acknowledgement is lost.
+              if (armed && ++inserts === (key === "createMany" ? 1 : 2)) throw new Error("connection lost after commit");
+              return out;
+            };
+          },
+        }),
+      })));
+      const routes = await cascadeServer(db);
+      armed = true;
+      const result = await routes[route]({ resource: "task", operation: "delete", id: "task:1" });
+
+      expect(inserts, route).toBeGreaterThan(0);
+      expect(okOf(route, result.body), `${route} ${JSON.stringify(result.body).slice(0, 200)}`).toBe(true);
+      expect(await deleteChanges(base), route).toEqual(["comment:1", "task:1"]);
+    }
+  });
+
+  it("records the changes already sequenced when sequencing a later change fails", async () => {
+    const base = memoryAdapter() as Adapter;
+    let armed = false;
+    let allocations = 0;
+    const db = withoutTransactions(overriding(base, (target) => ({
+      async delete(p: any) {
+        const out = await target.delete(p);
+        // After the write, the first sequence allocation succeeds and later ones fail.
+        if (p.model === "task") armed = true;
+        return out;
+      },
+      internal: new Proxy(target.internal as any, {
+        get(internal, key, receiver) {
+          const value = Reflect.get(internal, key, receiver);
+          if (typeof value !== "function") return value;
+          if (key !== "create" && key !== "update") return value.bind(internal);
+          return async (table: string, ...args: unknown[]) => {
+            if (table === "__datafn_meta" && armed && ++allocations > 1) throw new Error("forced sequence failure");
+            return value.apply(internal, [table, ...args]);
+          };
+        },
+      }),
+    })));
+    const routes = await cascadeServer(db);
+    const result = await routes.push({ resource: "task", operation: "delete", id: "task:1" });
+
+    expect(JSON.stringify(result.body)).toContain("INTERNAL");
+    expect(JSON.stringify(result.body)).toContain('"retryable":true');
+    expect((await deleteChanges(base)).length).toBe(1);
   });
 });

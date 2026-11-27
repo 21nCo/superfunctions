@@ -1518,15 +1518,23 @@ export async function executePush(
         let mutationRevision: DatafnPushRevision | undefined;
         try {
           const recorded: ChangeEntryInput[] = [];
-          for (const change of changes) {
-            const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
-            latestSeq = Math.max(latestSeq, seq);
-            resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-            recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
+          let sequencingFailure: { error: unknown } | undefined;
+          try {
+            for (const change of changes) {
+              const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
+              latestSeq = Math.max(latestSeq, seq);
+              resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
+              recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
+            }
+          } catch (error) {
+            // DATA-41: the changes already sequenced are still recorded, as
+            // base recorded each in turn, before the failure is reported.
+            sequencingFailure = { error };
           }
           // DATA-41: the write has committed; revisions and change rows are
-          // retried together on these entries, never replaying the write.
+          // retried on these entries, never replaying the write.
           await recordWriteChangesWithRetry(changeTracking, recorded, writeDb, 2, logger);
+          if (sequencingFailure) throw sequencingFailure.error;
           noteBatchRevisions(recorded);
           mutationRevision = await postWriteRevision(mut, db, recorded, false);
         } catch (error) {
