@@ -119,7 +119,7 @@ const NODES = [
   { id: "node:8", label: "Golf", metaType: "", creationContext: null, mdParent: [] },
 ];
 
-async function createServer(options: { schema?: DatafnSchema } = {}) {
+async function createServer(options: { schema?: DatafnSchema; allowUnknownResources?: boolean } = {}) {
   const db = memoryAdapter();
   await db.initialize();
   const seed = (model: string, data: Record<string, unknown>) =>
@@ -150,7 +150,8 @@ async function createServer(options: { schema?: DatafnSchema } = {}) {
   await seed("record_links", { id: "rl2", in: "task:2", out: "objective:goal" });
 
   const server = await createDatafnServer({
-    allowUnknownResources: true,
+    debug: true,
+    allowUnknownResources: options.allowUnknownResources ?? true,
     schema: options.schema ?? SCHEMA,
     limits: { maxLimit: 100 },
     database: db,
@@ -171,6 +172,23 @@ async function query(server: Awaited<ReturnType<typeof createDatafnServer>>, bod
   );
   const json = (await res.json()) as Json;
   return { status: res.status, body: json };
+}
+
+async function expectQueryAndTransactData(
+  server: Awaited<ReturnType<typeof createDatafnServer>>,
+  request: Json,
+  data: Json[],
+) {
+  const standalone = await query(server, request);
+  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+    method: "POST",
+    body: JSON.stringify({ atomic: false, steps: [{ query: { version: 1, ...request } }] }),
+  }));
+  const transaction = await response.json();
+  expect(standalone.status).toBe(200);
+  expect(response.status).toBe(200);
+  expect(standalone.body.result.data).toEqual(data);
+  expect(transaction.result.results[0].data).toEqual(data);
 }
 
 /** An always-true filter the adapter cannot express: forces in-memory evaluation. */
@@ -990,20 +1008,19 @@ describe("filter on a field named like its many-one relation (node.parent)", () 
     // Other relations are unaffected.
     const childNodes = await query(denied.server, { resource: "node", filters: { label: "Alpha" }, select: ["id", "childNodes"] });
     expect(childNodes.status).toBe(200);
-    // A scalar filter on it needs read access too, declared or not.
-    for (const [schema, undeclared] of [
-      [withPolicy(["id", "label"]), false],
-      [{ ...withPolicy(["id", "label"]), resources: withPolicy(["id", "label"]).resources.map((r) =>
-        r.name === "node" ? { ...r, fields: r.fields.filter((f) => f.name !== "parent") } : r) } as DatafnSchema, true],
-    ] as const) {
+    // Both scalar and quantified predicates need read access to the key.
+    const policy = withPolicy(["id", "label"]);
+    const withoutDeclaration = {
+      ...policy,
+      resources: policy.resources.map((r) =>
+        r.name === "node" ? { ...r, fields: r.fields.filter((f) => f.name !== "parent") } : r),
+    };
+    for (const schema of [policy, withoutDeclaration]) {
       const { server } = await createServer({ schema });
       const res = await query(server, { resource: "node", filters: { parent: "node:1" }, select: ["id"], count: true });
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      if (undeclared) {
-        // Quantifier objects remain relation filters.
-        const quantified = await query(server, { resource: "node", filters: { parent: { $any: { label: "Alpha" } } }, select: ["id"] });
-        expect(quantified.status, JSON.stringify(quantified.body)).toBe(200);
-      }
+      const quantified = await query(server, { resource: "node", filters: { parent: { $any: { label: "Alpha" } } }, select: ["id"] });
+      expect(quantified.status, JSON.stringify(quantified.body)).toBe(403);
     }
     const allowed = await createServer({ schema: withPolicy(["id", "label", "parent"]) });
     const res = await query(allowed.server, { resource: "node", filters: { label: "Echo" }, select: ["id", "parent.*"] });
@@ -1015,6 +1032,415 @@ describe("filter on a field named like its many-one relation (node.parent)", () 
     expect(classifyQuery({ resource: "objective", select: ["*", "parent.*"] }, SCHEMA)).toBe("IN_MEMORY");
     expect(classifyQuery({ resource: "node", select: ["*", "parent.*"] }, SCHEMA)).toBe("PARTIAL_PUSHDOWN");
   });
+});
+
+it("uses the same declared endpoint for legacy IDs in query and transact", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      relation: "relatedItem",
+      inverse: "relatedTasks",
+      fkField: "itemId",
+      fkResourceField: "itemResource",
+    }, {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      relation: "reviewItem",
+      fkField: "itemId",
+      fkResourceField: "reviewResource",
+    }, {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      inverse: "linkedTasks",
+    }, {
+      type: "one-many",
+      from: ["node", "objective"],
+      to: "task",
+      relation: "containedTasks",
+      inverse: "container",
+      fkField: "container",
+    }],
+  };
+  const { db, server } = await createServer({ schema });
+  await db.create({ model: "objective", namespace: "datafn", data: { id: "legacy-item", label: "Goal" } });
+  await db.create({ model: "node", namespace: "datafn", data: { id: "legacy-item", label: "Node" } });
+  await db.create({ model: "task", namespace: "datafn", data: { id: "task:legacy", label: "Unqualified", itemId: "legacy-item" } });
+  await db.create({ model: "task", namespace: "datafn", data: {
+    id: "task:explicit",
+    label: "Linked",
+    itemId: "legacy-item",
+    itemResource: "objective",
+    reviewResource: "node",
+    nodeId: "legacy-item",
+    targetResource: "objective",
+    container: "legacy-item",
+    containerResource: "objective",
+  } });
+  await db.create({ model: "task", namespace: "datafn", data: { id: "task:qualified", itemId: "objective:goal" } });
+  const body = {
+    resource: "task",
+    version: 1,
+    select: ["id"],
+    sort: ["id:asc"],
+    filters: { relatedItem: { $any: { label: "Goal" } } },
+  };
+  const inverse = {
+    version: 1,
+    select: ["id"],
+    filters: { relatedTasks: { $any: { label: "Linked" } } },
+  };
+  for (const [request, data] of [
+    [body, [{ id: "task:explicit" }, { id: "task:qualified" }]],
+    [{ ...inverse, resource: "objective" }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node" }, []],
+    [{ ...inverse, resource: "objective", filters: { linkedTasks: { $any: { label: "Linked" } } } }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node", filters: { linkedTasks: { $any: { label: "Linked" } } } }, []],
+    [{ ...body, filters: { container: { $any: { label: "Goal" } } } }, [{ id: "task:explicit" }]],
+    [{ ...inverse, resource: "objective", filters: { containedTasks: { $any: { label: "Linked" } } } }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node", filters: { containedTasks: { $any: { label: "Linked" } } } }, []],
+  ] as const) {
+    const standalone = await query(server, request);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: request }] }),
+    }));
+    const transaction = await response.json();
+    expect(standalone.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(standalone.body.result.data).toEqual(data);
+    expect(transaction.result.results[0].data).toEqual(data);
+  }
+
+  const owner = { resource: "task", version: 1, filters: { id: "task:explicit" } };
+  const forward = { ...owner, select: ["id", "relatedItem.label", "container.*"] };
+  expect(classifyQuery(forward, schema)).toBe("PARTIAL_PUSHDOWN");
+  const inverseSelect = ["id", "linkedTasks", "containedTasks.*"];
+  for (const [request, expected] of [
+    [forward, { relatedItem: { id: "legacy-item", label: "Goal" }, container: { id: "legacy-item", label: "Goal" } }],
+    [{ ...forward, filters: { $and: [owner.filters, body.filters] } },
+      { relatedItem: { id: "legacy-item", label: "Goal" }, container: { id: "legacy-item", label: "Goal" } }],
+    [{ resource: "objective", version: 1, filters: { id: "legacy-item" }, select: inverseSelect },
+      { linkedTasks: ["task:explicit"], containedTasks: [{ id: "task:explicit" }] }],
+    [{ resource: "node", version: 1, filters: { id: "legacy-item" }, select: inverseSelect },
+      { linkedTasks: [], containedTasks: [] }],
+  ] as const) {
+    const standalone = await query(server, request);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: request }] }),
+    }));
+    const transaction = await response.json();
+    expect(standalone.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(standalone.body.result.data[0]).toMatchObject(expected);
+    expect(transaction.result.results[0].data).toEqual(standalone.body.result.data);
+  }
+
+  const relatedQuery = { resource: "task", relation: "relatedItem", id: "task:explicit", select: ["*"] };
+  for (const request of [relatedQuery, withForcedInMemory(relatedQuery)]) {
+    const result = await query(server, request);
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "legacy-item", label: "Goal" }]);
+  }
+  await expectQueryAndTransactData(server, {
+    ...owner,
+    select: ["id", "reviewItem.label"],
+  }, [{ id: "task:explicit", reviewItem: { id: "legacy-item", label: "Node" } }]);
+});
+
+it("projects an inverse FK row under its actual owner's field policy", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => ({
+      ...resource,
+      permissions: { read: { fields: resource.name === "objective" ? ["label", "parentId"] : ["label"] } },
+    })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: ["node", "objective"],
+      to: "collection",
+      relation: "group",
+      inverse: "groupEntries",
+      fkField: "groupId",
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  await db.create({ model: "objective", namespace: "datafn", data: {
+    id: "legacy-entry", label: "Goal", parentId: "objective:parent", groupId: "collection:home",
+  } });
+  await expectQueryAndTransactData(server, {
+    resource: "collection", filters: { id: "collection:home" }, select: ["id", "groupEntries.*"],
+  }, [{ id: "collection:home", groupEntries: [{ id: "legacy-entry", label: "Goal", parentId: "objective:parent" }] }]);
+});
+
+it("excludes related projections without a policy unless the server allows unknown resources", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => (resource.name === "objective"
+      ? resource
+      : { ...resource, permissions: { read: { fields: ["label"] } } })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      relation: "relatedItem",
+      inverse: "relatedTasks",
+      fkField: "itemId",
+      fkResourceField: "itemResource",
+    }],
+  };
+  for (const allowUnknownResources of [false, true]) {
+    const { db, server } = await createServer({ schema, allowUnknownResources });
+    await db.create({ model: "objective", namespace: "datafn", data: { id: "legacy-item", label: "Goal" } });
+    await db.create({ model: "task", namespace: "datafn", data: {
+      id: "task:linked", itemId: "legacy-item", itemResource: "objective",
+    } });
+    await expectQueryAndTransactData(server, {
+      resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem.*"],
+    }, [{ id: "task:linked", relatedItem: allowUnknownResources ? { id: "legacy-item", label: "Goal" } : null }]);
+    await expectQueryAndTransactData(server, {
+      resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem"],
+    }, [{ id: "task:linked", relatedItem: allowUnknownResources ? "legacy-item" : null }]);
+    const dedicated = await query(server, { resource: "task", relation: "relatedItem", id: "task:linked", select: ["*"] });
+    expect(dedicated.status).toBe(200);
+    expect(dedicated.body.result.data).toEqual(allowUnknownResources ? [{ id: "legacy-item", label: "Goal" }] : []);
+    await server.close();
+  }
+});
+
+it.each([false, true])("checks nested FK visibility with allowUnknownResources=%s", async (allowUnknownResources) => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map<DatafnSchema["resources"][number]>((resource) => ({
+      ...resource,
+      permissions: { read: { fields: ["label"] } },
+      ...(allowUnknownResources && resource.name === "objective" ? {
+        capabilities: ["audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+      } : {}),
+    })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "one-many",
+      from: "collection",
+      to: "task",
+      relation: "members",
+      inverse: "folder",
+      ...(allowUnknownResources ? { fkField: "folderId" } : {}),
+    }, {
+      type: "many-one",
+      from: "collection",
+      to: "node",
+      relation: "shelf",
+      fkField: "shelfId",
+    }, {
+      type: "many-one",
+      from: "node",
+      to: "objective",
+      relation: "plan",
+      fkField: "planId",
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources });
+  try {
+    const seed = (model: string, data: Json) => db.create({ model, namespace: "datafn", data });
+    await seed("collection", { id: "collection:folder", shelfId: "node:shelf" });
+    await seed("node", { id: "node:shelf", planId: "objective:goal" });
+    await seed("task", { id: "task:member", folderId: "collection:folder" });
+    const member = { resource: "task", filters: { id: "task:member" } };
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder"] },
+      [{ id: "task:member", folder: "collection:folder" }]);
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf"] },
+      [{ id: "task:member", folder: { id: "collection:folder", shelf: "node:shelf" } }]);
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf.plan"] }, [{
+      id: "task:member",
+      folder: { id: "collection:folder", shelf: { id: "node:shelf", plan: allowUnknownResources ? null : "objective:goal" } },
+    }]);
+  } finally {
+    await server.close();
+  }
+});
+
+it.each([false, true])("checks inverse join visibility with allowUnknownResources=%s", async (allowUnknownResources) => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => {
+      if (resource.name === "collection") return { ...resource, permissions: { read: { fields: ["label"] } } };
+      if (allowUnknownResources && resource.name === "objective") {
+        return {
+          ...resource,
+          capabilities: ["audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        };
+      }
+      return resource;
+    }),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-many",
+      from: ["objective", "collection"],
+      to: "collection",
+      relation: "destinations",
+      inverse: "origins",
+      joinTable: "test_connections",
+      metadata: [{ name: "linkType", type: "string" }],
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources });
+  const createJoin = (data: Json) => db.create({ model: "test_connections", namespace: "datafn", data });
+  await createJoin({
+    id: "test-visible-join", from: "collection:work", fromResource: "collection",
+    to: "collection:home", linkType: "direct",
+  });
+  await createJoin({
+    id: "test-unreadable-join", from: "objective:goal", fromResource: "objective",
+    to: "collection:home", linkType: "reference",
+  });
+  const anchor = { resource: "collection", filters: { id: "collection:home" } };
+  await expectQueryAndTransactData(server, { ...anchor, select: ["id", "origins"] },
+    [{ id: "collection:home", origins: ["collection:work"] }]);
+  await expectQueryAndTransactData(server, { ...anchor, select: ["id", "origins.#"] },
+    [{ id: "collection:home", origins: [{ from: "collection:work", to: "collection:home", linkType: "direct" }] }]);
+  await server.close();
+});
+
+it("preserves both resource discriminators on inverse predicates", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => {
+      if (resource.name === "objective") return { ...resource, permissions: { read: { fields: ["label"] } } };
+      if (resource.name === "node") return { ...resource, permissions: { read: { fields: ["label", "metaType"] } } };
+      return resource;
+    }),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-many",
+      from: ["node", "objective", "collection"],
+      to: ["task", "collection"],
+      relation: "entryGroups",
+      inverse: "entries",
+      joinTable: "test_entries",
+    }],
+  };
+  const { db, server } = await createServer({ schema });
+  const seed = (model: string, data: Record<string, unknown>) =>
+    db.create({ model, namespace: "datafn", data });
+  await seed("objective", { id: "legacy-entry", label: "Legacy entry", parentId: "objective:parent" });
+  await seed("node", { id: "legacy-entry", label: "Node entry", metaType: "note" });
+  await seed("collection", { id: "legacy-target", label: "Linked collection" });
+  await seed("task", { id: "legacy-target", label: "Unlinked task" });
+  await seed("test_entries", {
+    id: "test-join",
+    from: "legacy-entry",
+    fromResource: "objective",
+    to: "legacy-target",
+    toResource: "collection",
+  });
+  await seed("test_entries", {
+    id: "test-node-join",
+    from: "legacy-entry",
+    fromResource: "node",
+    to: "legacy-target",
+    toResource: "collection",
+  });
+
+  for (const resource of ["collection", "task"]) {
+    const body = {
+      resource,
+      version: 1,
+      select: ["id"],
+      filters: { entries: { $any: { label: "Legacy entry" } } },
+    };
+    const expected = resource === "collection" ? [{ id: "legacy-target" }] : [];
+    const pushed = await query(server, body);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: body }] }),
+    }));
+    const transaction = await response.json();
+    expect(pushed.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(pushed.body.result.data).toEqual(expected);
+    expect(transaction.result.results[0].data).toEqual(expected);
+  }
+
+  const forward = {
+    resource: "objective",
+    version: 1,
+    select: ["id"],
+    filters: { entryGroups: { $any: { label: "Linked collection" } } },
+  };
+  const pushed = await query(server, forward);
+  expect(pushed.status).toBe(200);
+  expect(pushed.body.result.data).toEqual([{ id: "legacy-entry" }]);
+
+  const linked = { resource: "collection", version: 1, filters: { id: "legacy-target" } };
+  const selections = [
+    ["id", "entries.#"],
+    ["id", "entries.*"],
+    ["id", "entries.*#"],
+    ["id", "entries.id", "entries.label"],
+  ];
+  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+    method: "POST",
+    body: JSON.stringify({
+      atomic: false,
+      steps: [
+        { query: forward },
+        { query: { resource: "task", version: 1, select: ["id", "entries.#"], filters: { id: "legacy-target" } } },
+        ...selections.map((select) => ({ query: { ...linked, select } })),
+      ],
+    }),
+  }));
+  const transaction = await response.json();
+  expect(response.status).toBe(200);
+  expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
+  expect(transaction.result.results[1].data).toEqual([{ id: "legacy-target", entries: [] }]);
+  expect(transaction.result.results[2].data[0].entries).toHaveLength(2);
+  for (const result of transaction.result.results.slice(3)) {
+    expect(result.data[0].entries.map((entry: { label: string }) => entry.label).sort())
+      .toEqual(["Legacy entry", "Node entry"]);
+  }
+  expect(classifyQuery({ ...linked, select: selections[1] }, schema)).toBe("PARTIAL_PUSHDOWN");
+  for (const [index, select] of selections.entries()) {
+    const result = await query(server, { ...linked, select });
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual(transaction.result.results[index + 2].data);
+    if (index === 1 || index === 2) {
+      const entries = result.body.result.data[0].entries as Json[];
+      expect(entries.find((entry) => entry.label === "Legacy entry")).not.toHaveProperty("parentId");
+      expect(entries.find((entry) => entry.label === "Node entry")).toHaveProperty("metaType", "note");
+    }
+  }
+
+  const join = { from: "legacy-entry", to: "legacy-target" };
+  for (const [resource, relation, id, data] of [
+    ["objective", "entryGroups", "legacy-entry", [join]],
+    ["collection", "entries", "legacy-target", [join, join]],
+    ["task", "entries", "legacy-target", []],
+  ] as const) {
+    const result = await query(server, { resource, relation, id, version: 1, select: ["#"], count: true });
+    expect(result.status).toBe(200);
+    expect(result.body.result).toEqual({ data, nextCursor: null, count: data.length });
+  }
+
+  await seed("test_entries", {
+    id: "test-forward-join", from: "legacy-target", fromResource: "collection", to: "task:1", toResource: "task",
+  });
+  const findMany = db.findMany.bind(db);
+  const joinRead = vi.spyOn(db, "findMany").mockImplementation(async (params) => {
+    if (params.model === "test_entries" && params.where?.some(({ field }) => field === "to")) {
+      throw new Error("test inverse join read failure");
+    }
+    return findMany(params);
+  });
+  try {
+    const result = await query(server, withForcedInMemory({ ...linked, select: ["id", "entryGroups", "entries"] }));
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "legacy-target", entryGroups: ["task:1"], entries: [] }]);
+  } finally {
+    joinRead.mockRestore();
+  }
 });
 
 describe("relation expansion by name for in-memory queries", () => {

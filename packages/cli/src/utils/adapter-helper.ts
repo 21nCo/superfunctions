@@ -137,12 +137,14 @@ async function createPrismaAdapter(
     schemaVersionsTable: prismaConfig.schemaVersionsTable,
   });
 
-  // Determine dialect from datasource
+  // The client's own provider wins: its datasource can differ from DATABASE_URL.
+  const client = prismaConfig.prisma;
+  const provider = client._engineConfig?.activeProvider ?? client._activeProvider ?? client.$engineConfig?.activeProvider;
   const datasourceUrl = process.env.DATABASE_URL ?? '';
   let dialect: 'postgres' | 'mysql' | 'sqlite' = 'postgres';
-  if (datasourceUrl.startsWith('mysql:')) {
+  if (provider ? provider === 'mysql' : datasourceUrl.startsWith('mysql:')) {
     dialect = 'mysql';
-  } else if (datasourceUrl.startsWith('file:') || datasourceUrl.includes('sqlite')) {
+  } else if (provider ? provider === 'sqlite' : datasourceUrl.startsWith('file:') || datasourceUrl.includes('sqlite')) {
     dialect = 'sqlite';
   }
 

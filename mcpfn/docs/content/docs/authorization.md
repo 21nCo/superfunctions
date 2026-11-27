@@ -22,6 +22,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 The wrapper publishes protected-resource metadata and passes verified auth information to server context. Keep identity, tenant, scopes, and resource binding out of model-controlled arguments. The [authorization reference](/docs/reference/auth) covers the generic provider adapter and diagnostic entry points.
 
 ## Complete client OAuth

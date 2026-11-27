@@ -442,6 +442,20 @@
         }
       }
     },
+    "/auth/social/handoff/exchange": {
+      "post": {
+        "operationId": "exchangeSocialHandoff",
+        "summary": "Exchange a one-time social sign-in handoff code and its verifier for a bearer session",
+        "tags": [
+          "authfn"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
     "/auth/social/native/apple/complete": {
       "post": {
         "operationId": "completeNativeAppleSignIn",

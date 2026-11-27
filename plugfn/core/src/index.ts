@@ -35,6 +35,9 @@ export * from './utils/index.js';
 export * from './mail/index.js';
 export * from './policy/index.js';
 
+// Credential scope envelopes
+export * from './scopes/index.js';
+
 // Security exports
 export * from './security/isolation-guards.js';
 export * from './security/retention.js';

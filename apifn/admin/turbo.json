@@ -12,6 +12,7 @@
         "$TURBO_ROOT$/filefn/admin/src/**",
         "$TURBO_ROOT$/hostfn/admin/src/**",
         "$TURBO_ROOT$/mailfn/admin/src/**",
+        "$TURBO_ROOT$/memoryfn/admin/src/**",
         "$TURBO_ROOT$/plugfn/admin/src/**",
         "$TURBO_ROOT$/searchfn/admin/src/**",
         "$TURBO_ROOT$/sendfn/admin/src/**"
@@ -27,6 +28,7 @@
         "$TURBO_ROOT$/filefn/admin/src/**",
         "$TURBO_ROOT$/hostfn/admin/src/**",
         "$TURBO_ROOT$/mailfn/admin/src/**",
+        "$TURBO_ROOT$/memoryfn/admin/src/**",
         "$TURBO_ROOT$/plugfn/admin/src/**",
         "$TURBO_ROOT$/searchfn/admin/src/**",
         "$TURBO_ROOT$/sendfn/admin/src/**"
@@ -42,6 +44,7 @@
         "$TURBO_ROOT$/filefn/admin/src/**",
         "$TURBO_ROOT$/hostfn/admin/src/**",
         "$TURBO_ROOT$/mailfn/admin/src/**",
+        "$TURBO_ROOT$/memoryfn/admin/src/**",
         "$TURBO_ROOT$/plugfn/admin/src/**",
         "$TURBO_ROOT$/searchfn/admin/src/**",
         "$TURBO_ROOT$/sendfn/admin/src/**"

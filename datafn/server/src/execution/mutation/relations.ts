@@ -21,6 +21,7 @@ import {
 } from "@datafn/core";
 import type { Adapter, TransactionAdapter } from "@superfunctions/db";
 import type { DFQLMutation } from "./dfql.js";
+import { fkResourceFieldForRelation, htreeFkField } from "../relations/foreign-key.js";
 
 // Local alias — avoids TS2709 ("Cannot use namespace as type") for the @datafn/core re-export.
 type RelationSimpleCapability = "timestamps" | "audit";
@@ -93,26 +94,8 @@ async function validateRelationTargets(
   return { ok: true };
 }
 
-function htreeFkField(relation: DatafnRelationSchema): string {
-  return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
-}
-
 function htreePathField(relation: DatafnRelationSchema): string {
   return relation.pathField || "parentPath";
-}
-
-function fkResourceFieldForRelation(
-  relation: DatafnRelationSchema,
-  side: "from" | "to",
-): string {
-  if (relation.fkResourceField) return relation.fkResourceField;
-  if (relation.type === "htree") {
-    return `${htreeFkField(relation).replace(/Id$/, "")}Resource`;
-  }
-  const base = side === "to"
-    ? (relation.relation || "target")
-    : (relation.inverse || relation.relation || "source");
-  return `${base.replace(/Id$/, "")}Resource`;
 }
 
 function endpointIsPolymorphic(endpoint: string | readonly string[]): boolean {
@@ -126,7 +109,8 @@ function fkResourcePatch(
 ): Record<string, unknown> {
   const endpoint = side === "to" ? relation.to : relation.from;
   if (!endpointIsPolymorphic(endpoint)) return {};
-  return { [fkResourceFieldForRelation(relation, side)]: resource };
+  const field = fkResourceFieldForRelation(relation);
+  return field ? { [field]: resource } : {};
 }
 
 function joinHtreePath(parentPath: unknown, parentId: string | null): string {
@@ -891,7 +875,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.to)
-          ? fkResourceFieldForRelation(relation, "to")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -910,7 +894,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -929,7 +913,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1042,7 +1026,7 @@ export async function applyRelationDeletePolicies(
         changes,
         extraNullFields: fkResourcePatch(relation, "to", null),
         resourceField: endpointIsPolymorphic(relation.to)
-          ? fkResourceFieldForRelation(relation, "to")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1063,7 +1047,7 @@ export async function applyRelationDeletePolicies(
         changes,
         extraNullFields: fkResourcePatch(relation, "from", null),
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1087,7 +1071,7 @@ export async function applyRelationDeletePolicies(
           ...fkResourcePatch(relation, "from", null),
         },
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });

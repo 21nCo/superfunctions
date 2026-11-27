@@ -7,7 +7,8 @@
         "uifn/catalog/generated/catalog.json": "scripts/build.mjs generates dist/primitive-entries from the catalog."
       },
       "excluded": {
-        "scripts/dev.mjs": "Watch-mode helper for npm run dev; no lifecycle script runs it."
+        "scripts/dev.mjs": "Watch-mode helper for npm run dev; no lifecycle script runs it.",
+        "scripts/vite-source-aliases.mjs": "Vite alias helper for building docs and playgrounds from source; not in files and no lifecycle script runs it."
       }
     },
     "@uifn/adapter-kit": {

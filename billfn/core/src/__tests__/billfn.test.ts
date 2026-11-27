@@ -1025,6 +1025,8 @@ describe('@billfn/core', () => {
             providerSubscriptionId: 'sub_bootstrap',
             providerChargeId: 'charge_bootstrap',
             billingState: {
+              // A session named only by its BillFn id links an event that pays for the session's product.
+              providerProductId: 'pdt_pro_month',
               subscriptionStatus: 'active',
               checkoutStatus: 'succeeded',
               providerSubscriptionId: 'sub_bootstrap',

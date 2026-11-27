@@ -4,6 +4,8 @@
 !package-lock.json
 !scripts/ci-install-rollup-native.mjs
 !packages/observability/
+!packages/db/
+!packages/middleware/
 !packages/files/
 !packages/storage/
 !packages/storage-r2/

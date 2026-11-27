@@ -1,2 +1,2 @@
-export * from './webhook-handler.js';
+export { WebhookHandler, WebhookHandlerError } from './webhook-handler.js';
 

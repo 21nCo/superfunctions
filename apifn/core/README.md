@@ -17,6 +17,7 @@ npm install @apifn/core @superfunctions/http
 - **OpenAPI Generation** — Produce an OpenAPI 3.1 document directly from a router
 - **OpenAPI Parsing & Validation** — Parse YAML/JSON specs and validate them against the OpenAPI schema
 - **Diff** — Compare two OpenAPI documents and classify changes as breaking / non-breaking
+- **Request Idempotency** — Claim, settle and replay keyed requests through a host-supplied atomic store, with receipt-based commit recovery
 - **Integrations** — First-class hooks for authfn, secfn, watchfn, logfn, and testfn
 
 ---
@@ -84,7 +85,15 @@ const doc = parseOpenAPI(await readFile("./openapi.yml", "utf8"));
 
 ### validateOpenAPI
 
-Validate a document. Returns validation errors (`ValidationError[]`) for a report or gate.
+Validate a document without changing it. Returns validation errors (`ValidationError[]`) for a report or gate.
+Validation accepts local JSON pointers by default and refuses external references. If you validate a split document, pass trusted, preloaded JSON or YAML in `externalReferences`, keyed by resolved document URI or absolute path without a fragment. Use slash-delimited `#/` pointers within preloaded documents. Validation does not read files or make network requests.
+Escape literal `%`, `?`, and `\\` within path segments as `%25`, `%3F`, and `%5C`.
+Drive-qualified Windows paths and native network-share paths accept either slash style in allowlist keys. Use a URI key for an explicit `file:` reference.
+Preloaded YAML supports anchors and aliases within an expansion limit. Expand YAML merge keys before preloading.
+For recursion in a preloaded document, reference a distinct schema definition. A preloaded `$ref` cannot point directly to itself.
+Relative references use the preloaded document's retrieval URI or path as their base, matching Swagger Parser.
+Literal `$ref` strings in examples and defaults are kept as data, including in preloaded schemas.
+Use `validateAndDereferenceOpenAPI` when you also need the validated copy with references resolved. Recursive schemas can produce circular objects in that copy.
 
 ```typescript
 import { validateOpenAPI } from "@apifn/core";
@@ -157,6 +166,57 @@ const report = formatDiffAsJson(result); // DiffReportJson (machine-readable)
 
 ---
 
+## Request Idempotency
+
+`createRequestIdempotency` lets a host retry a keyed request after a lost response and get the original result back. It needs no database of its own: the host supplies an atomic conditional store and, for handlers with a durable commit receipt, a receipt source.
+
+```typescript
+import { createRequestIdempotency } from "@apifn/core";
+
+const idempotency = createRequestIdempotency({
+  store,             // { get(storeKey), compareAndSet(storeKey, expectedVersion, next) }
+  receipts,          // optional: { find(storeKey) } over receipts committed with the effect
+  leaseMs: 30_000,   // how long a holder owns the key: above store latency plus the handler's longest transaction
+  retentionMs: 86_400_000,
+  maxResponseBytes: 65_536,
+  credentialHeaders: ["x-session-token"], // optional: extra headers never stored or replayed
+});
+
+const claim = await idempotency.claim({
+  scope: { principal: user.id, tenant: org.id, operation: "createOrder", target: storeId },
+  key: request.headers.get("idempotency-key")!,
+  body: validatedBody,
+  recovery: "receipt",
+});
+
+switch (claim.outcome) {
+  case "acquired": {
+    // Write the effect and a receipt with claim.token's storeKey, fingerprint, generation and claimId
+    // in one transaction; the receipt store accepts one receipt per storeKey.
+    const response = await createOrder(claim.token, validatedBody);
+    const settled = await idempotency.settle(claim.token, response);
+    // "settled" or "committed": send settled.response, the full response (a committed receipt wins over the
+    // handler's own result); "conflict": a receipt for a different body holds the key; "stale": no receipt
+    // exists and a newer claim owns the key.
+    return settled;
+  }
+  case "replay":        // claim.response: the stored response; check claim.response.omitted (below)
+  case "conflict":      // same key, different body or recovery mode
+  case "in_progress":   // another holder owns the key; claim.retryAfterMs
+  case "indeterminate": // an expired holder without a receipt contract may have committed
+  case "invalid_key":   // the key is empty, too long or not visible ASCII
+}
+```
+
+- **Scope** — The record and receipt key is a digest of the tenant, principal, operation, target and idempotency key, so a different caller or tenant never sees another scope's result. Pass identifiers, never credentials. Pass the validated, parsed JSON body: the body fingerprint uses `canonicalJson`, which encodes plain JSON data only (sorted keys, undefined properties omitted) and throws a `TypeError` for anything a JSON serializer would convert, such as sparse arrays, undefined array items, `Date`, `Buffer`, class instances and any object with a `toJSON` method, so a `Date` never shares a fingerprint with its ISO string. An omitted body never matches a `null` body. The recovery mode is fixed per operation: to change it, use a new operation name or let the old one's records and receipts drain for a full retention period. A `recovery: "none"` request over a released or expired `"receipt"` record that the store still holds is a `conflict`, with or without a `receipts` source. `canonicalJson` also rejects array subclasses, arrays with extra properties and getter properties, and its errors name the depth and array index only, never a body member name. A `toJSON` getter is rejected without being called. `canonicalJson` also rejects symbol-keyed and non-enumerable object members. Response header names must be HTTP tokens, header values may contain only horizontal tab, visible ASCII, space and bytes 0x80-0xFF (no other control characters and no code points above U+00FF), and `headers` must be a plain object (a `Headers` instance throws a `TypeError`); a `__proto__` header is kept as an ordinary field. Every instance that shares a store must use the same recovery mode per operation and the same `receipts` source.
+- **Store contract** — `compareAndSet` writes (or deletes, for `null`) only when the stored `version` equals the expected one, or when no record exists and the expected version is `null`. Every write gets a fresh version, so a stale holder cannot settle, release or overwrite a newer claim. `release` writes a `released` tombstone that frees the key but keeps its generation until retention ends. A claim no handler ran under is freed the same way: when `claim` fails after its write (the `receipts` source rejects the post-write lookup, or the store applies the claim write and then rejects, for example on a lost acknowledgement), it releases exactly the version it wrote by a conditional write that never clears a newer writer's record, then rethrows the original error. A store that evicts a record before then restarts the key's generation at 1, so ownership never rests on the generation: each claim has a unique `claimId`, the handler writes it into its receipt, and `settle` and `release` treat a receipt as the holder's own commit only when its `claimId` matches the token's.
+- **Commit recovery** — With `recovery: "receipt"`, the receipt source is the only commit evidence for a commit, and the store never records a receipt. The only store writes are a claim's acquire, the release of a claim no handler ran under, and the holder's own `settle` and `release`, each conditional on the version its claim wrote; `claim` and `recover` never write commit evidence. `claim` and `recover` read the receipt for every record state: a receipt for the same body replays (`source: "receipt"`, the full response), even before the holder's lease expires, and a receipt for a different body is a `conflict`, never a replay. When the source has no receipt, the store record decides: a running lease is `in_progress`, an expired claim is taken over (`not_committed` for `recover`), and a completed record its holder settled replays from the store until its own `expiresAt` (a record settled from the holder's own validated receipt is flagged `receiptSettled`; a fallback settled without one is not). The receipt source's retention is therefore the replay window for a commit whose holder did not settle it: once the host prunes the receipt and the claim has expired, the key is free again. A receipt-source outage fails closed (the lookup error is thrown) except over a completed record settled from the holder's own validated receipt (`receiptSettled: true`), which replays from the store until its own `expiresAt`; a fallback settled without a receipt may be contradicted by a late commit, so it never replays during an outage. A completed record without the flag (including one written by an earlier build) counts as unflagged, and a flag that is not a boolean fails closed. Each `claim` and `recover` decides at its single receipt read: a receipt the source returns was the key's commit when the source answered, and a store record read before that lookup decides only if it has not expired by the time the source answers (an outage after its `expiresAt` throws; after an empty answer the lookup decides nothing, because a commit can land during it with no store write, so `claim` and `recover` read the store and the receipt again and report the key free only from a receipt lookup issued after the record was seen expired; `recover` reports `in_progress` if every lookup outlasts the record read before it). A receipt the source returns that fails validation (malformed, an invalid status, another key) always fails closed, over any record. A request whose `recovery` differs from the live record's is a `conflict`, so it never takes over or downgrades a claim. When a `receipts` source is configured and the record has expired or been evicted, the receipt is checked for every request: a `recovery: "none"` request over a retained receipt is a `conflict` that neither acquires the key nor exposes the receipt's response. With a `receipts` source, every claim rechecks the receipt after its write and before a handler can run: a receipt that landed meanwhile releases that claim (a tombstone that keeps the receipt contract), and the claim replays it (`source: "receipt"`) or reports `conflict`; a `recovery: "none"` claim reports `conflict`. `settle` and `release` read the receipt before validating or writing the holder's own result. Another claim's receipt decides with no store write (`settle` gives `committed` for the same body, `conflict` for another body; `release` the same). The holder's own receipt (its `claimId` and body) gives `settled` with the receipt's response, never the holder's in-memory one, which may differ from what its transaction committed, and `settle` records that response, flagged `receiptSettled`, over the claim's own pending version, so the settled commit keeps replaying from the store after the host prunes the receipt, until the record's own `expiresAt`. When that write loses to a takeover, `settle` writes nothing and decides from the receipt read after the write (`settled` while the receipt is retained, `stale` once it is pruned, and a failing read throws), so the commit replays only while its receipt is retained: once the host prunes it and the takeover's lease expires, the key is free. `release` gives `committed` and writes nothing. Without a receipt, they write the holder's result over its own pending version and read the receipt again: a receipt found then decides the same way, and `settle` replaces the record it just wrote over that exact version and deadline: with the receipt's response (flagged) when it is the holder's own commit, otherwise with a tombstone that keeps the receipt contract, so its fallback never replays over a commit (a replacement that loses to a newer writer reads the receipt again; a rejected replacement reads the store: when it holds the replacement, a receipt read now decides (an empty or unreachable source leaves the receipt already validated); when the fallback is still live there, or the store cannot be read, `settle` fails closed and throws the store error rather than report a result over a fallback that may stay live; otherwise, including a fallback that is released or expired, the receipt is read again as after a lost write: `stale` with none, and a failing read throws). A fallback that could not be replaced never replays during an outage, but a healthy source that no longer has the receipt lets it replay from the store, so hosts must retain each receipt past the actual `expiresAt` of every fallback it contradicts, including a takeover holder's: a fallback's deadline is `retentionMs` after `settle` samples its clock, which happens only once `settle`'s first receipt lookup has returned, so a duration-based retention must be at least `retentionMs` plus the longest time from a commit to that clock sample in any holder's `settle` of the same key (including that lookup's latency); equal retention periods are not enough; otherwise a won write is `settled` or `released` and a lost one is `stale`. When the write over the holder's own commit loses its acknowledgement, the store is read for the exact version it attempted, which counts as written only while that record is live (neither released nor expired). When the holder's write without a receipt in hand, or `release`'s tombstone, is rejected, the receipt is read: a receipt decides (`committed`, `conflict`, or `settled` for the holder's own; a fallback the rejected write may have applied is replaced as above, fenced to its exact version), and with none the store error is thrown. A failing receipt read throws, also after a won write; the holder's settled record then replays from the store. When a claim's post-write recheck finds a receipt and releasing that unused claim does not cleanly win, the receipt is read again: a receipt then decides, and with none the claim decides again from fresh reads. One window remains outside the library's fence: a holder whose lease expired can still commit after that final read. The receipt store's one-receipt-per-key rule still prevents a second effect, and the next `claim` or `recover` replays the receipt, but the caller that settled may already have sent its fallback. Keep `leaseMs` above the handler's longest transaction to make that rare. A claim is handed out only while its lease still runs after the claim write and the `acquired` diagnostic (`onDiagnostic` runs inside the lease window): a claim that outlasted `leaseMs` is released and retried (reported `in_progress` if every attempt is too slow), so set `leaseMs` above the store's write latency plus the handler's longest transaction. A completed record carries only the fields a holder's settle writes; any other field fails closed. `recovery: "receipt"` without a `receipts` source throws, and so do `settle` and `release` of a `"receipt"` token on an instance without one, before any store write. Without receipts, an expired claim is `indeterminate` until its retention ends.
+- **`recover(request)`** — Reports a key's state without claiming it: `replay`, `conflict`, `in_progress`, `not_committed`, `indeterminate` or `absent`.
+- **Bounded data** — Stored responses keep the status, headers and string body within `maxResponseBytes`; a larger body (then headers) is dropped and listed in `omitted`, and a dropped body takes its representation headers (`content-length`, `content-encoding`, `etag`, digests) with it. Responses need a final status (200-599), no body for `204`, `205` and `304`, and header names that do not repeat in a different case (`Location` and `location`); `settle` throws a `TypeError` otherwise, and stored records and receipts that break these rules fail closed. Credential headers such as `authorization` and `set-cookie`, plus any names passed in `credentialHeaders`, hop-by-hop headers such as `transfer-encoding`, and fields a `connection` header nominates are never stored or replayed. Receipt responses are validated like settled ones, and a malformed receipt fails closed. Only the stored copy is bounded: `settle` and `release` return the full response to the first caller. Without a receipt, `settle` returns a fresh copy of the holder's own full response as validated when `settle` was called (same status, body, header names and values), never the caller's object. `settle` reads the response, and the library reads stored records, receipts and tokens, exactly once through own data properties into a validated copy; a getter or setter on any of their fields (status, body, a header) is rejected with a `TypeError` (a malformed record or receipt fails closed) without being called, and every check, stored copy and returned response derives from that one copy. For the holder's own receipt-backed commit, `settle` returns the receipt's response with the replay header rules applied plus only the holder's own credential headers (`set-cookie` and the `credentialHeaders` names, never a field its `connection` header nominates), so the first delivery equals every replay apart from credentials; for another holder's commit or a `release`, it returns the receipt's response with the replay header rules applied, and a receipt-mode replay reads the full response from the receipt (`source: "receipt"`) whenever the source returns one. A replay from the store whose `omitted` lists `body` has the original status and remaining headers but no body: do not send it as if it were the original response (a client expecting a JSON body would reject it). Send a response the client can act on instead, such as a `409` problem saying the original result is too large to replay, and set `maxResponseBytes` above the largest response clients need replayed. Replays copy only the status, headers, body and `omitted` of a stored response. `normalizeIdempotentResponse(response, { maxBytes, credentialHeaders })` applies the same rules; `maxBytes` must be a positive integer up to 16 MiB. `onDiagnostic` events carry the action, outcome, operation, store key digest and generation only.
+- **Defaults** — Store keys and body fingerprints use a portable SHA-256 (`sha256Fingerprint`) that needs no Web Crypto, so they work on Node 18, which has no global `crypto`. Versions use `crypto.randomUUID()`; pass `nonce` on runtimes without it. `fingerprint` replaces the body digest only and must be collision-resistant; store keys always use SHA-256.
+
+---
+
 ## Integrations
 
 ### watchfn
@@ -178,9 +238,12 @@ const metrics = await fetchEndpointMetrics({
 
 const client = createWatchFnClient({ baseUrl: "https://watch.example.com" });
 
-// Middleware records per-endpoint timing to watchfn
+// Middleware records per-endpoint timing and status to watchfn
+const router = createRouter({ routes }); // from @superfunctions/http
 router.use(apifnWatchMiddleware({ baseUrl: "https://watch.example.com" }));
 ```
+
+`apifnWatchMiddleware` is a `@superfunctions/http` `Middleware`, so it also works in `createRouter({ middleware: [...] })` and in a route's `middleware` list. It returns the downstream `Response` unchanged (status, headers and body, which it never reads) and records that response's status. When the router's error handler turns a thrown error into a response, it records that response's status. Telemetry failures never change the response: they are logged with `console.warn` unless `silent: true`. By default (`fireAndForget: true`) it returns the response without waiting for the event POST to finish.
 
 ### authfn
 
@@ -229,6 +292,9 @@ npm install @testfn/core @apifn/collections
 import { ApifnTestAdapter } from "@apifn/core/testfn";
 ```
 
+The adapter requires `@apifn/collections` 0.0.5 or later. Pass `allowScripts: true` to the adapter constructor only for trusted collections. Pass a `processEnv` object with the specific values needed by collection templates.
+Discovered test IDs use the collection-relative request path. Rediscover saved test selections if multiple requests in a suite share a display name.
+
 ---
 
 ## Exports
@@ -242,6 +308,9 @@ export { detectSchemaType, convertSchema, convertZodSchema, convertTypeBoxSchema
 
 // Diff
 export { diffOpenAPI, formatDiffAsText, formatDiffAsJson }
+
+// Request idempotency
+export { createRequestIdempotency, canonicalJson, normalizeIdempotentResponse, sha256Fingerprint }
 
 // Integrations
 export { fetchEndpointMetrics, createWatchFnClient, apifnWatchMiddleware }

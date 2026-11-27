@@ -5,11 +5,13 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
+// Version 9 separates standalone and workflow webhook receipt keys. Existing
+// receipts predate workflow scoping and keep their keys in the standalone namespace.
 // Version 7 adds first-class tenant ownership to workflows. Backfills must use an
 // authoritative tenant source rather than caller-controlled workflow metadata.
 // Version 6 added job-scoped claim tokens to sync jobs. Any legacy claim token on a
 // connection represented a different ownership domain, so migration must not copy it.
-export const PLUGFN_SCHEMA_VERSION = 7;
+export const PLUGFN_SCHEMA_VERSION = 9;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;
@@ -177,12 +179,15 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           provider: { type: 'string', required: true, fieldName: 'provider' },
           event: { type: 'string', required: true, fieldName: 'event' },
           idempotencyKey: { type: 'string', required: false, fieldName: 'idempotency_key' },
+          workflowIdempotencyKey: { type: 'string', required: false, fieldName: 'workflow_idempotency_key', maxLength: 64 },
+          workflowTenantId: { type: 'string', required: false, fieldName: 'workflow_tenant_id' },
           connectionId: { type: 'string', required: false, fieldName: 'connection_id' },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
           headersRedacted: { type: 'json', required: false, fieldName: 'headers_redacted' },
           payloadHash: { type: 'string', required: true, fieldName: 'payload_hash' },
           verificationStatus: { type: 'string', required: true, fieldName: 'verification_status' },
+          signatureVerified: { type: 'boolean', required: false, fieldName: 'signature_verified' },
           receivedAt: { type: 'date', required: true, fieldName: 'received_at' },
           createdAt: { type: 'date', required: true, fieldName: 'created_at' },
           metadata: { type: 'json', required: false, fieldName: 'metadata' }
@@ -192,6 +197,11 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           {
             name: 'idx_plugfn_webhook_receipts_idempotency',
             fields: ['provider', 'idempotencyKey'],
+            unique: true
+          },
+          {
+            name: 'idx_plugfn_webhook_receipts_workflow_idempotency',
+            fields: ['workflowIdempotencyKey'],
             unique: true
           }
         ]
@@ -203,6 +213,8 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           receiptId: { type: 'string', required: true, fieldName: 'receipt_id' },
           sinkId: { type: 'string', required: false, fieldName: 'sink_id' },
           handlerName: { type: 'string', required: false, fieldName: 'handler_name' },
+          workflowScoped: { type: 'boolean', required: false, fieldName: 'workflow_scoped' },
+          signatureVerified: { type: 'boolean', required: false, fieldName: 'signature_verified' },
           status: { type: 'string', required: true, fieldName: 'status' },
           claimToken: { type: 'string', required: false, fieldName: 'claim_token' },
           attempts: { type: 'number', required: true, fieldName: 'attempts' },
@@ -226,7 +238,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           resource: { type: 'string', required: true, fieldName: 'resource' },
           mode: { type: 'string', required: true, fieldName: 'mode' },
           status: { type: 'string', required: true, fieldName: 'status' },
-          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 64 },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 768 },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
           cursor: { type: 'string', required: false, fieldName: 'cursor' },

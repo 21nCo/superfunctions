@@ -1,13 +1,13 @@
 {
   "name": "@filefn/docs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 6006",
     "build": "vite build",
     "preview": "vite preview --port 6006",
-    "test": "npm run check:llms && node --test scripts/check-recipe-types.test.mjs ../../scripts/docs-site/check-built-site.test.mjs ../../scripts/docs-site/atomic-write.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
+    "test": "npm run check:llms && node --test scripts/check-recipe-types.test.mjs scripts/changelog.test.mjs ../../scripts/docs-site/check-built-site.test.mjs ../../scripts/docs-site/atomic-write.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
     "check:llms": "node scripts/generate-llms.mjs --check",
     "check:recipes": "node scripts/check-recipe-types.mjs",
     "generate:openapi": "node scripts/generate-openapi.mjs",
@@ -37,16 +37,16 @@
     "typescript": "^5.0.0",
     "vite": "^6.4.3",
     "vitest": "^3.2.4",
-    "@authfn/api-keys": "0.3.0",
-    "@authfn/password": "0.1.9",
+    "@authfn/api-keys": "0.3.2",
+    "@authfn/password": "0.3.0",
     "@cloudflare/workers-types": "4.20251120.0",
     "@datafn/client": "0.1.10",
     "@datafn/core": "0.1.3",
-    "@filefn/client": "0.3.1",
-    "@filefn/processing": "0.3.2",
-    "@filefn/server": "0.6.1",
+    "@filefn/client": "0.4.0",
+    "@filefn/processing": "0.4.1",
+    "@filefn/server": "0.7.2",
     "@superfunctions/db": "0.3.4",
     "@superfunctions/storage-r2": "0.3.0",
-    "authfn": "0.8.0"
+    "authfn": "0.10.0"
   }
 }

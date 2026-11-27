@@ -11,6 +11,7 @@ interface RecordedCall {
   method: string;
   headers: Headers;
   credentials: RequestCredentials | undefined;
+  redirect?: RequestRedirect;
 }
 
 function envelope(data: unknown, status = 200): Response {
@@ -29,7 +30,7 @@ function createFakeServer(partUrl: (partNumber: number) => string) {
   const fetchImpl = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     const method = init.method ?? 'GET';
-    calls.push({ url, method, headers: new Headers(init.headers), credentials: init.credentials });
+    calls.push({ url, method, headers: new Headers(init.headers), credentials: init.credentials, redirect: init.redirect });
 
     if (!url.startsWith(`${BASE}/`)) {
       return new Response(null, { status: 200, headers: { ETag: '"storage-etag"' } });
@@ -227,6 +228,60 @@ describe('client transport options', () => {
     ['http://files.example.com/api/files/upload', false],
   ])('only sends FileFn headers and credentials to signed URL %s when it is under baseUrl (%s)', (url, toFileFn) =>
     expectPartUploadTransport({ baseUrl: `${BASE}/`, url, toFileFn, expectedUrl: url }));
+
+  it('sends the upload session token to FileFn part URLs only, never to a presigned storage URL (FILE-30 F-19)', async () => {
+    const server = createFakeServer(() => PRESIGNED);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl(PRESIGNED, {}, new Blob(['abc']), 'upls_1');
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1');
+    const storagePut = server.calls.find((c) => c.url === PRESIGNED)!;
+    const proxyPut = server.calls.find((c) => c.url === `${BASE}/upload/sess_1/parts/1`)!;
+    expect(storagePut.headers.get('x-upload-session-token')).toBeNull();
+    expect(proxyPut.headers.get('x-upload-session-token')).toBe('upls_1');
+    // A token-bearing PUT follows no redirect.
+    expect(proxyPut.redirect).toBe('error');
+  });
+
+  it('drops a session token the auth headers carry unless the request is the FileFn part endpoint', async () => {
+    const server = createFakeServer(() => `${BASE}/bucket/object`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch, getAuthHeaders: () => ({ 'X-Upload-Session-Token': 'upls_auth' }) });
+    await http.uploadPartToSignedUrl(`${BASE}/bucket/object`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1');
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBeNull();
+    expect(server.calls[1]!.headers.get('x-upload-session-token')).toBe('upls_1');
+  });
+
+  it('uses a session token from the auth headers for a part request when none is passed (resumed upload)', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch, getAuthHeaders: () => ({ 'X-Upload-Session-Token': 'upls_auth' }) });
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), undefined, undefined, { uploadSessionId: 'sess_1', partNumber: 1 });
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBe('upls_auth');
+    expect(server.calls[0]!.redirect).toBe('error');
+  });
+
+  it('sends the token only to the exact part endpoint the upload names', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1', undefined, { uploadSessionId: 'sess_1', partNumber: 1 });
+    await http
+      .uploadPartToSignedUrl('/upload/sess_1/parts/2', {}, new Blob(['abc']), 'upls_1', undefined, { uploadSessionId: 'sess_1', partNumber: 1 })
+      .catch(() => undefined);
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBe('upls_1');
+    expect(server.calls[1]!.headers.get('x-upload-session-token')).toBeNull();
+  });
+
+  it('keeps the session token off a presigned URL served under the FileFn origin and prefix', async () => {
+    const server = createFakeServer(() => `${BASE}/bucket/object?X-Amz-Signature=test-signature`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl(`${BASE}/bucket/object?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    await http.uploadPartToSignedUrl(`${BASE}/upload/sess_1/parts/1?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    // An absolute, queryless URL on a FileFn-shaped path (storage signing through headers).
+    await http.uploadPartToSignedUrl(`${BASE}/upload/sess_1/parts/1`, { authorization: 'test-storage-signature' }, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    expect(server.calls).toHaveLength(3);
+    for (const call of server.calls) {
+      expect(call.headers.get('x-upload-session-token')).toBeNull();
+    }
+  });
 
   it('lets request headers replace auth headers of any case on API requests', async () => {
     const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);

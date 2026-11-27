@@ -82,13 +82,17 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * Token endpoint authentication methods the target supports (its
    * `capabilities.tokenEndpointAuthMethods`). When declared, a registration
    * with another method is ineligible: it may receive neither an error nor a
-   * code callback. An omitted method is `none`, except for a
-   * client-metadata-document fixture, whose server default depends on how the
-   * target resolves it (`none` when stored, `client_secret_basic` when
-   * fetched): it is eligible when both defaults are declared, ineligible when
-   * neither is, and indeterminate when only one is, in which case a callback
-   * fails until the fixture sets `token_endpoint_auth_method`. When omitted,
-   * the harness adds no authentication-method constraint.
+   * code callback. An omitted method is `none`. A client-metadata-document
+   * fixture may be stored by the target (its method must be supported) or
+   * fetched by the server, which accepts only public documents: method `none`
+   * (an omitted method counts as `none`, per the Client ID Metadata Document
+   * draft) with `none` supported. The harness assumes the target refuses fetched documents with
+   * any other method, as @mcpfn/auth does. The fixture is eligible when both
+   * paths accept it, ineligible when neither does, and indeterminate when only
+   * one does, in which case a post-match response fails. When omitted, the
+   * stored path has no method constraint, but a fetched client-metadata-
+   * document fixture must still use `none`: set
+   * `token_endpoint_auth_method: "none"` on such fixtures.
    */
   tokenEndpointAuthMethods?: string[];
   /**
@@ -662,9 +666,11 @@ function clientStageCodes(
 const STORED_CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set(["invalid_client"]);
 
 const INDETERMINATE_ELIGIBILITY =
-  "Registration eligibility is indeterminate: the target declares only one server default " +
-  "token endpoint authentication method for a client-metadata-document fixture without " +
-  "one; set token_endpoint_auth_method on the fixture";
+  "Registration eligibility is indeterminate: a client-metadata-document fixture is accepted " +
+  "when the target stores it but not when the server fetches it (or the reverse), and the " +
+  "harness cannot tell which path the target takes; a fetched document must use " +
+  "token_endpoint_auth_method none, and when the target declares tokenEndpointAuthMethods " +
+  "the stored registration's method must be one of them";
 
 /**
  * An error page, error callback or code callback answers a request whose
@@ -794,47 +800,107 @@ function registrationEligibility(
     return {
       eligibility: "ineligible",
       scopeRejection: client.source === "client-metadata-document" &&
-        (!supportedMethods || supportedMethods.includes(fetchedAuthMethod(client, registration))),
+        fetchedDocumentAccepted(registration, supportedMethods),
     };
   }
   return { eligibility: method, scopeRejection: false };
 }
 
-/** The method the server applies to a Client ID Metadata Document it fetches. */
-function fetchedAuthMethod(
-  client: McpFnNormalizedClientRegistration,
-  registration: McpFnHostedRegistrationFixture,
-): string {
-  const declared: unknown = registration.metadata.token_endpoint_auth_method;
-  return declared === undefined || declared === null
-    ? "client_secret_basic"
-    : client.tokenEndpointAuthMethod;
-}
-
-/** Server defaults for a Client ID Metadata Document without a method. */
-const METADATA_DOCUMENT_DEFAULT_AUTH_METHODS = ["none", "client_secret_basic"] as const;
+const SHARED_SECRET_METHODS: ReadonlySet<string> = new Set([
+  "client_secret_basic",
+  "client_secret_post",
+  "client_secret_jwt",
+]);
 
 /**
- * A stored registration without a method is `none`; the server defaults a
- * Client ID Metadata Document it fetches to `client_secret_basic`. The
- * harness cannot tell which path the target takes for a
- * client-metadata-document fixture without a method, so the result is
- * indeterminate when the target supports only one of the two defaults.
+ * The method a Client ID Metadata Document selects when the server fetches it
+ * (draft, section 5): token_endpoint_auth_methods_supported, when present,
+ * must be a nonempty list of strings that includes any declared method, and
+ * none is selected whenever the list offers it. Undefined
+ * when the declarations are malformed or inconsistent (refused). Written from
+ * the draft rather than imported from @mcpfn/auth, so the harness judges
+ * any server, @mcpfn/auth included, against the specification.
+ */
+function fetchedAuthMethod(registration: McpFnHostedRegistrationFixture): string | undefined {
+  const metadata = registration.metadata as Record<string, unknown>;
+  const supported = metadata.token_endpoint_auth_methods_supported;
+  if (
+    supported !== undefined &&
+    (!Array.isArray(supported) || supported.length === 0 ||
+      !supported.every((method) => typeof method === "string"))
+  ) {
+    return undefined;
+  }
+  const methods = supported as string[] | undefined;
+  const declared = metadata.token_endpoint_auth_method;
+  // Draft section 4.1: a document never names a shared-secret method, in
+  // either field, even one the server would not select.
+  if ([declared, ...(methods ?? [])].some((method) => SHARED_SECRET_METHODS.has(method as string))) {
+    return undefined;
+  }
+  if (declared !== undefined && declared !== null) {
+    if (typeof declared !== "string") return undefined;
+    if (methods && !methods.includes(declared)) return undefined;
+  }
+  // With a list, the server selects from it (none when offered); without one,
+  // the declared method, or none when it is omitted.
+  if (methods) return methods.includes("none") ? "none" : (declared as string | undefined) ?? methods[0];
+  return typeof declared === "string" ? declared : "none";
+}
+
+/**
+ * Whether the server accepts the fixture as a Client ID Metadata Document it
+ * fetches: such a document is public, so its method (none when omitted) must
+ * be `none`, the target must support `none`, and its link fields must pass
+ * the fetch-time checks.
+ */
+function fetchedDocumentAccepted(
+  registration: McpFnHostedRegistrationFixture,
+  supported: readonly string[] | undefined,
+): boolean {
+  return fetchedAuthMethod(registration) === "none" && (!supported || supported.includes("none")) &&
+    fetchedLinksAccepted(registration);
+}
+
+/**
+ * A fetched document is refused (invalid_client_metadata, before its redirect
+ * URI or scope is checked) when a link field is present and is not an absolute
+ * https:// URL without credentials; a stored registration only has such a
+ * link dropped.
+ */
+function fetchedLinksAccepted(registration: McpFnHostedRegistrationFixture): boolean {
+  const metadata = registration.metadata as Record<string, unknown>;
+  return ["client_uri", "logo_uri", "tos_uri", "policy_uri"].every((field) => {
+    const value = metadata[field];
+    if (value === undefined || value === null) return true;
+    if (typeof value !== "string" || !/^https:\/\//i.test(value)) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * A client-metadata-document fixture is either stored by the target (its
+ * method, `none` when omitted, must be supported) or fetched by the server
+ * (see fetchedDocumentAccepted). The harness cannot tell which path the
+ * target takes, so the result is indeterminate when the two disagree.
  */
 function authMethodEligibility(
   client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
   supported: readonly string[] | undefined,
 ): RegistrationEligibility {
-  if (!supported) return "eligible";
-  const declared: unknown = registration.metadata.token_endpoint_auth_method;
-  if (client.source === "client-metadata-document" && (declared === undefined || declared === null)) {
-    const defaults = METADATA_DOCUMENT_DEFAULT_AUTH_METHODS
-      .filter((method) => supported.includes(method)).length;
-    if (defaults === METADATA_DOCUMENT_DEFAULT_AUTH_METHODS.length) return "eligible";
-    return defaults === 0 ? "ineligible" : "indeterminate";
-  }
-  return supported.includes(client.tokenEndpointAuthMethod) ? "eligible" : "ineligible";
+  // A stored client keeps its registered method; the harness cannot tell a
+  // stored from a fetched resolution, so the two paths must agree.
+  const stored = !supported || supported.includes(client.tokenEndpointAuthMethod);
+  if (client.source !== "client-metadata-document") return stored ? "eligible" : "ineligible";
+  const fetched = fetchedDocumentAccepted(registration, supported);
+  if (stored && fetched) return "eligible";
+  return stored || fetched ? "indeterminate" : "ineligible";
 }
 
 function isUnvettedErrorPage(

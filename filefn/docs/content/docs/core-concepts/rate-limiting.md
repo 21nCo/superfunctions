@@ -1,6 +1,6 @@
 ---
 title: Rate limiting
-description: Per-route rate limits using @superfunctions/middleware on top of filefn's upload, download, share-download, and artifact-download endpoints.
+description: Opt-in per-route rate limits. Categories you omit are not limited. Public uploads need a proxy-derived client key.
 ---
 
 # Rate limiting
@@ -28,6 +28,10 @@ const fileFn = createFileFn({
 });
 ```
 
+Every key under `limits` is opt-in. The full set is `uploadInit`, `uploadSign`, `uploadComplete`, `download`, `shareDownload`, `shareCreate`, `artifactDownload`, `list`, `processing`, and `grantCreate`. A category you leave out is not limited.
+
+For `auth.required: false`, set `clientKey` from a header your proxy overwrites (for example `cf-connecting-ip` once the proxy has stripped any client-supplied copy). Otherwise every guest shares one bucket per category. The operator page has the public-upload sample: [Features › Rate limiting](../features/rate-limiting).
+
 Or pass a pre-built `rateLimiter` directly:
 
 ```ts
@@ -41,7 +45,7 @@ const fileFn = createFileFn({
 });
 ```
 
-`rateLimiter` (alone) applies the same limit to every route. `rateLimit.limits` (per-category) is the recommended path.
+The standalone `rateLimiter` applies to upload init, signing, part uploads, completion, and file downloads. Use `rateLimit.limits` for per-category caps.
 
 ## Categories
 
@@ -49,12 +53,16 @@ const fileFn = createFileFn({
 | --- | --- |
 | `uploadInit` | `POST /upload/init` |
 | `uploadSign` | `POST /upload/:id/parts/:n/sign` |
-| `uploadComplete` | `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete`, `POST /upload/:id/abort` |
+| `uploadComplete` | `PUT /upload/:id/parts/:n`, `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete` |
 | `download` | `GET /:fileId/download`, `GET /:fileId/versions/:versionId/download`, `GET /proxy/files/:fileId/download` |
 | `shareDownload` | `GET /share-links/:token/download`, `GET /proxy/share-links/:token/download` |
-| `artifactDownload` | `GET /:fileId/artifacts/:artifactId/download` |
+| `shareCreate` | `POST /:fileId/share-links` |
+| `artifactDownload` | List artifacts, get an artifact download URL, and download through the artifact proxy |
+| `list` | `GET /` |
+| `processing` | `POST /:fileId/process` |
+| `grantCreate` | `POST /:fileId/permissions` |
 
-Routes not in any category (read-only file metadata, listing, render-descriptor) aren't rate-limited by filefn. Apply your framework's middleware on top if you want a global cap.
+Apply your framework's middleware to cap routes such as file metadata, render descriptors, and upload aborts.
 
 ## Algorithms
 

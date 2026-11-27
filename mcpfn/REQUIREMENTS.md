@@ -52,7 +52,7 @@ version, endpoint, and timestamp evidence.
 | MCP3-AC-06 | Schema portability validation is recursive and dialect-aware. | draft-07, 2019-09, and 2020-12 portability vectors |
 | MCP3-AC-07 | Explicit minimal-valid and captured-failure fixtures use the production target/session engine. | client-profile contract suite |
 | MCP3-AC-08 | Unknown root properties retain instance path, schema path, keyword, and exact rejected property without values. | structured Ajv diagnostic tests |
-| MCP3-AC-09 | Unmatched generic clients retain the canonical catalog and call behavior. | generic fallback core and suite cases |
+| MCP3-AC-09 | Unmatched generic clients retain the canonical catalog and call behavior, except that tools any profile gives server-owned arguments are hidden and uncallable unless the host sets `unmatchedServerOwnedArguments: "allow"`. | generic fallback core and suite cases |
 | MCP3-AC-10 | Effective-catalog snapshots detect stale and intentional behavioral changes. | snapshot validation/diff and stale-baseline tests |
 | MCP3-AC-11 | Compatibility reports are bounded, stable, machine-readable, and omit credentials and argument values. | report cap, isolation, and redaction tests |
 | MCP3-AC-12 | Protocol conformance, profile compatibility, product scenarios, authentication, and live-client evidence remain separate gates. | architecture, testing guide, CLI, and release gate |

@@ -96,7 +96,24 @@ Run it on anything that's about to leave the process — webhooks, log lines, er
 
 ## Metrics
 
-filefn doesn't ship a metrics adapter. The recommended pattern is event-driven:
+Pass a metric sink directly in the `observability` configuration object to receive domain observations. FileFn uses that sink to handle rejected metric writes safely. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
+
+| Kind | Operation | When |
+| --- | --- | --- |
+| `filefn.upload` | `failure` | An upload fails because storage stat is unavailable (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
+| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is false if the run reported processing or artifact errors. |
+
+```ts
+const fileFn = createFileFn({
+  database, storage,
+  observability: {
+    metrics: { record(metric) { /* sink */ } },
+  },
+});
+```
+
+For application-specific counters, subscribe to events.
 
 ```ts
 fileFn.events.on("file:uploaded", (e) => metrics.counter("filefn.uploads.complete").inc());

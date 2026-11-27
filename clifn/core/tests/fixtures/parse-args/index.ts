@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { runParsedFixture, type ParserFixtureResult } from "../shared.js";
+import { runDocumentFixture, runParsedFixture, type ParserFixtureResult } from "../shared.js";
 
 export async function runParseArgsFixture(argv: string[]): Promise<ParserFixtureResult> {
   const { values, positionals } = parseArgs({
@@ -18,8 +18,22 @@ export async function runParseArgsFixture(argv: string[]): Promise<ParserFixture
       json: {
         type: "boolean",
       },
+      fail: {
+        type: "boolean",
+      },
+      yes: {
+        type: "boolean",
+      },
     },
   });
+
+  if (positionals[0] === "status") {
+    return runDocumentFixture(
+      "parseArgs",
+      { name: values.name ?? "world", fail: values.fail },
+      { json: values.json, quiet: values.quiet, verbose: values.verbose, yes: values.yes }
+    );
+  }
 
   if (positionals[0] !== "greet") {
     throw new Error("parseArgs canary expects the greet command.");

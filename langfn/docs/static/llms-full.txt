@@ -13,7 +13,7 @@ an LLM-based assistant in a single shot. For a page index, see /docs/llms.txt.
 > Create a TypeScript client and run a deterministic model call.
 
 
-The TypeScript package is named `langfn` and exports a root client plus named subpaths. The current source manifest targets `0.1.0`; build or pack this checkout when testing the unpublished dev contract.
+The TypeScript package is named `langfn` and exports a root client plus named subpaths. The current source manifest targets `0.2.2`; build or pack this checkout when testing the unpublished dev contract.
 
 ```ts
 import { langfn } from "langfn";
@@ -166,7 +166,7 @@ export function langFnHandler(router: WebRouter): RequestHandler {
 
 The `langfn` TypeScript package provides model calls, prompts, structured output, tools, chains, state graphs, agents, memory, RAG, observability, evaluation, HTTP routes, and MCP adapters. Start with [getting started](/docs/getting-started) and use the [provider matrix](/docs/reference/compatibility) when choosing a model.
 
-This site describes the current `dev` branch TypeScript source, an unpublished adoption targeting package version `0.1.0`. The root LangFn README still lists Python and `@langfn/admin`, but neither package is present in this checkout. Its linked `SPEC.md` is also absent. Do not infer those surfaces from the root README or assume a same-version registry artifact includes these dev changes. Verify the actual installed artifact before adoption.
+This site describes the current `dev` branch TypeScript source, an unpublished adoption targeting package version `0.2.2`. The root LangFn README still lists Python and `@langfn/admin`, but neither package is present in this checkout. Its linked `SPEC.md` is also absent. Do not infer those surfaces from the root README or assume a same-version registry artifact includes these dev changes. Verify the actual installed artifact before adoption.
 
 ---
 
@@ -388,7 +388,7 @@ The root also exports common client, model, tool, orchestration, and HTTP contra
 > TypeScript build, test, package, and live-qualification boundaries.
 
 
-Release line: 0.1.0. Run `npm run gate:langfn-release` from repo root.
+Release line: 0.2.2. Run `npm run gate:langfn-release` from repo root.
 The TypeScript adoption checks `npm --prefix langfn/typescript run build`, type checking against real shared package declarations, the complete TypeScript suite, and built package imports. Python remains in the next source repository and is outside this TypeScript consumer adoption. Live Gemini verification is separately required before release readiness.
 
 HTTP trace listing and feedback require an authenticated actor. Trace records persist `tenantId` and `userId` from trusted session metadata; SQL-backed custom trace stores must include those columns and apply both query predicates. Historical unowned traces are excluded from HTTP results. Direct trusted SDK access remains available for maintenance. HTTP provider errors omit upstream bodies and metadata.
@@ -411,7 +411,7 @@ The storage-level `TraceStorage.saveFeedback` accepts top-level tenant/user fiel
 
 LangFn for TypeScript ships the canonical `langfn` package plus the documented subpath exports used throughout the SDK examples and tests.
 
-Current release target: `0.1.0`.
+Current release target: `0.2.2`.
 
 ## Install
 

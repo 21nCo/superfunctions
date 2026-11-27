@@ -1,5 +1,5 @@
 import { createBillFnError } from './errors.js';
-import { errorResponse } from './http.js';
+import { errorResponse, readBoundedBytes } from './http.js';
 import type { BillingProviderName } from './types.js';
 
 /**
@@ -7,6 +7,9 @@ import type { BillingProviderName } from './types.js';
  * record. Checkout writes it when `region` is configured; the ingress reads it.
  */
 export const BILLFN_REGION_METADATA_KEY = 'billfn_region';
+
+/** The largest webhook body the ingress reads, as the regions' routers do. */
+const MAX_INGRESS_BODY_BYTES = 256 * 1024;
 
 /** A region whose BillFn receives the events it owns. */
 export interface BillFnIngressRegion {
@@ -236,6 +239,9 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
     }
   }
 
+  const tooLarge = () =>
+    createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: `Webhook body must be at most ${MAX_INGRESS_BODY_BYTES} bytes` });
+
   return {
     async handle(provider, request) {
       if (request.method !== 'POST') {
@@ -243,8 +249,27 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
           createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'Webhooks are delivered with POST' })
         );
       }
-      const body = await request.arrayBuffer();
-      const rawBody = new TextDecoder().decode(body);
+      // Provider webhooks are a few kilobytes; a larger body is refused, without reading the rest of it, before any
+      // owner lookup.
+      let bytes: Awaited<ReturnType<typeof readBoundedBytes>>;
+      try {
+        bytes = await readBoundedBytes(request, MAX_INGRESS_BODY_BYTES);
+      } catch {
+        return errorResponse(
+          createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The webhook body could not be read' })
+        );
+      }
+      if (bytes === 'too_large') {
+        return errorResponse(tooLarge());
+      }
+      if (bytes === 'already_read') {
+        return errorResponse(
+          createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The webhook body was already read before the ingress' })
+        );
+      }
+      // The exact bytes received are forwarded, so the owning region verifies the provider's signature over them.
+      const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const rawBody = new TextDecoder().decode(bytes);
       const keys = readRoutingKeys(provider, rawBody);
       const decision = await route(provider, keys, request.headers, rawBody);
       try {

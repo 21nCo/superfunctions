@@ -3,6 +3,9 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
+    // The Apple tests mock jose across core and the sibling social OAuth source.
+    // Resolve both through core's install when the release job installs core in isolation.
+    dedupe: ['jose'],
     alias: [
       {
         find: 'authfn/core',

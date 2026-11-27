@@ -1,0 +1,556 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/nested-one-of": {
+      "post": {
+        "operationId": "readOnlyNestedOneOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/A"
+                      }
+                    ]
+                  },
+                  {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/B"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/nested-any-of": {
+      "post": {
+        "operationId": "readOnlyNestedAnyOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/A"
+                      }
+                    ]
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/B"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/referenced-any-of": {
+      "post": {
+        "operationId": "readOnlyReferencedAnyOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WrapA"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WrapB"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/all-of-one-of": {
+      "post": {
+        "operationId": "readOnlyAllOfOneOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "allOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/A"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/B"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/pattern": {
+      "post": {
+        "operationId": "readOnlyPatternDiscriminator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    },
+                    "patternProperties": {
+                      "^id$": {
+                        "const": "a"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    },
+                    "patternProperties": {
+                      "^id$": {
+                        "const": "b"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/invalid-pattern": {
+      "post": {
+        "operationId": "readOnlyInvalidPattern",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    },
+                    "patternProperties": {
+                      "(": {
+                        "const": "a"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/max-properties": {
+      "post": {
+        "operationId": "readOnlyMaxPropertiesInOneOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "id"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      }
+                    },
+                    "maxProperties": 1
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "p"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "p": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/property-names": {
+      "post": {
+        "operationId": "readOnlyPropertyNamesInOneOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    },
+                    "propertyNames": {
+                      "enum": [
+                        "id",
+                        "payload"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": [
+                      "id",
+                      "payload"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "payload": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/pattern-elsewhere": {
+      "post": {
+        "operationId": "readOnlyPatternNotMatching",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "a"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "a": {
+                        "type": "string"
+                      }
+                    },
+                    "patternProperties": {
+                      "^x-": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "b"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "readOnly": true
+                      },
+                      "b": {
+                        "type": "string"
+                      }
+                    },
+                    "patternProperties": {
+                      "^x-": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/write-only": {
+      "get": {
+        "operationId": "writeOnlyNestedOutput",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/SecretA"
+                        }
+                      ]
+                    },
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/SecretB"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "A": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "a",
+            "readOnly": true
+          }
+        }
+      },
+      "B": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "b",
+            "readOnly": true
+          }
+        }
+      },
+      "WrapA": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/A"
+          }
+        ]
+      },
+      "WrapB": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/B"
+          }
+        ]
+      },
+      "SecretA": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "a",
+            "writeOnly": true
+          }
+        }
+      },
+      "SecretB": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "b",
+            "writeOnly": true
+          }
+        }
+      }
+    }
+  }
+}

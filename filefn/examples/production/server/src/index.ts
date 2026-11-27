@@ -7,6 +7,7 @@ import { createS3StorageAdapter } from "@superfunctions/storage-s3";
 import { createThumbnailProcessor } from "@filefn/processing";
 import { adapter, db } from "./db.js";
 import { config } from "dotenv";
+import { stripFileFnPrefix } from "./filefn-path.js";
 
 config();
 
@@ -131,7 +132,7 @@ app.use(
 // FileFn router — strip /filefn prefix and forward
 app.all("/filefn/*", async (c) => {
   const url = new URL(c.req.raw.url);
-  const newPath = url.pathname.replace(/^\/filefn/, "") || "/";
+  const newPath = stripFileFnPrefix(url.pathname);
   const newUrl = url.origin + newPath + url.search;
 
   const newReq = new Request(newUrl, {

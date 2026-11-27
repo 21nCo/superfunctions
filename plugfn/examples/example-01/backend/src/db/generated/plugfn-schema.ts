@@ -4,7 +4,7 @@
  * 
  * DO NOT EDIT MANUALLY
  * 
- * To regenerate: npx superfunctions generate-schema
+ * To regenerate: npx superfunctions generate-schema --dialect postgres
  */
 
 import { boolean, index, integer, json, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
@@ -93,11 +93,13 @@ export const plugfn_workflows = pgTable(
   metadata: json('metadata'),
   name: text('name').notNull(),
   status: text('status').notNull(),
+  tenantId: text('tenant_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   userId: text('user_id').notNull(),
   },
   (table) => ({
     idx_plugfn_workflows_status: index('idx_plugfn_workflows_status').on(table.status),
+    idx_plugfn_workflows_tenant_user: index('idx_plugfn_workflows_tenant_user').on(table.tenantId, table.userId),
     idx_plugfn_workflows_user_id: index('idx_plugfn_workflows_user_id').on(table.userId)
   })
 );
@@ -225,11 +227,15 @@ export const plugfn_webhook_receipts = pgTable(
   payloadHash: text('payload_hash').notNull(),
   provider: text('provider').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  signatureVerified: boolean('signature_verified'),
   verificationStatus: text('verification_status').notNull(),
+  workflowIdempotencyKey: text('workflow_idempotency_key'),
+  workflowTenantId: text('workflow_tenant_id'),
   },
   (table) => ({
     idx_plugfn_webhook_receipts_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_idempotency').on(table.provider, table.idempotencyKey),
-    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event)
+    idx_plugfn_webhook_receipts_provider_event: index('idx_plugfn_webhook_receipts_provider_event').on(table.provider, table.event),
+    idx_plugfn_webhook_receipts_workflow_idempotency: uniqueIndex('idx_plugfn_webhook_receipts_workflow_idempotency').on(table.workflowIdempotencyKey)
   })
 );
 
@@ -246,9 +252,11 @@ export const plugfn_webhook_deliveries = pgTable(
   metadata: json('metadata'),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
   receiptId: text('receipt_id').notNull(),
+  signatureVerified: boolean('signature_verified'),
   sinkId: text('sink_id'),
   status: text('status').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  workflowScoped: boolean('workflow_scoped'),
   },
   (table) => ({
     idx_plugfn_webhook_deliveries_receipt: index('idx_plugfn_webhook_deliveries_receipt').on(table.receiptId),
@@ -261,6 +269,7 @@ export const plugfn_sync_jobs = pgTable(
   'plugfn_sync_jobs',
   {
   checkpoint: json('checkpoint'),
+  claimToken: text('claim_token'),
   connectionId: text('connection_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   cursor: text('cursor'),
@@ -279,6 +288,7 @@ export const plugfn_sync_jobs = pgTable(
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
   (table) => ({
+    idx_plugfn_sync_jobs_claim_token: uniqueIndex('idx_plugfn_sync_jobs_claim_token').on(table.claimToken),
     idx_plugfn_sync_jobs_connection_resource: index('idx_plugfn_sync_jobs_connection_resource').on(table.connectionId, table.resource),
     idx_plugfn_sync_jobs_provider: index('idx_plugfn_sync_jobs_provider').on(table.provider),
     idx_plugfn_sync_jobs_status: index('idx_plugfn_sync_jobs_status').on(table.status)

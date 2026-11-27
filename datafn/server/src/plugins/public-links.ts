@@ -1,5 +1,5 @@
 import type { Adapter, IndexedDirectoryRecord, IndexedDirectoryStoreAdapter } from "@superfunctions/db";
-import type { Route } from "@superfunctions/http";
+import { RouterError, type Route } from "@superfunctions/http";
 import {
   ensureBuiltinPublicLinks,
   resolveCapabilities,
@@ -7,6 +7,7 @@ import {
   type DatafnSchema,
 } from "@datafn/core";
 import { errorResponse, okResponse } from "../http/errors.js";
+import { checkPayloadLimit, payloadTooLarge, readBodyWithLimit } from "../http/middleware.js";
 import {
   executeShare,
   getFailedSharePermissionRecord,
@@ -26,6 +27,79 @@ import {
 
 export type DatafnPublicLinkShareLevel = "viewer" | "editor" | "owner";
 export type DatafnPublicLinkShareScope = "record" | "resource";
+
+export const PUBLIC_LINK_RESOLVE_PATH = "/datafn/public-links/resolve";
+const boundedResolveBodies = new WeakMap<Request, { complete: boolean; rejection: Response | null }>();
+
+class ResolveBodyError extends RouterError {
+  constructor(private readonly response: Response) {
+    super("Public-link resolve body rejected", response.status);
+  }
+
+  override toResponse(): Response {
+    return this.response;
+  }
+}
+
+/** Enforce the cap for every body reader without reading until one is used. */
+export function preparePublicLinkResolveRequest(
+  request: Request,
+  maxPayloadBytes: number,
+): Request {
+  const source = request.body;
+  const state = { complete: !source, rejection: checkPayloadLimit(request, maxPayloadBytes) };
+  if (!source) {
+    boundedResolveBodies.set(request, state);
+    return request;
+  }
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let total = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (state.rejection) throw new ResolveBodyError(state.rejection);
+        if (!reader) {
+          if (request.bodyUsed) throw new TypeError("Request body already consumed");
+          reader = source.getReader();
+        }
+        const { value, done } = await reader.read();
+        if (done) {
+          state.complete = true;
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        total += value.byteLength;
+        if (total > maxPayloadBytes) {
+          state.rejection = payloadTooLarge(maxPayloadBytes);
+          void reader.cancel().catch(() => undefined);
+          throw new ResolveBodyError(state.rejection);
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        reader?.releaseLock();
+        state.rejection ??= unreadableResolveBody();
+        controller.error(error instanceof ResolveBodyError ? error : new ResolveBodyError(state.rejection));
+      }
+    },
+    cancel(reason) {
+      if (reader) {
+        void reader.cancel(reason).catch(() => undefined);
+        reader.releaseLock();
+      } else {
+        void source.cancel(reason).catch(() => undefined);
+      }
+    },
+  }, { highWaterMark: 0 });
+  const init: RequestInit & { duplex: "half" } = { body, duplex: "half", keepalive: false };
+  const bounded = new Request(request, init);
+  boundedResolveBodies.set(bounded, state);
+  return bounded;
+}
+
+function unreadableResolveBody(): Response {
+  return errorResponse({ code: "DFQL_INVALID", message: "Failed to read request body", details: { path: "$" } }, 400);
+}
 
 export interface DatafnPublicLinkRecord {
   id: string;
@@ -110,6 +184,7 @@ export interface DatafnPublicLinksPlugin<TSession = unknown> extends DatafnPlugi
     database: Adapter;
     crossNamespaceDatabase?: Adapter;
     schema: DatafnSchema;
+    maxPayloadBytes?: number;
   }): Route[];
 }
 
@@ -267,7 +342,7 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
         directory: config.directory
       });
     },
-    routes({ database, crossNamespaceDatabase, schema }) {
+    routes({ database, crossNamespaceDatabase, schema, maxPayloadBytes }) {
       return [
         {
           method: "POST",
@@ -313,10 +388,27 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
         },
         {
           method: "POST",
-          path: "/datafn/public-links/resolve",
+          path: PUBLIC_LINK_RESOLVE_PATH,
           meta: { datafnPlacement: publicLinkPlacement },
-          handler: async (request) => {
-            const body = await request.json().catch(() => null);
+          handler: async (request, context) => {
+            let body: unknown;
+            const bounded = boundedResolveBodies.get(request);
+            if (bounded) {
+              if (bounded.rejection) return bounded.rejection;
+              body = await context.json().catch(() => null);
+              if (bounded.rejection) return bounded.rejection;
+              if (!bounded.complete) return unreadableResolveBody();
+            } else if (maxPayloadBytes !== undefined) {
+              const read = await readBodyWithLimit(request, maxPayloadBytes);
+              if (!read.ok) return read.response;
+              try {
+                body = JSON.parse(read.body);
+              } catch {
+                body = null;
+              }
+            } else {
+              body = await request.json().catch(() => null);
+            }
             const token =
               body &&
               typeof body === "object" &&

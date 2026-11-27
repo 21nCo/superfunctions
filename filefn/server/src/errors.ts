@@ -48,6 +48,7 @@ export const ErrorCodes = {
   SHARE_REVOKED: 'FILEFN_SHARE_REVOKED',
   SHARE_DOWNLOADS_EXCEEDED: 'FILEFN_SHARE_DOWNLOADS_EXCEEDED',
   SHARE_NOT_FOUND: 'FILEFN_SHARE_NOT_FOUND',
+  SHARE_DOWNLOAD_CONFLICT: 'FILEFN_SHARE_DOWNLOAD_CONFLICT',
   PERMISSION_NOT_FOUND: 'FILEFN_PERMISSION_NOT_FOUND',
   PROCESSING_ENQUEUE_FAILED: 'FILEFN_PROCESSING_ENQUEUE_FAILED',
   INVALID_RENDER_INTENT: 'FILEFN_INVALID_RENDER_INTENT',
@@ -57,11 +58,14 @@ export const ErrorCodes = {
   INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
   UPLOAD_COMPLETION_IN_PROGRESS: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
   INVALID_REQUEST: 'FILEFN_INVALID_REQUEST',
+  UNSUPPORTED_MEDIA_TYPE: 'FILEFN_UNSUPPORTED_MEDIA_TYPE',
+  BODY_TOO_LARGE: 'FILEFN_BODY_TOO_LARGE',
   ARTIFACT_KIND_NOT_ALLOWED: 'FILEFN_ARTIFACT_KIND_NOT_ALLOWED',
   ARTIFACT_TYPE_NOT_ALLOWED: 'FILEFN_ARTIFACT_TYPE_NOT_ALLOWED',
   ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
   ARTIFACT_WRITE_CONFLICT: 'FILEFN_ARTIFACT_WRITE_CONFLICT',
   STORAGE_UPLOAD_UNSUPPORTED: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED',
+  STORAGE_STAT_UNAVAILABLE: 'FILEFN_STORAGE_STAT_UNAVAILABLE',
   IMPORT_OBJECT_NOT_FOUND: 'FILEFN_IMPORT_OBJECT_NOT_FOUND',
   IMPORT_SIZE_MISMATCH: 'FILEFN_IMPORT_SIZE_MISMATCH',
   IMPORT_CONFLICT: 'FILEFN_IMPORT_CONFLICT',
@@ -112,6 +116,11 @@ export function quotaExceeded(current: number, limit: number, requested: number)
   );
 }
 
+/** Quota refused for an account that isn't the caller's (a file owner's): no usage figures. */
+export function ownerQuotaExceeded(requested: number): FileFnError {
+  return new FileFnError(ErrorCodes.QUOTA_EXCEEDED, "The file owner's storage quota is exceeded", 402, { requested });
+}
+
 export function rateLimited(resetAt: string): FileFnError {
   return new FileFnError(ErrorCodes.RATE_LIMITED, 'Rate limit exceeded', 429, { resetAt });
 }
@@ -149,6 +158,18 @@ export function noSupportedUploadMode(): FileFnError {
     ErrorCodes.NO_SUPPORTED_UPLOAD_MODE,
     'No supported upload mode for configured adapter',
     500
+  );
+}
+
+/**
+ * FileFn could not verify the declared upload size. This covers adapters
+ * without stat support and failures to stat objects during completion.
+ */
+export function storageStatUnavailable(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.STORAGE_STAT_UNAVAILABLE,
+    'Upload size cannot be verified',
+    500,
   );
 }
 
@@ -352,4 +373,16 @@ export function importConflict(storageKey: string, reason: 'owner' | 'fileId', f
     409,
     fileId === undefined ? { storageKey, reason } : { storageKey, reason, fileId },
   );
+}
+
+export function unsupportedMediaType(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+    'This route takes a JSON body: send Content-Type: application/json',
+    415
+  );
+}
+
+export function bodyTooLarge(maxBytes: number): FileFnError {
+  return new FileFnError(ErrorCodes.BODY_TOO_LARGE, 'Request body is too large', 413, { maxBytes });
 }

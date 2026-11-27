@@ -72,6 +72,7 @@ describe("Query Validation - VALID-001", () => {
     const db = memoryAdapter();
     await db.initialize();
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
       database: db,
@@ -100,6 +101,7 @@ describe("Query Validation - VALID-001", () => {
     const db = memoryAdapter();
     await db.initialize();
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
       database: db,
@@ -130,7 +132,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-RESOURCE-001: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -156,7 +158,7 @@ describe("Query Validation - VALID-001", () => {
       const db = memoryAdapter();
       await db.initialize();
 
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -177,7 +179,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-FIELD-001: unknown field in select returns DFQL_UNKNOWN_FIELD", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -203,7 +205,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in filters returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -229,7 +231,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in sort returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -255,6 +257,7 @@ describe("Query Validation - VALID-001", () => {
 
     it("validates structured sort terms against the resource schema", async () => {
       const server = await createDatafnServer({
+        debug: true,
         allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
@@ -293,7 +296,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in omit returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -321,7 +324,7 @@ describe("Query Validation - VALID-001", () => {
       const db = memoryAdapter();
       await db.initialize();
 
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -351,7 +354,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-RELATION-001: unknown relation in select returns DFQL_UNKNOWN_RELATION", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -379,7 +382,7 @@ describe("Query Validation - VALID-001", () => {
     it("accepts valid relation in select", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -407,7 +410,7 @@ describe("Mutation Validation - VALID-001", () => {
     it("TV-VALID-MUTATION-001: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -439,7 +442,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Field validation", () => {
     it("unknown field in mutation record returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -470,7 +473,7 @@ describe("Mutation Validation - VALID-001", () => {
     it("accepts valid fields in mutation record", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -503,7 +506,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Relation validation", () => {
     it("unknown relation in mutation returns DFQL_UNKNOWN_RELATION", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -535,7 +538,7 @@ describe("Mutation Validation - VALID-001", () => {
     });
 
     it("unknown metadata key in relation mutation returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -575,7 +578,7 @@ describe("Mutation Validation - VALID-001", () => {
         data: { id: "tag:1", label: "Tag 1" },
         namespace: "datafn",
       });
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         database: db,
@@ -605,7 +608,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Operation validation", () => {
     it("unsupported operation returns DFQL_UNSUPPORTED", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -633,7 +636,7 @@ describe("Mutation Validation - VALID-001", () => {
     });
 
     it("insert requires record", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -664,7 +667,7 @@ describe("Mutation Validation - VALID-001", () => {
 
 describe("Transact Validation - VALID-001", () => {
   it("validates mutation steps in transaction", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -696,7 +699,7 @@ describe("Transact Validation - VALID-001", () => {
   });
 
   it("validates query steps in transaction", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -723,7 +726,7 @@ describe("Transact Validation - VALID-001", () => {
   });
 
   it("validates unknown fields in transaction mutation step", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -757,7 +760,7 @@ describe("Transact Validation - VALID-001", () => {
 
 describe("Push Validation - VALID-001", () => {
   it("TV-VALID-PUSH-001: validates mutations in push request", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -791,7 +794,7 @@ describe("Push Validation - VALID-001", () => {
 
   describe("SEC-013: Having clause deep validation", () => {
     it("TV-SEC-035: having with unknown field returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -816,7 +819,7 @@ describe("Push Validation - VALID-001", () => {
     });
 
     it("TV-SEC-036: having with aggregation alias is accepted", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -841,7 +844,7 @@ describe("Push Validation - VALID-001", () => {
 
   describe("SEC-014: GroupBy field schema validation", () => {
     it("TV-SEC-037: groupBy with unknown field returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -864,7 +867,7 @@ describe("Push Validation - VALID-001", () => {
     });
 
     it("TV-SEC-038: groupBy with valid field is accepted", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -888,7 +891,7 @@ describe("Push Validation - VALID-001", () => {
 
   describe("SEC-015: LIKE pattern length cap", () => {
     it("TV-SEC-039: $like pattern >200 chars returns DFQL_INVALID", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -911,7 +914,7 @@ describe("Push Validation - VALID-001", () => {
     });
 
     it("SEC-015: $like pattern <=200 chars is accepted", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -935,7 +938,7 @@ describe("Push Validation - VALID-001", () => {
 
   describe("SEC-016: Search query length cap", () => {
     it("TV-SEC-040: search query >1000 chars returns LIMIT_EXCEEDED", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -959,7 +962,7 @@ describe("Push Validation - VALID-001", () => {
     });
 
     it("SEC-016: search query <=1000 chars passes length check", async () => {
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -982,7 +985,7 @@ describe("Push Validation - VALID-001", () => {
   });
 
   it("validates unknown fields in push mutations", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -1021,7 +1024,7 @@ describe("Push Validation - VALID-001", () => {
 
 describe("SRV-015: $or operator rejected at validation time", () => {
   it("TV-SRV-015-001: query with $or filter returns DFQL_UNSUPPORTED", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
     });
 
@@ -1048,7 +1051,7 @@ describe("SRV-015: $or operator rejected at validation time", () => {
   });
 
   it("TV-SRV-015-002: $and is still accepted", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
     });
 
@@ -1078,7 +1081,7 @@ describe("SRV-015: $or operator rejected at validation time", () => {
 
 describe("FIX-SRV-003: bounded concurrency batch query", () => {
   it("batch larger than default concurrency (20) is accepted and processed fully", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       database: (await import("@superfunctions/db/adapters")).memoryAdapter(),
     });
@@ -1101,7 +1104,7 @@ describe("FIX-SRV-003: bounded concurrency batch query", () => {
   });
 
   it("batch at exactly default concurrency (20) is accepted", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       database: (await import("@superfunctions/db/adapters")).memoryAdapter(),
     });
@@ -1127,6 +1130,7 @@ describe("FIX-SRV-003: bounded concurrency batch query", () => {
 describe("FIX-SEC-008: Query prototype pollution validation", () => {
   it("__proto__ in query aggregations is rejected at route level", async () => {
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
     });
@@ -1150,6 +1154,7 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
 
   it("constructor in having clause is rejected at route level", async () => {
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
     });
@@ -1172,6 +1177,7 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
 
   it("constructor nested inside array payload is rejected at route level", async () => {
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
     });
@@ -1194,6 +1200,7 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
 
   it("clean aggregations + having passes validation", async () => {
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: fixtureF1Schema,
     });
@@ -1244,6 +1251,7 @@ describe("Date field bounds validation", () => {
     const db = memoryAdapter();
     await db.initialize();
     const server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema: boundsSchema,
       database: db,

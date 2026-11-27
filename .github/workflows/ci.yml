@@ -59,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
 
@@ -72,12 +72,18 @@ jobs:
       - name: Verify CI planner
         run: node --test scripts/ci-plan.test.mjs
 
+      - name: Verify workflow action pins
+        run: node --test scripts/workflow-pins.test.mjs
+
       # The standalone-script list (SFNS-307) must match turbo.json's global inputs and no package may use a script on
       # it. These checks need no Turbo, so every pull request runs them, whatever the plan selects. The file's Turbo
       # task-hash tests need an installed Turbo and run with `node --test scripts/turbo-cache-config.test.mjs`.
       - name: Verify standalone script list
         run: |
           node --test --test-name-pattern="^standalone list: " scripts/turbo-cache-config.test.mjs
+
+      - name: Verify Turbo cache merge
+        run: node --test scripts/turbo-cache-merge.test.mjs
 
       # Every file a cacheable Turbo task reads from outside its package must be in that task's Turbo hash (SFNS-311).
       # The guard asks Turbo, and this job installs no workspace dependencies, so it installs only the locked Turbo.
@@ -180,7 +186,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -212,38 +218,120 @@ jobs:
           echo "typecheck filters: ${{ needs.plan.outputs.js_typecheck_filters }}"
           echo "devfn tests (DevFn tests job): ${{ needs.plan.outputs.devfn_test_filters }}"
 
+      # Turbo's task cache (SFNS-312, scripts/turbo-cache-merge.mjs). Every run records the current task hashes and a
+      # baseline before any task runs, and each Turbo step runs with --summarize and records its summary, the cache
+      # files and the changed or untracked files. Before saving, the merge deletes each entry written by a step that
+      # changed a file outside its tasks' declared outputs (a replay would not restore that file) or that left no
+      # record, and reports those files as warnings. The cache bookkeeping never changes a job's result: recording the
+      # hashes, merging and saving continue on error, and a run whose record or merge failed saves nothing. The one
+      # fatal cache step is a run that cannot set its restored entries aside, since it must not replay them. A pull
+      # request replays each task whose Turbo inputs are unchanged, prunes the restored entries whose hash is not
+      # current and saves its entry even when a task failed. Every other run (a push, the nightly run, a manual run)
+      # replays nothing, because the release CI gate needs every task run on the release commit: it sets the restored
+      # entries aside, runs every selected task while Turbo writes the cache, then merges back the set-aside entries for
+      # current hashes the run did not rewrite, so the entry it saves, which pull requests restore, holds every task and
+      # not only those the run selected. It saves only when every step passed, so a failed run leaves the last complete
+      # entry in place. `--cache=local:w` is not used for this: each step would then rebuild every `^build` instead of
+      # reading the Build step's results. The Node major and the job are in the key, so another Node version or job
+      # never reuses an entry.
+      - name: Turbo cache key
+        id: turbo-cache-key
+        run: echo "prefix=turbo-${RUNNER_OS}-node$(node -p 'process.versions.node.split(".")[0]')-${GITHUB_JOB}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Turbo cache
+        id: turbo-cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-
+            ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
+            ${{ steps.turbo-cache-key.outputs.prefix }}-
+
+      - name: Set the restored Turbo cache aside
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -d .turbo/cache ]; then
+            mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
+          fi
+
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
+        continue-on-error: true
+        run: |
+          ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
+
       - name: Build
         if: needs.plan.outputs.has_js_build == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run build
+            ./node_modules/.bin/turbo run build --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run build ${{ needs.plan.outputs.js_build_filters }}
+            ./node_modules/.bin/turbo run build --summarize ${{ needs.plan.outputs.js_build_filters }} || status=$?
           fi
+          node scripts/turbo-cache-merge.mjs --record build --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Typecheck
         if: needs.plan.outputs.has_js_typecheck == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run typecheck
+            ./node_modules/.bin/turbo run typecheck --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run typecheck ${{ needs.plan.outputs.js_typecheck_filters }}
+            ./node_modules/.bin/turbo run typecheck --summarize ${{ needs.plan.outputs.js_typecheck_filters }} || status=$?
           fi
+          node scripts/turbo-cache-merge.mjs --record typecheck --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       # Avoid oversubscribing hosted runners with many concurrent Vitest pools. The filters exclude every DevFn
       # package, even on a full run: the DevFn tests job runs those.
       - name: Test
         if: needs.plan.outputs.has_js_test == 'true'
-        run: ./node_modules/.bin/turbo run test --concurrency=2 ${{ needs.plan.outputs.js_test_filters }}
+        run: |
+          status=0
+          ./node_modules/.bin/turbo run test --concurrency=2 --summarize ${{ needs.plan.outputs.js_test_filters }} || status=$?
+          node scripts/turbo-cache-merge.mjs --record test --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Lint
         if: needs.plan.outputs.has_js_lint == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run lint
+            ./node_modules/.bin/turbo run lint --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
+            ./node_modules/.bin/turbo run lint --summarize ${{ needs.plan.outputs.js_lint_filters }} || status=$?
           fi
+          node scripts/turbo-cache-merge.mjs --record lint --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
+
+      - name: Merge and prune the Turbo cache
+        id: turbo-cache-merge
+        continue-on-error: true
+        if: >-
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          (success() || (github.event_name == 'pull_request' && !cancelled())) }}
+        run: |
+          aside=()
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            aside=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          fi
+          node scripts/turbo-cache-merge.mjs --merge --steps-dir "$RUNNER_TEMP/turbo-steps" --cache-dir .turbo/cache \
+            --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
+
+      - name: Save Turbo cache
+        continue-on-error: true
+        if: >-
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache-restore.outputs.cache-primary-key }}
 
   # DevFn's real-process tests (SFNS-293) run one package at a time, apart from every other package's tests. The plan
   # selects the DevFn part of the JavaScript test selection: a full run selects every DevFn package. Like the JavaScript
@@ -260,7 +348,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -286,8 +374,66 @@ jobs:
           echo "full js: ${{ needs.plan.outputs.full_js }}"
           echo "devfn test filters: ${{ needs.plan.outputs.devfn_test_filters }}"
 
+      # Turbo's task cache, as in the JavaScript job (SFNS-312). DevFn's own tasks are uncacheable (turbo.json).
+      - name: Turbo cache key
+        id: turbo-cache-key
+        run: echo "prefix=turbo-${RUNNER_OS}-node$(node -p 'process.versions.node.split(".")[0]')-${GITHUB_JOB}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Turbo cache
+        id: turbo-cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-
+            ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
+            ${{ steps.turbo-cache-key.outputs.prefix }}-
+
+      - name: Set the restored Turbo cache aside
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -d .turbo/cache ]; then
+            mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
+          fi
+
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
+        continue-on-error: true
+        run: |
+          ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
+
       - name: Test
-        run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
+        run: |
+          status=0
+          ./node_modules/.bin/turbo run test --concurrency=1 --summarize ${{ needs.plan.outputs.devfn_test_filters }} || status=$?
+          node scripts/turbo-cache-merge.mjs --record test --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
+
+      - name: Merge and prune the Turbo cache
+        id: turbo-cache-merge
+        continue-on-error: true
+        if: >-
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          (success() || (github.event_name == 'pull_request' && !cancelled())) }}
+        run: |
+          aside=()
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            aside=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          fi
+          node scripts/turbo-cache-merge.mjs --merge --steps-dir "$RUNNER_TEMP/turbo-steps" --cache-dir .turbo/cache \
+            --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
+
+      - name: Save Turbo cache
+        continue-on-error: true
+        if: >-
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache-restore.outputs.cache-primary-key }}
 
   mcpfn-node20:
     name: McpFn Node 20 compatibility
@@ -299,7 +445,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -343,7 +489,7 @@ jobs:
 
       # Imports are read with the installed parsers (typescript, svelte, parse5, MDX) and Python's ast module.
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -371,12 +517,12 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -413,7 +559,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -421,7 +567,7 @@ jobs:
             **/pyproject.toml
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
 
@@ -467,7 +613,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -494,7 +640,7 @@ jobs:
 
       - name: Upload McpFn regression artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mcpfn-regression-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/mcpfn
@@ -511,7 +657,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "18.20.8"
           cache: "npm"

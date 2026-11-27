@@ -14,14 +14,27 @@ export {
   type RunnerContext,
   type RunnerDiagnosticsListener,
   type RunnerDiagnosticsSink,
+  type RunnerJsonStyle,
   type RunnerOptions,
 } from "./runner.js";
+export {
+  resolveRunnerOptions,
+  resolveTerminal,
+  type ResolvedRunnerOptions,
+  type ResolveRunnerOptionsContext,
+  type ResolveTerminalOptions,
+  type RunnerFlags,
+  type TerminalState,
+  type TerminalStream,
+  type TerminalStreams,
+} from "./terminal.js";
 export {
   ConfigLoaderError,
   defineConfig,
   loadConfig,
   type ConfigLoaderOptions,
   type ConfigLoaderErrorCode,
+  type ConfigLoaderPolicy,
   type LoadedConfig,
 } from "./config-loader.js";
 export {
@@ -86,6 +99,15 @@ export {
 } from "./paths.js";
 export { InvalidStoreOptionsError } from "./store-options.js";
 export {
+  startUpdateCheck,
+  type UpdateCheck,
+  type UpdateCheckFetch,
+  type UpdateCheckOptions,
+  type UpdateCheckRequestInit,
+  type UpdateCheckResponse,
+  type UpdateCheckTerminal,
+} from "./update-check.js";
+export {
   createApiClient,
   HttpFailureError,
   HttpRequestError,
@@ -96,4 +118,11 @@ export {
 } from "./client.js";
 export { ui } from "./ui.js";
 export { readJsonStdin, writeJsonStdout, InvalidJsonStdinError } from "./stdio.js";
-export { createPrompt, prompt, PromptInputError, type PromptApi } from "./prompt.js";
+export {
+  createPrompt,
+  prompt,
+  PromptInputError,
+  type PromptApi,
+  type PromptErrorCode,
+  type PromptOptions,
+} from "./prompt.js";

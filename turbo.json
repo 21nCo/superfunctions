@@ -16,6 +16,8 @@
     "!scripts/assert-release-ci.*",
     "!scripts/release-gate-workflows.*",
     "!scripts/notify-next-sync-workflow.*",
+    "!scripts/turbo-cache-merge.*",
+    "!scripts/workflow-pins.test.mjs",
     "package.json",
     "tsconfig*.json",
     "vitest.config.*",

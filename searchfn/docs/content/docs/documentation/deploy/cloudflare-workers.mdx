@@ -20,9 +20,12 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 
 ## Setup
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // worker.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { MeilisearchAdapter } from "@searchfn/adapter-meilisearch";
 
 interface Env {
@@ -39,6 +42,7 @@ async function getServer(env: Env) {
       apiKey: env.MEILI_API_KEY,
     });
   sf = await createSearchFnServer({
+    authorize: authorizeSearchRequest,
     adapter,
     basePath: "/searchfn",
   });
@@ -93,7 +97,6 @@ async function getServer(env: Env) {
   sf = await createSearchFnServer({
     adapter,
     basePath: "/searchfn",
-    // Without authorize, anyone can call /searchfn/index, /remove and /clear.
     // This Worker serves reads only; index from your own authenticated code with adapter.index().
     authorize: (_ctx, action) => action === "status" || action === "search" || action === "searchAll",
   });
@@ -211,6 +214,7 @@ For per-tenant isolation backed by Durable Objects:
 
 ```typescript
 import { DurableObject } from "cloudflare:workers";
+import { authorizeSearchRequest } from "./search-authorization.js";
 
 export class TenantSearch extends DurableObject {
   private sf: Awaited<ReturnType<typeof createSearchFnServer>> | null = null;
@@ -223,6 +227,7 @@ export class TenantSearch extends DurableObject {
           indexPrefix: `tenant-${this.ctx.id.toString()}_`,
         });
       this.sf = await createSearchFnServer({
+        authorize: authorizeSearchRequest,
         adapter,
         basePath: "/searchfn",
       });

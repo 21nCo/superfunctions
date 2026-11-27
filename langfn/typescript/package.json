@@ -1,6 +1,6 @@
 {
   "name": "langfn",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Comprehensive AI Development SDK for LLM-based workflows",
   "type": "module",
   "main": "./dist/index.js",
@@ -101,7 +101,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.7",
+    "@mcpfn/core": "0.3.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/auth": "0.2.1",
     "@superfunctions/db": "0.2.0",

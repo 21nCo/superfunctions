@@ -12,6 +12,7 @@ filefn ships share links with TTLs and download caps. This recipe shows how to c
 ```ts
 const share = await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({ maxDownloads: 1 }),
 }).then((r) => r.json());
 
@@ -25,6 +26,7 @@ The first download succeeds; the second returns `FILEFN_SHARE_DOWNLOADS_EXCEEDED
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
   }),
@@ -36,6 +38,7 @@ await fetch(`/filefn/${fileId}/share-links`, {
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     requiresAuth: true,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),

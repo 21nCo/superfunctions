@@ -19,6 +19,7 @@
     SelectContent,
     SelectItem,
     SelectItemIndicator,
+    SelectPositioner,
     SelectTrigger,
     SelectValueText,
   } from "@uifn/svelte";
@@ -41,6 +42,7 @@
 
   let query = "";
   let selectedGroup = "all";
+  let groupChosen = false;
   let selectedCommandTitle = "";
 
   $: filteredCommands = commandItems.filter((command) => {
@@ -54,8 +56,12 @@
     filteredCommands[0] ??
     commandItems[0];
 
-  function handleGroupChange(value: string) {
-    selectedGroup = value;
+  $: selectedGroupLabel = groupOptions.find((option) => option.value === selectedGroup)?.label;
+
+  function handleGroupChange(value: string | readonly string[] | null) {
+    const next = Array.isArray(value) ? value[0] : value;
+    selectedGroup = typeof next === "string" && next ? next : "all";
+    groupChosen = true;
   }
 
   function handleCommandValueChange(value: string) {
@@ -109,22 +115,30 @@
           Command group
           <small>Keep the scenario deterministic by filtering the local fixture set only.</small>
         </label>
-        <Select onValueChange={handleGroupChange}>
+        <Select
+          items={[...groupOptions]}
+          placeholder="Filter command group"
+          onValueChange={handleGroupChange}
+        >
           <SelectTrigger
             id="command-group-trigger"
             class="select-trigger"
             aria-label="Filter command group"
           >
-            <SelectValueText placeholder="Filter command group" />
+            <SelectValueText>
+              {groupChosen ? selectedGroupLabel : "Filter command group"}
+            </SelectValueText>
           </SelectTrigger>
-          <SelectContent class="floating-card command-menu">
-            {#each groupOptions as option (option.value)}
-              <SelectItem value={option.value} class="command-option">
-                {option.label}
-                <SelectItemIndicator value={option.value}>Selected</SelectItemIndicator>
-              </SelectItem>
-            {/each}
-          </SelectContent>
+          <SelectPositioner class="menu-positioner">
+            <SelectContent class="floating-card command-menu">
+              {#each groupOptions as option (option.value)}
+                <SelectItem value={option.value} class="command-option">
+                  {option.label}
+                  <SelectItemIndicator value={option.value}>Selected</SelectItemIndicator>
+                </SelectItem>
+              {/each}
+            </SelectContent>
+          </SelectPositioner>
         </Select>
       </div>
     </section>

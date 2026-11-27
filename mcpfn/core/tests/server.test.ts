@@ -8,6 +8,8 @@ import {
   McpFnRegistry,
   createMcpFnServer,
   structuredResult,
+  type McpFnSchemaValidator,
+  type McpFnServer,
 } from "../src/index.js";
 
 describe("McpFnServer", () => {
@@ -101,6 +103,157 @@ describe("McpFnServer", () => {
     await client.connect(clientTransport);
     closeables.push(client, server);
     await expect(client.callTool({ name: "echo", arguments: {} })).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("accepts a runtime-safe schema compiler without using Ajv compilation", async () => {
+    let compileCount = 0;
+    let handlerCalls = 0;
+    const registry = new McpFnRegistry({
+      compileSchema: () => {
+        compileCount += 1;
+        const validate: McpFnSchemaValidator = (data: unknown) => {
+          const valid = Boolean(data && typeof data === "object" &&
+            (data as Record<string, unknown>).value === "allowed");
+          validate.errors = valid ? null : [{ keyword: "const", message: "value is not allowed" }];
+          return valid;
+        };
+        return validate;
+      },
+    }).register({
+      name: "safe",
+      description: "Validate without generated code.",
+      inputSchema: { type: "object", properties: { value: { type: "string" } } },
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    const server = createMcpFnServer({ info: { name: "safe", version: "1.0.0" }, registry });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    expect(compileCount).toBe(1);
+    const denied = await client.callTool({ name: "safe", arguments: { value: "denied" } });
+    expect(denied).toMatchObject({ isError: true });
+    expect(JSON.stringify(denied)).toContain("value is not allowed");
+    expect(handlerCalls).toBe(0);
+    await expect(client.callTool({ name: "safe", arguments: { value: "allowed" } }))
+      .resolves.toMatchObject({ structuredContent: { ok: true } });
+    expect(handlerCalls).toBe(1);
+  });
+
+  it("fails closed when a supplied schema validator returns a non-true value", async () => {
+    let handlerCalls = 0;
+    const registry = new McpFnRegistry({
+      // A terse validator: a truthy non-boolean result and no error details.
+      compileSchema: () => (() => "yes") as unknown as McpFnSchemaValidator,
+    }).register({
+      name: "terse",
+      description: "Validate with a terse validator.",
+      inputSchema: { type: "object" },
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    const server = createMcpFnServer({ info: { name: "terse", version: "1.0.0" }, registry });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    const result = await client.callTool({ name: "terse", arguments: {} });
+    expect(result).toMatchObject({ isError: true });
+    expect(JSON.stringify(result)).toContain("Schema validation failed");
+    expect(handlerCalls).toBe(0);
+  });
+
+  it("reports a schema compiler failure as an invalid tool schema", () => {
+    const registry = new McpFnRegistry({
+      compileSchema: () => { throw new Error("unsupported keyword"); },
+    });
+    expect(() => registry.register({
+      name: "broken",
+      description: "Has a schema the compiler rejects.",
+      inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    })).toThrow("Tool broken contains an invalid JSON Schema");
+    expect(registry.listTools()).toEqual([]);
+  });
+
+  it("cloneEmpty() keeps the schema compiler and copies no definitions", async () => {
+    const compiledSchemas: object[] = [];
+    const source = new McpFnRegistry({
+      compileSchema: (schema) => {
+        compiledSchemas.push(schema);
+        const validate: McpFnSchemaValidator = (data: unknown) => {
+          const valid = Boolean(data && typeof data === "object" &&
+            (data as Record<string, unknown>).value === "allowed");
+          validate.errors = valid ? null : [{ keyword: "const", message: "value is not allowed" }];
+          return valid;
+        };
+        return validate;
+      },
+    })
+      .register({
+        name: "existing",
+        description: "An existing tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      })
+      .registerResource({ uri: "file:///existing", name: "existing", read: async () => ({ contents: [] }) })
+      .registerResourceTemplate({
+        uriTemplate: "file:///items/{id}",
+        name: "item",
+        read: async (uri) => ({ contents: [{ uri: uri.href, text: "item" }] }),
+      })
+      .registerPrompt({ name: "existing", get: async () => ({ messages: [] }) });
+    const sourceTools = source.listTools();
+    expect(sourceTools).toHaveLength(1);
+    expect(await source.listResources()).toHaveLength(1);
+    expect(source.listResourceTemplates()).toHaveLength(1);
+    expect(source.listPrompts()).toHaveLength(1);
+    const compiledBefore = compiledSchemas.length;
+
+    const empty = source.cloneEmpty();
+    expect(empty).not.toBe(source);
+    expect(compiledSchemas).toHaveLength(compiledBefore);
+    expect(empty.listTools()).toEqual([]);
+    expect(await empty.listResources()).toEqual([]);
+    expect(empty.listResourceTemplates()).toEqual([]);
+    expect(empty.listPrompts()).toEqual([]);
+
+    let handlerCalls = 0;
+    const inputSchema = { type: "object", properties: { value: { type: "string" } } };
+    empty.register({
+      name: "safe",
+      description: "Validated by the inherited compiler.",
+      inputSchema,
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    // The registry compiles its own frozen snapshot of the caller's schema.
+    expect(compiledSchemas.at(-1)).toEqual(inputSchema);
+    expect(compiledSchemas.at(-1)).not.toBe(inputSchema);
+    expect(Object.isFrozen(compiledSchemas.at(-1))).toBe(true);
+    expect(source.listTools()).toEqual(sourceTools);
+
+    const server = createMcpFnServer({ info: { name: "empty", version: "1.0.0" }, registry: empty });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const denied = await client.callTool({ name: "safe", arguments: { value: "denied" } });
+    expect(denied).toMatchObject({ isError: true });
+    expect(JSON.stringify(denied)).toContain("value is not allowed");
+    expect(handlerCalls).toBe(0);
   });
 
   it("normalizes structured results without treating repeated references as cycles", () => {
@@ -425,6 +578,135 @@ describe("McpFnServer", () => {
     expect(server.manifest().tools.map(({ name }) => name)).toEqual(["hidden", "visible"]);
   });
 
+  describe("tool visibility request kind", () => {
+    function lookupRegistry(invoked: string[]) {
+      return new McpFnRegistry<{ tenant: string }>().register({
+        name: "lookup",
+        description: "Look up a record.",
+        inputSchema: { type: "object" },
+        handler: async () => { invoked.push("lookup"); return structuredResult({ ok: true }); },
+      });
+    }
+
+    async function connect<TContext>(server: McpFnServer<TContext>) {
+      const client = new Client({ name: "request-kind-client", version: "1.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      closeables.push(client, server);
+      return client;
+    }
+
+    it("passes tools/list on discovery and tools/call on invocation with the tool, context and extra", async () => {
+      const invoked: string[] = [];
+      const seen: Array<Record<string, unknown>> = [];
+      const server = createMcpFnServer({
+        info: { name: "request-kind", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        context: () => ({ tenant: "tenant-a" }),
+        toolVisibility: ({ tool, context, extra, requestKind }) => {
+          seen.push({
+            requestKind,
+            tool: { name: tool.name, description: tool.description },
+            context,
+            requestId: extra.requestId,
+            aborted: extra.signal.aborted,
+          });
+          return true;
+        },
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      const expected = (requestKind: string) => ({
+        requestKind,
+        tool: { name: "lookup", description: "Look up a record." },
+        context: { tenant: "tenant-a" },
+        requestId: expect.anything(),
+        aborted: false,
+      });
+      expect(seen).toEqual([expected("tools/list"), expected("tools/call")]);
+      expect(seen[0]!.requestId).not.toEqual(seen[1]!.requestId);
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("lets a tool hidden from discovery run when called directly", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "call-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/call",
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools).toEqual([]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("lets a profile-projected call reach a tool hidden from discovery", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "profile-call-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/call",
+        clientProfiles: {
+          profiles: [{ id: "noop", version: "1", matches: () => true }],
+          resolveVerifiedIdentity: () => ({ subject: "trusted" }),
+        },
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools).toEqual([]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("answers a call the hook rejects with MethodNotFound without running the handler", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "list-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/list",
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+      await expect(client.callTool({ name: "lookup" })).rejects.toMatchObject({
+        code: ErrorCode.MethodNotFound,
+      });
+      expect(invoked).toEqual([]);
+    });
+
+    it("keeps discovery and invocation unchanged for hooks that ignore requestKind and for servers without one", async () => {
+      for (const toolVisibility of [undefined, ({ tool }: { tool: { name: string } }) => tool.name === "lookup"]) {
+        const invoked: string[] = [];
+        const server = createMcpFnServer({
+          info: { name: "request-kind-compatible", version: "1.0.0" },
+          registry: lookupRegistry(invoked),
+          ...(toolVisibility ? { toolVisibility } : {}),
+        });
+        const client = await connect(server);
+
+        expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+        await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+          structuredContent: { ok: true },
+        });
+        await expect(client.callTool({ name: "missing" })).rejects.toMatchObject({
+          code: ErrorCode.MethodNotFound,
+        });
+        expect(invoked).toEqual(["lookup"]);
+      }
+    });
+  });
+
   it("checks only the requested tool on calls without client profiles", async () => {
     const checked: string[] = [];
     const registry = new McpFnRegistry()
@@ -483,7 +765,8 @@ describe("McpFnServer", () => {
     await server.connect(right); await client.connect(left);
     closeables.push(client, server);
 
-    await expect(client.listTools()).rejects.toThrow(/identity rejected/);
+    // The hook's own error text is withheld (MCP-SEC-08).
+    await expect(client.listTools()).rejects.toThrow(/Internal error/);
     expect(order).toEqual(["identity"]);
   });
 

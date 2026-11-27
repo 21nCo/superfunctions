@@ -86,7 +86,8 @@ export { generateOpenAPI } from "./openapi/generate.js";
 export { fromRouter } from "./openapi/from-router.js";
 export type { FromRouterOptions } from "./openapi/from-router.js";
 export { parseOpenAPI } from "./openapi/parse.js";
-export { validateOpenAPI } from "./openapi/validate.js";
+export { validateAndDereferenceOpenAPI, validateOpenAPI } from "./openapi/validate.js";
+export type { OpenAPIValidationOptions } from "./openapi/validate.js";
 export { upconvertFrom3_0 } from "./openapi/upconvert.js";
 export { diffOpenAPI } from "./diff/diff.js";
 export { formatDiffAsJson, formatDiffAsText } from "./diff/format.js";
@@ -112,3 +113,37 @@ export type {
 export { fetchRateLimits } from "./integrations/secfn.js";
 export { logfnReporter, createCliLogger } from "./integrations/logfn.js";
 export type { CliLoggerOptions } from "./integrations/logfn.js";
+export {
+  createRequestIdempotency,
+  normalizeIdempotentResponse,
+  sha256Fingerprint,
+} from "./idempotency/request-idempotency.js";
+export { canonicalJson } from "./idempotency/canonical-json.js";
+export type {
+  CompletedIdempotencyRecord,
+  IdempotencyClaimResult,
+  IdempotencyClock,
+  IdempotencyCommit,
+  IdempotencyDiagnostic,
+  IdempotencyInvalidKeyReason,
+  IdempotencyOmittedPart,
+  IdempotencyReceipt,
+  IdempotencyReceiptSource,
+  IdempotencyRecord,
+  IdempotencyRecoverResult,
+  IdempotencyRecovery,
+  IdempotencyReleaseResult,
+  IdempotencyReplay,
+  IdempotencyRequest,
+  IdempotencyScope,
+  IdempotencySettleResult,
+  IdempotencyStore,
+  NormalizeIdempotentResponseOptions,
+  IdempotencyToken,
+  IdempotentResponse,
+  PendingIdempotencyRecord,
+  ReleasedIdempotencyRecord,
+  RequestIdempotency,
+  RequestIdempotencyOptions,
+  StoredIdempotentResponse,
+} from "./idempotency/request-idempotency.js";

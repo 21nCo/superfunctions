@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@superfunctions/http": "0.3.1",
-    "@superfunctions/oauth-flow": "0.1.1"
+    "@superfunctions/oauth-flow": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

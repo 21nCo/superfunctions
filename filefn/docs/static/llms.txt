@@ -40,7 +40,7 @@
 - [Observability](https://filefn.com/docs/core-concepts/observability): How filefn handles request IDs, structured logging, metrics, and secret redaction.
 - [Offline](https://filefn.com/docs/core-concepts/offline): How @filefn/client stages uploads in OPFS, replays on reconnect, and serves pending-local previews.
 - [Policies](https://filefn.com/docs/core-concepts/policies): Named upload policies that gate content type, size, visibility, storage target, and storage path layout.
-- [Rate limiting](https://filefn.com/docs/core-concepts/rate-limiting): Per-route rate limits using @superfunctions/middleware on top of filefn's upload, download, share-download, and artifact-download endpoints.
+- [Rate limiting](https://filefn.com/docs/core-concepts/rate-limiting): Opt-in per-route rate limits. Categories you omit are not limited. Public uploads need a proxy-derived client key.
 - [Render intents](https://filefn.com/docs/core-concepts/render-intents): How filefn returns the right artifact for a given UI surface — thumbnail, preview, full, or download — with placeholder fallback.
 - [Security](https://filefn.com/docs/core-concepts/security): filefn's threat model — what it protects, what it doesn't, and how to harden a deployment.
 - [Share links](https://filefn.com/docs/core-concepts/share-links): Tokenised, optionally auth-required, optionally download-capped public links to files.
@@ -59,7 +59,7 @@
 - [Policies](https://filefn.com/docs/features/policies): Named upload contracts that gate content type, size, visibility, storage target, and storage path layout.
 - [Processing](https://filefn.com/docs/features/processing): The filefn processing pipeline — thumbnails, PDF previews, OCR, image transforms, audio waveforms, video posters — with composable processors and stable artifacts.
 - [Quota](https://filefn.com/docs/features/quota): Pluggable storage quotas — per-user, per-tenant, or any custom dimension.
-- [Rate limiting](https://filefn.com/docs/features/rate-limiting): Per-route rate limiting on upload-init, sign, complete, download, share-download, and artifact-download.
+- [Rate limiting](https://filefn.com/docs/features/rate-limiting): Opt-in per-route rate limits, including a trusted client key for public uploads.
 - [Share links](https://filefn.com/docs/features/share-links): Opt-in tokenised, optionally auth-required, optionally download-capped public links to files.
 - [Uploads](https://filefn.com/docs/features/uploads): Multipart upload sessions with signed-URL or proxy modes, idempotency, anonymous tokens, and automatic recovery.
 - [Versions](https://filefn.com/docs/features/versions): Every successful filefn upload becomes a new fileVersions row — list, target, download, and roll back.

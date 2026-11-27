@@ -81,9 +81,13 @@ const server = createMcpFnServer({
 ```
 
 For tenant- or actor-specific discovery, use `toolVisibility`. McpFn applies
-the hook to both `tools/list` and `tools/call`; a hidden call returns the same
-protocol `MethodNotFound` response as an unknown tool. The static manifest
-continues to describe the complete server contract.
+the hook to both `tools/list` and `tools/call` and passes the request in
+`requestKind` (`"tools/list"` or `"tools/call"`). A tool the hook rejects for
+`tools/list` is left out of that listing; a call the hook rejects for
+`tools/call` returns the same protocol `MethodNotFound` response as an unknown
+tool and never reaches the handler. A hook that ignores `requestKind` applies
+one decision to both. The static manifest continues to describe the complete
+server contract.
 
 ```ts
 const server = createMcpFnServer({
@@ -94,6 +98,24 @@ const server = createMcpFnServer({
     context.permissions.includes(String(tool._meta?.permission)),
 });
 ```
+
+A host may decide the two requests differently. Keep the authorization check
+for both request kinds and add any discovery-only condition separately, for
+example to keep a permitted tool out of listings while still accepting direct
+calls to it:
+
+```ts
+toolVisibility: ({ tool, context, requestKind }) => {
+  if (!context.permissions.includes(String(tool._meta?.permission))) {
+    return false;
+  }
+  return requestKind === "tools/call" || tool._meta?.hideFromDiscovery !== true;
+},
+```
+
+A hook that returns `true` for every `tools/call` lets any caller reach the
+tool by name, so do that only when the tool handler performs the same
+authorization check itself.
 
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 
@@ -106,6 +128,20 @@ included. `handleInvalidArguments` is available for existing domain packages
 that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
+
+In a tool result, only `McpFnError` (and its subclasses), the SDK's `McpError` (as code `MCPFN_TOOL_ERROR`, its JSON-RPC code not kept, with its message and its `data` as `details`) and a thrown plain `{ code, message }` object reach the client with their code, message and details. Resource, prompt, completion, subscription and other request handlers keep only `McpFnError` and `McpError`; a thrown plain object is withheld there too. Any other thrown value, such as a filesystem, database or upstream
+HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
+details: { errorId } }`; resource, prompt, completion and subscription handlers
+answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
+This covers errors from context factories, visibility hooks and task creation
+as well. The original error goes to the server's `onError({ error, errorId,
+method, tool })` sink, which is not awaited. An `McpError` from another copy of the SDK (such as the application's own) is recognised by its `McpError` name and `MCP error <code>:` message; a renamed subclass of it is withheld, so throw `McpFnError` for domain errors that must reach the client. `exposeErrors: true` restores verbatim error text. Argument validation
+stops at the first failure where the schema allows it: a large array whose
+`items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
+still reports each branch and, on `@cfworker/json-schema`, a tuple with
+`additionalItems: false` reports each extra item (responses keep at most 100
+issues), and tool arguments with more than 100,000 values in total are refused before any schema validation. Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+subscriptions.
 
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.
 
@@ -162,8 +198,16 @@ or `@cfworker/json-schema` on Cloudflare Workers and other runtimes that forbid
 code generation). Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
-invent or duplicate tools or mutate model-owned arguments. No matching profile
-preserves canonical behavior.
+invent or duplicate tools or mutate model-owned arguments.
+
+A client that matches no profile (no verified identity, or one no profile
+accepts) sees the canonical catalog without the tools that any profile gives
+server-owned arguments: it could never call them, since it may not supply
+those arguments and they are required. Calling such a tool answers like an
+unknown tool, so a client cannot pick a tenant or workspace by not matching a
+profile. Set `unmatchedServerOwnedArguments: "allow"` to list those tools and
+pass their arguments through unchanged, as before; the handler must then
+derive the value from trusted context itself.
 
 The optional `evidence` sink receives only bounded structural lifecycle
 events. It is observational: a sink failure cannot fail or change a request.
@@ -175,6 +219,18 @@ Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the 
 Task support is declared with `execution.taskSupport` and a `taskHandler`; a task-capable server must receive an official SDK `TaskStore`. `server.listRoots()`, `server.sample()`, and `server.elicit()` invoke matching client capabilities. Declare required client features in `clientRequirements` so manifests and host-profile tests can reject incompatible hosts before deployment.
 
 `createWebStandardHandler()` accepts the official SDK `HandleRequestOptions`, including validated `authInfo`. Use `@mcpfn/auth` to publish OAuth protected-resource metadata and produce that trusted value. In stateless mode, McpFn creates and disposes an isolated SDK server and transport for every request. Attach protocol instrumentation with `configureRequestServer`; it receives the live isolated server before transport connection and runs once per request, or once per session initialization attempt. Because configuration precedes SDK request validation, a rejected attempt can invoke the hook without retaining a session. Supply a cryptographically secure `sessionIdGenerator` when the server uses sampling, elicitation, or another server-to-client request that must be correlated across HTTP requests; session-enabled handlers retain their transport across the session.
+
+HTTP security defaults: a request carrying an `Origin` header is refused with
+HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
+`enableDnsRebindingProtection` hands Host and Origin checks to the SDK
+transport). A session belongs to the principal that created it
+(`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, with `extra.issuer` and `extra.tenantId` when the verifier reports them, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh; a server that trusts more than one issuer must also set `extra.issuer`, since subjects from verifiers that leave it unset share one namespace); a request
+from another principal, including GET and DELETE, gets the same 404 as an
+unknown session. In sessionful mode a configured `eventStore` is scoped per
+session, so `Last-Event-ID` resumption only replays the session's own events; a
+stateless handler has no session to scope it to, so don't share an event store
+between principals there.
 
 ## Cloudflare Workers and edge runtimes
 

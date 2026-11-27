@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Generic, List, Mapping, Optional, TypeVar
+from typing import Annotated, Any, Callable, Dict, Generic, List, Mapping, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AllowInfNan,
+    BaseModel,
+    ConfigDict,
+    Field,
+    Strict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from .errors import BillFnApiError, BillFnCanonicalError
 
@@ -203,7 +213,8 @@ class BillFnCheckoutCreateRequest(BillFnModel):
     provider: str
     interval: Optional[str] = None
     price_id: Optional[str] = Field(default=None, alias="priceId")
-    metadata: Optional[Dict[str, Any]] = None
+    # Flat scalar values only, as the server accepts (at most 20 entries, keys up to 40 characters, strings up to 500).
+    metadata: Optional[Dict[str, Union[StrictBool, StrictInt, Annotated[float, Strict(), AllowInfNan(False)], StrictStr]]] = None
     customer: Optional[Dict[str, Any]] = None
     return_url: Optional[str] = Field(default=None, alias="returnUrl")
     success_url: Optional[str] = Field(default=None, alias="successUrl")

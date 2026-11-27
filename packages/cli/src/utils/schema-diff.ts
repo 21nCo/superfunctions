@@ -3,7 +3,10 @@ import type { DatabaseTable } from './introspection.js';
 import {
   databaseStringLength,
   isUnboundedMySqlTextType,
+  mysqlFixedKeyBytes,
+  mysqlIndexKeyBudget,
   mysqlVarcharLength,
+  satisfiesUnboundedMySqlString,
 } from './mysql-types.js';
 
 /**
@@ -377,7 +380,15 @@ export function diffTables(
         // Check for type changes
         // Map FieldSchema types to SQL types for comparison
         const expectedType = mapFieldTypeToSQLType(fieldSchema, curCol.dialect);
-        const actualType = normalizeColumnType(curCol.dataType);
+        // MySQL stores BOOLEAN as TINYINT(1) and reports that column type.
+        // TINYINT(1) is also a valid integer column (the 1 is display width
+        // only), so read it as boolean only for boolean schema fields.
+        const actualType =
+          curCol.dialect === 'mysql' &&
+          fieldSchema.type === 'boolean' &&
+          /^tinyint\s*\(\s*1\s*\)$/i.test(curCol.columnType?.trim() ?? '')
+            ? 'boolean'
+            : normalizeColumnType(curCol.dataType);
 
         if (expectedType !== actualType) {
           changes.push(`type changed from ${actualType} to ${expectedType}`);
@@ -394,7 +405,9 @@ export function diffTables(
             legacyTargetLength === desiredLength &&
             isUnboundedMySqlTextType(curCol.dataType) &&
             desiredLength !== null;
-          if (actualLength !== desiredLength && !preserveLegacyText) {
+          const unboundedTextMatches =
+            desiredLength === null && satisfiesUnboundedMySqlString(curCol.dataType);
+          if (actualLength !== desiredLength && !preserveLegacyText && !unboundedTextMatches) {
             changes.push(
               `maxLength changed from ${actualLength ?? 'unbounded'} to ${desiredLength ?? 'unbounded'}`,
             );
@@ -450,6 +463,18 @@ export function diffTables(
         .map((change) => change.column),
     );
     const changedIndexNames = new Set(changedIndexes.map((index) => index.name));
+    // A width-only VARCHAR widening keeps every full-column index on the
+    // column: one MODIFY COLUMN statement rebuilds it in place, so a unique
+    // index never stops enforcing uniqueness (if the key budget below fits).
+    const widenedVarcharColumns = new Set(columnChanges.filter((change) => {
+      const widening = /^maxLength changed from (\d+) to (\d+)$/.exec(change.change);
+      return widening && /^varchar$/i.test(change.current?.dataType.trim() ?? '') && Number(widening[2]) >= Number(widening[1]);
+    }).map((change) => change.column));
+    const keepsIndexThroughWidening = (index: DatabaseTable['indexes'][number]) =>
+      (!index.indexType || index.indexType.toUpperCase() === 'BTREE') &&
+      index.columns.every((column, position) => index.prefixLengths?.[position] == null &&
+        /^(?:var)?char$/i.test(curColMap.get(column)?.dataType.trim() ?? '') &&
+        (!changedMySqlColumns.has(column) || widenedVarcharColumns.has(column)));
     const unpreservedIndexDependencies = curTable.indexes.filter((index) =>
       index.columns.some((column) => changedMySqlColumns.has(column)) &&
       (
@@ -485,6 +510,35 @@ export function diffTables(
           .join(', ')}`,
       );
     }
+    // Size each final key on a changed column against the InnoDB budget before
+    // any DDL. String parts: declared width (TEXT: the 191-character prefix)
+    // in the character set MODIFY COLUMN keeps, the column's own or else the
+    // table default (unknown: utf8mb4). Other parts: the physical type of an
+    // unchanged column, else the emitted type. Refuse what cannot be sized or modelled.
+    const budget = mysqlIndexKeyBudget(curTable);
+    const keyPartBytes = (column: string): number => {
+      const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
+      const type = field && (/^date(?:time)?$/.test(field.type)
+        ? ({ timestamp: 'datetime', timestamptz: 'timestamp', 'iso-text': 'text' } as Record<string, string>)[resolveDateStorageType(field)] ?? 'bigint'
+        : mapFieldTypeToSQLType(field, 'mysql'));
+      const current = curColMap.get(column);
+      const charBytes = current?.characterSet || current?.characterSetMaxBytes ? current.characterSetMaxBytes : curTable.characterSetMaxBytes;
+      if (type === 'text') return (field?.type === 'string' ? field.maxLength ?? 191 : 191) * (charBytes ?? 4);
+      const bytes = mysqlFixedKeyBytes(current && !changedMySqlColumns.has(column) ? current.columnType ?? current.dataType : type ?? '');
+      if (bytes) return bytes;
+      throw new Error(`Cannot generate MySQL column change for ${dbName}: the index key size of ${column} cannot be proven safe`);
+    };
+    for (const index of requiredIndexes) {
+      if (!index.columns.some((column) => changedMySqlColumns.has(column))) continue;
+      if (typeof budget === 'string') throw new Error(`Cannot generate MySQL column change for ${dbName}: the key size of ${index.name} cannot be proven to fit, because ${budget}.`);
+      const parts = index.columns.map((column) => ({ column, bytes: keyPartBytes(column) }));
+      const total = parts.reduce((sum, part) => sum + part.bytes, 0);
+      if (total <= budget.total && parts.every((part) => part.bytes <= budget.part)) continue;
+      const key = `${index.name} (${parts.map((part) => `${part.column} ${part.bytes} bytes`).join(', ')})`;
+      throw new Error(total > budget.total
+          ? `Cannot generate MySQL column change for ${dbName}: the migrated key ${key} would take ${total} bytes, over the ${budget.total}-byte InnoDB key limit for innodb_page_size ${budget.innodbPageSize}. innodb_page_size cannot change on an existing instance; shorten the key's columns in the schema, then generate the migration again.`
+          : `Cannot generate MySQL column change for ${dbName}: ${budget.partLimit} limits index key parts to 767 bytes, which the migrated key ${key} would exceed. ${budget.remedy}, then generate the migration again.`);
+    }
     const rebuiltIndexes: NonNullable<TableDiff['rebuiltIndexes']> =
       changedMySqlColumns.size === 0
         ? []
@@ -495,7 +549,8 @@ export function diffTables(
             );
             if (
               !currentIndex ||
-              !currentIndex.columns.some((column) => changedMySqlColumns.has(column))
+              !currentIndex.columns.some((column) => changedMySqlColumns.has(column)) ||
+              keepsIndexThroughWidening(currentIndex)
             ) return [];
 
             const currentTextColumns = currentIndex.columns.filter((column) => {

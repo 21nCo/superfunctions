@@ -898,7 +898,11 @@ export class SuperConsole {
     if (await this.mcpRequestRequiresMutationAuthorization(request)) {
       await this.options.auth.authorizeMutation?.({ principal: state.principal, request });
     }
-    this.mcpHandlerPromise ??= this.mcpServer.createWebStandardHandler({ enableJsonResponse: true });
+    // Every transport request is authenticated with the console's own
+    // operator session (and its CSRF header for mutations) before it gets
+    // here, which a DNS-rebinding page cannot present, so the browser's
+    // same-origin Origin header must not be refused.
+    this.mcpHandlerPromise ??= this.mcpServer.createWebStandardHandler({ enableJsonResponse: true, originPolicy: 'off' });
     const handler = await this.mcpHandlerPromise;
     return handler(request, {
       authInfo: {

@@ -28,6 +28,7 @@ import {
 import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import { canonicalizeActorPrincipal, resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import { resolveEffectiveLevel, type AccessGrant } from "../execution/auth/access-resolver.js";
+import { hasPredicateField, isNestedFilterField } from "../execution/query/filters.js";
 import {
   getSpv2MigrationRuntimeConfig,
   resolveAccessLevelFromLegacyV1,
@@ -50,7 +51,7 @@ export type AuthzError = {
 export type AuthzOptions = {
   /** VAL-001: Allow queries/mutations on resources with no policy. Default: false (deny-by-default). */
   allowUnknownResources?: boolean;
-  /** VAL-009: Debug mode — when false, strip field/schema details from error messages. Default: true. */
+  /** VAL-009: Include field/schema details in error messages when enabled. */
   debug?: boolean;
 };
 
@@ -180,6 +181,110 @@ function canReadField(
   return getReadFields(resolvePermissions(schema, resource)).includes(field);
 }
 
+export function getReadableRelationFields(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+): ReadonlySet<string> | undefined {
+  const policy = resolvePermissions(schema, resource);
+  if (!policy) return undefined;
+  const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+  return new Set(["id", ...capabilityFields, ...getReadFields(policy)]);
+}
+
+export function hasResourceReadPolicy(schema: DatafnSchema, resourceName: string): boolean {
+  const resource = getResourceSchema(schema, resourceName);
+  return resource !== undefined && resolvePermissions(schema, resource) !== undefined;
+}
+
+/**
+ * DATA-41: whether a caller may read every field of the resource (each
+ * schema field, and each key of `row` when given), so a row and its
+ * revision may be returned whole. Decided from the policy, not only the keys
+ * a row happens to carry: an unset hidden field still hides writes to it.
+ * Resources without a policy are read in full by anyone the route already
+ * let through (`allowUnknownResources`).
+ */
+export function canReadEveryField(
+  schema: DatafnSchema,
+  resourceName: string,
+  row?: Record<string, unknown>,
+): boolean {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource) return false;
+  if (!resolvePermissions(schema, resource)) return true;
+  const declared = resourceFieldNames(resource);
+  const fields = new Set([...declared, ...Object.keys(row ?? {})]);
+  return [...fields].every(
+    (field) =>
+      isStoragePartitionField(declared, field) ||
+      isRevisionMetadata(declared, field) ||
+      canReadField(schema, resource, field),
+  );
+}
+
+/**
+ * `__ns` is the storage partition column a namespaced adapter adds to rows,
+ * unless the resource declares its own `__ns` field: a declared `__ns` is an
+ * ordinary application field and its read policy applies to it.
+ */
+function isStoragePartitionField(declared: readonly string[], field: string): boolean {
+  return field === "__ns" && !declared.includes("__ns");
+}
+
+/** `$rev` is revision metadata unless the resource declares its own `$rev` field. */
+function isRevisionMetadata(declared: readonly string[], field: string): boolean {
+  return field === "$rev" && !declared.includes("$rev");
+}
+
+/**
+ * DATA-41: a copy of `row` without the fields the resource's read policy
+ * withholds (and without `$rev` revision metadata, which only a complete row
+ * may carry; a resource's own declared `$rev` field is an ordinary field).
+ * Resources without a policy are returned unchanged.
+ */
+export function withoutUnreadableFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = resourceFieldNames(resource);
+  const readable: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(row)) {
+    if (
+      isStoragePartitionField(declared, field) ||
+      (!isRevisionMetadata(declared, field) && canReadField(schema, resource, field))
+    ) {
+      readable[field] = value;
+    }
+  }
+  return readable;
+}
+
+/**
+ * DATA-41: a copy of `row` without the declared schema fields of the
+ * resource that its read policy withholds. Keys the schema does not declare
+ * (aggregation aliases, a resource's own declared `$rev` is declared and kept
+ * when readable) are returned unchanged.
+ */
+export function withoutHiddenDeclaredFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = new Set(resourceFieldNames(resource));
+  const hidden = Object.keys(row).filter(
+    (field) => declared.has(field) && !canReadField(schema, resource, field),
+  );
+  if (hidden.length === 0) return row;
+  const copy = { ...row };
+  for (const field of hidden) delete copy[field];
+  return copy;
+}
+
 /**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").
@@ -224,6 +329,22 @@ export function validateQueryAuthz(
   }
 
   const policy = resolvePermissions(schema, resource);
+  const computedFields = getTemporalGroupAliases(query);
+  if (query.aggregations && typeof query.aggregations === "object" && !Array.isArray(query.aggregations)) {
+    for (const alias of Object.keys(query.aggregations)) computedFields.add(alias);
+  }
+  const checkPredicate = (key: "filters" | "having") => {
+    const filter = query[key];
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return { ok: true } as const;
+    const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+    const result = extractFieldsFromFilter(
+      filter as Record<string, unknown>, resource, policy, capabilityFields, schema,
+      opts?.allowUnknownResources, key === "having" ? computedFields : undefined,
+    );
+    return key === "having" && !result.ok
+      ? { ...result, path: `having.${result.path.replace(/^filters\./, "")}` }
+      : result;
+  };
   if (!policy) {
     // VAL-001: Deny-by-default — resources without a policy are FORBIDDEN unless escape hatch enabled
     if (!opts?.allowUnknownResources) {
@@ -237,7 +358,9 @@ export function validateQueryAuthz(
         path: "resource",
       };
     }
-    return { ok: true };
+    // The missing-policy exception applies to this resource's fields only.
+    const filters = checkPredicate("filters");
+    return filters.ok ? checkPredicate("having") : filters;
   }
 
   const { capabilityFields } = getCapabilityFieldSets(schema, resource);
@@ -312,18 +435,8 @@ export function validateQueryAuthz(
   }
 
   // Validate filter fields
-  if (query.filters && typeof query.filters === "object") {
-    const filterFieldsResult = extractFieldsFromFilter(
-      query.filters as Record<string, unknown>,
-      resource,
-      policy,
-      capabilityFields,
-      schema,
-    );
-    if (!filterFieldsResult.ok) {
-      return filterFieldsResult;
-    }
-  }
+  const filters = checkPredicate("filters");
+  if (!filters.ok) return filters;
 
   const readFields = policy.read?.fields || [];
   const temporalAliases = getTemporalGroupAliases(query);
@@ -378,17 +491,8 @@ export function validateQueryAuthz(
   }
 
   // SEC-003: Validate having clause (recursive field extraction)
-  if (query.having && typeof query.having === "object" && !Array.isArray(query.having)) {
-    const havingResult = extractFieldsFromFilter(
-      query.having as Record<string, unknown>,
-      resource,
-      policy,
-      capabilityFields,
-    );
-    if (!havingResult.ok) {
-      return { ...havingResult, path: `having.${havingResult.path.replace(/^filters\./, "")}` };
-    }
-  }
+  const having = checkPredicate("having");
+  if (!having.ok) return having;
 
   // SEC-003: Validate sort fields
   if (query.sort && Array.isArray(query.sort)) {
@@ -449,17 +553,128 @@ export function validateQueryAuthz(
   return { ok: true };
 }
 
+function isQuantifierFilterValue(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ("$any" in value || "$all" in value || "$none" in value)
+  );
+}
+
+const RELATION_QUANTIFIERS = ["$any", "$all", "$none"] as const;
+
+/**
+ * Read policy for a relation dot-path or a nested quantifier filter.
+ * Returns "scalar" when the key is not a relation traversal.
+ */
+function authorizeRelationFilter(
+  key: string,
+  value: unknown,
+  resource: DatafnResourceSchema,
+  policy: DatafnPermissionsPolicy | undefined,
+  schema: DatafnSchema | undefined,
+  allowUnknownResources: boolean,
+): "scalar" | { ok: true } | AuthzError {
+  if (!schema) return "scalar";
+  const parts = key.split(".");
+  const head = parts[0];
+  if (!head) return "scalar";
+
+  const targets = resolveRelationTargetResources(schema, resource.name, head);
+  if (targets.length === 0) return "scalar";
+
+  const quantifier = parts.length === 1 && isQuantifierFilterValue(value);
+  if (!quantifier && isNestedFilterField(resource, head)) return "scalar";
+  const fkNamed = isForeignKeyNamedManyOne(schema, resource.name, head);
+  // Scalar comparisons go through field authorization. Traversals also
+  // authorize the related fields they reference.
+  if (!quantifier && parts.length === 1) return "scalar";
+  // A stored field can shadow a relation in a dot-path. A declared or
+  // generated FK can expose its association through a quantifier.
+  const hasSourceField = hasPredicateField(schema, resource, head);
+  if (policy && (hasSourceField || fkNamed) && !canReadField(schema, resource, head)) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: `filters.${key}`,
+    };
+  }
+
+  if (quantifier) {
+    for (const op of RELATION_QUANTIFIERS) {
+      if (!(op in value)) continue;
+      const sub = value[op];
+      if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;
+      for (const targetName of targets) {
+        const target = getResourceSchema(schema, targetName);
+        if (!target) continue;
+        const targetPolicy = resolvePermissions(schema, target) ??
+          (allowUnknownResources ? undefined : { read: { fields: [] } });
+        const { capabilityFields: targetFields } = getCapabilityFieldSets(schema, target);
+        const result = extractFieldsFromFilter(
+          sub as Record<string, unknown>,
+          target,
+          targetPolicy,
+          targetFields,
+          schema,
+          allowUnknownResources,
+        );
+        if (!result.ok) {
+          return {
+            ...result,
+            path: `filters.${key}.${op}.${result.path.replace(/^filters\./, "")}`,
+          };
+        }
+      }
+    }
+    return { ok: true };
+  }
+
+  let currentNames = targets;
+  for (let segmentIndex = 1; segmentIndex < parts.length; segmentIndex++) {
+    const segment = parts[segmentIndex];
+    const isLast = segmentIndex === parts.length - 1;
+    const nextTargets = new Set<string>();
+    for (const name of currentNames) {
+      const current = getResourceSchema(schema, name);
+      const related = isLast || isNestedFilterField(current, segment)
+        ? []
+        : resolveRelationTargetResources(schema, name, segment);
+      // An endpoint may read a stored field even when another endpoint follows a relation.
+      const needsReadCheck = current && hasPredicateField(schema, current, segment) &&
+        (!allowUnknownResources || resolvePermissions(schema, current));
+      if (!current || (needsReadCheck && !canReadField(schema, current, segment))) {
+        return {
+          ok: false,
+          code: "FORBIDDEN",
+          message: "Authorization denied",
+          path: `filters.${key}`,
+        };
+      }
+      for (const target of related) nextTargets.add(target);
+    }
+    if (nextTargets.size === 0) break;
+    currentNames = [...nextTargets];
+  }
+
+  return { ok: true };
+}
+
 /**
  * Extract and validate fields from a filter object
  */
 function extractFieldsFromFilter(
   filter: Record<string, unknown>,
   resource: DatafnResourceSchema,
-  policy: DatafnPermissionsPolicy,
+  policy: DatafnPermissionsPolicy | undefined,
   capabilityFields: Set<string>,
   schema?: DatafnSchema,
+  allowUnknownResources = false,
+  computedFields?: ReadonlySet<string>,
 ): { ok: true } | AuthzError {
-  const readFields = policy.read?.fields || [];
+  const readFields = policy?.read?.fields || [];
 
   for (const [key, value] of Object.entries(filter)) {
     // Skip logical operators
@@ -473,6 +688,8 @@ function extractFieldsFromFilter(
               policy,
               capabilityFields,
               schema,
+              allowUnknownResources,
+              computedFields,
             );
             if (!result.ok) return result;
           }
@@ -481,28 +698,27 @@ function extractFieldsFromFilter(
       continue;
     }
 
-    // Extract base field name (handle dot-paths like "goal.label")
     const parts = key.split(".");
     const baseField = parts[0];
+    if (!baseField) continue;
+    // HAVING evaluates the computed column. The aggregation and its source
+    // field are authorized independently.
+    if (computedFields?.has(key) && !isQuantifierFilterValue(value)) continue;
 
-    // id and capability-managed fields are always allowed for filtering
-    if (baseField === "id") continue;
-    if (capabilityFields.has(baseField)) continue;
+    const relationResult = authorizeRelationFilter(key, value, resource, policy, schema, allowUnknownResources);
+    if (relationResult !== "scalar") {
+      if (!relationResult.ok) return relationResult;
+      continue;
+    }
 
-    // Check if it's a direct field (not a relation). A scalar filter on a
-    // relation that stores its id under its own name (e.g. node.parent)
-    // filters that field, declared or not; quantifier objects stay relation
-    // filters.
-    const isQuantifier =
-      parts.length === 1 &&
-      typeof value === "object" && value !== null && !Array.isArray(value) &&
-      ("$any" in value || "$all" in value || "$none" in value);
-    const isField = resource.fields.some((f) => f.name === baseField) ||
-                    capabilityFields.has(baseField) ||
-                    (!!schema && parts.length === 1 && !isQuantifier &&
-                      isForeignKeyNamedManyOne(schema, resource.name, baseField));
+    // Scalar filters on id and capability-managed fields are always allowed.
+    if (baseField === "id" || capabilityFields.has(baseField)) continue;
 
-    if (isField && !readFields.includes(baseField)) {
+    const isField = schema
+      ? hasPredicateField(schema, resource, baseField)
+      : resource.fields.some((field) => field.name === baseField);
+
+    if (policy && isField && !readFields.includes(baseField)) {
       return {
         ok: false,
         code: "FORBIDDEN",
@@ -521,7 +737,7 @@ function extractFieldsFromFilter(
 export function validateMutationAuthz(
   mutation: Record<string, unknown>,
   schema: DatafnSchema,
-  opts?: AuthzOptions,
+  opts?: AuthzOptions & { evaluateGuard?: boolean },
 ): { ok: true } | AuthzError {
   const resource = schema.resources.find((r) => r.name === mutation.resource);
   if (!resource) {
@@ -543,11 +759,30 @@ export function validateMutationAuthz(
         path: "resource",
       };
     }
-    return { ok: true };
   }
 
-  const { readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
+  const { capabilityFields, readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
 
+  // Guards read stored values. A field the caller cannot read must not be a predicate.
+  if (opts?.evaluateGuard !== false &&
+      mutation.if && typeof mutation.if === "object" && !Array.isArray(mutation.if)) {
+    const guardResult = extractFieldsFromFilter(
+      mutation.if as Record<string, unknown>,
+      resource,
+      policy,
+      capabilityFields,
+      schema,
+      opts?.allowUnknownResources,
+    );
+    if (!guardResult.ok) {
+      return {
+        ...guardResult,
+        path: `if.${guardResult.path.replace(/^filters\./, "")}`,
+      };
+    }
+  }
+
+  if (!policy) return { ok: true };
   const writeFields = policy.write?.fields || [];
 
   // Validate record fields for insert/merge/replace operations

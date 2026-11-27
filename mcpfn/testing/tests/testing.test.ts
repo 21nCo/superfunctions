@@ -547,6 +547,49 @@ describe("McpFn testing", () => {
     }
   });
 
+  it("lists and calls through a visibility hook that decides each request kind separately", async () => {
+    const requestKinds: string[] = [];
+    const invoked: string[] = [];
+    const registry = new McpFnRegistry()
+      .register({
+        name: "call-only",
+        description: "Hidden from discovery, callable directly.",
+        inputSchema: { type: "object" },
+        handler: async () => { invoked.push("call-only"); return structuredResult({ ok: true }); },
+      })
+      .register({
+        name: "list-only",
+        description: "Listed, never callable.",
+        inputSchema: { type: "object" },
+        handler: async () => { invoked.push("list-only"); return structuredResult({ ok: true }); },
+      });
+    const server = createMcpFnServer({
+      info: { name: "request-kind-harness", version: "1.0.0" },
+      registry,
+      toolVisibility: ({ tool, requestKind }) => {
+        requestKinds.push(`${requestKind}:${tool.name}`);
+        return requestKind === "tools/list" ? tool.name === "list-only" : tool.name === "call-only";
+      },
+    });
+    const client = await McpFnTestClient.connect(server);
+    try {
+      expect((await client.listTools()).map(({ name }) => name)).toEqual(["list-only"]);
+      await expect(client.callTool("call-only")).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      await expect(client.callTool("list-only")).rejects.toMatchObject({ code: -32601 });
+      expect(invoked).toEqual(["call-only"]);
+      expect(requestKinds).toEqual([
+        "tools/list:call-only",
+        "tools/list:list-only",
+        "tools/call:call-only",
+        "tools/call:list-only",
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("rejects stale resource and prompt inventories and ignores undefined scenario fields", async () => {
     const registry = new McpFnRegistry()
       .register({
@@ -751,12 +794,19 @@ describe("McpFn testing", () => {
         request.end();
       });
       expect(JSON.parse(hostileBody)).toEqual({ ok: true });
+      // MCP-21 audit, MCP-SEC-15: a caller that knows only the port, not the
+      // random path prefix, gets no credentials.
+      const guessed = new URL(proxy.url);
+      expect(guessed.pathname).toMatch(/^\/mcpfn-proxy-[0-9a-f]{32}\/mcp$/);
+      const unauthenticated = await fetch(`${guessed.origin}/mcp`);
+      await expect(unauthenticated.json()).resolves.toEqual({ ok: true });
       expect(observed).toEqual([
         {
           authorization: "Bearer conformance-secret",
           host: `127.0.0.1:${address.port}`,
         },
         { host: "untrusted.example.test" },
+        { host: guessed.host },
       ]);
     } finally {
       await proxy.close();

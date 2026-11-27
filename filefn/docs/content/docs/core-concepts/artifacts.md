@@ -72,6 +72,7 @@ Processing happens after the upload closes. Errors are isolated:
 ```ts
 fetch(`/filefn/${fileId}/process`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     storageKey: existing.storageKey,
     mimeType: existing.mimeType,

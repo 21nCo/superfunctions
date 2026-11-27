@@ -3,11 +3,7 @@ import { instrumentStorageAdapter, type StorageAdapter } from '@superfunctions/s
 import type { FileProvider, FileProviderContext } from '@superfunctions/files';
 import { type RateLimiter, createRateLimiter } from '@superfunctions/middleware';
 import { applyObservationHeaders } from '@superfunctions/http';
-import {
-  normalizeObservability,
-  type ObservabilityInput,
-  type ObservationLogger
-} from '@superfunctions/observability';
+import type { ObservabilityInput, ObservationLogger } from '@superfunctions/observability';
 import { getSchema } from './schema.js';
 import { createPolicyRegistry, type Policy, type PolicyRegistryWithDefine } from './policies.js';
 import { createEventEmitter, type FileFnEventEmitter, type FileFnObservationEvent } from './events.js';
@@ -18,7 +14,7 @@ import { createFileRoutes } from './files/routes.js';
 import { createDeduplicationService } from './dedup/service.js';
 import { createGrantsService, type GrantsService } from './authz/grants.service.js';
 import { createGrantsRoutes } from './authz/grants.routes.js';
-import { createSharesService, type SharesService } from './shares/service.js';
+import { createSharesService, type ShareLinkOptions, type SharesService } from './shares/service.js';
 import { createSharesRoutes } from './shares/routes.js';
 import { createProcessingService, type Processor, type FlowFnProvider, type ProcessingService } from './processing/service.js';
 import { createProcessingRoutes } from './processing/routes.js';
@@ -28,7 +24,9 @@ import { createQuotaRoutes } from './quota.routes.js';
 import { createRouter, normalizeBasePath, stripBasePath, type FileFnRouter } from './router.js';
 import { createBackgroundScheduler, type FileFnRuntime } from './runtime.js';
 import type { AuthConfig } from './auth.js';
-import type { Logger } from './observability/logger.js';
+import type { RateLimitClientKey } from './rate-limit-key.js';
+import { redactSecrets as redactLogContext, type Logger } from './observability/logger.js';
+import { createFileFnObservability } from './metrics.js';
 
 export interface RateLimitCategory {
   windowSeconds: number;
@@ -42,6 +40,14 @@ export interface FileFnRouteRateLimits {
   download?: RateLimitCategory;
   shareDownload?: RateLimitCategory;
   artifactDownload?: RateLimitCategory;
+  /** `GET /` (file listing). */
+  list?: RateLimitCategory;
+  /** `POST /:fileId/process`. */
+  processing?: RateLimitCategory;
+  /** `POST /:fileId/permissions`. */
+  grantCreate?: RateLimitCategory;
+  /** `POST /:fileId/share-links`. */
+  shareCreate?: RateLimitCategory;
 }
 
 export type FileFnRateLimitMode = 'strict' | 'best-effort' | 'local';
@@ -60,9 +66,27 @@ export interface FileFnConfig {
     mode?: FileFnRateLimitMode;
     algorithm?: 'fixed-window' | 'sliding-window' | 'token-bucket';
     limits?: FileFnRouteRateLimits;
+    /**
+     * Identifies unauthenticated callers (for example by the client IP your
+     * proxy reports), so each gets its own bucket instead of all sharing one.
+     */
+    clientKey?: RateLimitClientKey;
   };
   observability?: ObservabilityInput<FileFnObservationEvent>;
   authorizer?: Authorizer;
+  /**
+   * Share links. `enabled: false` removes the share-link routes (creating,
+   * listing, revoking and downloading); `requireAuth` makes every new link
+   * require a signed-in downloader; `maxTtlSeconds` caps a link's lifetime and
+   * is the lifetime of a link created without `expiresAt`. By default links
+   * are enabled, public and never expire unless the creator sets `expiresAt`.
+   */
+  shares?: { enabled?: boolean } & ShareLinkOptions;
+  /**
+   * Grants. `allowCrossTenant: true` lets an owner grant a tenant other than
+   * the file's own; by default such a grant is refused (403).
+   */
+  grants?: { allowCrossTenant?: boolean };
   namespace?: string;
   /**
    * Path prefix the router serves every route under, e.g. `/files` when the
@@ -148,7 +172,11 @@ function hasConfiguredRouteRateLimits(limits?: FileFnRouteRateLimits): boolean {
     limits.uploadComplete ||
     limits.download ||
     limits.shareDownload ||
-    limits.artifactDownload
+    limits.artifactDownload ||
+    limits.list ||
+    limits.processing ||
+    limits.grantCreate ||
+    limits.shareCreate
   );
 }
 
@@ -159,7 +187,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     stores,
     policies: initialPolicies = [],
     auth = {},
-    quota,
+    quota: hostQuota,
     rateLimiter,
     rateLimit,
     observability,
@@ -174,12 +202,20 @@ export function createFileFn(config: FileFnConfig): FileFn {
     dedup,
     processing: processingConfig,
   } = config;
+  // Anonymous files are owned by 'anonymous'; their quota account is the
+  // provider's unset principal, as anonymous uploads have always been checked
+  // and charged, so existing anonymous usage keeps counting.
+  const quota = hostQuota && anonymousAsUnsetPrincipal(hostQuota);
   const inputDatabase = database ?? config.db;
   if (!inputDatabase) {
     throw new Error('FILEFN_DATABASE_REQUIRED: database is required');
   }
-  const observabilityScope = normalizeObservability<FileFnObservationEvent>(observability)?.child({ component: 'filefn' });
+  const { scope: observabilityScope, domainMetrics } = createFileFnObservability(
+    observability,
+    (work) => background.track(work),
+  );
   const logger = fileFnLoggerFromObservability(observabilityScope?.logger);
+  const background = createBackgroundScheduler(runtime, logger);
   const db = wrapWithSchema(inputDatabase, getSchema({ namespace }));
   const observedDb = instrumentAdapter(db, {
     observability: observabilityScope?.child({ component: 'filefn.db' }),
@@ -191,7 +227,6 @@ export function createFileFn(config: FileFnConfig): FileFn {
   });
 
   const policyRegistry = createPolicyRegistry(initialPolicies);
-  const background = createBackgroundScheduler(runtime, logger);
   const events = createEventEmitter(observabilityScope, background);
   const deduplication = createDeduplicationService({
     db: observedDb,
@@ -215,7 +250,11 @@ export function createFileFn(config: FileFnConfig): FileFn {
       routeRateLimits.uploadComplete ||
       routeRateLimits.download ||
       routeRateLimits.shareDownload ||
-      routeRateLimits.artifactDownload;
+      routeRateLimits.artifactDownload ||
+      routeRateLimits.list ||
+      routeRateLimits.processing ||
+      routeRateLimits.grantCreate ||
+      routeRateLimits.shareCreate;
 
     const mode = rateLimit.mode ?? (stores?.atomicKv ? 'strict' : stores?.kv ? 'best-effort' : 'local');
     if (mode === 'strict' && !stores?.atomicKv) {
@@ -254,6 +293,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     processors: processingConfig?.processors,
     flowFn: processingConfig?.flowFn,
     logger,
+    metrics: domainMetrics,
     namespace,
     enabled: processingConfig?.enabled ?? false,
     background,
@@ -267,6 +307,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     policies: policyRegistry,
     events,
     logger,
+    metrics: domainMetrics,
     quota,
     dedup: deduplication,
     fileWriteChecker: fileService,
@@ -278,6 +319,14 @@ export function createFileFn(config: FileFnConfig): FileFn {
     completionTimeoutSeconds,
     databaseIdentity: inputDatabase,
   });
+  // A sweep through either entry point (fileFn.cleanupExpiredSessions or
+  // fileFn.services.uploads.cleanupExpiredSessions) counts once it has run.
+  const runSweep = uploadService.cleanupExpiredSessions.bind(uploadService);
+  uploadService.cleanupExpiredSessions = async (...args: Parameters<typeof runSweep>) => {
+    const result = await runSweep(...args);
+    sweepState.ran = true;
+    return result;
+  };
 
   const uploadRoutes = createUploadSessionRoutes({
     service: uploadService,
@@ -289,6 +338,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
       uploadComplete: routeRateLimits?.uploadComplete,
     },
     legacyGlobalRateLimit,
+    clientKey: rateLimit?.clientKey,
   });
 
   const fileRoutes = createFileRoutes({
@@ -297,18 +347,24 @@ export function createFileFn(config: FileFnConfig): FileFn {
     rateLimiter: finalRateLimiter,
     rateLimits: {
       download: routeRateLimits?.download,
+      list: routeRateLimits?.list,
     },
     legacyGlobalRateLimit,
+    clientKey: rateLimit?.clientKey,
   });
 
   const grantsService = createGrantsService({
     db: observedDb,
     namespace,
+    allowCrossTenantGrants: config.grants?.allowCrossTenant === true,
   });
 
   const grantsRoutes = createGrantsRoutes({
     service: grantsService,
     auth,
+    rateLimiter: finalRateLimiter,
+    rateLimits: { grantCreate: routeRateLimits?.grantCreate },
+    clientKey: rateLimit?.clientKey,
   });
 
   const sharesService = createSharesService({
@@ -317,6 +373,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     policies: policyRegistry,
     namespace,
     signedUrlTtlSeconds,
+    options: { requireAuth: config.shares?.requireAuth, maxTtlSeconds: config.shares?.maxTtlSeconds },
   });
 
   const sharesRoutes = createSharesRoutes({
@@ -325,7 +382,9 @@ export function createFileFn(config: FileFnConfig): FileFn {
     rateLimiter: finalRateLimiter,
     rateLimits: {
       shareDownload: routeRateLimits?.shareDownload,
+      shareCreate: routeRateLimits?.shareCreate,
     },
+    clientKey: rateLimit?.clientKey,
   });
 
   const processingRoutes = createProcessingRoutes({
@@ -334,7 +393,9 @@ export function createFileFn(config: FileFnConfig): FileFn {
     rateLimiter: finalRateLimiter,
     rateLimits: {
       artifactDownload: routeRateLimits?.artifactDownload,
+      processing: routeRateLimits?.processing,
     },
+    clientKey: rateLimit?.clientKey,
   });
 
   const policyRoutes = createPolicyRoutes({
@@ -342,8 +403,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
     auth,
   });
 
+  // The quota route reports the caller's own account as the host's provider
+  // names it (the anonymous normalisation applies to upload accounting only).
   const quotaRoutes = createQuotaRoutes({
-    quota,
+    quota: hostQuota,
     auth,
   });
 
@@ -351,12 +414,36 @@ export function createFileFn(config: FileFnConfig): FileFn {
     uploadRoutes,
     fileRoutes,
     grantsRoutes,
-    sharesRoutes,
+    sharesRoutes: config.shares?.enabled === false ? undefined : sharesRoutes,
     processingRoutes,
     policyRoutes,
     quotaRoutes,
     basePath,
   });
+  // Expired sessions, their part objects and orphaned artifacts are removed
+  // only by the host's scheduled sweeps. Say so once per process (not per
+  // FileFn instance: hosts that build one per request share the process) when
+  // uploads start and no sweep has run in the process yet.
+  // Only a host logger with a warn method uses up the warning, and a sink that
+  // throws never fails the upload.
+  const hostWarn = typeof observabilityScope?.logger?.warn === 'function' ? logger?.warn : undefined;
+  events.once('upload.started', () => {
+    if (hostWarn && !sweepState.ran && !sweepState.warned) {
+      sweepState.warned = true;
+      try {
+        const sent: unknown = hostWarn('Uploads started but cleanupExpiredSessions has not run in this process', {
+          hint: 'Schedule cleanupExpiredSessions() and cleanupOrphanedArtifacts(); without them expired sessions and their stored objects are never removed.',
+        });
+        // An async sink that rejects must not become an unhandled rejection.
+        if (sent && typeof (sent as PromiseLike<unknown>).then === 'function') {
+          (sent as PromiseLike<unknown>).then(undefined, () => {});
+        }
+      } catch {
+        // The warning is advisory.
+      }
+    }
+  });
+
   const mountPath = normalizeBasePath(basePath);
   const router: FileFnRouter = observabilityScope
     ? {
@@ -368,7 +455,12 @@ export function createFileFn(config: FileFnConfig): FileFn {
           if (existing) {
             return baseRouter.handle(request);
           }
-          const observation = observabilityScope.startRequest({ request });
+          // Share-link tokens are bearer secrets in the path: record the route
+          // shape, never the token.
+          const observation = observabilityScope.startRequest({
+            request,
+            path: redactObservedPath(new URL(request.url).pathname, mountPath),
+          });
           const response = await observabilityScope.runWithRequest(
             observation,
             () => baseRouter.handle(request),
@@ -551,7 +643,7 @@ export type { GrantsRoutes, GrantsRouteContext } from './authz/grants.routes.js'
 
 // Share link exports
 export { createSharesService } from './shares/service.js';
-export type { SharesService, FileShareRecord, CreateShareLinkInput } from './shares/service.js';
+export type { SharesService, FileShareRecord, CreateShareLinkInput, ShareLinkOptions } from './shares/service.js';
 export { createSharesRoutes } from './shares/routes.js';
 export type { SharesRoutes, SharesRouteContext } from './shares/routes.js';
 
@@ -604,13 +696,55 @@ function fileFnLoggerFromObservability(logger: ObservationLogger | undefined): L
   if (!logger) {
     return undefined;
   }
+  // The same redaction as FileFn's own logger: signed URLs, bearer and session
+  // tokens never reach the host's sink.
+  const safe = (context: Parameters<Logger['info']>[1]) => (context ? redactLogContext(context) : context);
   return {
-    info: (message, context) => logger.info?.(message, context),
-    warn: (message, context) => logger.warn?.(message, context),
-    error: (message, context) => logger.error?.(message, context),
-    debug: (message, context) => logger.debug?.(message, context),
+    info: (message, context) => logger.info?.(message, safe(context)),
+    warn: (message, context) => logger.warn?.(message, safe(context)),
+    error: (message, context) => logger.error?.(message, safe(context)),
+    debug: (message, context) => logger.debug?.(message, safe(context)),
   };
 }
+
+function anonymousAsUnsetPrincipal(quota: QuotaProvider): QuotaProvider {
+  const principal = (id: string | undefined) => (id === 'anonymous' ? undefined : id);
+  return {
+    ...quota,
+    checkQuota: (input) => quota.checkQuota({ ...input, principalId: principal(input.principalId) }),
+    recordUsage: (input) => quota.recordUsage({ ...input, principalId: principal(input.principalId) }),
+    ...(quota.getUsage ? { getUsage: (principalId?: string, tenantId?: string) => quota.getUsage!(principal(principalId), tenantId) } : {}),
+  };
+}
+
+// Process-wide: whether any FileFn instance in this process ran the expiry
+// sweep, and whether the missing-sweep warning was already given.
+const sweepState = { ran: false, warned: false };
+
+// The router's share-link routes, on the path under the mount.
+const SHARE_TOKEN_ROUTES: RegExp[] = [
+  /^(\/share-links\/)[^/]+(\/download)$/,
+  /^(\/proxy\/share-links\/)[^/]+(\/download)$/,
+  /^(\/[^/]+\/share-links\/)[^/]+()$/,
+];
+
+/**
+ * A request path with its share-link token replaced by `:token`. The token is
+ * found on the route path under `mountPath` (FileFn's `basePath`), with the
+ * router's own share-link patterns, so a mount path that itself contains
+ * `share-links` can't shift the match off the token.
+ */
+export function redactObservedPath(pathname: string, mountPath = ''): string {
+  const route = stripBasePath(pathname, mountPath);
+  if (route === null) return pathname;
+  for (const pattern of SHARE_TOKEN_ROUTES) {
+    if (pattern.test(route)) {
+      return `${mountPath}${route.replace(pattern, '$1:token$2')}`;
+    }
+  }
+  return pathname;
+}
+export type { RateLimitClientKey } from './rate-limit-key.js';
 export {
   INLINE_SAFE_CONTENT_TYPES,
   buildDownloadHeaders,

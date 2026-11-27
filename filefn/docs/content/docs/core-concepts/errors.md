@@ -35,7 +35,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_RATE_LIMITED` | 429 | The route's rate limit was exceeded. `details.resetAt` tells you when to retry. |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber` is not a positive integer. |
 | `FILEFN_INVALID_ETAG` | 400 | The etag passed to `complete-part` is malformed. |
-| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` was called but parts are missing. |
+| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` was called but parts are missing, including a recorded proxy part object that is no longer in storage. The message is `Upload incomplete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | The session TTL expired. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | The session was aborted. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` was called on a session that's already closed. |
@@ -43,11 +43,13 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_PART_CONFLICT` | 409 | Same `partNumber` completed twice with different etags. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | The recorded total bytes don't match the declared size. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | The storage adapter doesn't support any negotiable mode. |
+| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init or complete cannot verify the upload size because the adapter cannot report an object's size. The message is `Upload size cannot be verified` and names neither the adapter nor the session. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | OPFS isn't available in this environment. |
 | `FILEFN_SESSION_NOT_FOUND` | 404 | Upload session id doesn't exist. |
 | `FILEFN_SHARE_EXPIRED` | 410 | The share link's `expiresAt` has passed. |
 | `FILEFN_SHARE_REVOKED` | 410 | The share link was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | The share link reached `maxDownloads`. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the share link; retry. |
 | `FILEFN_SHARE_NOT_FOUND` | 404 | The share token doesn't match any row. |
 | `FILEFN_PERMISSION_NOT_FOUND` | 404 | Permission grant id doesn't exist. |
 | `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue / inline runner refused. |

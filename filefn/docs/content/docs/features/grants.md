@@ -50,7 +50,11 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` is enforced on every authorisation check. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date or date-time (send a zone, e.g. `Z`: a date-time without one is read as the server's local time by the TypeScript server and as UTC by the Python server, as each always has; a date alone is UTC midnight) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+
+## Tenants
+
+A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` (in the Python server, `grants={"allowCrossTenant": True}` in `FileFnConfig`) to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
 
 ## Roles vs. users
 

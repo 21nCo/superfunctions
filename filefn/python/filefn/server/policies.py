@@ -1,3 +1,5 @@
+import hashlib
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
@@ -82,17 +84,99 @@ def validate_policy_constraints(policy: Policy, mime_type: str, size: int) -> Di
 
     return {'valid': True}
 
+# C0 controls, DEL and C1 controls.
+_STORAGE_KEY_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_ENCODED_CHARACTERS = re.compile(r"[%\\/\x00-\x1f\x7f-\x9f]")
+# Longest tenant, principal, file ID or file-name part of a default key, in UTF-8 bytes.
+_MAX_KEY_PART_BYTES = 120
+
+
+def _utf8(value: str) -> bytes:
+    """UTF-8 as JavaScript's TextEncoder writes it (a lone surrogate becomes U+FFFD)."""
+    return value.encode("utf-16", "surrogatepass").decode("utf-16", "replace").encode("utf-8")
+
+
+def _percent_encode(match: "re.Match[str]") -> str:
+    return "".join(f"%{byte:02X}" for byte in _utf8(match.group(0)))
+
+
+def sanitize_storage_key_segment(value: str) -> str:
+    """Turn one value into a single storage key segment without collisions.
+
+    The same encoding as the TypeScript server: ``%``, path separators and
+    control characters are percent-encoded, as are the dots of a leading run of
+    two or more dots and a segment that is exactly ``.``. Everything else is
+    kept, so distinct IDs never share a segment (``team/east`` becomes
+    ``team%2Feast``, never ``team_east``). An empty value becomes ``%20``,
+    which no other value produces.
+    """
+    # Explicit surrogate pairs become the code points they encode (as JavaScript
+    # iterates them); a lone surrogate stays and is replaced when encoded.
+    value = str(value).encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass")
+    encoded = _ENCODED_CHARACTERS.sub(_percent_encode, value)
+    encoded = re.sub(r"^\.\.+", lambda dots: "%2E" * len(dots.group(0)), encoded)
+    # A leading drive letter and colon (`C:`), which Windows would read as a drive.
+    encoded = re.sub(r"^([A-Za-z]):", r"\1%3A", encoded)
+    if encoded == "":
+        return "%20"
+    if encoded == ".":
+        return "%2E"
+    return encoded
+
+
+def _bounded_key_part(value: str, keep_extension: bool) -> str:
+    """A sanitized key part, shortened past 120 UTF-8 bytes as the TypeScript server does.
+
+    A shortened part keeps its start, then ``%~`` and 128 bits of the SHA-256 of
+    the whole part, then (for file names) its extension. ``%~`` never appears in
+    a sanitized value, so a shortened part never equals another ID's segment.
+    """
+    sanitized = sanitize_storage_key_segment(value)
+    if len(_utf8(sanitized)) <= _MAX_KEY_PART_BYTES:
+        return sanitized
+    extension_match = re.search(r"\.[A-Za-z0-9]{1,10}\Z", sanitized) if keep_extension else None
+    extension = extension_match.group(0) if extension_match else ""
+    suffix = f"%~{hashlib.sha256(_utf8(sanitized)).hexdigest()[:32]}{extension}"
+    head = ""
+    for char in sanitized:
+        if len(_utf8(head + char)) + len(suffix) > _MAX_KEY_PART_BYTES:
+            break
+        head += char
+    # Never end the head inside a percent-escape.
+    head = re.sub(r"%[0-9A-F]?\Z", "", head)
+    return f"{head}{suffix}"
+
+
+def unsafe_storage_key_reason(key: str) -> Optional[str]:
+    """Return why a storage key is unsafe, or None when it is safe."""
+    if not isinstance(key, str) or not key:
+        return "empty key"
+    if _STORAGE_KEY_CONTROL_CHARACTERS.search(key):
+        return "control character"
+    if "\\" in key:
+        return "backslash"
+    # Slash-rooted, or starting with a Windows drive (`C:/x` or drive-relative `C:x`).
+    if key.startswith("/") or re.match(r"[A-Za-z]:", key):
+        return "absolute key"
+    for segment in key.split("/"):
+        if segment == "":
+            return "empty segment"
+        if segment in (".", ".."):
+            return "dot segment"
+    return None
+
+
 def compute_storage_path(policy: Policy, ctx: PolicyStoragePathContext) -> str:
     if policy.storagePath:
         return policy.storagePath(ctx)
 
     parts = []
     if ctx.tenantId:
-        parts.append(ctx.tenantId)
+        parts.append(_bounded_key_part(ctx.tenantId, False))
     if ctx.principalId:
-        parts.append(ctx.principalId)
-    parts.append(ctx.fileId)
-    parts.append(f"{ctx.versionId}-{ctx.fileName}")
+        parts.append(_bounded_key_part(ctx.principalId, False))
+    parts.append(_bounded_key_part(ctx.fileId, False))
+    parts.append(f"{sanitize_storage_key_segment(ctx.versionId)}-{_bounded_key_part(ctx.fileName, True)}")
     return "/".join(parts)
 
 def resolve_storage_target(policy: Any) -> str:

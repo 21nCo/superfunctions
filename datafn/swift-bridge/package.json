@@ -23,8 +23,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@datafn/client": "0.1.4",
-    "@datafn/core": "0.1.2"
+    "@datafn/client": "0.1.11",
+    "@datafn/core": "0.1.4"
   },
   "files": [
     "dist"

@@ -100,6 +100,8 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 | `--retries <n>` | Retry failed requests |
 | `--delay <ms>` | Delay between sequential requests |
 | `--env-var <KEY=value>` | Override an environment variable (repeatable) |
+| `--allow-env <name>` | Expose a named process environment variable to interpolation (repeatable) |
+| `--allow-scripts` | Execute scripts from a trusted collection |
 | `--dotenv <path>` | Load a dotenv file as overrides |
 | `--redact-header <name>` | Additional header to redact (repeatable) |
 | `--output <path>` | Write a machine-readable report |
@@ -108,9 +110,6 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 Exit codes: `0` all passed · `1` failures/errors · `2` load/run error.
 
 ## check
-
-> **Not yet in the CLI.** `@apifn/cli` 0.0.2 has no `check` command; this section documents
-> the command that lands in 0.1.0 with API-5 slice 2/2.
 
 The one command a developer or CI runs: it regenerates the spec from the router in memory (the
 `generate` code path), fails when the committed spec is stale, validates it, diffs it against a
@@ -228,6 +227,8 @@ Exit codes: `0` no breaking changes · `1` breaking detected · `2` load/parse e
 ```bash
 apifn validate .apifn/openapi.yml --format json
 ```
+
+Validation accepts references within the supplied document. Bundle split specifications into one document before running this command.
 
 - `--format <type>` — `text` (default) or `json`
 

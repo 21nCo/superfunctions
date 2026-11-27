@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "authfn"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python authfn kernel — same routes, envelopes, plugins, and OpenAPI as the TypeScript package"
 readme = "README.md"
 requires-python = ">=3.10"

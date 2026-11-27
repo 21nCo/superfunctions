@@ -60,7 +60,7 @@ Wire-format envelope:
 | --- | --- | --- | --- |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber < 1` or `> totalParts`. | Use the part numbers returned by init. |
 | `FILEFN_INVALID_ETAG` | 400 | etag empty or malformed. | Read `ETag` from the storage PUT response and pass it through. |
-| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
+| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts are recorded, or a recorded proxy part object is missing. The message is `Upload incomplete` and does not include the session id. | Record every part, and keep the part objects, before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |
 | `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | On `complete`: another completion call of the same upload session (in any FileFn process sharing the database), or the commit step of a completion of the same `fileId` in the same database in this process, is still running and did not finish within 30 seconds. On `abort` or a part call: a completion of the session is running or publishing (a completion call finishes it). On `DELETE /:fileId`: an upload session of the file is completing or publishing. Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay; it returns the completed result. An abort cannot end a session whose completion is running. |
@@ -69,6 +69,7 @@ Wire-format envelope:
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
+| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init requires a storage adapter that implements `statObject`. Completion returns this code if a required stat cannot verify the uploaded object or its parts. The message is `Upload size cannot be verified`. | Check adapter support and availability, then retry. |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
 | `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |
@@ -82,6 +83,7 @@ Wire-format envelope:
 | `FILEFN_SHARE_REVOKED` | 410 | Share was revoked. | Surface a "this link is no longer valid" message. |
 | `FILEFN_SHARE_EXPIRED` | 410 | Share past `expiresAt`. | Same. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | `maxDownloads` exhausted. | Same. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the link. | Retry. |
 
 ## Permissions
 

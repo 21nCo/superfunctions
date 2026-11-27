@@ -103,6 +103,7 @@ describe("share SPV2 mutation semantics", () => {
     db = memoryAdapter();
     await db.initialize();
     server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema,
       database: db,
@@ -1649,6 +1650,85 @@ describe("share SPV2 mutation semantics", () => {
     )).resolves.toHaveLength(100);
   });
 
+  it("releases a leased directory task when revision storage setup fails before a nontransactional share (DATA-41)", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    (localDb.capabilities.transactions as { supported: boolean }).supported = false;
+    const directory = createMemoryIndexedDirectoryStore();
+    const runtime = { regionId: "region:test", directory };
+    let refuseRevisionsTable = false;
+    const refusingInternal = new Proxy(localDb.internal, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property !== "ensureTable") return value;
+        return async (table: string, ...rest: unknown[]) => {
+          if (refuseRevisionsTable && table === "__datafn_revisions") {
+            throw new Error("permission denied to create table");
+          }
+          return (value as (...args: unknown[]) => Promise<unknown>).call(target, table, ...rest);
+        };
+      },
+    });
+    const refusingDb = new Proxy(localDb, {
+      get(target, property, receiver) {
+        if (property === "internal") return refusingInternal;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: refusingDb,
+      plugins: [datafnMultiRegionPlugin(runtime)],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const localMutation = async (payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        "http://localhost/datafn/mutation",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+    try {
+      const insert = await localMutation({
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "revision-setup",
+        mutationId: "revision-setup-insert",
+        id: "note:revision-setup",
+        record: { title: "Revision setup" },
+      });
+      expect(insert.result.ok).toBe(true);
+      refuseRevisionsTable = true;
+      const share = await localMutation({
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "revision-setup",
+        mutationId: "revision-setup-share",
+        id: "note:revision-setup",
+        shareWith: { principalId: "user:partner", level: "viewer" },
+      });
+      expect(share.result?.ok).not.toBe(true);
+      const tasks = await localDb.internal.findMany("__datafn_permission_directory_outbox", []);
+      expect(tasks).toHaveLength(1);
+      // A released task is no longer held by the failed request, so the
+      // reconciliation drain takes it instead of waiting for lease expiry.
+      await expect(drainPermissionDirectoryOutbox(localDb, runtime))
+        .resolves.toEqual({ processed: 1, pending: 0 });
+    } finally {
+      await localServer.close();
+    }
+  });
+
   it("does not let the interval drain consume a pre-commit directory task", async () => {
     const localDb = memoryAdapter();
     await localDb.initialize();
@@ -2901,7 +2981,7 @@ describe("share SPV2 mutation semantics", () => {
       const body = await response.json() as any;
       expect(body.error).toMatchObject({
         code: "INTERNAL",
-        message: "Transaction setup failed: outbox unavailable",
+        message: "Transaction failed",
       });
       await expect(localDb.findMany({
         model: globalPermissionsTable,

@@ -2,9 +2,9 @@ import type { Logger } from './observability/logger.js';
 
 /**
  * Host runtime hooks. FileFn runs some work after a response is produced:
- * processing when no queue is configured, and event fan-out to observability
- * sinks. A host whose runtime ends work with the response wires `defer` to its
- * lifetime extension, for example `ctx.waitUntil` on Cloudflare Workers.
+ * processing when no queue is configured, and event and domain metric writes
+ * to observability sinks. A host whose runtime ends work with the response
+ * wires `defer` to its lifetime extension, for example `ctx.waitUntil` on Cloudflare Workers.
  */
 export interface FileFnRuntime {
   /**

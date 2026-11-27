@@ -7,7 +7,6 @@
     ScrollAreaThumb,
     ScrollAreaViewport,
   } from "@uifn/svelte";
-  import VirtualizedList from "./VirtualizedList.svelte";
   import { resultRows, type ExampleRouteHash } from "@uifn/examples-shared";
 
   export let route: ExampleRouteHash;
@@ -22,12 +21,12 @@
 <div class="scenario-stack" data-route={route}>
   <div class="results-summary">
     <div>
-      <p class="section-label">Windowed rendering</p>
-      <h3>Virtualized dataset</h3>
+      <p class="section-label">Large result set</p>
+      <h3>Scrollable dataset</h3>
     </div>
     <p class="scenario-description">
-      The Svelte adapter keeps the logical result set at 120 rows while mounting only a visible
-      window inside the virtualized viewport.
+      All {resultRows.length} result rows render inside a fixed-height ScrollArea viewport, a
+      keyboard-focusable scroll region that keeps the page layout stable.
     </p>
   </div>
 
@@ -53,19 +52,25 @@
     </aside>
 
     <section class="virtualized-frame">
-      <VirtualizedList items={resultRows} itemHeight={48} height={336} class="virtualized-viewport">
-        {#snippet children(row, index)}
-          <button
-            type="button"
-            class="virtualized-row"
-            aria-label={row.label}
-            data-row-index={index}
-          >
-            <span>{row.label}</span>
-            <small>{row.category}</small>
-          </button>
-        {/snippet}
-      </VirtualizedList>
+      <ScrollArea class="virtualized-viewport" ariaLabel="Result rows">
+        <ScrollAreaViewport class="virtualized-scroll-viewport">
+          <ul class="virtualized-list">
+            {#each resultRows as row, index (row.id)}
+              <li>
+                <button
+                  type="button"
+                  class="virtualized-row"
+                  aria-label={row.label}
+                  data-row-index={index}
+                >
+                  <span>{row.label}</span>
+                  <small>{row.category}</small>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </ScrollAreaViewport>
+      </ScrollArea>
     </section>
   </div>
 </div>

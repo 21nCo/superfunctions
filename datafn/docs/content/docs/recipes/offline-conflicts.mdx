@@ -9,31 +9,42 @@ When two clients edit the same row offline and reconnect at different times, you
 
 ## Last-writer-wins (default)
 
-Most fields don't need conflict resolution. The default is **last-writer-wins by server timestamp**: when push delivers two competing edits, the one with the later `updatedAt` wins. The earlier edit is silently dropped.
+Most fields don't need conflict resolution. Successful unguarded writes apply in server execution order. For resources with the `timestamps` capability, the server stamps `updatedAt` when it applies a write. It does not compare the client's `updatedAt` or any other client clock. If two unguarded updates both succeed, the later one in that execution order is the stored value, and both writes are acknowledged. Concurrent requests can finish in an order that differs from the order they arrived.
 
-This is correct for status toggles, single-value fields, and any field where the meaningful state is "the most recent value the user intended".
+This is the right default for status toggles, single-value fields, and any field where the meaningful state is the value from the write the server applied last.
 
 No configuration needed.
 
 ## Version guards (optimistic concurrency)
 
-For fields where you want the second writer to **fail** instead of silently overwrite, use `if` guards.
+Use an `if` guard to reject a write when the stored value has already changed at the time of the check. The example calls `/datafn/mutation` directly because a hydrated client's `mutate` call queues the write for `/datafn/push`.
 
 ```typescript
 const task = await client.table("tasks").get(taskId);
 
-await client.table("tasks").mutate({
-  operation: "merge",
-  id: taskId,
-  record: { title: newTitle },
-  if: { updatedAt: { $eq: task.updatedAt } },
+const response = await fetch("/datafn/mutation", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    resource: "tasks",
+    version: 1,
+    operation: "merge",
+    id: taskId,
+    record: { title: newTitle },
+    if: { updatedAt: { $eq: task.updatedAt } },
+  }),
 });
+const env = await response.json();
 ```
 
-The server checks the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. Catch and prompt the user:
+Guard support depends on the endpoint:
+
+- `/datafn/mutation` and mutation steps in `/datafn/transact` evaluate `if` against the stored row. A guard that fails at the time of the read returns `CONFLICT` without applying the write. On a transactional adapter the check and write share a transaction. Under read-committed isolation two transactions can both read the old version and succeed. On a nontransactional adapter the check and write are separate, and atomic `transact` with mutations returns `DFQL_UNSUPPORTED` before any step runs.
+- `/datafn/push` validates `if` and applies writes in server execution order without evaluating the guard.
+
+Prompt the user when the direct mutation reports `CONFLICT`.
 
 ```typescript
-const env = await client.table("tasks").mutate({ /* …with guard… */ });
 if (!env.ok && env.error.code === "CONFLICT") {
   const fresh = await client.table("tasks").get(taskId);
   if (await confirm("Someone else edited this. Use their version?")) return; // discard local
@@ -41,7 +52,7 @@ if (!env.ok && env.error.code === "CONFLICT") {
 }
 ```
 
-This pattern is correct for important singular fields: a price, a name, a permissions list.
+Use this pattern to detect committed changes to individual fields such as a title or name.
 
 ## Explicit merge (per-field policy)
 

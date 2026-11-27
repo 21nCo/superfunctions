@@ -26,6 +26,13 @@ These routes require `operations.authorize(request)` to succeed.
 
 ## Events for subscriptions BillFn has not seen
 
+A provider event can name its BillFn checkout session in two ways. The provider's own checkout id, taken from the provider's record (for Dodo, `checkout_session_id`), is trusted. A reference copied from metadata (for Dodo, `billfn_checkout_session_id`, which an adapter marks with `checkoutReferenceSource: "metadata"`; a reference without a source is treated the same way), or one naming a BillFn checkout session id, is something the payer can set. It links the event to that session's plan and billing account only when:
+
+- the event pays for the session's product, as the provider itself reported it (a price id from metadata proves nothing); and
+- any `billfn_billing_account_id` in its metadata is the session's account.
+
+It does so too when the session already holds the event's provider subscription or charge. Otherwise the session reference is dropped, and the event is linked, bootstrapped or stored unlinked by its own references (recorded as the `webhook.checkout_reference.dropped` metric). A payment for a product outside the catalog therefore never takes on the plan of a session it names. Known limitation: the session's product is its catalog price's current product. If a catalog price moves to another provider product while a checkout is open, an event that reports the original product and names the session only in metadata no longer links through the session; unless its own references link it or bootstrap it, it is stored unlinked. It is replayed once the payment webhook, which carries the provider's own checkout id (trusted without a product check), links the subscription; checkout verification answers `409 BILLFN_CONFLICT` there, since it compares the provider's product with the replacement. If that newer payment event links the subscription first, the older activation can be skipped as out of order, and the period dates then come from the next sync.
+
 A verified webhook whose subscription or payment reference matches no local subscription or checkout session no longer fails with `BILLFN_NOT_FOUND`. It is acknowledged with a 2xx response once it is stored or applied; a metadata bootstrap that then fails to replay retained events fails the delivery as described below, so the provider redelivers it:
 
 - When the provider record carries `billfn_billing_account_id` metadata naming an existing billing account, and its product is in the catalog, BillFn creates the subscription from the provider record and applies the event. Two deliveries racing to create the same subscription end with one row: the loser of the unique `provider + providerSubscriptionId` insert applies its event as an ordered update.

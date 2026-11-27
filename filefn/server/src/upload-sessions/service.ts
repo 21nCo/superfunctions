@@ -1,5 +1,6 @@
 import type { Adapter, WhereClause } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
+import { isNotFoundError } from '@superfunctions/storage/internal/errors';
 import type { FileProviderContext } from '@superfunctions/files';
 import {
   computeStoragePath,
@@ -17,6 +18,7 @@ import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
 import { parseRequestedFileId, SERIALIZED_WAIT_TIMEOUT_MS } from './file-id.js';
+import { assertValidUploadInit, type UploadInitInput } from './input.js';
 import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
 import { isAnonymousContext } from '../authz/ownership.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
@@ -25,6 +27,7 @@ import {
   createPartRecordedEvent,
   createFileUploadedEvent,
 } from '../events.js';
+import { recordQuotaDenial, recordUploadFailure, type FileFnMetrics } from '../metrics.js';
 
 export interface QuotaProvider {
   checkQuota(input: { principalId?: string; tenantId?: string; requestedBytes: number }): Promise<{
@@ -47,6 +50,8 @@ export interface UploadSessionServiceConfig {
   policies: PolicyRegistry;
   events: FileFnEventEmitter;
   logger?: Logger;
+  /** Counts upload failures and quota denials. Omitted, those observations are skipped. */
+  metrics?: FileFnMetrics;
   quota?: QuotaProvider;
   dedup?: DeduplicationService;
   fileWriteChecker?: FileWriteAuthChecker;
@@ -161,8 +166,16 @@ class PublicationMoved extends Error {
   }
 }
 
+/**
+ * The account a file's storage is charged to: its owner (the session's owner
+ * for a new file). Usage is recorded and refunded (when the file is deleted)
+ * against the same account, so a writer with a grant adds to the owner's
+ * usage, not their own.
+ */
+type QuotaAccount = { principalId?: string; tenantId?: string };
+
 type PublishOutcome =
-  | { kind: 'completed'; storageKey: string }
+  | { kind: 'completed'; storageKey: string; quotaAccount: QuotaAccount }
   | { kind: 'refused' }
   | { kind: 'other'; current: UploadSession | null };
 
@@ -197,18 +210,32 @@ function generateDefaultId(): string {
   return generateFileFnId('upl');
 }
 
-function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; tenantId?: string }): string {
+// Stands in for the metadata in the fingerprint payload, to be replaced by
+// the metadata's JSON text (no field before `md` can hold control characters).
+const METADATA_PLACEHOLDER = '\u0000filefn-metadata\u0000';
+
+function hashPayload(
+  input: CreateSessionInput,
+  ctx: { principalId?: string; tenantId?: string },
+  metadataJson?: string,
+): string {
   const payload = {
     p: input.policy,
     fn: input.fileName,
     s: input.size,
     mt: input.mimeType,
     fid: input.fileId,
-    md: input.metadata,
+    md: metadataJson === undefined ? input.metadata : METADATA_PLACEHOLDER,
     pr: ctx.principalId,
     tn: ctx.tenantId
   };
-  const str = JSON.stringify(payload);
+  let str = JSON.stringify(payload);
+  if (metadataJson !== undefined) {
+    // The metadata as JSON.stringify wrote it from the caller's value (its
+    // property order included), so fingerprints match those made before
+    // metadata was normalized.
+    str = str.replace(`"md":${JSON.stringify(METADATA_PLACEHOLDER)}`, () => `"md":${metadataJson}`);
+  }
   return createHash('sha256').update(str).digest('hex');
 }
 
@@ -288,6 +315,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     policies,
     events,
     logger,
+    metrics,
     quota,
     dedup,
     fileWriteChecker,
@@ -545,24 +573,41 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   async function admitCompletion(
     session: UploadSession,
     ctx: FileProviderContext,
-  ): Promise<{ parts: Array<{ partNumber: number; etag: string }> } | { error: Error }> {
+  ): Promise<
+    { parts: Array<{ partNumber: number; etag: string }> }
+    | { error: Error; failure?: 'parts_missing' | 'quota' }
+  > {
     const parts = await db.findMany<{ partNumber: number; etag: string }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
       namespace,
     });
     if (parts.length !== session.totalParts) {
-      return { error: errors.uploadIncomplete() };
+      return { error: errors.uploadIncomplete(), failure: 'parts_missing' };
     }
-    if (quota) {
-      const quotaResult = await quota.checkQuota({
-        principalId: ctx.principalId,
-        tenantId: ctx.tenantId,
-        requestedBytes: session.size,
-      });
-      if (!quotaResult.allowed) {
-        return { error: errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size) };
+    if (!quota) return { parts };
+    // One read of the file decides both the account and whether the caller
+    // may write it: an existing file (not written by this session) is charged
+    // to its owner, a new one to the session's owner.
+    const file = session.fileId ? await rivalFile(session) : null;
+    const account: QuotaAccount = file
+      ? quotaAccountOf(file.ownerId, file.tenantId)
+      : sessionQuotaAccount(session);
+    const quotaResult = await quota.checkQuota({ ...account, requestedBytes: session.size });
+    if (!quotaResult.allowed) {
+      // A caller who can't write the file learns nothing about its owner's
+      // usage: plain 403 (the session is left for the expiry sweep). One who
+      // can't write it but passes is refused (403), fenced and cleaned by the
+      // completion's own write check.
+      if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
+        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
       }
+      return {
+        error: isCallersAccount(account, ctx)
+          ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size)
+          : errors.ownerQuotaExceeded(session.size),
+        failure: 'quota',
+      };
     }
     return { parts };
   }
@@ -643,30 +688,47 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  // Whether the session's final object exists (any size).
-  async function storageObjectExists(session: UploadSession, target: StorageTargetName | undefined): Promise<boolean> {
-    if (!storage.statObject) return false;
+  function isMissingStorageObject(error: unknown): boolean {
+    return isNotFoundError(error, {
+      names: ['NotFound', 'NoSuchKey'],
+      statusCode: 404,
+      stringCodes: ['STORAGE_NOT_FOUND', 'ENOENT'],
+    });
+  }
+
+  function warnUploadFailure(message: string, requestId?: string, uploadSessionId?: string): void {
     try {
-      await storage.statObject({ key: session.storageKey, target });
-      return true;
+      void Promise.resolve(logger?.warn(message, { requestId, uploadSessionId })).catch(() => {});
     } catch {
-      return false;
+      // Reporting an upload failure must preserve the original result.
     }
   }
 
-  // Whether every proxy part object of the session is still in storage. Without
-  // statObject this cannot be told, and stitching runs as before.
+  function sizeUnverified(message: string, requestId?: string, uploadSessionId?: string): errors.FileFnError {
+    warnUploadFailure(message, requestId, uploadSessionId);
+    return errors.storageStatUnavailable();
+  }
+
+  function missingProxyPart(requestId: string | undefined, uploadSessionId: string): errors.FileFnError {
+    warnUploadFailure('Recorded upload parts are missing in storage', requestId, uploadSessionId);
+    return errors.uploadIncomplete();
+  }
+
+  // Whether every recorded proxy part is still in storage. A failed stat
+  // without a not-found signal is retryable and says nothing about the part.
   async function proxyPartsPresent(
     session: UploadSession,
     parts: Array<{ partNumber: number }>,
     target: StorageTargetName | undefined,
+    requestId?: string,
   ): Promise<boolean> {
     if (!storage.statObject) return true;
     for (const part of parts) {
       try {
         await storage.statObject({ key: proxyPartKey(session.storageKey, part.partNumber), target });
-      } catch {
-        return false;
+      } catch (error) {
+        if (isMissingStorageObject(error)) return false;
+        throw sizeUnverified('Upload part storage stat failed', requestId, session.uploadSessionId);
       }
     }
     return true;
@@ -960,7 +1022,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   async function rollForward(session: UploadSession, ctx: FileProviderContext): Promise<PublishOutcome> {
     const { uploadSessionId } = session;
     const fileId = session.fileId!;
-    const findFile = () => db.findOne<{ currentVersionId: string; originVersionId?: string | null }>({
+    const findFile = () => db.findOne<{ currentVersionId: string; originVersionId?: string | null; ownerId?: string; tenantId?: string | null }>({
       model: 'files',
       where: [{ field: 'fileId', operator: 'eq', value: fileId }],
       namespace,
@@ -1157,6 +1219,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // read first: nothing may fail between completing the session and its
       // effects.
       const storageKey = (await findOwnVersion())?.storageKey || publication.storageKey;
+      // The account the completion charges, fixed now from the published
+      // file's owner (the session owner when this upload created it), so the
+      // charge never depends on a later lookup the file may be deleted under.
+      const published = await findFile();
+      const quotaAccount: QuotaAccount = published?.ownerId
+        ? quotaAccountOf(published.ownerId, published.tenantId)
+        : sessionQuotaAccount(session);
       const finishedBy = randomBytes(6).toString('hex');
       const finished = await updateSessionIf(
         uploadSessionId,
@@ -1164,7 +1233,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         { status: 'completed', completionVersionId: versionId, completionPublication: { ...publication, finishedBy } },
         (row) => row.status === 'completed' && row.completionPublication?.finishedBy === finishedBy,
       );
-      if (finished.applied) return { kind: 'completed', storageKey };
+      if (finished.applied) return { kind: 'completed', storageKey, quotaAccount };
       if (finished.current?.status !== 'publishing') return { kind: 'other', current: finished.current };
       session = finished.current;
     }
@@ -1198,8 +1267,41 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       await deleteRefusedUploads(session);
       throw errors.forbidden({ fileId, operation: 'replace' });
     }
-    await finishCompletedSession(session, fileId, publication, outcome.storageKey, ctx);
+    await finishCompletedSession(session, fileId, publication, outcome.storageKey, outcome.quotaAccount, ctx);
     return { fileId, versionId: publication.versionId };
+  }
+
+  // The session's file when it exists and was not written by this session
+  // itself (a files row pointing at the session's own version, as the write
+  // checks at completion also treat it); otherwise null.
+  async function rivalFile(session: UploadSession): Promise<{ ownerId: string; tenantId?: string | null } | null> {
+    const file = await db.findOne<{ currentVersionId: string; ownerId: string; tenantId?: string | null }>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: session.fileId! }],
+      namespace,
+    });
+    if (!file) return null;
+    return session.completionVersionId && file.currentVersionId === session.completionVersionId ? null : file;
+  }
+
+  // Whether a quota account is the caller's own (same principal and tenant).
+  function isCallersAccount(account: QuotaAccount, ctx: FileProviderContext): boolean {
+    return (account.principalId || 'anonymous') === (ctx.principalId || 'anonymous') && (account.tenantId || null) === (ctx.tenantId || null);
+  }
+
+  // A session's own account: the owner and tenant it was created for.
+  function sessionQuotaAccount(session: Pick<UploadSession, 'ownerId' | 'tenantId'>): QuotaAccount {
+    return quotaAccountOf(session.ownerId, session.tenantId);
+  }
+
+  // The quota provider's account for an owner: the reserved owner 'anonymous'
+  // (or none) is the provider's unset principal, as anonymous uploads have
+  // always been checked and charged.
+  function quotaAccountOf(ownerId: string | null | undefined, tenantId: string | null | undefined): QuotaAccount {
+    return {
+      principalId: ownerId && ownerId !== 'anonymous' ? ownerId : undefined,
+      tenantId: tenantId ?? undefined,
+    };
   }
 
   // The effects of a completion, run once by the call that completed the
@@ -1211,12 +1313,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     fileId: string,
     publication: CompletionPublication,
     storageKey: string,
+    quotaAccount: QuotaAccount,
     ctx: FileProviderContext,
   ): Promise<void> {
     const { uploadSessionId } = session;
     const { versionId } = publication;
     if (quota) {
-      await quota.recordUsage({ principalId: ctx.principalId, tenantId: ctx.tenantId, bytes: session.size });
+      await quota.recordUsage({ ...quotaAccount, bytes: session.size });
     }
 
     events.emit('file:uploaded', createFileUploadedEvent({
@@ -1315,6 +1418,54 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      // The route passes the JSON body through unchanged, so check every field
+      // against the contract before it reaches storage keys, quota or the DB.
+      // Read each field once (accessors included, never a spread) before any
+      // caller hook such as metadata.toJSON runs, then validate and use that
+      // same snapshot, with metadata replaced by its checked plain copy.
+      // Metadata is read last and lazily (once), so the scalar fields are
+      // checked before any metadata accessor or hook runs; a metadata accessor
+      // that throws is an invalid request.
+      const source = input;
+      let metadataRead = false;
+      let metadataValue: unknown;
+      const readField = <K extends keyof CreateSessionInput>(field: K): CreateSessionInput[K] => {
+        try {
+          return source[field];
+        } catch {
+          throw errors.invalidRequest(`${String(field)} could not be read`, { field });
+        }
+      };
+      const fields = {
+        policy: readField('policy'),
+        fileName: readField('fileName'),
+        size: readField('size'),
+        mimeType: readField('mimeType'),
+        fileId: readField('fileId'),
+        idempotencyKey: readField('idempotencyKey'),
+        get metadata(): unknown {
+          if (!metadataRead) {
+            metadataRead = true;
+            try {
+              metadataValue = source.metadata;
+            } catch {
+              throw errors.invalidRequest('metadata could not be read', { field: 'metadata' });
+            }
+          }
+          return metadataValue;
+        },
+      };
+      const checked = assertValidUploadInit(fields as unknown as UploadInitInput, { fingerprinted: !isAnonymousContext(ctx) });
+      const checkedMetadataJson = checked.metadataJson;
+      input = {
+        policy: fields.policy,
+        fileName: fields.fileName,
+        size: fields.size,
+        mimeType: fields.mimeType,
+        fileId: fields.fileId,
+        idempotencyKey: fields.idempotencyKey,
+        ...(checked.metadata !== undefined ? { metadata: checked.metadata } : {}),
+      };
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency. The stored key is scoped to the caller (owner and
@@ -1328,7 +1479,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         ? scopeIdempotencyKey(input.idempotencyKey, ctx)
         : null;
       if (scopedIdempotencyKey && input.idempotencyKey) {
-        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId });
+        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson);
         let existing = await db.findOne<UploadSession>({
           model: 'uploadSessions',
           where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
@@ -1401,19 +1552,37 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      // Check quota
+      // Check quota. One read of the file gives the account (an existing
+      // file's owner, else the caller); if the file appeared since the write
+      // check and the caller can't write it, a refusal reports no usage.
       if (quota) {
-        const quotaResult = await quota.checkQuota({
-          principalId: ctx.principalId,
-          tenantId: ctx.tenantId,
-          requestedBytes: input.size,
-        });
+        const existing = requestedFileId
+          ? await db.findOne<{ ownerId: string; tenantId?: string | null }>({
+              model: 'files',
+              where: [{ field: 'fileId', operator: 'eq', value: requestedFileId }],
+              namespace,
+            })
+          : null;
+        // A file that appeared since the write check above is checked again
+        // before its owner's quota is looked at: a caller who can't write it
+        // learns nothing (no usage, limit or warning) about that owner.
+        if (existing && requestedFileId && !(await canWriteFileNow(requestedFileId, ctx))) {
+          throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
+        }
+        const account: QuotaAccount = existing
+          ? quotaAccountOf(existing.ownerId, existing.tenantId)
+          : quotaAccountOf(ctx.principalId, ctx.tenantId);
+        const quotaResult = await quota.checkQuota({ ...account, requestedBytes: input.size });
 
         if (!quotaResult.allowed) {
-          throw errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size);
+          recordQuotaDenial(metrics);
+          // Another account's usage and limit (a file owner's) are not the caller's to see.
+          throw isCallersAccount(account, ctx)
+            ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size)
+            : errors.ownerQuotaExceeded(input.size);
         }
 
-        if (quotaResult.warning) {
+        if (quotaResult.warning && isCallersAccount(account, ctx)) {
           warnings.push(quotaResult.warning);
         }
       }
@@ -1433,7 +1602,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Completion verifies the stored size with statObject; refuse before any
       // upload starts rather than after storage was finalized.
       if (typeof storage.statObject !== 'function') {
-        throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+        recordUploadFailure(metrics, 'size_unverified');
+        throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId);
       }
       const uploadSessionId = generateId();
       const now = new Date();
@@ -1513,7 +1683,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
           idempotencyKey: scopedIdempotencyKey,
-          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson) : null,
           // Only the hash is kept; the token is returned once, below.
           uploadSessionToken: null,
           uploadSessionTokenHash,
@@ -1910,6 +2080,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               }
               await releaseClaim(uploadSessionId, ended.claim, 'in_progress', session.completionClaim ?? null);
             }
+            if (admission.failure === 'quota') recordQuotaDenial(metrics);
+            if (admission.failure === 'parts_missing') recordUploadFailure(metrics, 'parts_missing');
             throw admission.error;
           }
           parts = admission.parts;
@@ -1954,6 +2126,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
           // A stitch left behind keeps this claim, so the next call deletes it.
           await releaseClaim(uploadSessionId, claim, releasedStatus, discarded ? claimedSession.completionClaim ?? null : claim);
+        }
+        if (err instanceof errors.FileFnError) {
+          switch (err.code) {
+            case errors.ErrorCodes.STORAGE_STAT_UNAVAILABLE:
+              recordUploadFailure(metrics, 'size_unverified');
+              break;
+            case errors.ErrorCodes.UPLOAD_INCOMPLETE:
+              recordUploadFailure(metrics, 'parts_missing');
+              break;
+            case errors.ErrorCodes.UPLOAD_SIZE_MISMATCH:
+              recordUploadFailure(metrics, 'size_mismatch');
+              break;
+          }
         }
         throw err;
       }
@@ -2026,7 +2211,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Checked before storage is finalized (sessions created before init
           // checked it): the size is verified with statObject below.
           if (typeof storage.statObject !== 'function') {
-            throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+            throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId, uploadSessionId);
           }
           try {
             await storage.completeMultipartUpload({
@@ -2043,23 +2228,29 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // Only a per-session key (a pre-allocated version ID) is known to
             // hold this upload's object; a legacy shared key may hold another
             // version's, so it keeps the exact-size check.
-            const finalized = session.completionVersionId
-              ? await storageObjectExists(session, policyStorageTarget)
-              : await isStorageFinalized(session, policyStorageTarget);
-            if (!finalized) throw err;
+            let recoveredSize: number;
+            try {
+              recoveredSize = (await storage.statObject({ key: session.storageKey, target: policyStorageTarget })).size;
+            } catch (error) {
+              if (isMissingStorageObject(error)) throw err;
+              throw sizeUnverified('Recovered upload storage stat failed', ctx.requestId, uploadSessionId);
+            }
+            if (!session.completionVersionId && recoveredSize !== session.size) throw err;
           }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts
           if (!storage.openUploadStream || !storage.openDownloadStream) {
               throw new Error('Storage adapter does not support streaming required for proxy upload completion');
           }
+          const openDownloadStream = storage.openDownloadStream.bind(storage);
 
           // The part objects stay until the session is completed, so every
           // holder of the session finds them.
           const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
-          if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget))) {
+          if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget, ctx.requestId))) {
             // Never open (and so truncate) an object without every part.
-            throw new Error(`Proxy part objects of upload session ${uploadSessionId} are missing`);
+            // The public error names neither the session nor the part keys.
+            throw missingProxyPart(ctx.requestId, uploadSessionId);
           } else {
             if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
             stitchedKey = attemptKey;
@@ -2070,15 +2261,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             });
 
             const writer = writeStream.getWriter();
+            const readPart = async <T>(read: () => Promise<T>): Promise<T> => {
+              try {
+                return await read();
+              } catch (error) {
+                if (isMissingStorageObject(error)) throw missingProxyPart(ctx.requestId, uploadSessionId);
+                throw error;
+              }
+            };
             try {
                 for (const part of sortedParts) {
                     const partKey = proxyPartKey(session.storageKey, part.partNumber);
-                    const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
+                    const readStream = await readPart(() => openDownloadStream({ key: partKey, target: policyStorageTarget }));
                     const reader = readStream.getReader();
 
                     try {
                         while (true) {
-                            const { done, value } = await reader.read();
+                            const { done, value } = await readPart(() => reader.read());
                             if (done) break;
                             await writer.write(value);
                         }
@@ -2100,10 +2299,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // cannot stat) fails the completion, which can be retried; it never
         // publishes an object of unknown size.
         if (typeof storage.statObject !== 'function') {
-          throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+          throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId, uploadSessionId);
         }
-        const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
-        if (stat.size !== session.size) {
+        let storedSize: number;
+        try {
+          storedSize = (await storage.statObject({ key: attemptKey, target: policyStorageTarget })).size;
+        } catch {
+          throw sizeUnverified('Completed upload storage stat failed', ctx.requestId, uploadSessionId);
+        }
+        if (storedSize !== session.size) {
           // Refused while this call still holds the session, then everything it
           // uploaded is deleted: an oversized object is never left in storage.
           if (!(await fenceRefusedSession(uploadSessionId, claim))) {
@@ -2122,7 +2326,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               error: error instanceof Error ? error.message : String(error),
             });
           });
-          throw errors.uploadSizeMismatch(session.size, stat.size);
+          throw errors.uploadSizeMismatch(session.size, storedSize);
         }
 
         // Check for deduplication

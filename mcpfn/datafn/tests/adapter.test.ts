@@ -33,7 +33,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "mcpfn-test",
+      clientId: () => "mcpfn-test",
       expose: {
         tasks: {
           fields: ["id", "title"],
@@ -118,7 +118,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: { tasks: { fields: ["secret"] } },
     })).toThrow(/not readable/);
   });
@@ -135,7 +135,7 @@ describe("DataFn McpFn adapter", () => {
     expect(() => createDatafnMcpRegistry({
       executor: { schema } as never,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: {
         _tasks: { fields: ["id", "title"] },
         tasks_: { fields: ["id", "title"] },
@@ -157,7 +157,7 @@ describe("DataFn McpFn adapter", () => {
     const registry = createDatafnMcpRegistry({
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: {
         tasks: {
           fields: ["id", "title"],
@@ -190,7 +190,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: {
         tasks: {
           fields: ["id", "title"],
@@ -216,7 +216,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: { _tasks_: { fields: ["id", "title"] } },
     });
     expect(registry.listTools().map((tool) => tool.name)).toEqual([
@@ -239,7 +239,7 @@ describe("DataFn McpFn adapter", () => {
     const registry = createDatafnMcpRegistry({
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: { tasks: { fields: ["id", "title"] } },
     });
     expect(registry.listTools().map((tool) => tool.name)).toEqual([
@@ -277,7 +277,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
       expose: {
         events: {
           fields: ["id", "title", "status", "payload", "occurredAt", "note"],
@@ -341,7 +341,7 @@ describe("DataFn McpFn adapter", () => {
       schema,
       executor: datafn.executor,
       context: () => undefined,
-      clientId: "test",
+      clientId: () => "test",
     };
 
     expect(() => createDatafnMcpRegistry({
@@ -366,5 +366,82 @@ describe("DataFn McpFn adapter", () => {
         },
       },
     })).toThrow(/defaultLimit cannot exceed maxLimit/);
+  });
+  // MCP-21 audit, MCP-SEC-14.
+  describe("audit hardening", () => {
+    const schema = {
+      resources: [{
+        name: "alpha",
+        version: 1,
+        fields: [{ name: "label", type: "string" as const, required: true }],
+        permissions: { read: { fields: ["label"] }, write: { fields: ["label"] } },
+      }, {
+        name: "notes",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: true },
+          { name: "settings", type: "object" as const, required: false },
+          { name: "payload", type: "json" as const, required: false },
+        ],
+        permissions: {
+          read: { fields: ["title", "settings", "payload"] },
+          write: { fields: ["title"] },
+        },
+      }],
+    };
+
+    it("refuses a fixed clientId for mutation tools unless shared IDs are allowed", async () => {
+      const datafn = await createDatafnServer({ schema, db: memoryAdapter() });
+      closeables.push(datafn);
+      const base = { executor: datafn.executor, context: () => undefined, expose: { notes: { fields: ["id", "title"], create: { fields: ["title"] } } } };
+      expect(() => createDatafnMcpRegistry({ ...base, clientId: "shared" })).toThrow(/per-credential clientId/);
+      expect(() => createDatafnMcpRegistry({ ...base, clientId: "shared", allowSharedClientId: true })).not.toThrow();
+      expect(() => createDatafnMcpRegistry({ ...base, clientId: "shared", expose: { notes: { fields: ["id", "title"] } } })).not.toThrow();
+    });
+
+    it("accepts only scalar filter values", async () => {
+      const datafn = await createDatafnServer({ schema, db: memoryAdapter() });
+      closeables.push(datafn);
+      const registry = createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        expose: { notes: { fields: ["id", "title", "settings", "payload"] } },
+      });
+      const list = registry.listTools().find((tool) => tool.name === "datafn_notes_list")!;
+      const filters = (list.inputSchema.properties as Record<string, { properties: Record<string, { type: unknown }> }>).filters!.properties;
+      expect(Object.keys(filters).sort()).toEqual(["id", "payload", "title"]);
+      expect(filters.payload!.type).toEqual(["string", "number", "boolean"]);
+      expect(() => createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        expose: { notes: { fields: ["id", "title"], list: { filterFields: ["settings"] } } },
+      })).toThrow(/non-scalar field settings/);
+      // A rejected configuration registers nothing in the supplied registry.
+      const { McpFnRegistry } = await import("@mcpfn/core");
+      // A valid resource ("alpha") sorts before the refused one.
+      const shared = new McpFnRegistry();
+      const expose = (filterFields: string[]) => ({
+        alpha: { fields: ["id", "label"] },
+        notes: { fields: ["id", "title"], list: { filterFields } },
+      });
+      expect(() => createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        registry: shared,
+        expose: expose(["settings"]),
+      })).toThrow(/non-scalar field settings/);
+      expect(shared.listTools()).toEqual([]);
+      createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        registry: shared,
+        expose: expose(["title"]),
+      });
+      expect(shared.listTools().map((tool) => tool.name)).toContain("datafn_alpha_list");
+    });
   });
 });

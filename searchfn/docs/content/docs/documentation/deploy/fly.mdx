@@ -67,7 +67,7 @@ primary_region = "iad"
   timeout = "5s"
 ```
 
-The `status` endpoint doubles as the health check.
+The `status` endpoint doubles as the health check. Allow the Fly health check in your policy before deploying.
 
 ## Postgres
 
@@ -78,8 +78,11 @@ fly postgres attach my-searchfn-db --app my-searchfn
 
 Fly injects `DATABASE_URL` into the app. The example reads that variable directly; resource initialization must use the same database.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import express from "express";
 import { toExpress } from "@superfunctions/http-express";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
@@ -88,7 +91,7 @@ const adapter = new PostgresAdapter({
   connectionString: process.env.DATABASE_URL!,
 });
 
-const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+const sf = await createSearchFnServer({ adapter, basePath: "/searchfn", authorize: authorizeSearchRequest });
 await adapter.initialize({ resources: [{ name: "articles", searchFields: ["title", "body"] }] });
 
 const server = express();

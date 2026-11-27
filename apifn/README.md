@@ -21,28 +21,24 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The prepared release versions are `@apifn/core` **0.1.0** (the optional
-`@testfn/core` peer and the new `@apifn/core/testfn` subpath) and the next patch of
-every published package that pins it exactly: `@apifn/collections`,
-`@apifn/mock`, `@apifn/snippets`, `@apifn/react`, and `@apifn/svelte` (collections
-and mock **0.0.4**, the others **0.0.5**), `@apifn/admin` **0.1.2**, and
-`@apifn/docsfn` **0.1.2**. Publish core first, then collections, mock, snippets,
-React, Svelte, and admin, which all require that exact core version. Publish
-DocsFn after both renderers: it pins core 0.1.0 and React and Svelte 0.0.5. The
-admin wrapper also requires the published `@superfunctions/admin` **^0.1.4** peer
-so consumers share the same `AdminClient` type.
+The collection runner, OpenAPI validation, watchFn middleware and request idempotency updates keep exact pins aligned across the npm packages. Publish in this order.
 
-`@apifn/contracts` **0.1.0** also pins core to exactly 0.1.0 and publishes after
-core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either. `@apifn/cli` is still version **0.0.2**, which
-has no `check` command yet; `apifn check` lands with API-5 slice 2/2, and `@apifn/cli` **0.1.0** will add it
-(an interrupted `check` rolls back what it wrote; only SIGKILL or a crash can leave an empty file
-at a missing output's name, the accepted residue described in the CLI README);
-its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
-which npm does not serve. The `apifn-cli-v0.1.0` tag is therefore not pushed when
-`apifn check` merges: the release issue (API-7) publishes contracts, then sdk,
-then the CLI (owner decision 2026-11-21). Do not republish the already-used
-CLI 0.0.2.
+1. `@apifn/core` **0.3.0**.
+2. `@apifn/collections` and `@apifn/mock` **0.0.8**, `@apifn/react` and
+   `@apifn/svelte` **0.0.7**, `@apifn/snippets` **0.0.9**, `@apifn/contracts`
+   **0.1.4**, and `@apifn/admin` **0.1.6**. These packages pin Core. Admin also
+   requires the published `@superfunctions/admin` **^0.1.4** peer.
+3. `@apifn/sdk` **0.1.4** after Contracts, and `@apifn/docsfn` **0.1.4**
+   after both renderers.
+4. `@apifn/cli` **0.1.4** after its dependencies are available.
+
+The npm registry lists `@apifn/react` and `@apifn/svelte` up to **0.0.5** and
+`@apifn/docsfn` up to **0.1.2**, so `@apifn/react` and `@apifn/svelte`
+**0.0.7** and `@apifn/docsfn` **0.1.4** are unreleased and ship the Core
+**0.3.0** pin.
+
+The reusable workflow can move to the fixed CLI after it is published. API-6
+tracks the lockfile pin, workflow default, and external caller example.
 
 ## Python SDK
 
@@ -110,10 +106,12 @@ console.log(formatDiffAsText(result));
 ApiFn provides a reusable GitHub Actions workflow at `.github/workflows/apifn-api-check.yml` (repo root, so GitHub Actions can register and call it).
 
 The workflow checks out the **caller**, installs the pinned published `@apifn/cli`
-version, then runs it against the caller's spec and collection. The caller does
-not need to be this monorepo or contain an `@apifn/cli` workspace. Grant
+version, then checks the caller's contract. The caller does not need to be this
+monorepo or contain an `@apifn/cli` workspace. Grant `contents: read` and
 `pull-requests: write` on the calling job even when `post_pr_comment` is false;
-the reusable workflow cannot elevate the caller token. Same-repo callers:
+the reusable workflow cannot elevate the caller token. With `router_path` it
+runs `apifn check` from the router, which fails on spec drift, an invalid spec or
+a breaking change the contract version does not cover:
 
 ```yaml
 permissions:
@@ -121,21 +119,20 @@ permissions:
   pull-requests: write
 jobs:
   api-check:
-    uses: ./.github/workflows/apifn-api-check.yml
+    uses: 21nCo/superfunctions/.github/workflows/apifn-api-check.yml@dev
     with:
+      router_path: src/router.ts
       spec_path: .apifn/openapi.yml
-      collection_dir: .apifn/collection
+      base_branch: main
 ```
 
-External repositories can use the registered workflow directly:
+Without `router_path` it validates a committed spec and diffs it against the base
+branch, as before (same-repo callers can use `uses: ./.github/workflows/apifn-api-check.yml`):
 
 ```yaml
-permissions:
-  contents: read
-  pull-requests: write
 jobs:
   api-check:
-    uses: 21nCo/super-functions/.github/workflows/apifn-api-check.yml@dev
+    uses: 21nCo/superfunctions/.github/workflows/apifn-api-check.yml@dev
     with:
       spec_path: openapi.yml
       collection_dir: .apifn/collection
@@ -143,7 +140,7 @@ jobs:
 
 Pin a commit or release tag instead of `@dev` when the caller requires an
 immutable workflow. Omit `cli_version` to use the workflow's static default
-(`0.0.2`), which must stay equal to that revision's lockfile pin. If you set it
+(`0.1.2`), which must stay equal to that revision's lockfile pin. If you set it
 explicitly, read the version from the same ref in the
 [workflow's CLI lockfile](../.github/apifn-cli-install/package-lock.json); the
 input is an assertion, not a package selector. For GitLab/Jenkins/Buildkite,
@@ -151,23 +148,76 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 
 ### What it does
 
+The workflow has two jobs. `evaluate` checks out and runs everything below with a read-only token (`contents: read`),
+because the caller's install scripts, router and config run there. `api-check` holds the only token that can write to
+the pull request: it checks out, installs and imports nothing, posts the comment from `evaluate`'s report and applies
+the gate `evaluate` decided. Requiring `<caller job> / api-check` as a status check is enough; existing callers keep
+that check name.
+Every step of `evaluate` continues on error and has a timeout, so a step that fails before the check runs (invalid
+inputs, the install, the CLI build) is reported as an error in the summary and the comment and fails `api-check`
+whatever `enforce_gates` says. `api-check` runs whatever `evaluate`'s result, so when `evaluate` is cancelled, times
+out or loses its runner, `api-check` fails (the outputs report `verdict=fail`) instead of being skipped. Rerun the
+workflow then.
+
+The guards below protect against caller code that is not adversarial: install scripts and router or config imports
+that generate or rewrite files. Code in the pull request runs in `evaluate` and could forge its result; the job split
+keeps the pull-request write token away from it, and review of the pull request covers the rest.
+
+With `router_path`:
+
+- Checks out the caller without keeping the token in `.git/config`
+- Runs `npm ci --ignore-scripts` (with npm 11.21.3) in `working_directory` (when it has a `package.json`), because the router imports the caller's packages; with `allow_install_scripts: true` it runs `npm ci` with lifecycle scripts instead. Either way the install runs in the read-only job, and the job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
+- Runs `apifn check <router_path> --base <commit of origin/base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set). The base is pinned right after the checkout, before any caller code runs (the workspace CLI build, `npm ci`, the router and config imports): the base commit is resolved from the remote-tracking ref `refs/remotes/origin/<base_branch>`, and a `base_spec` is copied to a snapshot in `$RUNNER_TEMP` (an HTTP(S) URL downloaded or a local path resolved against `working_directory`, each at most 32 MiB) that both runs read; a `base_spec` that cannot be loaded is reported as a baseline load error (exit 2), as the CLI reports it. Inputs appear in the job log, so never pass a `base_spec` URL that carries a credential (a signed query string or `user:password@`). Both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- After both runs, requires `HEAD` to still be the checked-out commit, and the spec the CLI opened (`spec_path` as given, or the config default) to be the file committed at that commit, reached only through symlinks committed there with the same targets (a spec missing from both is reported as drift). A spec or symlink that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
+- Fails an uncovered breaking change unless `allow_breaking` is true, even when the caller's apifn config sets `diff.failOnBreaking: false`
+- Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`
+
+Without `router_path`:
+
 - Validates OpenAPI specs via `apifn validate --format json`
 - Diffs current spec against base branch via `apifn diff --format json`
-- Runs collection tests via `apifn test --reporter json`
-- Emits machine-readable JSON artifacts (`validate-report.json`, `diff-report.json`, `test-report.json`)
-- Builds a markdown summary and posts/updates a PR comment (optional)
-- Enforces non-zero exits for validation failures, breaking changes, and test failures
+- Writes machine-readable JSON reports (`validate-report.json`, `diff-report.json`); a missing or malformed report fails the check
+- Builds a markdown summary
+
+Either way:
+
+- Runs collection tests via `apifn test --reporter json` (its report goes to `$RUNNER_TEMP`) when `collection_dir` is set; without it the summary reports the tests as **not run**. Tests that produce no report fail
+- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply. A report over 60000 UTF-8 bytes is cut and links the job summary; a failed post is a warning and does not decide the job
+- Sets the outputs `verdict`, `drift` and `breaking`
+- Fails the job on drift, validation failures, uncovered breaking changes and test failures (unless `enforce_gates` is false)
+
+Bundle split OpenAPI specs before passing them to `spec_path`. Validation resolves
+internal `#/` references and rejects file and remote references by default.
+The workflow runs collection tests with scripts and host environment interpolation
+disabled. For trusted collections that need either, configure your own workflow
+with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeatable
+`--allow-env <name>` flags to `apifn test` as needed.
 
 ### Inputs
 
-- `spec_path` (required): Repo-relative OpenAPI path (e.g. `.apifn/openapi.yml`)
-- `collection_dir` (required): Repo-relative OpenCollection directory (e.g. `.apifn/collection`)
+- `router_path` (optional): Router module, relative to `working_directory`. Set it to run `apifn check`; leave it empty for validate-and-diff
+- `spec_path` (required without `router_path`): Repo-relative OpenAPI path (e.g. `.apifn/openapi.yml`). With `router_path` it is the committed spec passed as `--spec`, relative to `working_directory`; empty uses the config's default (`<output or .apifn>/openapi.yml`)
+- `config_path` (optional): apifn config file for `apifn check`, relative to `working_directory`; empty finds `apifn.config.ts`, `.js` or `.mjs` there
+- `working_directory` (optional, default `.`): Repo-relative directory of the caller's package; with `router_path`, `npm ci` and `apifn check` run there
+- `base_spec` (optional, `router_path` only): Base spec file (relative to `working_directory`) or HTTP(S) URL, instead of the spec committed at `origin/<base_branch>`
+- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`, verdict `warn`). Only this input allows them: with `allow_breaking: false` the workflow fails an uncovered breaking change even when the caller's apifn config sets `diff.failOnBreaking: false` (which alone makes `apifn check` report it as a warning)
+- `allow_install_scripts` (optional, default `false`, `router_path` only): Run the lifecycle scripts of the caller's `npm ci` (its own `preinstall`, `postinstall` and `prepare` and those of its dependencies). By default the install runs `npm ci --ignore-scripts`, so anything those scripts build or generate is missing when the router is imported: native modules, generated clients such as Prisma's, `prepare` builds of the caller's packages. With scripts off, the install uses npm 11.21.3, which the workflow downloads, checks against its pinned integrity and installs outside the checkout: the npm bundled with Node 20 (10.8) still runs the `prepare` script of a git dependency, or of a directory dependency installed as a copy, under `--ignore-scripts`, and npm 11.21 skips it, so such a dependency is installed unprepared (without what its `prepare` builds). npm 11.21.3 enforces `devEngines` and `engines` with `engine-strict`: a caller whose constraints exclude it fails the scripts-off install. With `true`, the install uses the runner's npm (the one bundled with Node 20). Set it to `true` only when the router needs them; the scripts then run in the read-only evaluate job, and the job still fails when they move `HEAD`, change checked-out files or add untracked ones outside `node_modules`. In `cli_source: workspace` at the repository root, the workspace CLI build's install (scripts off) is the only install unless this input is `true`, which installs the root again with scripts
+- `cli_source` (optional, default `npm`): `npm` installs the CLI from the workflow revision's lockfile; `workspace` builds `@apifn/cli` from the checked-out repository and is allowed only in `21nCo/superfunctions` (the job fails in any other repository)
+- `enforce_gates` (optional, default `true`): Fail the job when a gate fails. `false` only reports, through the summary, comment and outputs; keep the default for a required check
+- `collection_dir` (optional): Repo-relative OpenCollection directory (e.g. `.apifn/collection`); empty skips the collection tests
+- `start_mock_server` (optional, default `false`): Serve `spec_path` with `apifn mock` on `mock_port` while the collection runs, for workflow self-tests; needs `spec_path` (relative to `working_directory` with `router_path`). A mock that does not start fails the tests
 - `environment` (optional, default `development`): Collection environment
-- `cli_version` (optional, default `0.0.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision. The default is static in the workflow file and must stay equal to that revision's lockfile pin. Omit it to use the default, or set it from the same ref in the [workflow's CLI lockfile](../.github/apifn-cli-install/package-lock.json). External callers do not need the lockfile locally—the workflow sparse-checks it out from `job.workflow_repository` at `job.workflow_sha`.
-- `base_branch` (optional, default `main`): Branch used to fetch baseline spec
-- `fail_on_breaking` (optional, default `true`): Whether breaking diff exits non-zero
+- `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision (`cli_source: npm`). The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
+- `base_branch` (optional, default `main`): Branch whose committed spec is the base; a branch name (`git check-ref-format --branch`), not a revision such as `dev~1`
+- `fail_on_breaking` (optional, default `true`, without `router_path`): Whether a breaking diff exits non-zero
 - `post_pr_comment` (optional, default `true`): Whether to post/update PR summary comment
 - `called_as_reusable_workflow` (optional, default `true`): Do not set it. It tells the job it was called, so it runs for every caller; setting it to `false` skips the check outside `21nCo/superfunctions`.
+
+### Outputs
+
+- `verdict`: `pass`, `warn` or `fail` for the whole job (`warn` only with `router_path`: warnings such as an allowed breaking change). A usage or load error of `apifn check` (exit 2) is `fail`
+- `drift`: `true` or `false` with `router_path` (whether the committed spec differs from the router); empty without it or when `apifn check` produced no consistent report
+- `breaking`: `true` when the diff against the base found breaking changes, allowed or not; `false` otherwise; empty when `apifn check` or `apifn diff` produced no consistent report
 
 ### Example
 

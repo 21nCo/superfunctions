@@ -225,6 +225,21 @@ export class AuthFnValidationError extends AuthFnError {
   }
 }
 
+/** The auth router read a request body larger than the documented limit. */
+export class AuthFnPayloadTooLargeError extends AuthFnError {
+  constructor(maxBytes: number) {
+    super(
+      'AUTHFN_VALIDATION_ERROR',
+      `Request body exceeds the maximum allowed size of ${maxBytes} bytes`,
+      {
+        status: 413,
+        details: { maxBytes }
+      }
+    );
+    this.name = 'AuthFnPayloadTooLargeError';
+  }
+}
+
 export class AuthFnInvalidCredentialsError extends AuthFnError {
   constructor(message: string = 'Authentication required', details?: Record<string, unknown>) {
     super('AUTHFN_INVALID_CREDENTIALS', message, {

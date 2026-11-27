@@ -5,23 +5,73 @@ description: Notable filefn releases and migration notes.
 
 # Changelog
 
-filefn follows semver. Breaking changes are flagged.
+filefn follows semver. The `@filefn/server` version is the spine of these notes. Breaking changes are flagged.
 
-For per-package changelogs (under `filefn/server`, `filefn/client`, `filefn/processing`, etc.), check the package's `CHANGELOG.md` or the GitHub release notes.
+## Unreleased
 
-## 0.1.x — initial public preview
+- Upload init and complete that cannot verify a stored size return `500 FILEFN_STORAGE_STAT_UNAVAILABLE` with the message `Upload size cannot be verified`. A complete whose proxy parts are missing returns `409 FILEFN_UPLOAD_INCOMPLETE` with the message `Upload incomplete`. Neither response names the storage adapter or the upload session.
+- A metric sink passed directly in the `observability` configuration receives upload failures (`filefn.upload` / `failure`, with `labels.reason` of `size_unverified`, `parts_missing`, or `size_mismatch`), quota denials (`filefn.quota` / `denied`), and processing duration (`filefn.processing` / `complete`, with `durationMs`). Those labels are a closed set: no file id, session id, error text, or usage figure.
+- A processing service built on its own with `createProcessingService` never serves an artifact whose parent file row is missing. `getArtifactDownloadUrl` answers `404 FILEFN_NOT_FOUND` (`Artifact not found`) for it with or without a `readChecker`; before, a service without a `readChecker` signed a URL for it. An artifact whose file row exists is served as before. `createFileFn` always configured a `readChecker`, so it already behaved this way. Standalone hosts that create artifact rows without a `files` row must create the file row first.
 
-- Multipart uploads with signed-URL and proxy modes.
-- Policies, visibility, storage targets, render intents, artifacts.
-- Bundled processors: thumbnails, PDF previews, OCR, image transforms, video, audio, compression.
-- DB adapters: memory, Drizzle, Postgres, SQLite, MySQL.
-- Storage adapters: local FS, S3, GCS, Azure, R2, MinIO.
-- Python kernel parity via `filefn` (PyPI).
-- Native Swift package (`FileFnClient`, `FileFnSwiftUI`, `FileFnWebViewBridgeHost`).
-- WKWebView bridge protocol `filefn-bridge/v1`.
-- OPFS offline pipeline in `@filefn/client`.
-- HEIC preprocessing on browser and native.
+## 0.7.0 — security
+
+An unauthenticated caller is the principal `anonymous` and owns nothing. A public upload stays readable and listable by anyone. A private one needs a grant made to `anonymous`. That caller cannot replace or delete the upload, and cannot create, list, or revoke share links or grants. Existing share links and grants on anonymous uploads keep working. Signed-in owners can manage grants for their own files over HTTP. Creating a share link requires a signed-in user with `canShare` on the file. To clean up legacy access on files owned by `anonymous`, set `revokedAt` on unwanted `fileShares` rows for those files and delete unwanted `filePermissions` rows for those files. Never return the principal id `anonymous` from `resolveSession`.
+
+The same release also sanitizes storage keys, checks the stored upload size, tightens artifact keys and download headers, and scopes idempotency to the caller. Init validation, roles, rate limits, owner quota, and log hygiene land here, including the same key, init, and size checks in the Python client.
+
+Packages in this release: `@filefn/server` 0.7.0, `@filefn/processing` 0.4.0, `@filefn/processing-container` 0.2.0, `@filefn/client` 0.4.0, `@filefn/admin` 0.1.1, `@superfunctions/storage-local` 0.3.0, and Python `filefn` 0.2.0.
+
+## 0.6.1
+
+- A completion fences itself against an abort or a duplicate complete of the same session.
+
+## 0.6.0
+
+- Import an object that already exists in storage.
+- Processing can run in a container.
+
+## 0.5.0
+
+- A client can supply processing artifacts for a version.
+
+## 0.4.2
+
+- A client can choose the file id at init.
+- The client migrates a pending upload onto that id.
+
+## 0.4.1
+
+- Storage keys are per upload session.
+
+## 0.4.0
+
+- Processing runs from a queue, including Cloudflare Queues.
+
+## 0.3.1
+
+- Workers type definitions aligned with the Workers runtime.
+
+## 0.3.0
+
+- Mount FileFn on Workers with a base path, deferred work, and cryptographic ids.
+- Client transport for that runtime.
+
+## 0.2.1
+
+- Patch release on the 0.2 runtime.
+
+## 0.2.0
+
+- Runtime stores and observability.
+
+## 0.1.1
+
+- Patch release on the initial server.
+
+## 0.1.0
+
+- Initial server: multipart upload, policies, storage adapters, and the first clients.
 
 ## See also
 
-- [GitHub releases](https://github.com/21nCo/super-functions/releases) — full release notes.
+- [GitHub releases](https://github.com/21nCo/superfunctions/releases) — full release notes.

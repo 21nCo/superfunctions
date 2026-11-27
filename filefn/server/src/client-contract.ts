@@ -537,8 +537,8 @@ export const fileFnClientContract = {
         name: 'x-idempotency-key',
         in: 'header',
         required: false,
-        description: 'Optional idempotency key used for upload initialization.',
-        schema: { type: 'string' },
+        description: 'Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.',
+        schema: { type: 'string', maxLength: 255 },
       },
       XUploadSessionToken: {
         name: 'x-upload-session-token',
@@ -741,12 +741,25 @@ export const fileFnClientContract = {
       CreateUploadSessionRequest: {
         type: 'object',
         properties: {
-          policy: { type: 'string' },
-          fileName: { type: 'string' },
-          size: { type: 'integer' },
-          mimeType: { type: 'string' },
+          policy: { type: 'string', minLength: 1 },
+          fileName: {
+            type: 'string',
+            minLength: 1,
+            description: 'At most 255 UTF-16 code units; no "/", "\\", control characters or lone surrogates; not "." or "..".',
+          },
+          size: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
+          mimeType: {
+            type: 'string',
+            minLength: 3,
+            maxLength: 1024,
+            description: 'One type/subtype of RFC 9110 tokens with optional parameters.',
+          },
           fileId: { type: 'string' },
-          metadata: { type: 'object', additionalProperties: ref('#/components/schemas/JSONValue') },
+          metadata: {
+            type: 'object',
+            additionalProperties: ref('#/components/schemas/JSONValue'),
+            description: 'At most 16384 bytes as JSON and 32 levels deep.',
+          },
         },
         required: ['policy', 'fileName', 'size', 'mimeType'],
       },

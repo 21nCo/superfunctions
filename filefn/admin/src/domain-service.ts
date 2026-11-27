@@ -22,6 +22,23 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * FileFn's input validation (FILEFN_INVALID_REQUEST, a 400) is the caller's
+ * error, not the adapter's: report it as `invalid_argument` with its details.
+ */
+function invalidArgumentFromFileFn(error: unknown): unknown {
+  if (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === "FILEFN_INVALID_REQUEST"
+  ) {
+    return new AdminError("invalid_argument", error.message, {
+      details: (error as { details?: unknown }).details,
+      cause: error,
+    });
+  }
+  return error;
+}
+
 function adminDownloadDescriptor(descriptor: { url: string; headers?: Record<string, string> }) {
   const unsupportedHeaders = Object.keys(descriptor.headers ?? {});
   if (unsupportedHeaders.length > 0) {
@@ -248,7 +265,13 @@ export function createFileFnDomainAdminService(options: FileFnDomainAdminService
     };
 
   const operation = <K extends FileFnAdminOperationId>(operationId: K): FileFnAdminServiceMethod<K> =>
-    async (input, context) => execute({ operationId, input, context } as FileFnDomainRequest) as unknown as Promise<AdminOperationResult<FileFnAdminOperationOutputMap[K]>>;
+    async (input, context) => {
+      try {
+        return await execute({ operationId, input, context } as FileFnDomainRequest) as unknown as AdminOperationResult<FileFnAdminOperationOutputMap[K]>;
+      } catch (error) {
+        throw invalidArgumentFromFileFn(error);
+      }
+    };
 
   return {
     listFiles: operation("filefn.files.list"),

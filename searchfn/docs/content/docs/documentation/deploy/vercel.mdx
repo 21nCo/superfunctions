@@ -15,9 +15,12 @@ Vercel runs SearchFn well if you pick an external adapter (Postgres, Meilisearch
 
 ## Next.js App Router
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // app/searchfn/[...path]/route.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "../../../search-authorization";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 let sfPromise: ReturnType<typeof createSearchFnServer> | null = null;
@@ -28,6 +31,7 @@ function getServer() {
         connectionString: process.env.SEARCH_DB_URL!,
       });
     sfPromise = createSearchFnServer({
+      authorize: authorizeSearchRequest,
       adapter,
       basePath: "/searchfn",
     }).then(async (sf) => {
@@ -101,12 +105,15 @@ Vercel's logs are Datadog-flavoured by default. Send structured JSON; Vercel par
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: () => {},
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: () => {},
+    },
   },
 });
 ```

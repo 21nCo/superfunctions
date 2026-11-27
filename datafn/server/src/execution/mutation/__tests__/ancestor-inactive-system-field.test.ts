@@ -80,6 +80,7 @@ describe("isAncestorInactive as a system field (server)", () => {
     await db.initialize();
     server = await createDatafnServer({
       allowUnknownResources: true,
+      debug: true,
       schema,
       database: db,
       namespaceProvider: { getNamespace: () => NS },

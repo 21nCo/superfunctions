@@ -12,6 +12,7 @@ import type {
 import type { AuthFnEventInput, AuthFnRuntimeConfig } from '../types.js';
 import {
   AuthFnConfigError,
+  AuthFnError,
   AuthFnPlacementDirectoryUnavailableError,
   AuthFnPlacementMovingError,
   AuthFnRegionMismatchError,
@@ -21,6 +22,7 @@ import {
   AuthFnValidationError
 } from './errors.js';
 import { jsonError, resolveRequestId } from '../http/envelopes.js';
+import { assertAuthRequestBodyLimit, getOAuthBodyPolicy } from '../http/body-limit.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 
 const ASSERTION_HEADER = 'x-authfn-routing-assertion';
@@ -81,6 +83,8 @@ export interface AuthFnCanonicalGatewayOptions<TTarget> {
     request: Request,
     classification: AuthFnRouteClassification
   ) => Promise<Response> | Response;
+  /** OAuth provider operations served by the regional cells, for ingress error formatting. */
+  oauthBodyErrorOperations?: readonly ('oauthRegister' | 'oauthDeviceAuthorization')[];
   assertionTtlSeconds?: number;
   placementCacheTtlMs?: number;
   /** Maximum identities retained by the in-process placement cache. */
@@ -274,6 +278,7 @@ export function createAuthFnCanonicalGateway<TTarget>(
   validateKeyring(options.keyring);
   const publicAuthority = normalizeAuthority(options.publicAuthority);
   const basePath = normalizeBasePath(options.basePath ?? '/auth');
+  const oauthBodyErrorOperations = new Set<string>(options.oauthBodyErrorOperations);
   const now = options.now ?? (() => new Date());
   const assertionTtlSeconds = options.assertionTtlSeconds ?? 20;
   const placementCacheTtlMs = options.placementCacheTtlMs ?? 5_000;
@@ -465,12 +470,16 @@ export function createAuthFnCanonicalGateway<TTarget>(
 
   return {
     async handle(request) {
-      if (new URL(request.url).origin !== publicAuthority) {
+      const url = new URL(request.url);
+      if (url.origin !== publicAuthority) {
         return jsonError(request, new AuthFnValidationError('AuthFn gateway accepts only its public authority'));
       }
       const classification = classifyAuthFnRoute(request, basePath);
       try {
+        const bodyError = await checkGatewayBody(request, url.pathname, basePath, oauthBodyErrorOperations);
+        if (bodyError) return bodyError;
         const sanitizedRequest = stripClientRoutingHeaders(request);
+        sanitizedRequest.headers.set('x-request-id', resolveRequestId(request));
         if (classification.scope === 'global') {
           if (!options.handleGlobal) {
             return jsonError(request, new AuthFnRegionNotFoundError('Global AuthFn route is not configured'));
@@ -511,6 +520,41 @@ export function createAuthFnCanonicalGateway<TTarget>(
       cache.delete(identityKey);
     }
   };
+}
+
+async function checkGatewayBody(
+  request: Request,
+  pathname: string,
+  basePath: string,
+  oauthBodyErrorOperations: ReadonlySet<string>
+): Promise<Response | undefined> {
+  try {
+    // The gateway has no route table. Admit bodies against the global limit
+    // and let the matched regional endpoint enforce its own smaller limit.
+    await assertAuthRequestBodyLimit(request);
+  } catch (error) {
+    const path = stripBasePath(pathname, basePath).replace(/\/$/, '');
+    const insideBase = basePath === '/' || pathname.startsWith(`${basePath}/`);
+    const oauth = insideBase && request.method === 'POST' ? getOAuthBodyPolicy(path) : undefined;
+    if (
+      !oauth || !oauthBodyErrorOperations.has(oauth.operationId)
+      || !(error instanceof AuthFnError) || (error.status !== 408 && error.status !== 413)
+    ) {
+      throw error;
+    }
+    return Response.json({
+      error: oauth.errorCode,
+      error_description: error.status === 413 ? oauth.sizeError : error.message
+    }, {
+      status: 400,
+      headers: {
+        'cache-control': 'no-store',
+        pragma: 'no-cache',
+        'x-request-id': resolveRequestId(request)
+      }
+    });
+  }
+  return undefined;
 }
 
 /** Runs before rate limiting and every AuthFn route handler in a regional cell. */

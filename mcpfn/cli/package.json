@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/cli",
-  "version": "0.0.10",
+  "version": "0.0.13",
   "description": "McpFn manifest, compatibility, regression, and official conformance CLI",
   "type": "module",
   "main": "dist/index.cjs",
@@ -23,11 +23,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@mcpfn/auth": "0.0.8",
-    "@mcpfn/client": "0.1.0",
-    "@mcpfn/core": "0.0.7",
-    "@mcpfn/inspector": "0.0.8",
-    "@mcpfn/testing": "0.0.9",
+    "@mcpfn/auth": "0.0.9",
+    "@mcpfn/client": "0.1.3",
+    "@mcpfn/core": "0.3.0",
+    "@mcpfn/inspector": "0.0.11",
+    "@mcpfn/testing": "0.1.0",
     "cac": "^6.7.14",
     "jiti": "^2.4.2"
   },

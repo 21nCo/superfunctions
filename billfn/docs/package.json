@@ -27,10 +27,10 @@
     "styled-jsx": "5.1.6"
   },
   "devDependencies": {
-    "@authfn/password": "0.1.9",
+    "@authfn/password": "0.3.0",
     "@billfn/core": "0.8.0",
-    "@billfn/provider-apple": "0.10.0",
-    "@billfn/provider-dodo": "0.9.0",
+    "@billfn/provider-apple": "0.10.1",
+    "@billfn/provider-dodo": "0.9.1",
     "@billfn/swift-bridge": "0.1.1",
     "@cloudflare/workers-types": "4.20251120.0",
     "@superfunctions/db": "0.3.4",
@@ -39,7 +39,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "authfn": "0.8.0",
+    "authfn": "0.10.0",
     "autoprefixer": "^10",
     "postcss": "^8",
     "tailwindcss": "^4",

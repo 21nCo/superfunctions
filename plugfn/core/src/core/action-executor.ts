@@ -16,7 +16,7 @@ import { ConnectionManager } from './connection-manager.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { RetryMiddleware } from '../middleware/retry.js';
 import { RateLimiter } from '../middleware/rate-limiter.js';
-import { CacheMiddleware } from '../middleware/caching.js';
+import { CacheMiddleware, credentialBinding, randomCacheBindingKey } from '../middleware/caching.js';
 import { LoggingMiddleware } from '../middleware/logging.js';
 import { MetricsMiddleware } from '../middleware/metrics.js';
 import { FetchHttpClient } from '../utils/request.js';
@@ -38,6 +38,7 @@ export class ActionExecutor {
   private readonly enableRetry: boolean;
   private readonly enableRateLimit: boolean;
   private readonly enableCache: boolean;
+  private readonly cacheBindingKey: Uint8Array;
   private readonly enableLogging: boolean;
   private readonly enableMetrics: boolean;
   private readonly respectProviderLimits: boolean;
@@ -58,6 +59,12 @@ export class ActionExecutor {
       cacheStore?: KVStoreAdapter;
       cacheTtl?: number;
       cacheKeyPrefix?: string;
+      /**
+       * Server-side key that binds cache entries to credentials (see
+       * deriveCacheBindingKey). Without one, a random per-executor key is used,
+       * so entries are not shared with other executors on a shared store.
+       */
+      cacheBindingKey?: Uint8Array;
       respectProviderLimits?: boolean;
       globalRateLimit?: RateLimitConfig;
       rateLimitStore?: AtomicKVStoreAdapter;
@@ -71,6 +78,7 @@ export class ActionExecutor {
       store: _options.cacheStore,
       keyPrefix: _options.cacheKeyPrefix,
     });
+    this.cacheBindingKey = _options.cacheBindingKey ?? randomCacheBindingKey();
     this.loggingMiddleware = new LoggingMiddleware(logger, _options.database);
     this.metricsMiddleware = new MetricsMiddleware();
     this.maxConcurrentSyncPerConnection = Math.max(1, _options.maxConcurrentSyncPerConnection ?? 1);
@@ -113,6 +121,7 @@ export class ActionExecutor {
       const validatedParams = actionObj.parameters.parse(options.params);
       const shouldUseCache =
         this.enableCache &&
+        actionObj.cacheable !== 'never' &&
         options.cache !== false &&
         (options.cache !== undefined || actionObj.cacheable === true);
 
@@ -135,36 +144,50 @@ export class ActionExecutor {
       };
       requireScopes(connection.scopes);
 
-      const cacheKey = shouldUseCache
-        ? typeof options.cache === 'object' && options.cache.key
-          ? this.cacheMiddleware.generateCustomKey(
-              provider,
-              action,
-              options.cache.key,
-              options.userId,
-              connection.id
-            )
-          : this.cacheMiddleware.generateKey(
-              provider,
-              action,
-              validatedParams,
-              options.userId,
-              connection.id
-            )
-        : undefined;
-
       // Get credentials
       const credentials = await this.connectionManager.getCredentials(connection.id);
 
       // Refresh may change granted scopes. Reapply consumer authorization against
       // the persisted refreshed connection before any external dispatch.
+      let grantedScopes = connection.scopes;
       if (connection.expiresAt && new Date() >= connection.expiresAt) {
         const refreshed = await this.connectionManager.resolveConnectionForAction({
           userId: options.userId, provider, connectionId: connection.id, actor: options.actor,
         });
         if (!refreshed) throw new Error("Connection unavailable after refresh");
         requireScopes(refreshed.scopes);
+        grantedScopes = refreshed.scopes;
       }
+
+      // Bind the cache entry to the exact credential version and granted
+      // scopes used for this dispatch, so a replaced or narrowed credential on
+      // the same connection never reads, or races a late write into, an older
+      // entry. Credentials without a known version are never cached.
+      const credentialVersion = shouldUseCache
+        ? this.connectionManager.credentialVersion?.(credentials)
+        : undefined;
+      const binding = credentialVersion !== undefined
+        ? credentialBinding(this.cacheBindingKey, credentialVersion, grantedScopes)
+        : undefined;
+      const cacheKey = binding !== undefined
+        ? typeof options.cache === 'object' && options.cache.key
+          ? this.cacheMiddleware.generateCustomKey(
+              provider,
+              action,
+              options.cache.key,
+              options.userId,
+              connection.id,
+              binding
+            )
+          : this.cacheMiddleware.generateKey(
+              provider,
+              action,
+              validatedParams,
+              options.userId,
+              connection.id,
+              binding
+            )
+        : undefined;
 
       // Check cache only after resolving the concrete connection.
       if (cacheKey) {

@@ -23,6 +23,7 @@ const database = memoryAdapter();
 const storage = createMemoryStorage();
 let lastCleanup: unknown = null;
 let waitUntilRegistrations = 0;
+let uploadFailureWrites = 0;
 
 class WaitUntilRuntime implements FileFnRuntime {
   constructor(private readonly ctx: ExecutionContextLike) {}
@@ -52,7 +53,11 @@ const uppercase: Processor = {
   },
 };
 
-function fileFnFor(ctx: ExecutionContextLike, mount: { basePath: string; uploadSessionTtlSeconds?: number } = { basePath: '/files' }) {
+function fileFnFor(
+  ctx: ExecutionContextLike,
+  mount: { basePath: string; uploadSessionTtlSeconds?: number } = { basePath: '/files' },
+  overrides: Partial<FileFnConfig> = {},
+) {
   const config: FileFnConfig = {
     database,
     storage,
@@ -68,6 +73,7 @@ function fileFnFor(ctx: ExecutionContextLike, mount: { basePath: string; uploadS
     },
     processing: { enabled: true, processors: [uppercase] },
     runtime: new WaitUntilRuntime(ctx),
+    ...overrides,
   };
   return createFileFn(config);
 }
@@ -83,8 +89,24 @@ app.all('/expiring/*', async (c) => {
   const response = await fileFn.router.handle(c.req.raw);
   return response ?? c.notFound();
 });
+app.all('/stat-unavailable/*', async (c) => {
+  const statlessStorage = { ...storage };
+  delete (statlessStorage as Partial<typeof storage>).statObject;
+  const fileFn = fileFnFor(c.executionCtx, { basePath: '/stat-unavailable' }, {
+    storage: statlessStorage,
+    observability: {
+      async metrics(metric) {
+        if (metric.kind !== 'filefn.upload') return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        uploadFailureWrites += 1;
+      },
+    },
+  });
+  return (await fileFn.router.handle(c.req.raw)) ?? c.notFound();
+});
 app.get('/__smoke/last-cleanup', (c) => c.json(lastCleanup));
 app.get('/__smoke/wait-until', (c) => c.json({ registrations: waitUntilRegistrations }));
+app.get('/__smoke/upload-failure-writes', (c) => c.json(uploadFailureWrites));
 
 export default {
   fetch: app.fetch,

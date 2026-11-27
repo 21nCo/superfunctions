@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Set, cast
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.grant_expiry import is_grant_expired
 from ..authz.ownership import is_file_owner
 from ..events import (
     FileFnEventEmitter,
@@ -143,7 +144,7 @@ class ProcessingService:
 
         readable: Set[str] = set()
         for grant in grants:
-            if not grant.get("canRead"):
+            if not grant.get("canRead") or is_grant_expired(grant.get("expiresAt")):
                 continue
             if (
                 grant.get("principalId") == ctx.principalId

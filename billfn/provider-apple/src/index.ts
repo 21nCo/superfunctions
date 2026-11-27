@@ -52,6 +52,9 @@ export { APPLE_ROOT_CA_G3, APPLE_ROOT_CA_G3_SHA256 } from './apple-root-ca.js';
  */
 export const APPLE_BUNDLE_ID_METADATA_KEY = 'appleBundleId';
 
+/** How long one Apple HTTP call, including its response body, may take before the deadline fails it. */
+export const APPLE_PROVIDER_HTTP_DEADLINE_MS = 30_000;
+
 export interface AppleNotificationVerifierContext {
   rawBody: string;
   signedPayload: string;
@@ -286,15 +289,20 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple subscription management is handled by Apple-managed surfaces');
       }
-      const response = await requestAdvancedCommerce(
+      const { data, bodyTimedOut } = await requestAdvancedCommerce(
         fetchImpl,
         config,
         transactionId,
-        `/subscription/cancel/${encodeStoreKitPathSegment(transactionId)}`,
+        'cancel',
         {
           method: 'POST'
         }
       );
+      if (bodyTimedOut) {
+        // The 200 confirms cancellation. Let StoreKit sync or a notification supply the state, since the
+        // response body is missing and writing the pre-request snapshot could overwrite a newer event.
+        return { operationStatus: 'applied', raw: data } satisfies BillFnProviderOperationResult;
+      }
       return {
         operationStatus: 'applied',
         billingState: {
@@ -305,9 +313,9 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           currentPeriodStart: input.subscription.currentPeriodStart,
           currentPeriodEnd: input.subscription.currentPeriodEnd,
           autoRenew: false,
-          raw: response
+          raw: data
         },
-        raw: response
+        raw: data
       } satisfies BillFnProviderOperationResult;
     },
     async changeSubscription(_input: BillFnChangeSubscriptionInput) {
@@ -335,11 +343,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple refunds require Advanced Commerce or Apple-managed support flows');
       }
-      const response = await requestAdvancedCommerce(
+      const { data: response } = await requestAdvancedCommerce(
         fetchImpl,
         config,
         transactionId,
-        `/subscription/revoke/${encodeStoreKitPathSegment(transactionId)}`,
+        'revoke',
         {
           method: 'POST',
           body: JSON.stringify({
@@ -590,12 +598,13 @@ async function requestAdvancedCommerce(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   transactionId: string,
-  path: string,
+  operation: 'cancel' | 'revoke',
   init: RequestInit
 ) {
+  const transactionPath = encodeStoreKitPathSegment(transactionId);
   const advancedCommerce = config.advancedCommerce ?? {};
   const bundleId = config.bundleIds.length > 1
-    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${encodeStoreKitPathSegment(transactionId)}`))
+    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${transactionPath}`))
         .bundleId
     : config.bundleIds[0];
   const hostTokenProvider = advancedCommerce.tokenProvider;
@@ -603,15 +612,19 @@ async function requestAdvancedCommerce(
     ? await (bundleId === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId }))
     : await config.tokenFor(bundleId);
   const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
-  const response = await fetchImpl(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {})
-    }
-  });
-  const raw = await response.text();
+  const { response, raw, bodyTimedOut } = await fetchProviderText(
+    fetchImpl,
+    `${baseUrl}/subscription/${operation}/${transactionPath}`,
+    {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(init.headers ?? {})
+      }
+    },
+    operation
+  );
   if (!response.ok) {
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',
@@ -622,24 +635,77 @@ async function requestAdvancedCommerce(
       }
     });
   }
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  return { data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}, bodyTimedOut };
 }
 
 async function requestJson(fetchImpl: typeof fetch, url: string, token: string, init: RequestInit = {}) {
-  const response = await fetchImpl(url, {
-    ...init,
-    method: init.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {})
-    }
-  });
-  const raw = await response.text();
+  const { response, raw } = await fetchProviderText(
+    fetchImpl,
+    url,
+    {
+      ...init,
+      method: init.method ?? 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(init.headers ?? {})
+      }
+    },
+    'read'
+  );
   if (!response.ok) {
     throw createProviderError(response.status, raw);
   }
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
+/** Fetches one Apple response and reads its body, under one deadline for both. */
+async function fetchProviderText(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: Omit<RequestInit, 'signal'>,
+  kind: 'read' | 'cancel' | 'revoke'
+): Promise<{ response: Response; raw: string; bodyTimedOut?: true }> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error('Apple HTTP deadline');
+      reject(error);
+      controller.abort(error);
+    }, APPLE_PROVIDER_HTTP_DEADLINE_MS);
+  });
+  let response: Response | undefined;
+  try {
+    const request = async () => {
+      const fetched = await fetchImpl(url, { ...init, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      response = fetched;
+      return { response: fetched, raw: await fetched.text() };
+    };
+    return await Promise.race([request(), expired]);
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      throw error;
+    }
+    if (kind !== 'read' && response && !response.ok) {
+      return { response, raw: '' };
+    }
+    // Apple documents HTTP 200 from the cancellation endpoint as confirmation that auto-renew is off.
+    // https://developer.apple.com/documentation/advancedcommerceapi/cancel-a-subscription
+    if (kind === 'cancel' && response?.status === 200) {
+      return { response, raw: '', bodyTimedOut: true };
+    }
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: kind === 'read'
+        ? 'Apple did not answer before the deadline; the read can be retried'
+        : 'Apple did not answer before the deadline; whether the change was applied is unknown',
+      retryable: kind === 'read'
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function createProviderError(status: number, body: string) {

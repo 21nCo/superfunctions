@@ -1,5 +1,6 @@
 import type { PolicyRegistry } from './policies.js';
-import type { AuthConfig } from './auth.js';
+import { isAnonymousPrincipal, resolvePrincipal, type AuthConfig } from './auth.js';
+import { FileFnError, authRequired } from './errors.js';
 
 export interface PolicyRoutesContext {
   policyRegistry: PolicyRegistry;
@@ -11,15 +12,24 @@ function getRequestId(request: Request): string | undefined {
 }
 
 function successResponse(data: unknown, requestId?: string): Response {
-  return Response.json({ ok: true, data, requestId }, { status: 200 });
+  // Answered per caller (auth applies): no shared cache may replay it.
+  return Response.json({ ok: true, data, requestId }, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });
 }
 
 export function createPolicyRoutes(ctx: PolicyRoutesContext) {
-  const { policyRegistry } = ctx;
+  const { policyRegistry, auth } = ctx;
 
   return {
     async listPolicies(request: Request): Promise<Response> {
       const requestId = getRequestId(request);
+      // Same rule as the upload routes: a caller who could not start an upload
+      // does not learn the policies' names, limits and visibility either.
+      const principal = await resolvePrincipal(request, auth);
+      // The shared 'anonymous' principal is a guest, as on the share routes.
+      if (isAnonymousPrincipal(principal) && auth.required !== false) {
+        const error: FileFnError = authRequired();
+        return Response.json({ ok: false, error: error.toJSON(), requestId }, { status: error.statusCode });
+      }
 
       const policies = policyRegistry.list().map((p) => ({
         name: p.name,

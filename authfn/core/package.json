@@ -1,6 +1,6 @@
 {
   "name": "authfn",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "description": "Core authfn contracts and plugin composition primitives",
   "type": "module",
   "main": "./dist/index.js",
@@ -76,13 +76,13 @@
     "@superfunctions/db": "0.3.4",
     "@superfunctions/http": "0.2.0",
     "@superfunctions/http-openapi": "0.1.2",
-    "@superfunctions/oauth-storage": "0.1.1",
+    "@superfunctions/oauth-storage": "0.1.2",
     "@superfunctions/observability": "0.0.4"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-flow": "0.1.1",
+    "@superfunctions/oauth-flow": "0.1.2",
     "@superfunctions/oauth-http": "0.1.0",
     "@superfunctions/oauth-providers": "0.1.1",
     "@types/better-sqlite3": "^7.6.13",

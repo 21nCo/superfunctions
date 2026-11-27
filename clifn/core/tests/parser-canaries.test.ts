@@ -38,6 +38,33 @@ describe("parser canaries", () => {
     });
   });
 
+  it.each([
+    ["commander", runCommanderFixture],
+    ["cac", runCacFixture],
+    ["parseArgs", runParseArgsFixture],
+  ] as const)("prints one result document through %s with --json", async (parser, run) => {
+    const result = await run(["--json", "status", "--name", "Ada"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.indexOf("\n")).toBe(result.stdout.length - 1);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, data: { parser, name: "Ada", nonInteractive: true } });
+    expect(result.stderr).toBe(`{"level":"info","message":"status for Ada from ${parser}"}\n`);
+  });
+
+  it.each([
+    ["commander", runCommanderFixture],
+    ["cac", runCacFixture],
+    ["parseArgs", runParseArgsFixture],
+  ] as const)("prints one failure document with the thrown code through %s", async (_parser, run) => {
+    const result = await run(["--json", "--quiet", "status", "--name", "Ada", "--fail"]);
+
+    expect(result).toEqual({
+      exitCode: 3,
+      stdout: '{"ok":false,"error":{"code":"STATUS_UNAVAILABLE","message":"Ada is unavailable"}}\n',
+      stderr: "",
+    });
+  });
+
   it("keeps parser libraries out of clifn runtime dependencies", async () => {
     const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8")) as {
       dependencies?: Record<string, string>;
@@ -55,6 +82,11 @@ describe("parser canaries", () => {
       "src/index.ts",
       "src/output.ts",
       "src/runner.ts",
+      "src/terminal.ts",
+      "src/document-output.ts",
+      "src/json-value.ts",
+      "src/sensitive-keys.ts",
+      "src/errors.ts",
     ];
 
     const contents = await Promise.all(

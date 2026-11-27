@@ -14,26 +14,30 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
   Dialog,
+  DialogBackdrop,
   DialogClose,
   DialogContent,
   DialogDescription,
-  DialogBackdrop,
   DialogPortal,
+  DialogPositioner,
   DialogTitle,
   DialogTrigger,
-  Menu as DropdownMenu,
-  MenuContent as DropdownMenuContent,
-  MenuItem as DropdownMenuItem,
-  MenuGroupLabel as DropdownMenuLabel,
-  MenuSeparator as DropdownMenuSeparator,
-  MenuTrigger as DropdownMenuTrigger,
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
+  MenuContent,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPositioner,
+  MenuRoot,
+  MenuSeparator,
+  MenuTrigger,
   Popover,
   PopoverClose,
   PopoverContent,
   PopoverTrigger,
+  Portal,
   ScrollArea,
   ScrollAreaScrollbar,
   ScrollAreaThumb,
@@ -41,8 +45,9 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectPositioner,
   SelectTrigger,
-  SelectValueText as SelectValue,
+  SelectValueText,
   Switch,
   SwitchThumb,
   Tabs,
@@ -56,7 +61,6 @@ import {
   ToastTitle,
   ToastViewport,
 } from "@uifn/react";
-import { VirtualizedList } from "./VirtualizedList";
 import {
   capabilitySupport,
   commandItems,
@@ -278,100 +282,102 @@ function SettingsConsoleScenario({ route }: ScenarioComponentProps) {
           <DialogTrigger className="primary-button">Open settings console</DialogTrigger>
           <DialogPortal>
             <DialogBackdrop className="dialog-overlay" />
-            <DialogContent className="dialog-content">
-              <div className="dialog-header">
-                <div>
-                  <DialogTitle>Workspace settings</DialogTitle>
-                  <DialogDescription>
-                    Review defaults, notification rules, and approval prompts.
-                  </DialogDescription>
+            <DialogPositioner className="dialog-positioner">
+              <DialogContent className="dialog-content">
+                <div className="dialog-header">
+                  <div>
+                    <DialogTitle>Workspace settings</DialogTitle>
+                    <DialogDescription>
+                      Review defaults, notification rules, and approval prompts.
+                    </DialogDescription>
+                  </div>
+                  <DialogClose className="ghost-button" aria-label="Close settings dialog">
+                    Close
+                  </DialogClose>
                 </div>
-                <DialogClose className="ghost-button" aria-label="Close settings dialog">
-                  Close
-                </DialogClose>
-              </div>
 
-              <Tabs defaultValue={settingsSections[0].id}>
-                <TabsList className="tabs-list">
-                  {settingsSections.map((section) => (
-                    <TabsTrigger
-                      key={section.id}
-                      value={section.id}
-                      className="tab-trigger"
-                    >
-                      {section.title}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
+                <Tabs defaultValue={settingsSections[0].id}>
+                  <TabsList className="tabs-list">
+                    {settingsSections.map((section) => (
+                      <TabsTrigger
+                        key={section.id}
+                        value={section.id}
+                        className="tab-trigger"
+                      >
+                        {section.title}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
 
-                {settingsSections.map((section) => {
-                  const toggle = settingsToggles.find(
-                    (item) => item.sectionId === section.id,
-                  );
-                  const checkboxId = `checkbox-${section.id}`;
+                  {settingsSections.map((section) => {
+                    const toggle = settingsToggles.find(
+                      (item) => item.sectionId === section.id,
+                    );
+                    const checkboxId = `checkbox-${section.id}`;
 
-                  return (
-                    <TabsContent key={section.id} value={section.id} className="tab-panel">
-                      <p>{section.description}</p>
+                    return (
+                      <TabsContent key={section.id} value={section.id} className="tab-panel">
+                        <p>{section.description}</p>
 
-                      {toggle ? (
-                        <label className="control-row">
+                        {toggle ? (
+                          <label className="control-row">
+                            <span>
+                              <strong>{toggle.label}</strong>
+                              <small>{toggle.description}</small>
+                            </span>
+                            <Switch
+                              checked={switchStates[toggle.id]}
+                              onCheckedChange={(checked) =>
+                                setSwitchStates((current) => ({
+                                  ...current,
+                                  [toggle.id]: checked,
+                                }))
+                              }
+                              aria-label={toggle.label}
+                              className="switch-root"
+                            >
+                              <SwitchThumb className="switch-thumb" />
+                            </Switch>
+                          </label>
+                        ) : null}
+
+                        <label className="control-row checkbox-row" htmlFor={checkboxId}>
                           <span>
-                            <strong>{toggle.label}</strong>
-                            <small>{toggle.description}</small>
+                            <strong>Require notes for changes</strong>
+                            <small>Capture operator intent before applying updates.</small>
                           </span>
-                          <Switch
-                            checked={switchStates[toggle.id]}
+                          <Checkbox
+                            id={checkboxId}
+                            checked={checkboxStates[section.id]}
                             onCheckedChange={(checked) =>
-                              setSwitchStates((current) => ({
+                              setCheckboxStates((current) => ({
                                 ...current,
-                                [toggle.id]: checked,
+                                [section.id]: checked === true,
                               }))
                             }
-                            aria-label={toggle.label}
-                            className="switch-root"
+                            aria-label={`Require notes for ${section.title}`}
+                            className="checkbox-root"
                           >
-                            <SwitchThumb className="switch-thumb" />
-                          </Switch>
+                            <CheckboxIndicator className="checkbox-indicator">
+                              ✓
+                            </CheckboxIndicator>
+                          </Checkbox>
                         </label>
-                      ) : null}
+                      </TabsContent>
+                    );
+                  })}
+                </Tabs>
 
-                      <label className="control-row checkbox-row" htmlFor={checkboxId}>
-                        <span>
-                          <strong>Require notes for changes</strong>
-                          <small>Capture operator intent before applying updates.</small>
-                        </span>
-                        <Checkbox
-                          id={checkboxId}
-                          checked={checkboxStates[section.id]}
-                          onCheckedChange={(checked) =>
-                            setCheckboxStates((current) => ({
-                              ...current,
-                              [section.id]: checked === true,
-                            }))
-                          }
-                          aria-label={`Require notes for ${section.title}`}
-                          className="checkbox-root"
-                        >
-                          <CheckboxIndicator className="checkbox-indicator">
-                            ✓
-                          </CheckboxIndicator>
-                        </Checkbox>
-                      </label>
-                    </TabsContent>
-                  );
-                })}
-              </Tabs>
-
-              <div className="dialog-actions">
-                <button className="ghost-button" type="button" onClick={() => setDialogOpen(false)}>
-                  Cancel
-                </button>
-                <button className="primary-button" type="button" onClick={applySettings}>
-                  Apply settings
-                </button>
-              </div>
-            </DialogContent>
+                <div className="dialog-actions">
+                  <button className="ghost-button" type="button" onClick={() => setDialogOpen(false)}>
+                    Cancel
+                  </button>
+                  <button className="primary-button" type="button" onClick={applySettings}>
+                    Apply settings
+                  </button>
+                </div>
+              </DialogContent>
+            </DialogPositioner>
           </DialogPortal>
         </Dialog>
 
@@ -443,18 +449,26 @@ function TeamDirectoryScenario({ route }: ScenarioComponentProps) {
                 </PopoverContent>
               </Popover>
 
-              <DropdownMenu items={memberActionItems}>
-                <DropdownMenuTrigger className="ghost-button">
+              <MenuRoot items={memberActionItems}>
+                <MenuTrigger className="ghost-button">
                   Actions
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuLabel value={member.id}>Quick actions</DropdownMenuLabel>
-                  <DropdownMenuItem value="message">Message teammate</DropdownMenuItem>
-                  <DropdownMenuItem value="review">Assign reviewer</DropdownMenuItem>
-                  <DropdownMenuSeparator value={`${member.id}-separator`} />
-                  <DropdownMenuItem value="profile">Open profile</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                </MenuTrigger>
+                {/* The menu binding moves the positioner to <body>; a React portal
+                    keeps its item events inside React's event system. */}
+                <Portal>
+                  <MenuPositioner className="menu-positioner">
+                    <MenuContent className="floating-card">
+                      <MenuGroup value="quick-actions">
+                        <MenuGroupLabel value="quick-actions">Quick actions</MenuGroupLabel>
+                        <MenuItem value="message">Message teammate</MenuItem>
+                        <MenuItem value="review">Assign reviewer</MenuItem>
+                      </MenuGroup>
+                      <MenuSeparator value="profile" />
+                      <MenuItem value="profile">Open profile</MenuItem>
+                    </MenuContent>
+                  </MenuPositioner>
+                </Portal>
+              </MenuRoot>
             </div>
           </article>
         ))}
@@ -462,6 +476,13 @@ function TeamDirectoryScenario({ route }: ScenarioComponentProps) {
     </div>
   );
 }
+
+const groupFilterOptions = [
+  { value: "all", label: "All groups" },
+  { value: "Navigation", label: "Navigation" },
+  { value: "Creation", label: "Creation" },
+  { value: "Maintenance", label: "Maintenance" },
+];
 
 function CommandCenterScenario({ route }: ScenarioComponentProps) {
   const [selectedCommand, setSelectedCommand] = useState(commandItems[0]?.id ?? "");
@@ -512,16 +533,29 @@ function CommandCenterScenario({ route }: ScenarioComponentProps) {
 
           <label className="field-label">
             <span>Command group</span>
-            <Select value={groupFilter} onValueChange={setGroupFilter}>
+            <Select
+              items={groupFilterOptions}
+              value={groupFilter}
+              placeholder="Filter group"
+              onValueChange={(value) => {
+                const next = Array.isArray(value) ? value[0] : value;
+                setGroupFilter(typeof next === "string" && next ? next : "all");
+              }}
+            >
               <SelectTrigger className="text-input" aria-label="Filter command group">
-                <SelectValue placeholder="Filter group" />
+                <SelectValueText />
               </SelectTrigger>
-              <SelectContent className="picker-surface">
-                <SelectItem value="all">All groups</SelectItem>
-                <SelectItem value="Navigation">Navigation</SelectItem>
-                <SelectItem value="Creation">Creation</SelectItem>
-                <SelectItem value="Maintenance">Maintenance</SelectItem>
-              </SelectContent>
+              <Portal>
+                <SelectPositioner className="menu-positioner">
+                  <SelectContent className="picker-surface">
+                    {groupFilterOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectPositioner>
+              </Portal>
             </Select>
           </label>
         </div>
@@ -559,30 +593,31 @@ function VirtualizedResultsScenario({ route }: ScenarioComponentProps) {
   return (
     <div className="scenario-stack" data-route={route}>
       <div className="results-summary">
-        <p className="section-label">Virtualized dataset</p>
+        <p className="section-label">Large result set</p>
         <h3>{resultRows.length} logical rows</h3>
         <p>
-          This route uses <code>VirtualizedList</code> with fixed row height, capped
-          viewport height, and the adapter default overscan behavior.
+          All rows render inside a fixed-height <code>ScrollArea</code> viewport, a
+          keyboard-focusable scroll region that keeps the page layout stable.
         </p>
       </div>
 
       <div className="virtualized-frame">
-        <VirtualizedList
-          aria-label="Virtualized results"
-          className="virtualized-list"
-          items={resultRows}
-          itemHeight={52}
-          height={320}
-          renderItem={(row, index) => (
-            <button type="button" className="virtualized-row" aria-label={row.label}>
-              <span>{row.label}</span>
-              <small>
-                {row.category} · row {index + 1}
-              </small>
-            </button>
-          )}
-        />
+        <ScrollArea className="virtualized-list" ariaLabel="Result rows">
+          <ScrollAreaViewport className="virtualized-viewport">
+            <ul className="result-list">
+              {resultRows.map((row, index) => (
+                <li key={row.id}>
+                  <button type="button" className="virtualized-row" aria-label={row.label}>
+                    <span>{row.label}</span>
+                    <small>
+                      {row.category} · row {index + 1}
+                    </small>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </ScrollAreaViewport>
+        </ScrollArea>
       </div>
     </div>
   );

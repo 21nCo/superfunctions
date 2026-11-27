@@ -3,7 +3,7 @@ title: Getting started
 description: Create a TypeScript client and run a deterministic model call.
 ---
 
-The TypeScript package is named `langfn` and exports a root client plus named subpaths. The current source manifest targets `0.1.0`; build or pack this checkout when testing the unpublished dev contract.
+The TypeScript package is named `langfn` and exports a root client plus named subpaths. The current source manifest targets `0.2.2`; build or pack this checkout when testing the unpublished dev contract.
 
 ```ts
 import { langfn } from "langfn";

@@ -38,9 +38,14 @@ describe("release gate contract", () => {
 
     expect(manifest.scripts["gate:langfn-release"]).toBe("node scripts/gate-langfn-release.mjs");
     for (const content of [rootReadme, tsReadme, compatibility, releaseGate]) {
-      expect(content).toContain("0.1.0");
       expect(content).not.toMatch(absolutePathPattern);
     }
+    // TypeScript and Python release separately: the gate names the TypeScript
+    // manifest's version, the READMEs name both.
+    const tsVersion = JSON.parse(read(resolve(langfnRoot, "typescript/package.json"))).version;
+    expect(releaseGate).toContain(`Release line: ${tsVersion}.`);
+    for (const content of [rootReadme, tsReadme]) expect(content).toContain(`npm install langfn@${tsVersion}`);
+    expect(compatibility).toContain("0.1.0");
     expect(rootReadme).toContain("npm run gate:langfn-release");
     expect(releaseGate).toContain("npm --prefix langfn/typescript run build");
     expect(releaseGate).toContain("TypeScript");
@@ -197,7 +202,7 @@ describe("release gate contract", () => {
 
     const router = createLangFnRouter(new LangFn({ model: new MockChatModel({ responses: ["ok"] }) }));
     const health = await router.handle(new Request("http://localhost/health"));
-    expect(await health.json()).toMatchObject({ ok: true, data: { name: "langfn", version: "0.1.0" } });
+    expect(await health.json()).toMatchObject({ ok: true, data: { name: "langfn", version: "0.2.2" } });
 
     const tracer = new Tracer({ redactionKeys: ["apiKey"] });
     expect(tracer.sanitize({ apiKey: "secret", keep: 1 })).toEqual({ apiKey: "***REDACTED***", keep: 1 });

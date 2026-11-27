@@ -83,6 +83,8 @@ function targetFor(
           context: () => context,
           clientProfiles: {
             profiles: [profile()],
+            // The generic fixtures replay canonical calls that carry tenantId.
+            unmatchedServerOwnedArguments: "allow",
             resolveVerifiedIdentity: ({ context: trusted }) =>
               trusted.subject ? { subject: trusted.subject } : undefined,
           },

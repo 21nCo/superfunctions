@@ -14,8 +14,10 @@ This page is the canonical reference. The same fields appear in narrower pages w
 | `adapter` | `SearchAdapter` | — | Required. Backing adapter |
 | `basePath` | `string` | `"/searchfn"` | URL prefix for endpoints |
 | `limits` | `Partial<ServerLimits>` | see below | Override default limits |
-| `authorize` | `(ctx, action, payload) => boolean \| Promise<boolean>` | — | Authorization callback |
-| `logger` | `SearchFnLogger` | — | Structured logger (info/warn/error/debug) |
+| `authorize` | `(ctx, action, payload, request, resources) => boolean \| Promise<boolean>` | — | Authorization callback. Required unless `allowUnauthenticated` is `true` |
+| `allowUnauthenticated` | `boolean` | `false` | Explicitly allow operations without a SearchFn authorization callback |
+| `context` | `(request: Request) => TContext \| Promise<TContext>` | — | Build per-request context for the callback |
+| `observability` | `ObservabilityInput<SearchFnEvent>` | — | Structured logs and events |
 
 ### Server limits
 

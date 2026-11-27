@@ -6,7 +6,7 @@ import type { StorageAdapter } from '@superfunctions/storage';
 
 const FAKE_CAPABILITIES: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
-  operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: false },
+  operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: true },
   transactions: { supported: false, nested: false },
   performance: { supportsJoins: false, supportsPreparedStatements: false },
   schema: { migrations: false, constraints: false, indexes: false },
@@ -256,13 +256,27 @@ describe('@filefn/server shares', () => {
 
       const sharesService = createSharesService({ db, storage, namespace: 'filefn' });
 
+      // A past expiresAt is refused at creation, so let a valid link run out.
+      await expect(
+        sharesService.createShareLink(
+          { fileId: 'file_expired', expiresAt: new Date(Date.now() - 10000).toISOString() },
+          { principalId: 'owner_user' }
+        )
+      ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
       const { token } = await sharesService.createShareLink(
         {
           fileId: 'file_expired',
-          expiresAt: new Date(Date.now() - 10000).toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
         { principalId: 'owner_user' }
       );
+      const [share] = await db.findMany<{ tokenHash: string }>({ model: 'fileShares', where: [{ field: 'fileId', operator: 'eq', value: 'file_expired' }], namespace: 'filefn' });
+      await db.update({
+        model: 'fileShares',
+        where: [{ field: 'tokenHash', operator: 'eq', value: share.tokenHash }],
+        data: { expiresAt: new Date(Date.now() - 10000).toISOString() },
+        namespace: 'filefn',
+      });
 
       await expect(
         sharesService.downloadViaShareLink(token, { principalId: 'anonymous' })

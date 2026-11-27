@@ -24,7 +24,8 @@ Every SearchFn response is an envelope. Failures look like:
 | `LIMIT_EXCEEDED` | 400 | Query/limit/batch size above the server's configured max | Reduce request size or increase `limits` in `createSearchFnServer` | No |
 | `DFQL_ABORTED` | 499 | The caller aborted via `AbortSignal` before the operation completed | None — this is the expected outcome of cancellation | No |
 | `DFQL_UNSUPPORTED` | 400 | The adapter doesn't implement the requested operation or option | Check adapter capabilities; use a different adapter; drop the unsupported option | No |
-| `FORBIDDEN` | 403 | The `authorize` callback returned false | Verify credentials / role | No |
+| `FORBIDDEN` | 403 | The `authorize` callback denied the request or threw | Verify credentials and policy | No |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | The POST request did not declare JSON | Send `Content-Type: application/json` | No |
 | `INTERNAL` | 500 | Unexpected backend failure | Inspect logs; check backend health; retry with backoff | Yes |
 | `SEARCH_ADAPTER_DISPOSED` | 500 | Called any method after `dispose()` | Re-initialize the adapter before use | No |
 | `SEARCH_TIMEOUT` | 504 | Adapter operation exceeded its timeout | Increase the adapter's `queryTimeoutMs`; check backend latency | Yes |

@@ -4,15 +4,17 @@
     AvatarFallback,
     AvatarImage,
     Badge,
-    Menu,
-    MenuContent,
-    MenuGroupLabel,
-    MenuItem,
-    MenuSeparator,
-    MenuTrigger,
     HoverCard,
     HoverCardContent,
     HoverCardTrigger,
+    MenuContent,
+    MenuGroup,
+    MenuGroupLabel,
+    MenuItem,
+    MenuPositioner,
+    MenuRoot,
+    MenuSeparator,
+    MenuTrigger,
     Popover,
     PopoverContent,
     PopoverTrigger,
@@ -97,18 +99,22 @@
             </PopoverContent>
           </Popover>
 
-          <Menu items={memberActionItems}>
+          <MenuRoot items={memberActionItems}>
             <MenuTrigger class="primary-button" aria-label={`Open actions for ${member.name}`}>
               Actions
             </MenuTrigger>
-            <MenuContent class="floating-card">
-              <MenuGroupLabel value={member.id}>{member.name}</MenuGroupLabel>
-              <MenuSeparator value={`${member.id}-separator`} />
-              <MenuItem value="message">Message teammate</MenuItem>
-              <MenuItem value="review">Review example route</MenuItem>
-              <MenuItem value="share">Share status update</MenuItem>
-            </MenuContent>
-          </Menu>
+            <MenuPositioner class="menu-positioner">
+              <MenuContent class="floating-card">
+                <MenuGroupLabel value="member">{member.name}</MenuGroupLabel>
+                <MenuSeparator value="member" />
+                <MenuGroup value="member">
+                  {#each memberActionItems as action (action.id)}
+                    <MenuItem value={action.value}>{action.label}</MenuItem>
+                  {/each}
+                </MenuGroup>
+              </MenuContent>
+            </MenuPositioner>
+          </MenuRoot>
         </div>
       </article>
     {/each}

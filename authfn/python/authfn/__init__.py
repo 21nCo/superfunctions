@@ -1,6 +1,6 @@
 """Python contract surface for the multi-package authfn platform."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __author__ = "21n"
 __license__ = "MIT"
 

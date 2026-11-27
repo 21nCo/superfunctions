@@ -32,6 +32,8 @@ const apple = createAppleProvider({
 
 With `bundleId` and `appStoreServerApiKey`, the adapter signs its own App Store Server API tokens (ES256, reused until shortly before they expire) and verifies App Store Server Notifications itself. Both run on WebCrypto, so they work on Workers. `environment` defaults to `"production"`.
 
+StoreKit reads and Advanced Commerce calls have 30 seconds to receive the response and read its body. A StoreKit read that misses the deadline returns a retryable provider error. BillFn reports an Advanced Commerce rejection even if the body stalls. If Apple's cancellation endpoint returns HTTP 200 and the body stalls, BillFn reports the cancellation as applied. In that case, a signed StoreKit notification or sync updates the stored subscription state. A mutation timeout before the status, or a timeout reading a successful revocation's body, returns a non-retryable provider error because Apple may already have acted.
+
 ## Sandbox Purchases
 
 A sandbox or TestFlight purchase costs nothing, so a `"production"` deployment ignores the sandbox unless `allowSandbox: true` is set:

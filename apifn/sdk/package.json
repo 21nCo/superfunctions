@@ -1,6 +1,6 @@
 {
   "name": "@apifn/sdk",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Generate installable SDKs from ApiFn operation catalogs through deterministic target adapters",
   "type": "module",
   "main": "dist/index.cjs",
@@ -29,7 +29,7 @@
     "verify:packed": "node scripts/verify-packed-sdk.mjs"
   },
   "dependencies": {
-    "@apifn/contracts": "0.1.0",
+    "@apifn/contracts": "0.1.4",
     "ajv": "8.20.0"
   },
   "devDependencies": {
@@ -45,7 +45,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "apifn/sdk"
   },
   "publishConfig": {

@@ -3,6 +3,6 @@
   "private": true,
   "description": "Locked install of the published ApiFn CLI for the reusable api-check workflow.",
   "dependencies": {
-    "@apifn/cli": "0.0.2"
+    "@apifn/cli": "0.1.2"
   }
 }

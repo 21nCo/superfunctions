@@ -6,6 +6,7 @@ import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import { createHash, randomBytes } from 'crypto';
 import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
+import { isGrantExpired, parseIsoInstant } from '../authz/grant-expiry.js';
 import { isAnonymousContext, isFileOwner } from '../authz/ownership.js';
 
 export interface FileShareRecord {
@@ -23,6 +24,7 @@ export interface FileShareRecord {
 interface FilePermissionRecord {
   fileId: string;
   userId?: string | null;
+  role?: string | null;
   tenantId?: string | null;
   canShare?: boolean;
   expiresAt?: string | null;
@@ -34,6 +36,18 @@ export interface SharesServiceConfig {
   policies?: Pick<PolicyRegistry, 'get'>;
   namespace?: string;
   signedUrlTtlSeconds?: number;
+  /** Host limits on share links; see `FileFnConfig.shares`. */
+  options?: ShareLinkOptions;
+}
+
+export interface ShareLinkOptions {
+  /** Every new link requires the downloader to be signed in. */
+  requireAuth?: boolean;
+  /**
+   * Longest lifetime a link may have. A link created without `expiresAt` gets
+   * this lifetime; a later `expiresAt` is refused.
+   */
+  maxTtlSeconds?: number;
 }
 
 export interface CreateShareLinkInput {
@@ -52,19 +66,83 @@ function generateToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-function isGrantExpired(expiresAt: string | null | undefined): boolean {
-  if (!expiresAt) {
-    return false;
-  }
-  const expiresAtMs = Date.parse(expiresAt);
-  if (Number.isNaN(expiresAtMs)) {
-    return false;
-  }
-  return expiresAtMs <= Date.now();
+
+/** Longest `shares.maxTtlSeconds` (100 years), so every expiry stays within years 0001-9999. */
+const MAX_SHARE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
+
+// Share rows written before expiries were normalized hold the caller's text,
+// which older servers compared as a string with the current UTC ISO time, so
+// an offset was in effect ignored. The earlier of that reading and the parsed
+// instant applies: no stored link outlives the deadline it had.
+const TRAILING_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/;
+function shareDeadline(expiresAt: string): number | null {
+  const parsed = parseIsoInstant(expiresAt, 'utc');
+  if (parsed === null) return null;
+  const legacy = parseIsoInstant(expiresAt.replace(TRAILING_ZONE, ''), 'utc');
+  return legacy === null ? parsed : Math.min(parsed, legacy);
+}
+
+/** Whether a share link's `expiresAt` has passed; a malformed value counts as expired. */
+function isShareExpired(expiresAt: string | null | undefined): boolean {
+  if (expiresAt === null || expiresAt === undefined || expiresAt === '') return false;
+  const deadline = shareDeadline(expiresAt);
+  return deadline === null || deadline <= Date.now();
 }
 
 export function createSharesService(config: SharesServiceConfig) {
-  const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900 } = config;
+  const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900, options = {} } = config;
+  if (
+    options.maxTtlSeconds !== undefined &&
+    (!Number.isSafeInteger(options.maxTtlSeconds) || options.maxTtlSeconds < 1 || options.maxTtlSeconds > MAX_SHARE_TTL_SECONDS)
+  ) {
+    throw new Error(`shares.maxTtlSeconds must be a positive integer of at most ${MAX_SHARE_TTL_SECONDS}`);
+  }
+
+  function validateShareInput(input: CreateShareLinkInput): { expiresAt: string | null; maxDownloads: number | null; requiresAuth: boolean } {
+    // An empty versionId means the current version, as it always has (and as
+    // the Python server reads it).
+    if (input.versionId !== undefined && input.versionId !== null && typeof input.versionId !== 'string') {
+      throw errors.invalidRequest('versionId must be a version ID', { field: 'versionId' });
+    }
+    if (input.requiresAuth !== undefined && input.requiresAuth !== null && typeof input.requiresAuth !== 'boolean') {
+      throw errors.invalidRequest('requiresAuth must be a boolean', { field: 'requiresAuth' });
+    }
+    let maxDownloads: number | null = null;
+    if (input.maxDownloads !== undefined && input.maxDownloads !== null) {
+      if (!Number.isSafeInteger(input.maxDownloads) || input.maxDownloads < 1) {
+        throw errors.invalidRequest('maxDownloads must be a positive integer', { field: 'maxDownloads' });
+      }
+      maxDownloads = input.maxDownloads;
+    }
+    const now = Date.now();
+    let expiresAtMs: number | null = null;
+    // An empty string means no expiry, as it always has.
+    if (input.expiresAt !== undefined && input.expiresAt !== null && input.expiresAt !== '') {
+      expiresAtMs = parseIsoInstant(input.expiresAt, 'utc');
+      if (expiresAtMs === null) {
+        throw errors.invalidRequest('expiresAt must be an ISO 8601 date-time', { field: 'expiresAt' });
+      }
+      if (expiresAtMs <= now) {
+        throw errors.invalidRequest('expiresAt must be in the future', { field: 'expiresAt' });
+      }
+    }
+    if (options.maxTtlSeconds !== undefined) {
+      const latest = now + options.maxTtlSeconds * 1000;
+      if (expiresAtMs === null) {
+        expiresAtMs = latest;
+      } else if (expiresAtMs > latest) {
+        throw errors.invalidRequest(`expiresAt may be at most ${options.maxTtlSeconds} seconds away`, {
+          field: 'expiresAt',
+          maxTtlSeconds: options.maxTtlSeconds,
+        });
+      }
+    }
+    return {
+      expiresAt: expiresAtMs === null ? null : new Date(expiresAtMs).toISOString(),
+      maxDownloads,
+      requiresAuth: options.requireAuth === true || input.requiresAuth === true,
+    };
+  }
 
   async function getFile(fileId: string): Promise<FileRecord | null> {
     return db.findOne<FileRecord>({
@@ -74,7 +152,9 @@ export function createSharesService(config: SharesServiceConfig) {
     });
   }
 
-  async function canShareFile(file: FileRecord, ctx: FileProviderContext): Promise<boolean> {
+  // `allowRoleGrants`: role grants count only for creating links; revoking or
+  // listing keeps the owner/user/tenant rule.
+  async function canShareFile(file: FileRecord, ctx: FileProviderContext, allowRoleGrants = false): Promise<boolean> {
     if (isFileOwner(file, ctx)) {
       return true;
     }
@@ -92,17 +172,125 @@ export function createSharesService(config: SharesServiceConfig) {
       if (!grant?.canShare || isGrantExpired(grant.expiresAt)) {
         return false;
       }
-      return grant.userId === ctx.principalId || (grant.tenantId && grant.tenantId === ctx.tenantId);
+      if (grant.userId === ctx.principalId || (grant.tenantId && grant.tenantId === ctx.tenantId)) return true;
+      // A role grant, like an admin role, applies only within the file's tenant.
+      if (!allowRoleGrants) return false;
+      const roles = (ctx as { roles?: string[] }).roles;
+      return Boolean(grant.role && roles?.includes(grant.role) && (file.tenantId || null) === (ctx.tenantId || null));
     });
   }
 
-  async function incrementDownloads(tokenHash: string, currentDownloads: number): Promise<void> {
-    await db.update({
+  async function readShare(tokenHash: string): Promise<FileShareRecord | null> {
+    return db.findOne<FileShareRecord>({
       model: 'fileShares',
       where: [{ field: 'tokenHash', operator: 'eq', value: tokenHash }],
-      data: { downloads: currentDownloads + 1 },
       namespace,
     });
+  }
+
+  function assertShareUsable(share: FileShareRecord, ctx: { isAuthenticated?: boolean }): void {
+    if (share.revokedAt) {
+      throw errors.shareRevoked();
+    }
+    // Compared as instants: a stored value that is not an ISO 8601 date-time counts as expired.
+    if (isShareExpired(share.expiresAt)) {
+      throw errors.shareExpired();
+    }
+    if (share.maxDownloads !== null && share.maxDownloads !== undefined && share.downloads >= share.maxDownloads) {
+      throw errors.shareDownloadsExceeded();
+    }
+    if (share.requiresAuth && !ctx.isAuthenticated) {
+      throw errors.authRequired();
+    }
+  }
+
+  /**
+   * Writes downloads = `to` only while the count is still `from`, and reports
+   * whether this call's write landed. Adapters with RETURNING
+   * report it through `update` (a row back means written; not-found means the
+   * count moved). The others (Prisma, MySQL) read the row back after `update`
+   * with the same filter, which fails after a successful write, so their
+   * `updateMany` row count decides. Database errors propagate.
+   */
+  async function setDownloadsIf(tokenHash: string, from: number, to: number): Promise<boolean> {
+    const where = [
+      { field: 'tokenHash', operator: 'eq' as const, value: tokenHash },
+      { field: 'downloads', operator: 'eq' as const, value: from },
+    ];
+    const data = { downloads: to };
+    if (db.capabilities?.operations?.returning) {
+      try {
+        return Boolean(await db.update({ model: 'fileShares', where, data, namespace }));
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code;
+        const name = (error as { name?: unknown } | null)?.name;
+        if (code === 'ADAPTER_NOT_FOUND' || name === 'NotFoundError') return false;
+        throw error;
+      }
+    }
+    return (await db.updateMany({ model: 'fileShares', where, data, namespace })) > 0;
+  }
+
+  /**
+   * Counts one download and returns the count written. The write is
+   * conditional on the count read, so concurrent downloads can never exceed
+   * `maxDownloads`; a lost race re-reads the link and checks it again.
+   */
+  async function reserveDownload(
+    tokenHash: string,
+    share: FileShareRecord,
+    ctx: { isAuthenticated?: boolean },
+  ): Promise<number> {
+    let current = share;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      assertShareUsable(current, ctx);
+      if (await setDownloadsIf(tokenHash, current.downloads, current.downloads + 1)) return current.downloads + 1;
+      const reread = await readShare(tokenHash);
+      if (!reread) throw errors.shareNotFound();
+      current = reread;
+    }
+    // The last reread may show the link used up (or revoked) meanwhile: that is
+    // the answer, not a retryable conflict.
+    assertShareUsable(current, ctx);
+    throw new errors.FileFnError(
+      errors.ErrorCodes.SHARE_DOWNLOAD_CONFLICT,
+      'Too many concurrent downloads of this share link; retry',
+      409,
+      { retryable: true },
+    );
+  }
+
+  /**
+   * Gives back one download this request counted but could not hand out: the
+   * current count goes down by one with a conditional write, re-read and
+   * retried when another download moved it in between, so the release happens
+   * once whatever was counted since. Best effort: after repeated misses or a
+   * database error the link keeps the extra count (fails closed).
+   */
+  async function releaseDownload(tokenHash: string, written: number): Promise<void> {
+    let current = written;
+    try {
+      for (let attempt = 0; attempt < 20 && current > 0; attempt++) {
+        if (await setDownloadsIf(tokenHash, current, current - 1)) return;
+        const reread = await readShare(tokenHash);
+        if (!reread) return;
+        current = reread.downloads;
+      }
+    } catch {
+      // Fails closed: the link keeps the extra count.
+    }
+  }
+
+  /**
+   * Signed URL lifetime, taken just before signing: the configured TTL, but
+   * never past the link's own expiry. Null when less than a whole second is
+   * left.
+   */
+  function signedUrlLifetime(share: FileShareRecord): number | null {
+    const expiresAtMs = share.expiresAt ? shareDeadline(share.expiresAt) : null;
+    if (expiresAtMs === null) return signedUrlTtlSeconds;
+    const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
+    return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
   }
 
   async function resolveDownload(
@@ -111,32 +299,13 @@ export function createSharesService(config: SharesServiceConfig) {
   ): Promise<{ tokenHash: string; share: FileShareRecord; file: FileRecord; version: FileVersionRecord }> {
     const tokenHash = hashToken(token);
 
-    const share = await db.findOne<FileShareRecord>({
-      model: 'fileShares',
-      where: [{ field: 'tokenHash', operator: 'eq', value: tokenHash }],
-      namespace,
-    });
+    const share = await readShare(tokenHash);
 
     if (!share) {
       throw errors.shareNotFound();
     }
 
-    if (share.revokedAt) {
-      throw errors.shareRevoked();
-    }
-
-    const now = new Date().toISOString();
-    if (share.expiresAt && share.expiresAt < now) {
-      throw errors.shareExpired();
-    }
-
-    if (share.maxDownloads !== null && share.downloads >= share.maxDownloads) {
-      throw errors.shareDownloadsExceeded();
-    }
-
-    if (share.requiresAuth && !ctx.isAuthenticated) {
-      throw errors.authRequired();
-    }
+    assertShareUsable(share, ctx);
 
     const file = await getFile(share.fileId);
     if (!file) {
@@ -167,9 +336,21 @@ export function createSharesService(config: SharesServiceConfig) {
         throw errors.notFound('File');
       }
 
-      const canShare = await canShareFile(file, ctx);
+      const canShare = await canShareFile(file, ctx, true);
       if (!canShare) {
         throw errors.forbidden();
+      }
+
+      const limits = validateShareInput(input);
+      if (input.versionId) {
+        const version = await db.findOne<FileVersionRecord>({
+          model: 'fileVersions',
+          where: [{ field: 'versionId', operator: 'eq', value: input.versionId }],
+          namespace,
+        });
+        if (!version || version.fileId !== file.fileId) {
+          throw errors.notFound('Version');
+        }
       }
 
       const token = generateToken();
@@ -179,9 +360,9 @@ export function createSharesService(config: SharesServiceConfig) {
         tokenHash,
         fileId: input.fileId,
         versionId: input.versionId || null,
-        expiresAt: input.expiresAt || null,
-        requiresAuth: input.requiresAuth ?? false,
-        maxDownloads: input.maxDownloads ?? null,
+        expiresAt: limits.expiresAt,
+        requiresAuth: limits.requiresAuth,
+        maxDownloads: limits.maxDownloads,
         downloads: 0,
         createdAt: new Date().toISOString(),
         revokedAt: null,
@@ -203,17 +384,56 @@ export function createSharesService(config: SharesServiceConfig) {
       const { tokenHash, share, file, version } = await resolveDownload(token, ctx);
       const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
-      if (getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
-        const result = await storage.signDownloadUrl({
-          key: version.storageKey,
-          target: storageTarget,
-          expiresInSeconds: signedUrlTtlSeconds,
-          ...signedDownloadConstraints(version.mimeType),
-        });
-        await incrementDownloads(tokenHash, share.downloads);
-        return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
+      const capabilities = getStorageCapabilities(storage, storageTarget);
+      // Streaming is judged for the file's own storage target: a routed adapter
+      // has openDownloadStream even when that target can only sign.
+      const canStream = Boolean(storage.openDownloadStream) && capabilities.proxyStreamingDownload !== false;
+      const canSign = Boolean(capabilities.signedDownloadUrls && storage.signDownloadUrl);
+      // Under a second left: the checked proxy serves the link if it can.
+      if (canSign && (signedUrlLifetime(share) !== null || !canStream)) {
+        // Counted first, then signed with the lifetime left at that moment, so
+        // the URL starts no earlier than the count and ends no later than the
+        // link (plus the signer's own latency). A failed signing gives the
+        // count back.
+        const written = await reserveDownload(tokenHash, share, ctx);
+        const lifetime = signedUrlLifetime(share);
+        if (lifetime === null) {
+          await releaseDownload(tokenHash, written);
+          // Under a second left after counting: the proxy serves it if it can.
+          if (!canStream) throw errors.shareExpired();
+        } else {
+          let result: Awaited<ReturnType<NonNullable<StorageAdapter['signDownloadUrl']>>>;
+          try {
+            result = await storage.signDownloadUrl!({
+              key: version.storageKey,
+              target: storageTarget,
+              expiresInSeconds: lifetime,
+              ...signedDownloadConstraints(version.mimeType),
+            });
+          } catch (error) {
+            await releaseDownload(tokenHash, written);
+            throw error;
+          }
+          // Revoked or expired while signing: the URL is withheld. A failed
+          // read withholds it too, and gives the count back.
+          let after: FileShareRecord | null;
+          try {
+            after = await readShare(tokenHash);
+          } catch (error) {
+            await releaseDownload(tokenHash, written);
+            throw error;
+          }
+          if (!after || after.revokedAt || isShareExpired(after.expiresAt)) {
+            await releaseDownload(tokenHash, written);
+            if (!after) throw errors.shareNotFound();
+            throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
+          }
+          return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
+        }
       }
 
+      // Only a link that is still valid gets the proxy URL.
+      if (isShareExpired(share.expiresAt)) throw errors.shareExpired();
       return {
         url: `/proxy/share-links/${encodeURIComponent(token)}/download`,
         fileName: file.name,
@@ -232,8 +452,32 @@ export function createSharesService(config: SharesServiceConfig) {
         throw new Error('Storage adapter does not support streaming');
       }
 
+      // Opened first and handed out only once the download is counted, and the
+      // link is checked again after counting: one revoked or expired meanwhile
+      // gives the count back and hands nothing out.
       const stream = await storage.openDownloadStream({ key: version.storageKey, target: storageTarget });
-      await incrementDownloads(tokenHash, share.downloads);
+      try {
+        const written = await reserveDownload(tokenHash, share, ctx);
+        let after: FileShareRecord | null;
+        try {
+          after = await readShare(tokenHash);
+        } catch (error) {
+          await releaseDownload(tokenHash, written);
+          throw error;
+        }
+        if (!after || after.revokedAt || isShareExpired(after.expiresAt)) {
+          await releaseDownload(tokenHash, written);
+          if (!after) throw errors.shareNotFound();
+          throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
+        }
+      } catch (error) {
+        // Not awaited: a stream that never settles must not hold the error back.
+        const unread = stream as unknown as { cancel?: () => unknown; destroy?: () => unknown };
+        void Promise.resolve()
+          .then(() => (unread.cancel ? unread.cancel() : unread.destroy?.()))
+          .catch(() => {});
+        throw error;
+      }
 
       return {
         stream: stream as unknown as ReadableStream,

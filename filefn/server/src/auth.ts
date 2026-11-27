@@ -1,3 +1,10 @@
+declare module '@superfunctions/files' {
+  interface FileProviderContext {
+    /** Roles of the principal, as `auth` resolved them; role grants and admin roles match against these. */
+    roles?: string[];
+  }
+}
+
 export interface FileFnPrincipal {
   principalId: string;
   tenantId?: string;

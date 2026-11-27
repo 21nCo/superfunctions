@@ -14,10 +14,23 @@ const DEFAULT_CANDIDATES = [
 
 const SUPPORTED_EXTENSIONS = new Set([".ts", ".js", ".mjs", ".cjs", ".json"]);
 
+/** Extensions the loader runs as code (TS through Jiti, the rest through `import()`). */
+const EXECUTABLE_EXTENSIONS = new Set([".ts", ".js", ".mjs", ".cjs"]);
+
+/**
+ * How `loadConfig` treats config files that run code.
+ *
+ * - `"executable"` (the default, unchanged): discovery and explicit paths load TS, JS, MJS, CJS and JSON.
+ * - `"data-only"`: discovery considers only `.json` candidates, and an explicit TS, JS, MJS or CJS path is rejected
+ *   with `CLIFN_CONFIG_UNTRUSTED` before it is imported unless `trustExecutableConfig` is `true`.
+ */
+export type ConfigLoaderPolicy = "executable" | "data-only";
+
 export type ConfigLoaderErrorCode =
   | "CLIFN_CONFIG_INVALID"
   | "CLIFN_CONFIG_NOT_FOUND"
-  | "CLIFN_CONFIG_UNSUPPORTED";
+  | "CLIFN_CONFIG_UNSUPPORTED"
+  | "CLIFN_CONFIG_UNTRUSTED";
 
 export class ConfigLoaderError extends Error {
   readonly code: ConfigLoaderErrorCode;
@@ -35,6 +48,14 @@ export interface ConfigLoaderOptions<T> {
   candidates?: readonly string[];
   exportNames?: readonly string[];
   validate?: (value: unknown, path: string) => T;
+  /** Defaults to `"executable"`. Any other value throws `CLIFN_CONFIG_INVALID` before a file is read. */
+  policy?: ConfigLoaderPolicy;
+  /**
+   * The host's explicit, non-interactive trust signal for running an explicit `configPath` that is TS, JS, MJS or
+   * CJS under the `"data-only"` policy, such as a `--trust-config` flag the user passed. Only the boolean `true`
+   * trusts; the loader never prompts. Discovery stays JSON-only either way, and the `"executable"` policy ignores it.
+   */
+  trustExecutableConfig?: boolean;
 }
 
 export interface LoadedConfig<T> {
@@ -52,12 +73,48 @@ function ensureLocalPath(value: string): void {
   }
 }
 
-function resolveCandidates(options: ConfigLoaderOptions<unknown>): readonly string[] {
-  if (options.configPath) {
-    return [options.configPath];
+function resolvePolicy(value: unknown): ConfigLoaderPolicy {
+  if (value === undefined || value === "executable") {
+    return "executable";
+  }
+  if (value === "data-only") {
+    return "data-only";
+  }
+  throw new ConfigLoaderError(
+    "CLIFN_CONFIG_INVALID",
+    'Unknown config loader policy. Use "executable" or "data-only".'
+  );
+}
+
+function configExtension(value: string): string {
+  return path.extname(value).toLowerCase();
+}
+
+function untrustedExplicitConfig(configPath: string): ConfigLoaderError {
+  return new ConfigLoaderError(
+    "CLIFN_CONFIG_UNTRUSTED",
+    `Refusing to run executable config ${configPath}: the data-only config policy loads JSON only. ` +
+      "Use a .json config, or rerun with the CLI's explicit trust option to run this file."
+  );
+}
+
+function untrustedDiscoveredConfig(candidate: string): ConfigLoaderError {
+  return new ConfigLoaderError(
+    "CLIFN_CONFIG_UNTRUSTED",
+    `Found executable config ${candidate} but the data-only config policy loads JSON only. ` +
+      "Convert it to a .json config, or pass it as the explicit config path with the CLI's explicit trust option."
+  );
+}
+
+function resolveCandidates(
+  configPath: string | undefined,
+  customCandidates: readonly string[] | undefined
+): readonly string[] {
+  if (configPath) {
+    return [configPath];
   }
 
-  const candidates = options.candidates && options.candidates.length > 0 ? [...options.candidates] : [...DEFAULT_CANDIDATES];
+  const candidates = customCandidates && customCandidates.length > 0 ? [...customCandidates] : [...DEFAULT_CANDIDATES];
   if (candidates.length > 32) {
     throw new ConfigLoaderError("CLIFN_CONFIG_INVALID", "Config candidate list exceeds the limit of 32 entries.");
   }
@@ -134,14 +191,34 @@ export function defineConfig<T>(config: T): T {
 }
 
 export async function loadConfig<T>(options: ConfigLoaderOptions<T> = {}): Promise<LoadedConfig<T>> {
+  const dataOnly = resolvePolicy(options.policy) === "data-only";
+  // Read once, so the path that decides trust is the path that is loaded.
+  const configPath = options.configPath;
+  const trusted = options.trustExecutableConfig === true;
   const cwd = options.cwd ?? process.cwd();
-  const candidates = resolveCandidates(options);
+  const candidates = resolveCandidates(configPath, options.candidates);
   const exportNames = options.exportNames ?? [];
+  let skippedExecutable: string | undefined;
 
   for (const candidate of candidates) {
     ensureLocalPath(candidate);
 
     const resolvedPath = path.isAbsolute(candidate) ? candidate : path.resolve(cwd, candidate);
+    // Classified by the same extension `loadModuleConfig` dispatches on, before the file is checked or imported.
+    const extension = configExtension(resolvedPath);
+    const executable = dataOnly && EXECUTABLE_EXTENSIONS.has(extension);
+    if (executable && configPath && !trusted) {
+      throw untrustedExplicitConfig(configPath);
+    }
+
+    // Data-only discovery considers only JSON; an executable candidate is only checked for, to name it in the error.
+    if (dataOnly && !configPath && extension !== ".json") {
+      if (executable && existsSync(resolvedPath)) {
+        skippedExecutable ??= candidate;
+      }
+      continue;
+    }
+
     if (!existsSync(resolvedPath)) {
       continue;
     }
@@ -163,12 +240,21 @@ export async function loadConfig<T>(options: ConfigLoaderOptions<T> = {}): Promi
     }
   }
 
-  if (options.configPath) {
-    throw new ConfigLoaderError("CLIFN_CONFIG_NOT_FOUND", `Config file not found: ${options.configPath}`);
+  if (configPath) {
+    throw new ConfigLoaderError("CLIFN_CONFIG_NOT_FOUND", `Config file not found: ${configPath}`);
   }
 
+  if (skippedExecutable !== undefined) {
+    throw untrustedDiscoveredConfig(skippedExecutable);
+  }
+
+  const checked = dataOnly
+    ? candidates.filter((candidate) => configExtension(path.resolve(cwd, candidate)) === ".json")
+    : candidates;
   throw new ConfigLoaderError(
     "CLIFN_CONFIG_NOT_FOUND",
-    `Config file not found. Checked: ${candidates.join(", ")}`
+    checked.length > 0
+      ? `Config file not found. Checked: ${checked.join(", ")}`
+      : "Config file not found. The data-only config policy checks only .json candidates, and none were given."
   );
 }

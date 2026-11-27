@@ -23,6 +23,7 @@ import { SEARCH_DB_URL } from "$env/static/private";
 
 const adapter = new PostgresAdapter({ connectionString: SEARCH_DB_URL });
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });

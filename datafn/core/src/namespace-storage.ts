@@ -32,6 +32,7 @@ export const NAMESPACE_STORAGE_LOGICAL_ROLES = [
   "idempotency",
   "seed",
   "permission_directory_outbox",
+  "revisions",
 ] as const;
 
 export type NamespaceStorageLogicalRole =
@@ -167,6 +168,14 @@ export const DATAFN_NAMESPACE_STORAGE_MANIFEST = {
       operations: TENANT_ROW_OPERATIONS,
       copyOrder: 430,
       description: "Per-namespace seed execution records.",
+    },
+    {
+      logicalRole: "revisions",
+      selectorKind: "internal_namespace",
+      presence: "on-demand",
+      operations: TENANT_ROW_OPERATIONS,
+      copyOrder: 440,
+      description: "Per-record revisions, kept as tombstones after deletes and never pruned.",
     },
     {
       logicalRole: "permission_directory_outbox",

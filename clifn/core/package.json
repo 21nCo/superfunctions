@@ -1,6 +1,6 @@
 {
   "name": "@clifn/core",
-  "version": "0.3.0",
+  "version": "0.7.0",
   "description": "Reusable CLI primitives runtime for the Superfunctions ecosystem",
   "type": "module",
   "main": "./dist/index.js",
@@ -65,6 +65,14 @@
     "./paths": {
       "types": "./dist/paths.d.ts",
       "import": "./dist/paths.js"
+    },
+    "./terminal": {
+      "types": "./dist/terminal.d.ts",
+      "import": "./dist/terminal.js"
+    },
+    "./update-check": {
+      "types": "./dist/update-check.d.ts",
+      "import": "./dist/update-check.js"
     }
   },
   "engines": {
@@ -93,7 +101,9 @@
     "credentials",
     "config",
     "paths",
-    "stdio"
+    "terminal",
+    "stdio",
+    "update-check"
   ],
   "author": "21n",
   "license": "MIT",

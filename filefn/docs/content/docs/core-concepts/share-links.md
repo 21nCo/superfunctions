@@ -27,7 +27,7 @@ curl -X POST https://example.com/filefn/file_xyz/share-links \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }'
@@ -41,7 +41,7 @@ Response:
   "data": {
     "token": "shr_live_<random>",
     "url": "https://example.com/filefn/share-links/shr_live_<random>/download",
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59.000Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }
@@ -88,8 +88,9 @@ After revoke, the token returns `FILEFN_SHARE_REVOKED` (HTTP 410).
 | `FILEFN_SHARE_EXPIRED` | The current time is past `expiresAt`. |
 | `FILEFN_SHARE_REVOKED` | The token was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | `maxDownloads` was reached. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | Too many concurrent downloads of the link; retry. |
 
-All return HTTP 410 except `NOT_FOUND` (404). They're indistinguishable on purpose — clients that try a guessed token see "not found" instead of "exists but expired," which avoids leaking enumeration signal.
+All return HTTP 410 except `NOT_FOUND` (404) and `SHARE_DOWNLOAD_CONFLICT` (409). Retry a 409, treat a 410 as final, and read a 404 as no matching link. A token that matches no link gets 404 (once the request is past the rate limit, which answers 429 first), never one of the 410s, so trying tokens reveals nothing about links that exist.
 
 ## What share links don't do
 

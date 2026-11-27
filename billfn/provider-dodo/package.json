@@ -1,6 +1,6 @@
 {
   "name": "@billfn/provider-dodo",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Dodo provider adapter for billfn",
   "type": "module",
   "main": "./dist/index.js",

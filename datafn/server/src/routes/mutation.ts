@@ -142,7 +142,7 @@ export function createMutationHandler(
         });
         if (!validationResult.ok) {
           // VAL-009: In production (debug: false), strip field/schema details from messages
-          const debug = handlerOpts?.debug ?? true;
+          const debug = handlerOpts?.debug ?? false;
           const message = debug ? validationResult.error.message : "Validation error";
           return errorResponse({
             code: validationResult.error.code,
@@ -197,6 +197,7 @@ export function createMutationHandler(
 
         // Create change tracking service with user/tenant namespace and optional sequence store
         const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+        changeTracking.useRevisionsOf(validatedSchema);
 
         // Process each mutation
         timer?.startPhase("guard");

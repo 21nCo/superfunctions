@@ -1,24 +1,58 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import createCalculatorServer from "./calculator-server.js";
 
+const MAX_BODY_BYTES = 1_048_576;
+
+/** The request body, or undefined once it exceeds MAX_BODY_BYTES (the rest is discarded). */
+function readBody(request: IncomingMessage): Promise<ReturnType<typeof Buffer.concat> | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) {
+        request.off("data", onData);
+        request.resume();
+        resolve(undefined);
+        return;
+      }
+      chunks.push(buffer);
+    };
+    request.on("data", onData);
+    request.once("end", () => resolve(size > MAX_BODY_BYTES ? undefined : Buffer.concat(chunks)));
+    request.once("error", reject);
+  });
+}
+
 const mcp = createCalculatorServer();
+// The handler refuses browser requests whose Origin is not listed (DNS
+// rebinding); the Host check below also refuses rebound names that send none.
 const handler = await mcp.createWebStandardHandler({ enableJsonResponse: true });
 
 const httpServer = createServer(async (request, response) => {
   try {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+    // A local server answers only to loopback names. A DNS-rebinding page
+    // reaches 127.0.0.1 under its own host name, which this refuses.
+    const host = request.headers.host ?? "";
+    if (!/^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(host)) {
+      response.writeHead(403).end("Forbidden host");
+      return;
+    }
+    const url = new URL(request.url ?? "/", `http://${host}`);
     if (url.pathname !== "/mcp") {
       response.writeHead(404).end("Not found");
       return;
     }
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const body = await readBody(request);
+    if (!body) {
+      // Let the queued 413 flush; "connection: close" ends the socket after it.
+      response.writeHead(413, { connection: "close" }).end("Payload too large");
+      return;
     }
-    const body = Buffer.concat(chunks);
     const webRequest = new Request(url, {
       method: request.method,
       headers: new Headers(

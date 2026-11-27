@@ -92,7 +92,7 @@ When working in a repo with @searchfn/* dependencies:
 - Errors follow envelopes: { ok: true, result } or { ok: false, error: { code, message } }.
 
 Patterns to copy:
-- Server bootstrap: createSearchFnServer({ adapter, basePath, authorize, logger })
+- Server bootstrap: createSearchFnServer({ adapter, basePath, authorize, observability })
 - Client bootstrap: createSearchClient({ adapter, defaults })
 - Provider bootstrap: createSearchProvider(adapter, { resourceFields })
 ```
@@ -577,7 +577,7 @@ The server wraps all responses in a canonical envelope:
 ### External backends (Postgres / Meilisearch / ES)
 
 1. **Validation** — client or server validates the request shape and limits.
-2. **Authorization** — server checks the `authorize` callback (if configured).
+2. **Authorization** — the server checks the `authorize` callback unless the application explicitly opts into `allowUnauthenticated` mode.
 3. **Delegation** — the request is translated into the backend's native API.
 4. **Response** — backend results are mapped back to SearchFn's response format.
 
@@ -950,6 +950,7 @@ import { createSearchFnServer } from "@searchfn/server";
 import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const server = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter: new MemoryAdapter(),
   basePath: "/searchfn",
 });
@@ -1145,7 +1146,7 @@ Pick your runtime. Each guide installs the right packages, picks a sensible defa
 A SearchFn deployment is three layers:
 
 1. **An adapter** — picks where the index lives.
-2. **A server** — `createSearchFnServer({ adapter, basePath, ... })` mounted onto your HTTP framework.
+2. **A server** — `createSearchFnServer({ adapter, basePath, authorize })` mounted onto your HTTP framework. The local demos opt out of authorization. Configure your application policy before exposing these routes to other users.
 3. **A client** — either the SearchFn client SDK (`@searchfn/client`) or the DataFn search provider (`@searchfn/datafn-provider`) if you're using DataFn.
 
 The Quickstart pages stitch all three for your framework, but each layer is independently swappable. You can change adapters without changing client code, and you can switch from direct client use to the DataFn provider without changing the server.
@@ -1291,9 +1292,14 @@ class DualAdapter implements SearchAdapter {
 
 Wire it in:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const adapter = new DualAdapter(oldAdapter, newAdapter);
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -1360,6 +1366,7 @@ Or remove the dual wrapper entirely:
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter: newAdapter,                              // direct
   basePath: "/searchfn",
 });
@@ -2483,11 +2490,15 @@ The package ships with prebuilt WASM artifacts in `dist/`. You don't need Rust i
 
 ## Use as an adapter
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { WasmCoreAdapter } from "@searchfn/core-wasm";
 
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter: new WasmCoreAdapter({
     // mirror IndexedDbAdapter options: bm25, normalization, cache, etc.
   }),
@@ -2629,6 +2640,7 @@ The WASM adapter is API-compatible with the TS core adapter for the same operati
 + import { WasmCoreAdapter } from "@searchfn/core-wasm";
 
   const sf = await createSearchFnServer({
+    authorize: authorizeSearchRequest,
 -   adapter: new IndexedDbAdapter({ dbName: "search" }),
 +   adapter: new WasmCoreAdapter({}),
   });
@@ -3337,9 +3349,12 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 
 ## Setup
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // worker.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { MeilisearchAdapter } from "@searchfn/adapter-meilisearch";
 
 interface Env {
@@ -3356,6 +3371,7 @@ async function getServer(env: Env) {
       apiKey: env.MEILI_API_KEY,
     });
   sf = await createSearchFnServer({
+    authorize: authorizeSearchRequest,
     adapter,
     basePath: "/searchfn",
   });
@@ -3410,7 +3426,6 @@ async function getServer(env: Env) {
   sf = await createSearchFnServer({
     adapter,
     basePath: "/searchfn",
-    // Without authorize, anyone can call /searchfn/index, /remove and /clear.
     // This Worker serves reads only; index from your own authenticated code with adapter.index().
     authorize: (_ctx, action) => action === "status" || action === "search" || action === "searchAll",
   });
@@ -3528,6 +3543,7 @@ For per-tenant isolation backed by Durable Objects:
 
 ```typescript
 import { DurableObject } from "cloudflare:workers";
+import { authorizeSearchRequest } from "./search-authorization.js";
 
 export class TenantSearch extends DurableObject {
   private sf: Awaited<ReturnType<typeof createSearchFnServer>> | null = null;
@@ -3540,6 +3556,7 @@ export class TenantSearch extends DurableObject {
           indexPrefix: `tenant-${this.ctx.id.toString()}_`,
         });
       this.sf = await createSearchFnServer({
+        authorize: authorizeSearchRequest,
         adapter,
         basePath: "/searchfn",
       });
@@ -3748,7 +3765,7 @@ primary_region = "iad"
   timeout = "5s"
 ```
 
-The `status` endpoint doubles as the health check.
+The `status` endpoint doubles as the health check. Allow the Fly health check in your policy before deploying.
 
 ## Postgres
 
@@ -3759,8 +3776,11 @@ fly postgres attach my-searchfn-db --app my-searchfn
 
 Fly injects `DATABASE_URL` into the app. The example reads that variable directly; resource initialization must use the same database.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import express from "express";
 import { toExpress } from "@superfunctions/http-express";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
@@ -3769,7 +3789,7 @@ const adapter = new PostgresAdapter({
   connectionString: process.env.DATABASE_URL!,
 });
 
-const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+const sf = await createSearchFnServer({ adapter, basePath: "/searchfn", authorize: authorizeSearchRequest });
 await adapter.initialize({ resources: [{ name: "articles", searchFields: ["title", "body"] }] });
 
 const server = express();
@@ -4073,15 +4093,19 @@ Railway's templated Postgres + auto-deploy fit SearchFn well.
 
 ## Server code
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createServer } from "node:http";
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({
     connectionString: process.env.DATABASE_URL!,
   });
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -4134,7 +4158,7 @@ Railway has a one-click Meilisearch template. After deploying it:
 
 ## Health check
 
-In the Railway service settings, set the health check path to `/searchfn/status`. Railway auto-restarts unhealthy instances.
+In the Railway service settings, set the health check path to `/searchfn/status`. Allow this health check in your policy before deploying.
 
 ## See also
 
@@ -4275,9 +4299,12 @@ Vercel runs SearchFn well if you pick an external adapter (Postgres, Meilisearch
 
 ## Next.js App Router
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // app/searchfn/[...path]/route.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "../../../search-authorization";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 let sfPromise: ReturnType<typeof createSearchFnServer> | null = null;
@@ -4288,6 +4315,7 @@ function getServer() {
         connectionString: process.env.SEARCH_DB_URL!,
       });
     sfPromise = createSearchFnServer({
+      authorize: authorizeSearchRequest,
       adapter,
       basePath: "/searchfn",
     }).then(async (sf) => {
@@ -4361,12 +4389,15 @@ Vercel's logs are Datadog-flavoured by default. Send structured JSON; Vercel par
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: () => {},
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: () => {},
+    },
   },
 });
 ```
@@ -5084,26 +5115,16 @@ The query touched documents from other tenants. The scoring, IDF, and term frequ
 
 ## Authorize as the enforcement layer
 
-Even with resource-name isolation, the `authorize` callback must cross-check the resource against the caller's tenant:
+Check each target against the tenant's exact resource names in a trusted provisioning registry. Ensure the provisioned names map to distinct physical tables or indexes, or put tenants in separate backend namespaces.
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
-  if (!session) return false;
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
+  if (!session?.user.tenantId) return false;
+  if (action === "status") return false;
 
-  const resources = collectResources(payload);
-  return resources.every((r) => resourceBelongsToTenant(r, session.user.tenantId));
-}
-
-function collectResources(payload: any): string[] {
-  if (payload.resource) return [payload.resource];
-  if (payload.resources) return payload.resources;
-  return [];
-}
-
-function resourceBelongsToTenant(resource: string, tenantId: string): boolean {
-  const parts = resource.split(":");
-  return parts.length === 2 && parts[1] === tenantId;
+  const allowed = new Set(await getProvisionedSearchResources(session.user.tenantId));
+  return resources.every((resource) => allowed.has(resource));
 }
 ```
 
@@ -5111,27 +5132,23 @@ A malicious tenant who tries `resource: "articles:other-tenant"` gets `FORBIDDEN
 
 ## Logging
 
-Every cross-tenant attempt is a potential incident. Log them:
+Record denial events with `observability.logger`. Emit any tenant-specific audit record from the policy, where verified identity and the target list are both available.
 
 ```typescript
-logger: {
-  warn: (msg, ctx) => {
-    if (msg === "authorization.denied" && ctx.crossTenant) {
-      pagerduty.send({
-        severity: "high",
-        title: "Cross-tenant search attempt",
-        ...ctx,
-      });
-    }
+observability: {
+  logger: {
+    warn: (message, context) => {
+      if (message === "authorization.denied") audit({ operation: context?.operation });
+    },
   },
-}
+},
 ```
 
 ## Backend-specific notes
 
 ### Postgres
 
-`PostgresAdapter` writes resources to separate tables (`_searchfn_articles_tenant_a`, `_searchfn_articles_tenant_b`). Row-level security isn't needed — the rows are physically separate.
+`PostgresAdapter` derives physical table names from the resource name. Use resource names whose lowercase letters, digits, and underscores remain unique after normalization, or use separate databases or schemas for tenants.
 
 ### Meilisearch
 
@@ -5139,7 +5156,7 @@ Each resource becomes a Meili index. Indices are independent; an API key can be 
 
 ### Elasticsearch / OpenSearch
 
-Each resource becomes an ES index. Use ES's [API key with index-scoped privileges](https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api-create-api-key.html) for defense-in-depth.
+The adapters normalize resource names when deriving index names. Use names that stay unique after normalization, and scope credentials to the corresponding indexes with [index-scoped privileges](https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api-create-api-key.html).
 
 ### IndexedDB
 
@@ -5147,7 +5164,7 @@ Per-user isolation in the browser is implicit (different users = different brows
 
 ## Audit before launch
 
-- Search for `payload.resource` and `payload.resources` references in your `authorize` — make sure they're inspected.
+- Check every entry in the validated `resources` argument in your `authorize` callback.
 - Try a manual cross-tenant request in staging and confirm it returns `FORBIDDEN`.
 - Confirm the test catches a regression where someone removes the `authorize` check.
 
@@ -5181,8 +5198,13 @@ Without limits, a single malicious or buggy client can exhaust server memory by 
 
 ## Configuring
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,
@@ -5212,7 +5234,7 @@ If you need different limits per endpoint, run two SearchFn servers:
 const userSf = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
-  limits: { maxLimit: 50, maxIndexBatch: 0 }, // read-only for users
+  limits: { maxLimit: 50 },
   authorize: async (ctx, action) => action === "search" || action === "searchAll",
 });
 
@@ -5247,7 +5269,7 @@ Clients should treat this as a non-retryable client error — retrying won't hel
 
 ## HTTP framework limits
 
-SearchFn's `maxPayloadBytes` is checked **after** the request body has been read. To stop attacks before the body is read, configure your HTTP framework's body limit at the same value or slightly higher:
+SearchFn checks `maxPayloadBytes` while streaming the request body. Configure your HTTP framework's body limit too if it buffers requests before handing them to SearchFn:
 
 - Express: `express.json({ limit: "2mb" })`
 - Fastify: `Fastify({ bodyLimit: 2 * 1024 * 1024 })`
@@ -5255,7 +5277,7 @@ SearchFn's `maxPayloadBytes` is checked **after** the request body has been read
 
 ## Rate limiting
 
-Limits cap individual request size, not request rate. For per-user rate limits, use the `authorize` callback:
+For per-user rate limits on requests that pass parsing and resource validation, use the `authorize` callback:
 
 ```typescript
 import { Ratelimit } from "@upstash/ratelimit";
@@ -5263,15 +5285,16 @@ import { Ratelimit } from "@upstash/ratelimit";
 const indexLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(10, "1 m") });
 const searchLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(120, "1 m") });
 
-async function authorize(ctx, action) {
-  const userId = ctx.user?.id ?? ctx.ip;
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
+  if (!session || !(await passesAuth(session, action, resources))) return false;
   const limiter = action === "index" ? indexLimiter : searchLimiter;
-  const { success } = await limiter.limit(userId);
-  return success && passesAuth(ctx, action);
+  const { success } = await limiter.limit(session.user.id);
+  return success;
 }
 ```
 
-Rate-limit denials look like authorization failures (`FORBIDDEN`) — surface this as 429 if you want HTTP semantics correct.
+The callback returns `FORBIDDEN` on denial. Use a limiter before `router.handle` to count every request and return HTTP `429` when the limit is reached.
 
 ## See also
 
@@ -5385,14 +5408,16 @@ URL: https://searchfn.com/docs/documentation/security/request-authz
 Description: The authorize callback — how to write one, how to test it.
 --------------------------------------------------------------------------------
 
-`createSearchFnServer` accepts an `authorize` callback that's invoked before every action. It receives the request context, the action name, and the request payload:
+`createSearchFnServer` requires an `authorize` callback or an explicit `allowUnauthenticated: true` opt-in. Reserve the opt-in for local demos or deployments where an upstream service authorizes every operation. The callback receives the context, action, parsed payload, original request, and validated resource names.
+
+Define `authorizeSearchRequest` in your application using one of the policies below.
 
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
-    // return boolean
-  },
+  authorize: authorizeSearchRequest,
 });
 ```
 
@@ -5412,8 +5437,8 @@ When `authorize` returns `false`, the server responds with a `FORBIDDEN` envelop
 ## Worked example: role-based
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request) {
+  const session = await getSession(request);
   if (!session) return action === "status";
 
   switch (action) {
@@ -5434,12 +5459,10 @@ async function authorize(ctx, action, payload) {
 ## Worked example: per-resource ACL
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
   if (!session) return false;
-
-  const resource = (payload as { resource?: string }).resource;
-  const resources = (payload as { resources?: string[] }).resources ?? (resource ? [resource] : []);
+  if (action === "status") return false;
 
   for (const r of resources) {
     if (!(await userCanAccess(session.user, r, action))) return false;
@@ -5448,7 +5471,7 @@ async function authorize(ctx, action, payload) {
 }
 ```
 
-This handles both single-resource (`search`, `index`, etc.) and multi-resource (`searchAll`).
+The same policy checks every effective target for single-resource operations and `searchAll`. With authorization configured, `/search-all` requires a non-empty list of `resources`. Single-resource routes accept `resource`. The server rejects requests containing a scope field that the route does not use.
 
 ## Worked example: rate limiting
 
@@ -5460,8 +5483,8 @@ const limiter = new Ratelimit({
   limiter: Ratelimit.slidingWindow(60, "1 m"), // 60 req/min per user
 });
 
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request) {
+  const session = await getSession(request);
   if (!session) return false;
 
   const { success } = await limiter.limit(session.user.id);
@@ -5471,26 +5494,25 @@ async function authorize(ctx, action, payload) {
 }
 ```
 
-`authorize` is a flexible enough hook to be the only auth/limit layer if you want it to be.
+This limiter counts requests that pass body parsing and resource validation. Apply a request-wide limiter before `router.handle` to also count rejected requests.
 
-## ctx contents
+## Request and context
 
 ```typescript
-interface AuthorizeCtx {
-  request: Request;            // The original Request object
-  ip?: string;                 // Source IP, if your framework provides it
-  headers: Headers;            // Request headers
-  user?: unknown;              // Whatever you populated upstream
-  requestId?: string;
-}
+const sf = await createSearchFnServer({
+  adapter,
+  context: async (request) => ({ session: await getSession(request) }),
+  authorize: (ctx, action) => action === "status" || ctx.session?.user.role === "admin",
+});
 ```
 
-Anything that runs before SearchFn (auth middleware, CORS, etc.) can populate `ctx.user` for the callback to read.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. Its result is passed directly to the policy as `ctx`. The router's middleware and custom routes receive the route parameters, parsed URL and query parameters from the HTTP router. Without a factory, the policy also receives this router context. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 
 - **`authorize` returns `false`** → `FORBIDDEN` (403).
-- **`authorize` throws** → the `authorization.error` event is logged, then `INTERNAL` (500). The original error doesn't leak.
+- **`context` or `authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403). The response and event omit the underlying error details.
+- **A POST uses a non-JSON media type** → `UNSUPPORTED_MEDIA_TYPE` (415) before authorization. Send `Content-Type: application/json`.
 
 Treat `authorize` like any other async function — handle your own errors.
 
@@ -5506,12 +5528,11 @@ const sf = await createSearchFnServer({
   authorize: async (ctx, action) => action === "search",
 });
 
-const res = await sf.router.handle({
+const res = await sf.router.handle(new Request("http://test/searchfn/index", {
   method: "POST",
-  url: "http://test/searchfn/index",
-  headers: new Headers({ "content-type": "application/json" }),
-  body: JSON.stringify({ resource: "x", documents: [] }),
-});
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ resource: "docs", documents: [{ id: "doc-1", fields: { title: "Sample" } }] }),
+}));
 expect(res.status).toBe(403);
 ```
 
@@ -5520,19 +5541,15 @@ Inject the request directly into `router.handle` — no HTTP server needed.
 ## What to log on denial
 
 ```typescript
-logger: {
-  warn: (msg, ctx) => {
-    if (msg === "authorization.denied") {
-      audit({
-        userId: ctx.userId ?? "anonymous",
-        action: ctx.action,
-        resource: ctx.resource,
-        ip: ctx.ip,
-        at: Date.now(),
-      });
-    }
+observability: {
+  logger: {
+    warn: (message, context) => {
+      if (message === "authorization.denied") {
+        audit({ operation: context?.operation, adapter: context?.adapter, at: Date.now() });
+      }
+    },
   },
-}
+},
 ```
 
 Patterns like "100 denied search requests from one IP in 1 minute" are signals for a security alert.
@@ -5588,7 +5605,10 @@ logger.info("request.start", {
 
 For these you have to extend the redactor:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createRedactor } from "@searchfn/server";
 
 const customRedactor = createRedactor({
@@ -5597,10 +5617,13 @@ const customRedactor = createRedactor({
 });
 
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(msg, customRedactor(ctx)),
-    // ... etc
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(msg, customRedactor(ctx)),
+      // ... etc
+    },
   },
 });
 ```
@@ -6071,16 +6094,23 @@ Description: Structured logging, health checks, and failure classification for S
 
 ## Structured Logging
 
-Pass a `logger` to `createSearchFnServer` to receive structured log events for every operation:
+Pass `observability.logger` to `createSearchFnServer` to receive structured log events for every operation:
+
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
 
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+    },
   },
 });
 ```
@@ -6165,12 +6195,13 @@ Description: Authorization, secret handling, and credential management for Searc
 
 ## Authorization
 
-`createSearchFnServer` supports a per-action `authorize` callback. It is called before every operation with the request context, action name, and payload:
+`createSearchFnServer` requires a per-action `authorize` callback unless you explicitly set `allowUnauthenticated: true`. The callback receives the request context, action name, parsed payload, original request, and validated resource list.
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
+  context: async (request) => ({ user: await getVerifiedUser(request) }),
+  authorize: (ctx, action) => {
     if (action === "status") return true;
     if (action === "search" || action === "searchAll") return !!ctx.user;
     return ctx.user?.role === "admin";
@@ -6231,7 +6262,10 @@ Description: Deploy SearchFn in production with proper configuration, limits, an
 4. **Create the server** — use `createSearchFnServer()` to expose search over HTTP.
 5. **Mount the router** — attach the server router to your HTTP framework using a `@superfunctions/http` adapter.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
@@ -6242,6 +6276,7 @@ await adapter.initialize({
   resources: [{ name: "tasks", searchFields: ["title", "description"] }],
 });
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -6264,6 +6299,7 @@ The server enforces these limits by default. Override them in the `limits` confi
 
 ```typescript
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,
@@ -6432,9 +6468,9 @@ See [configuration reference](/docs/reference/configuration).
 Your `authorize` returned `false` or threw. Add structured logging:
 
 ```typescript
-authorize: async ({ method, resource, request }) => {
-  const result = await myAuthCheck(...);
-  if (!result) console.warn("denied", { method, resource });
+authorize: async (_ctx, action, _payload, request, resources) => {
+  const result = await myAuthCheck(request, action, resources);
+  if (!result) console.warn("denied", { action });
   return result;
 },
 ```
@@ -6535,6 +6571,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -6545,6 +6582,7 @@ await adapter.initialize({
 
 Bun.serve({
   port: 3000,
+  hostname: "127.0.0.1",
   fetch: async (req) => {
     if (new URL(req.url).pathname.startsWith("/searchfn/")) {
       return sf.router.handle(req);
@@ -6574,6 +6612,7 @@ For Bun on Fly or Railway:
 
 - Use `@searchfn/adapter-postgres` for persistence (in-memory loses state on every cold start).
 - Set up a tiny startup script to call `initialize()` against your resource list.
+- Replace the demo opt-in with an [authorization policy](/docs/documentation/security/request-authz).
 
 ## Next steps
 
@@ -6605,6 +6644,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -6617,7 +6657,7 @@ const app = express();
 app.use(express.raw({ type: "*/*", limit: "2mb" }));
 app.use(toExpress(sf.router));
 
-app.listen(3000);
+app.listen(3000, "127.0.0.1");
 ```
 
 ## 3. Index + search
@@ -6719,6 +6759,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -6731,7 +6772,7 @@ const app = Fastify({ bodyLimit: 2 * 1024 * 1024 });
 
 await app.register(toFastify(sf.router));
 
-await app.listen({ port: 3000 });
+await app.listen({ port: 3000, host: "127.0.0.1" });
 ```
 
 ## 3. Smoke test
@@ -6835,6 +6876,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -6848,10 +6890,10 @@ await adapter.initialize({
 const app = new Hono();
 
 app.all("/searchfn/*", (c) => sf.router.handle(c.req.raw));
-serve({ fetch: app.fetch, port: 3000 });
+serve({ fetch: app.fetch, port: 3000, hostname: "127.0.0.1" });
 ```
 
-The router consumes a Web `Request` and returns a Web `Response`; Hono exposes its incoming request as `c.req.raw`. This example starts a Node server explicitly. On Bun, use `Bun.serve({ fetch: app.fetch, port: 3000 })` instead of the Node server adapter.
+The router consumes a Web `Request` and returns a Web `Response`. Hono exposes its incoming request as `c.req.raw`. On Bun, use `Bun.serve({ fetch: app.fetch, port: 3000, hostname: "127.0.0.1" })`.
 
 ## 3. Run
 
@@ -6900,7 +6942,7 @@ const adapter = new PostgresAdapter({
 await adapter.initialize({
   resources: [{ name: "articles", searchFields: ["title", "body"] }],
 });
-const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+const sf = await createSearchFnServer({ adapter, basePath: "/searchfn", allowUnauthenticated: true });
 ```
 
 Initialize the same adapter instance passed to the server, before accepting requests. Keep the Hono routes and server startup from above. See the [Postgres adapter](/docs/reference/adapters/postgres) for provisioning details.
@@ -6938,6 +6980,7 @@ import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({ connectionString: process.env.SEARCH_DB_URL! });
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -7100,6 +7143,7 @@ import { SEARCH_DB_URL } from "$env/static/private";
 
 const adapter = new PostgresAdapter({ connectionString: SEARCH_DB_URL });
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -7292,79 +7336,50 @@ SearchFn's `authorize` callback is the gate between an HTTP request and the sear
 
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
-import { authFn } from "@authfn/server";
+import { hasScopes } from "authfn";
 
 const sf = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
-  authorize: async (ctx, action, payload) => {
-    const session = await authFn.getSession(ctx.request);
-    if (!session) return action === "status";
-
-    switch (action) {
-      case "status":
-      case "search":
-      case "searchAll":
-        return true; // any authenticated user
-      case "index":
-      case "remove":
-        return session.user.role === "editor" || session.user.role === "admin";
-      case "clear":
-        return session.user.role === "admin";
-      default:
-        return false;
-    }
+  authorize: async (_ctx, action, _payload, request) => {
+    if (action === "status") return true;
+    const session = await auth.provider.authenticate(request);
+    return !!session && canUseSearchAction(session, action);
   },
 });
 ```
 
-The `ctx.request` shape depends on your HTTP framework adapter — pass it through as-is so AuthFn can read cookies / Authorization headers.
+Use your configured AuthFn server as `auth` and implement `canUseSearchAction` with your application roles or permissions. The fourth argument is the original `Request`, including cookies and authorization headers.
 
 ## Per-resource authz
 
 If different resources have different access rules:
 
 ```typescript
-authorize: async (ctx, action, payload) => {
-  const session = await authFn.getSession(ctx.request);
-  if (!session) return false;
-
-  const resource = (payload as any).resource ?? (payload as any).resources?.[0];
-
-  if (resource === "admin_logs") {
-    return session.user.role === "admin";
+authorize: async (_ctx, action, _payload, request, resources) => {
+  const session = await auth.provider.authenticate(request);
+  if (!session || action === "status") return false;
+  for (const resource of resources) {
+    if (!(await canAccess(session, action, resource))) return false;
   }
-
-  // Default: any authenticated user
   return true;
 },
 ```
 
-For multi-resource `searchAll`, all requested resources have to pass:
-
-```typescript
-authorize: async (ctx, action, payload) => {
-  if (action === "searchAll") {
-    const resources = (payload as SearchAllParams).resources;
-    return resources.every((r) => canAccess(session, r));
-  }
-  // ...
-},
-```
+Define `canAccess` in your application. It must check the requested action for every resource.
 
 ## Per-tenant authz
 
 When resource names encode tenant (`articles:tenant-1`):
 
 ```typescript
-authorize: async (ctx, action, payload) => {
-  const session = await authFn.getSession(ctx.request);
-  if (!session) return false;
-
-  const resource = (payload as any).resource;
-  if (!resource) return false;
-  const [, tenantId] = resource.split(":");
-  return session.user.tenantId === tenantId;
+authorize: async (_ctx, action, _payload, request, resources) => {
+  const session = await auth.provider.authenticate(request);
+  if (!session || action === "status") return false;
+  const tenantId = await lookupTenantForSession(session);
+  if (!tenantId || !(await canUseSearchAction(session, action))) return false;
+  const allowed = new Set(await getProvisionedSearchResources(tenantId));
+  return resources.every((resource) => allowed.has(resource));
 },
 ```
 
@@ -7375,42 +7390,29 @@ This pairs with the [multi-tenant pattern](/docs/recipes/multi-tenant).
 For service accounts (background indexers, CI pipelines), pass a different credential:
 
 ```typescript
-authorize: async (ctx, action, payload) => {
-  const apiKey = ctx.request.headers.get("x-service-key");
-  if (apiKey === process.env.INDEXER_SERVICE_KEY && action === "index") {
-    return true;
-  }
-
-  const session = await authFn.getSession(ctx.request);
-  // ...
+authorize: async (_ctx, action, _payload, request) => {
+  if (action !== "index") return false;
+  const session = await auth.provider.authenticate(request);
+  return session?.type === "api-key" && hasScopes(session, "search:index", { registry: scopes });
 },
 ```
 
-Treat service keys as long-lived secrets — rotate, store in a secret manager, scope to specific actions.
+Use the `scopes` registry from your AuthFn configuration, register `search:index`, and grant it to the indexer's key. Rotate service keys and store them in a secret manager.
 
 ## Logging denied requests
 
-Failed authz attempts surface as `authorization.denied` events:
+Log policy denials through `observability.logger`:
 
 ```typescript
 const sf = await createSearchFnServer({
   adapter,
   authorize,
-  logger: {
-    warn: (msg, ctx) => {
-      if (msg === "authorization.denied") {
-        log({
-          level: "warn",
-          msg,
-          action: ctx.action,
-          userId: ctx.userId ?? "anonymous",
-          ip: ctx.ip,
-        });
-      }
+  observability: {
+    logger: {
+      warn: (msg, ctx) => {
+        if (msg === "authorization.denied") log({ msg, operation: ctx?.operation });
+      },
     },
-    info: () => {},
-    error: () => {},
-    debug: () => {},
   },
 });
 ```
@@ -7422,13 +7424,13 @@ Track repeated denies per IP as a signal for an alert.
 Mock the AuthFn session in your test setup:
 
 ```typescript
-import { authFn } from "@authfn/server";
-
-beforeEach(() => {
-  vi.spyOn(authFn, "getSession").mockResolvedValue({
-    user: { id: "u1", role: "editor", tenantId: "t1" },
-  });
-});
+vi.spyOn(auth.provider, "authenticate").mockResolvedValue(null);
+const response = await sf.router.handle(new Request("https://test.example/searchfn/search", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ resource: "docs", query: "sample" }),
+}));
+expect(response.status).toBe(403);
 ```
 
 ## See also
@@ -8529,17 +8531,17 @@ On the server, the `authorize` callback enforces which resources a caller can to
 ```typescript
 const sf = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
-    const requestedResource = payload.resource as string | undefined;
-    if (!requestedResource) return false;
-    const [base, tenantId] = requestedResource.split(":");
-    if (!tenantId) return false;
-    return ctx.user?.tenantId === tenantId;
+  context: async (request) => ({ session: await getSession(request) }),
+  authorize: async (ctx, action, _payload, _request, resources) => {
+    const tenantId = ctx.session?.user.tenantId;
+    if (!tenantId || action === "status") return false;
+    const allowed = new Set(await getProvisionedSearchResources(tenantId));
+    return resources.every((resource) => allowed.has(resource));
   },
 });
 ```
 
-This pairs with the per-tenant resource name pattern: the resource itself encodes the tenant, and `authorize` cross-references it against the session.
+Load the exact resource names registered for the tenant from a trusted provisioning registry. Provision distinct physical indexes or tables for each resource. See [multi-tenant isolation](/docs/documentation/security/multi-tenant-isolation).
 
 ## DataFn integration
 
@@ -10198,8 +10200,10 @@ This page is the canonical reference. The same fields appear in narrower pages w
 | `adapter` | `SearchAdapter` | — | Required. Backing adapter |
 | `basePath` | `string` | `"/searchfn"` | URL prefix for endpoints |
 | `limits` | `Partial<ServerLimits>` | see below | Override default limits |
-| `authorize` | `(ctx, action, payload) => boolean \| Promise<boolean>` | — | Authorization callback |
-| `logger` | `SearchFnLogger` | — | Structured logger (info/warn/error/debug) |
+| `authorize` | `(ctx, action, payload, request, resources) => boolean \| Promise<boolean>` | — | Authorization callback. Required unless `allowUnauthenticated` is `true` |
+| `allowUnauthenticated` | `boolean` | `false` | Explicitly allow operations without a SearchFn authorization callback |
+| `context` | `(request: Request) => TContext \| Promise<TContext>` | — | Build per-request context for the callback |
+| `observability` | `ObservabilityInput<SearchFnEvent>` | — | Structured logs and events |
 
 ### Server limits
 
@@ -10474,7 +10478,8 @@ Every SearchFn response is an envelope. Failures look like:
 | `LIMIT_EXCEEDED` | 400 | Query/limit/batch size above the server's configured max | Reduce request size or increase `limits` in `createSearchFnServer` | No |
 | `DFQL_ABORTED` | 499 | The caller aborted via `AbortSignal` before the operation completed | None — this is the expected outcome of cancellation | No |
 | `DFQL_UNSUPPORTED` | 400 | The adapter doesn't implement the requested operation or option | Check adapter capabilities; use a different adapter; drop the unsupported option | No |
-| `FORBIDDEN` | 403 | The `authorize` callback returned false | Verify credentials / role | No |
+| `FORBIDDEN` | 403 | The `authorize` callback denied the request or threw | Verify credentials and policy | No |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | The POST request did not declare JSON | Send `Content-Type: application/json` | No |
 | `INTERNAL` | 500 | Unexpected backend failure | Inspect logs; check backend health; retry with backoff | Yes |
 | `SEARCH_ADAPTER_DISPOSED` | 500 | Called any method after `dispose()` | Re-initialize the adapter before use | No |
 | `SEARCH_TIMEOUT` | 504 | Adapter operation exceeded its timeout | Increase the adapter's `queryTimeoutMs`; check backend latency | Yes |
@@ -10560,16 +10565,23 @@ SearchFn emits structured events from two surfaces: the TypeScript server's `log
 
 ## TypeScript server events
 
-Pass a `logger` to `createSearchFnServer`:
+Pass `observability.logger` to `createSearchFnServer`:
+
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
 
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+    },
   },
 });
 ```
@@ -10647,12 +10659,15 @@ Counts and metadata: resource names, query length, document count per index batc
 const dd = new TracingApi();
 
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => dd.send({ message: msg, ...ctx, service: "searchfn" }),
-    warn: (msg, ctx) => dd.send({ message: msg, level: "warn", ...ctx, service: "searchfn" }),
-    error: (msg, ctx) => dd.send({ message: msg, level: "error", ...ctx, service: "searchfn" }),
-    debug: () => {},
+  observability: {
+    logger: {
+      info: (msg, ctx) => dd.send({ message: msg, ...ctx, service: "searchfn" }),
+      warn: (msg, ctx) => dd.send({ message: msg, level: "warn", ...ctx, service: "searchfn" }),
+      error: (msg, ctx) => dd.send({ message: msg, level: "error", ...ctx, service: "searchfn" }),
+      debug: () => {},
+    },
   },
 });
 ```
@@ -10707,7 +10722,10 @@ Description: Expose SearchFn as an HTTP API with authorization, logging, and sec
 
 Use `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
@@ -10716,9 +10734,7 @@ const server = await createSearchFnServer({
     connectionString: process.env.SEARCH_DB_URL!,
   }),
   basePath: "/searchfn",
-  authorize: async (ctx, action, payload) => {
-    return ctx.user?.role === "admin" || action === "search" || action === "status";
-  },
+  authorize: authorizeSearchRequest,
 });
 
 // Mount server.router with your HTTP framework adapter
@@ -10731,8 +10747,10 @@ const server = await createSearchFnServer({
 | `adapter` | `SearchAdapter` | — | Required. The search adapter to use. |
 | `basePath` | `string` | `"/searchfn"` | URL prefix for all endpoints. |
 | `limits` | `Partial<ServerLimits>` | See below | Override default validation limits. |
-| `authorize` | `(ctx, action, payload) => boolean \| Promise<boolean>` | — | Per-action authorization callback. |
-| `logger` | `SearchFnLogger` | — | Custom structured logger. |
+| `authorize` | `(ctx, action, payload, request, resources) => boolean \| Promise<boolean>` | — | Per-action authorization callback. Required unless `allowUnauthenticated` is `true`. |
+| `allowUnauthenticated` | `boolean` | `false` | Explicitly allow operations without a SearchFn authorization callback. |
+| `context` | `(request: Request) => TContext \| Promise<TContext>` | — | Populate per-request context for the callback. |
+| `observability` | `ObservabilityInput<SearchFnEvent>` | — | Structured logs and events. |
 
 ### Server Limits
 
@@ -10747,7 +10765,7 @@ const server = await createSearchFnServer({
 
 ## Endpoints
 
-All endpoints are prefixed with the configured `basePath`.
+All endpoints are prefixed with the configured `basePath`. POST requests require `Content-Type: application/json`.
 
 ### `GET /searchfn/status`
 
@@ -10807,7 +10825,7 @@ Search a single resource.
 
 ### `POST /searchfn/search-all`
 
-Search across multiple resources.
+Search across multiple resources. When `authorize` is configured, send a non-empty `resources` list.
 
 **Request:**
 ```json
@@ -10861,12 +10879,13 @@ Clear all documents from a resource.
 
 ## Authorization
 
-The `authorize` callback is called before every operation. It receives the request context, action name, and request payload:
+The `authorize` callback receives the request context, action name, parsed payload snapshot, original request, and validated resource names before the adapter runs. Use the [authorization guide](/docs/documentation/security/request-authz) to check access to each target.
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
+  context: async (request) => ({ user: await getVerifiedUser(request) }),
+  authorize: (ctx, action) => {
     if (action === "status") return true;
     if (action === "search" || action === "searchAll") return !!ctx.user;
     return ctx.user?.role === "admin";
@@ -10887,16 +10906,14 @@ Denied requests return a `FORBIDDEN` error envelope.
 
 ## Structured Logging
 
-Pass a `logger` to receive structured log events for every operation:
+Pass an `observability.logger` to receive structured log events:
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(msg, ctx),
-    warn: (msg, ctx) => console.warn(msg, ctx),
-    error: (msg, ctx) => console.error(msg, ctx),
-    debug: (msg, ctx) => console.debug(msg, ctx),
+  authorize: authorizeSearchRequest,
+  observability: {
+    logger: console,
   },
 });
 ```

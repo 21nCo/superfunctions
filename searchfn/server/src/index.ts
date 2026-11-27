@@ -1,5 +1,6 @@
 export {
   createSearchFnServer,
+  type SearchFnAction,
   type SearchFnServer,
   type SearchFnServerConfig,
   type ServerContext,

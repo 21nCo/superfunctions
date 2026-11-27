@@ -54,6 +54,7 @@ The WASM adapter is API-compatible with the TS core adapter for the same operati
 + import { WasmCoreAdapter } from "@searchfn/core-wasm";
 
   const sf = await createSearchFnServer({
+    authorize: authorizeSearchRequest,
 -   adapter: new IndexedDbAdapter({ dbName: "search" }),
 +   adapter: new WasmCoreAdapter({}),
   });

@@ -79,7 +79,8 @@ fixtures are reviewed on every MCP SDK upgrade and at least once per quarter.
 
 | Vector | Expected result |
 | --- | --- |
-| No verified identity or no matching profile | canonical generic catalog and arguments |
+| No verified identity or no matching profile | canonical generic catalog and arguments, without tools any profile gives server-owned arguments; calling one answers like an unknown tool |
+| No matching profile with `unmatchedServerOwnedArguments: "allow"` | canonical generic catalog and arguments, server-owned fields passed through |
 | Self-reported client name without matching verified identity | no trusted profile selection |
 | Visibility-hidden tool with a profile transform | absent from both list and call |
 | Profile removes canonical required field and declares trusted enrichment | field absent from catalog and restored before canonical validation |

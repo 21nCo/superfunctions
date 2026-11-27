@@ -13,15 +13,19 @@ Railway's templated Postgres + auto-deploy fit SearchFn well.
 
 ## Server code
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createServer } from "node:http";
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({
     connectionString: process.env.DATABASE_URL!,
   });
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -74,7 +78,7 @@ Railway has a one-click Meilisearch template. After deploying it:
 
 ## Health check
 
-In the Railway service settings, set the health check path to `/searchfn/status`. Railway auto-restarts unhealthy instances.
+In the Railway service settings, set the health check path to `/searchfn/status`. Allow this health check in your policy before deploying.
 
 ## See also
 

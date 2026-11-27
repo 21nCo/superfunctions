@@ -6,6 +6,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     types: "src/types.ts",
+    "openapi-reference-context": "src/openapi/reference-context.ts",
     testfn: "src/integrations/testfn.ts",
   },
   format: ["cjs", "esm"],

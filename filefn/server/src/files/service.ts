@@ -17,6 +17,7 @@ import {
 } from '../processing/service.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 import { createImportObject } from './import.js';
+import { isGrantExpired } from '../authz/grant-expiry.js';
 import { isFileOwner } from '../authz/ownership.js';
 
 /** Kinds of the rows recording an artifact object no artifact row names (see the processing service). */
@@ -186,16 +187,6 @@ function isAfterCursor(file: FileRecord, cursor: CursorTuple): boolean {
   return file.fileId.localeCompare(cursor.fileId) > 0;
 }
 
-function isGrantExpired(expiresAt: string | null | undefined): boolean {
-  if (!expiresAt) {
-    return false;
-  }
-  const expiresAtMs = Date.parse(expiresAt);
-  if (Number.isNaN(expiresAtMs)) {
-    return false;
-  }
-  return expiresAtMs <= Date.now();
-}
 
 function tryParseCursor(cursor: string): CursorTuple | null {
   try {
@@ -846,7 +837,9 @@ export function createFileService(config: FileServiceConfig) {
 
       if (quota && totalBytesFreed > 0) {
         await quota.recordUsage({
-          principalId: file.ownerId,
+          // The reserved owner 'anonymous' is the provider's unset principal,
+          // the account its uploads were charged to.
+          principalId: file.ownerId && file.ownerId !== 'anonymous' ? file.ownerId : undefined,
           tenantId: file.tenantId ?? undefined,
           bytes: -totalBytesFreed,
         });

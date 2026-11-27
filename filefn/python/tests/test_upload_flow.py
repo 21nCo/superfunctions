@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from filefn.server import create_event_emitter, create_routed_storage_adapter
+from filefn.server import create_event_emitter, create_routed_storage_adapter, errors
 from filefn.server.policies import Policy, create_nucleus_policies, create_policy_registry
 from filefn.server.upload_sessions.service import (
     CreateSessionInput,
@@ -786,6 +786,666 @@ async def test_nucleus_policy_bundle_enforces_size_and_wildcard_types() -> None:
     assert getattr(exc_mime.value, "code", "") == "FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        "../../../../t1/alice/file_a/ver_a-a.png",
+        "..",
+        ".",
+        "a/b.png",
+        "a\\b.png",
+        "bad\x00name.png",
+        "   ",
+        "a" * 256,
+        # 254 ASCII characters and one emoji: 256 UTF-16 code units.
+        "a" * 254 + "\U0001f600",
+    ],
+)
+async def test_create_session_rejects_unsafe_file_names(file_name: str) -> None:
+    # FILE-30 F-01: a traversal name used to land in the storage key unchanged.
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName=file_name, size=3, mimeType="image/png"),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_negative_size() -> None:
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=-5, mimeType="image/png"),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_default_storage_key_sanitizes_tenant_and_principal() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a..b.png", size=3, mimeType="image/png"),
+        _ctx(principal_id="../alice", tenant_id="t1/.."),
+    )
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    assert key.startswith("t1%2F../%2E%2E%2Falice/")
+    assert all(segment not in (".", "..", "") for segment in key.split("/"))
+    # Dots inside a name are kept.
+    assert key.endswith("-a..b.png")
+
+
+def test_unsafe_storage_key_reason() -> None:
+    from filefn.server.policies import sanitize_storage_key_segment, unsafe_storage_key_reason
+
+    # The same encoding as the TypeScript server, so distinct IDs never share a segment.
+    assert sanitize_storage_key_segment("../a/b") == "%2E%2E%2Fa%2Fb"
+    assert sanitize_storage_key_segment(".") == "%2E"
+    assert sanitize_storage_key_segment("") == "%20"
+    assert sanitize_storage_key_segment("team/east") != sanitize_storage_key_segment("team_east")
+    assert sanitize_storage_key_segment("a%b") == "a%25b"
+    assert unsafe_storage_key_reason("a/../b") == "dot segment"
+    assert unsafe_storage_key_reason("acme.com/a..b") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"mimeType": "text"},
+        {"mimeType": "text/plain\x00"},
+        {"metadata": {"blob": "x" * (17 * 1024)}},
+        {"idempotencyKey": "k" * 256},
+        {"size": 2**53},
+        {"size": 1.5},
+    ],
+)
+async def test_create_session_validates_init_fields_like_typescript(override: Dict[str, Any]) -> None:
+    service = _make_service()
+    fields: Dict[str, Any] = {"policy": "user-avatar", "fileName": "a.png", "size": 3, "mimeType": "image/png"}
+    fields.update(override)
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(CreateSessionInput(**fields), _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+def test_create_session_input_refuses_coerced_sizes() -> None:
+    from pydantic import ValidationError
+
+    for size in ("12", True, None):
+        with pytest.raises(ValidationError):
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=size, mimeType="image/png")
+
+
+def test_default_storage_key_keeps_version_id_underscores() -> None:
+    from filefn.server.policies import PolicyStoragePathContext, compute_storage_path
+
+    policy = Policy(name="p")
+    a = compute_storage_path(policy, PolicyStoragePathContext(fileName="x", fileId="file_1", versionId="ver_a__b"))
+    b = compute_storage_path(policy, PolicyStoragePathContext(fileName="x", fileId="file_1", versionId="ver_a_b"))
+    assert a == "file_1/ver_a__b-x"
+    assert a != b
+
+
+
+def _nested(depth: int, leaf: Any) -> Any:
+    value: Any = leaf
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def test_metadata_size_counts_numbers_like_javascript() -> None:
+    from filefn.server.upload_sessions.service import _js_json
+
+    # Expected strings are what JSON.stringify returns for the same values.
+    assert _js_json({"n": 1.0, "m": [2.0, 2.5], "t": True, "z": None}) == '{"n":1,"m":[2,2.5],"t":true,"z":null}'
+    assert _js_json([1e-7, 1.5e-7, 0.000001, 1e21, 1e20, 5e-324, -0.0, 123.456]) == (
+        "[1e-7,1.5e-7,0.000001,1e+21,100000000000000000000,5e-324,0,123.456]"
+    )
+    # Integers are counted with every digit (they are stored as sent).
+    assert _js_json({"n": 10**21, "k": 2**53}) == '{"n":1000000000000000000000,"k":9007199254740992}'
+    assert _js_json({"s": "a\"b\n\u00e9"}) == '{"s":"a\\"b\\n\u00e9"}'
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_integral_float_size() -> None:
+    service = _make_service()
+    result = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3.0, mimeType="image/png"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"fileName": "a\ud800.png"},
+        {"fileName": "\ufeff"},
+        {"mimeType": "text/plain; x=\ud800"},
+        {"metadata": {"note": "x\udfff"}},
+        {"metadata": {"\ud800": 1}},
+        {"metadata": {"a": _nested(70, "\ud800")}},
+        {"metadata": {"a": _nested(40, "ok")}},
+        {"idempotencyKey": "k\ud800"},
+    ],
+)
+async def test_create_session_rejects_lone_surrogates(override: Dict[str, Any]) -> None:
+    # A lone surrogate is valid JSON but cannot be stored as text; both servers refuse it.
+    service = _make_service()
+    fields: Dict[str, Any] = {"policy": "user-avatar", "fileName": "a.png", "size": 3, "mimeType": "image/png"}
+    fields.update(override)
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(CreateSessionInput(**fields), _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_core_create_upload_session_maps_type_errors_to_invalid_request() -> None:
+    from filefn.server.core import FileFn
+
+    fake = SimpleNamespace(upload_service=_make_service())
+    for size in ("12", True):
+        with pytest.raises(Exception) as exc_info:
+            await FileFn.create_upload_session(  # type: ignore[arg-type]
+                fake, {"policy": "user-avatar", "fileName": "a.png", "size": size, "mimeType": "image/png"}, _ctx()
+            )
+        assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+def test_metadata_number_format_ignores_decimal_context() -> None:
+    import decimal
+
+    from filefn.server.upload_sessions.service import _js_json
+
+    with decimal.localcontext() as context:
+        context.prec = 3
+        assert _js_json([1.23456, 100.0, 1e-7]) == "[1.23456,100,1e-7]"
+
+
+@pytest.mark.asyncio
+async def test_metadata_with_huge_integers_is_counted_at_full_length() -> None:
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(
+                policy="user-avatar", fileName="a.png", size=3, mimeType="image/png",
+                metadata={"huge": [int("9" * 1000)] * 20},
+            ),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_metadata_numbers_are_stored_as_sent() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    huge = int("9" * 100)
+    await service.create_session(
+        CreateSessionInput(
+            policy="user-avatar",
+            fileName="a.png",
+            size=3,
+            mimeType="image/png",
+            metadata={"big": 10**21, "huge": [huge] * 2, "safe": 2**53},
+        ),
+        _ctx(),
+    )
+    # Stored exactly as sent; only the size count uses JavaScript's numbers.
+    stored = db.tables["uploadSessions"][0]["metadata"]
+    assert stored == {"big": 10**21, "huge": [huge] * 2, "safe": 2**53}
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_any_http_token_media_type() -> None:
+    service = _make_service()
+    service.policies.register(Policy(name="any"))
+    result = await service.create_session(
+        CreateSessionInput(policy="any", fileName="a.bin", size=3, mimeType="application/x-example~v1"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+async def test_idempotent_replay_hashes_metadata_as_sent() -> None:
+    # The fingerprint uses the metadata as sent, so a session created before
+    # number normalisation still matches its retry.
+    db = FakeDB()
+    service = _make_service(db=db)
+    init = CreateSessionInput(
+        policy="user-avatar",
+        fileName="a.png",
+        size=3,
+        mimeType="image/png",
+        metadata={"n": 9007199254740993},
+        idempotencyKey="retry-key",
+    )
+    first = await service.create_session(init, _ctx())
+    replay = await service.create_session(init, _ctx())
+    assert replay["uploadSessionId"] == first["uploadSessionId"]
+    expected = service._hash_payload(init, _ctx())
+    assert db.tables["uploadSessions"][0]["idempotencyPayloadHash"] == expected
+
+
+@pytest.mark.asyncio
+async def test_long_registered_policy_names_still_work() -> None:
+    service = _make_service()
+    long_name = "p" * 300
+    service.policies.register(Policy(name=long_name))
+    result = await service.create_session(
+        CreateSessionInput(policy=long_name, fileName="a.bin", size=3, mimeType="application/octet-stream"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+async def test_parts_are_bounded_by_the_declared_size() -> None:
+    # FILE-30 F-05 (Python): a part may carry at most what the session allows.
+    multipart = _make_service(storage=FakeStorage({"signedUploadUrls": True, "multipart": True}))
+    created = await multipart.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    for bad, code in [(4, "FILEFN_PART_TOO_LARGE"), (0, "FILEFN_INVALID_REQUEST")]:
+        with pytest.raises(Exception) as exc_info:
+            await multipart.sign_part(created["uploadSessionId"], 1, bad, _ctx())
+        assert getattr(exc_info.value, "code", "") == code
+    assert (await multipart.sign_part(created["uploadSessionId"], 1, 3, _ctx()))["url"]
+
+    proxy = _make_service()
+    created = await proxy.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png"), _ctx()
+    )
+    with pytest.raises(Exception) as exc_info:
+        await proxy.record_proxy_part(created["uploadSessionId"], 1, b"abcd", _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_PART_TOO_LARGE"
+
+
+def test_long_key_parts_are_shortened_like_typescript() -> None:
+    from types import SimpleNamespace
+
+    from filefn.server.policies import compute_storage_path
+
+    key = compute_storage_path(
+        SimpleNamespace(storagePath=None),
+        SimpleNamespace(tenantId="t" * 200, principalId="p", fileId="f", versionId="ver_1", fileName="n" * 200 + ".pdf"),
+    )
+    tenant, _, _, last = key.split("/")
+    assert len(tenant.encode()) <= 120 and "%~" in tenant
+    assert last.startswith("ver_1-") and last.endswith(".pdf") and "%~" in last
+
+
+class StatStorage(FakeStorage):
+    """Multipart storage that stores `actual_size` bytes, can stat, and consumes upload IDs."""
+
+    def __init__(self, actual_size: int, fail_stats: int = 0) -> None:
+        super().__init__({"signedUploadUrls": True, "multipart": True})
+        self.actual_size = actual_size
+        self.fail_stats = fail_stats
+
+    async def complete_multipart_upload(self, key: str, upload_id: str, parts: list, target: Optional[str] = None):
+        if upload_id not in self.multipart:
+            raise RuntimeError("NoSuchUpload")
+        del self.multipart[upload_id]
+        self.objects[key] = b"x" * self.actual_size
+        return {"key": key}
+
+    async def stat_object(self, key: str, target: Optional[str] = None) -> Dict[str, Any]:
+        if self.fail_stats:
+            self.fail_stats -= 1
+            raise RuntimeError("transient stat failure")
+        if key not in self.objects:
+            raise KeyError(key)
+        return {"key": key, "size": len(self.objects[key])}
+
+
+async def _multipart_session(service: UploadSessionService, size: int = 3) -> Dict[str, Any]:
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=size, mimeType="image/png"), _ctx()
+    )
+    for part_number in range(1, session["totalParts"] + 1):
+        part_size = min(3, size - (part_number - 1) * 3)
+        await service.complete_part(session["uploadSessionId"], part_number, f"etag-{part_number}", part_size, _ctx())
+    return session
+
+
+@pytest.mark.asyncio
+async def test_multipart_size_mismatch_deletes_only_the_session_object_and_aborts() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    with pytest.raises(errors.FileFnError) as mismatch:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert mismatch.value.code == "FILEFN_UPLOAD_SIZE_MISMATCH"
+    assert key not in storage.objects
+    assert db.tables["uploadSessions"][0]["status"] == "aborted"
+    assert not db.tables.get("files") and not db.tables.get("fileVersions")
+    # A retry is refused before storage is touched again.
+    with pytest.raises(errors.FileFnError) as aborted:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert aborted.value.code == "FILEFN_UPLOAD_ABORTED"
+
+
+@pytest.mark.asyncio
+async def test_multipart_retry_after_a_failed_stat_verifies_the_finalized_object() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=3, fail_stats=1)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    with pytest.raises(errors.FileFnError) as unreadable:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert unreadable.value.code == "FILEFN_STORAGE_ERROR"
+    # The upload ID is consumed; the retry finds the session's own object and checks its size.
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert result["versionId"] in db.tables["uploadSessions"][0]["storageKey"]
+
+
+@pytest.mark.asyncio
+async def test_routed_storage_forwards_stat_object() -> None:
+    from filefn.server.routed_storage import create_routed_storage_adapter
+
+    db = FakeDB()
+    inner = StatStorage(actual_size=50)
+    routed = create_routed_storage_adapter({"durable": inner}, default_target="durable")
+    routed.capabilities = inner.capabilities  # type: ignore[attr-defined]
+    service = _make_service(db=db, storage=routed)  # type: ignore[arg-type]
+    session = await _multipart_session(service)
+    with pytest.raises(errors.FileFnError) as mismatch:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert mismatch.value.code == "FILEFN_UPLOAD_SIZE_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_policy_storage_path_must_include_the_version_id() -> None:
+    service = create_upload_session_service(
+        UploadSessionServiceConfig(
+            db=FakeDB(),
+            storage=FakeStorage({"proxyStreamingUpload": True}),
+            policies=create_policy_registry(
+                [Policy(name="shared", storagePath=lambda c: f"{c.tenantId}/{c.fileId}/{c.fileName}")]
+            ),
+            events=create_event_emitter(),
+            namespace="filefn",
+            default_chunk_size_bytes=3,
+            upload_session_ttl_seconds=3600,
+        )
+    )
+    with pytest.raises(errors.FileFnError) as refused:
+        await service.create_session(CreateSessionInput(policy="shared", fileName="a.png", size=3, mimeType="image/png"), _ctx())
+    assert refused.value.code == "FILEFN_STORAGE_PATH_NOT_PER_VERSION"
+    assert refused.value.status == 500
+
+
+@pytest.mark.asyncio
+async def test_zero_byte_upload_signs_its_empty_part_and_parts_need_integer_sizes() -> None:
+    service = _make_service(storage=FakeStorage({"signedUploadUrls": True, "multipart": True}))
+    empty = await service.create_session(CreateSessionInput(policy="user-avatar", fileName="a.png", size=0, mimeType="image/png"), _ctx())
+    signed = await service.sign_part(empty["uploadSessionId"], 1, 0, _ctx())
+    assert signed["url"]
+    other = await service.create_session(CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png"), _ctx())
+    with pytest.raises(errors.FileFnError):
+        await service.sign_part(other["uploadSessionId"], 1, 0, _ctx())
+    # A whole-number float is the same JSON number as the integer.
+    assert (await service.complete_part(other["uploadSessionId"], 1, "etag-1", 3.0, _ctx()))["recorded"]  # type: ignore[arg-type]
+    for bad in ["3", None, True, -1, 1.5]:
+        with pytest.raises(errors.FileFnError) as invalid:
+            await service.complete_part(other["uploadSessionId"], 1, "etag-1", bad, _ctx())  # type: ignore[arg-type]
+        assert invalid.value.code == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "mime_type,ok",
+    [
+        ("image/png", True),
+        ('image/png; name="a b"', True),
+        ("image/png; charset=utf-8", True),
+        ("image/png;", True),
+        ("image/png;\u20ac", False),
+        ("image/png; foo", False),
+        ('image/png;"x', False),
+        ("image/png; a=b c", False),
+    ],
+)
+def test_mime_type_grammar_matches_typescript(mime_type: str, ok: bool) -> None:
+    from filefn.server.upload_sessions.service import _MIME_TYPE
+
+    assert bool(_MIME_TYPE.fullmatch(mime_type)) is ok
+
+
+def test_drive_qualified_keys_are_unsafe() -> None:
+    from filefn.server.policies import unsafe_storage_key_reason
+
+    assert unsafe_storage_key_reason("C:/Windows/x") == "absolute key"
+    assert unsafe_storage_key_reason("c:") == "absolute key"
+    assert unsafe_storage_key_reason("C:x/y") == "absolute key"
+    assert unsafe_storage_key_reason("ab:c/x") is None
+    # Default keys stay usable: a drive-like segment start is encoded.
+    from filefn.server.policies import sanitize_storage_key_segment
+
+    assert sanitize_storage_key_segment("a:b") == "a%3Ab"
+    assert sanitize_storage_key_segment("ab:c") == "ab:c"
+
+
+class FailOnceSessionUpdate(FakeDB):
+    """Fails the first write of status `completed`, after the version row is written."""
+
+    failed = False
+
+    async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+        if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
+            self.failed = True
+            raise RuntimeError("database timeout")
+        return await super().update(model, where, data, namespace)
+
+
+async def _proxy_session_published_without_completed() -> Any:
+    """A proxy session whose completion published its version, then failed to write `completed`."""
+    db = FailOnceSessionUpdate()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    return db, service, session
+
+
+@pytest.mark.asyncio
+async def test_retry_after_the_version_was_written_finishes_the_session() -> None:
+    db = FailOnceSessionUpdate()
+    storage = StatStorage(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_proxy_retry_after_the_version_was_written_finishes_without_storage() -> None:
+    db, service, session = await _proxy_session_published_without_completed()
+    # The staged parts are gone; the retry finishes from the published version alone.
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_expiry_sweep_keeps_a_published_session_for_its_retry() -> None:
+    db, service, session = await _proxy_session_published_without_completed()
+    db.tables["uploadSessions"][0]["expiresAt"] = "2001-01-01T00:00:00+00:00"
+    await service.garbage_collect_expired_sessions()
+    # The session survives untouched; the client's retry finishes it normally.
+    assert db.tables["uploadSessions"][0]["status"] != "completed"
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_retry_after_expiry_still_finishes_a_published_version() -> None:
+    db, service, session = await _proxy_session_published_without_completed()
+    # The file is live; the session expired before the client retried.
+    db.tables["uploadSessions"][0]["expiresAt"] = "2001-01-01T00:00:00+00:00"
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_legacy_session_sharing_a_published_key_must_restart() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    row = db.tables["uploadSessions"][0]
+    # A pre-upgrade session: no version ID of its own, and a key a published version uses.
+    row["completionVersionId"] = None
+    await db.create(model="fileVersions", data={"versionId": "ver_old", "fileId": "file_other", "storageKey": row["storageKey"], "size": 3})
+    with pytest.raises(errors.FileFnError) as restart:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert restart.value.code == "FILEFN_INVALID_REQUEST"
+    assert row["status"] == "aborted"
+    assert row["storageKey"] not in storage.objects
+
+
+@pytest.mark.asyncio
+async def test_metadata_with_non_finite_numbers_is_refused() -> None:
+    service = _make_service()
+    with pytest.raises(errors.FileFnError) as refused:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", metadata={"x": float("inf")}),
+            _ctx(),
+        )
+    assert refused.value.code == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_pending_to_in_progress_never_overwrites_an_aborted_session() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    db.tables["uploadSessions"][0]["status"] = "aborted"
+    await service._set_status_if(session["uploadSessionId"], "pending", "in_progress")
+    assert db.tables["uploadSessions"][0]["status"] == "aborted"
+
+
+@pytest.mark.asyncio
+async def test_expiry_sweep_deletes_an_unpublished_object_whose_delete_failed() -> None:
+    class DeleteFailsOnce(StatStorage):
+        failed = False
+
+        async def delete_object(self, key: str, target: Optional[str] = None) -> None:
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("storage unavailable")
+            await super().delete_object(key, target)
+
+    db = FakeDB()
+    storage = DeleteFailsOnce(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    with pytest.raises(errors.FileFnError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert key in storage.objects
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert key not in storage.objects
+    assert not db.tables["uploadSessions"]
+
+
+@pytest.mark.asyncio
+async def test_refused_session_keeps_its_object_for_the_sweep_and_replays_ask_for_a_new_key() -> None:
+    class DeleteFails(StatStorage):
+        async def delete_object(self, key: str, target: Optional[str] = None) -> None:
+            raise RuntimeError("storage unavailable")
+
+    db = FakeDB()
+    storage = DeleteFails(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    init = CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", idempotencyKey="key-1")
+    session = await service.create_session(init, _ctx())
+    await service.complete_part(session["uploadSessionId"], 1, "etag-1", 3, _ctx())
+    with pytest.raises(errors.FileFnError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+    status = await service.get_session_status(session["uploadSessionId"], _ctx())
+    assert status["status"] == "aborted"
+    # An abort leaves it refused, so the sweep still deletes the object.
+    await service.abort_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+    with pytest.raises(errors.FileFnError) as replay:
+        await service.create_session(init, _ctx())
+    assert replay.value.code == "FILEFN_UPLOAD_ABORTED"
+    # The sweep keeps the row while the delete keeps failing.
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert db.tables["uploadSessions"]
+
+
+@pytest.mark.asyncio
+async def test_abort_and_sweep_never_overwrite_a_session_refused_meanwhile() -> None:
+    db = FakeDB()
+
+    class RefusesDuringCleanup(StatStorage):
+        async def abort_multipart_upload(self, key: str, upload_id: str, target: Optional[str] = None) -> None:
+            # A completion refuses the session while abort or the sweep is mid-way.
+            db.tables["uploadSessions"][0]["status"] = "refused"
+
+    storage = RefusesDuringCleanup(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    await service.abort_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+
+    db.tables["uploadSessions"][0]["status"] = "in_progress"
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert [row["status"] for row in db.tables["uploadSessions"]] == ["refused"]
+
+
+@pytest.mark.asyncio
+async def test_init_body_shape_null_metadata_and_mime_controls_match_typescript() -> None:
+    from filefn.server.core import FileFn
+
+    service = _make_service()
+    with pytest.raises(errors.FileFnError) as null_metadata:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", metadata=None), _ctx()
+        )
+    assert null_metadata.value.code == "FILEFN_INVALID_REQUEST"
+    # Quoted obs-text such as U+0085 is allowed by the grammar, as in TypeScript.
+    from filefn.server.upload_sessions.service import _validate_upload_init
+
+    _validate_upload_init(CreateSessionInput(policy="any", fileName="b.png", size=3, mimeType='image/png; name="a\u0085b"'))
+
+    fake = object.__new__(FileFn)
+    fake.upload_service = service  # type: ignore[attr-defined]
+    with pytest.raises(errors.FileFnError) as not_object:
+        await fake.create_upload_session([1, 2], _ctx())  # type: ignore[arg-type]
+    assert not_object.value.code == "FILEFN_INVALID_REQUEST"
+
+
+def test_explicit_surrogate_pairs_are_read_as_code_points_in_keys() -> None:
+    from filefn.server.policies import sanitize_storage_key_segment
+
+    assert sanitize_storage_key_segment("😀") == "\U0001F600"
 
 def test_nobody_owns_an_anonymous_file() -> None:
     # FILE-30 F-02: every unauthenticated caller shares the principal `anonymous`.

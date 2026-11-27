@@ -122,9 +122,9 @@ See [configuration reference](/docs/reference/configuration).
 Your `authorize` returned `false` or threw. Add structured logging:
 
 ```typescript
-authorize: async ({ method, resource, request }) => {
-  const result = await myAuthCheck(...);
-  if (!result) console.warn("denied", { method, resource });
+authorize: async (_ctx, action, _payload, request, resources) => {
+  const result = await myAuthCheck(request, action, resources);
+  if (!result) console.warn("denied", { action });
   return result;
 },
 ```

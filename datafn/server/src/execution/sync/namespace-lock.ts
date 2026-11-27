@@ -1,3 +1,5 @@
+import { adapterIdentity } from "../internal-tables.js";
+
 class AsyncMutex {
   private tail: Promise<void> = Promise.resolve();
   private pendingCount = 0;
@@ -27,7 +29,8 @@ class AsyncMutex {
 
 const adapterNamespaceMutexes = new WeakMap<object, Map<string, AsyncMutex>>();
 
-function getNamespaceMutexes(adapter: object): Map<string, AsyncMutex> {
+function getNamespaceMutexes(wrapped: object): Map<string, AsyncMutex> {
+  const adapter = adapterIdentity(wrapped);
   let namespaceMutexes = adapterNamespaceMutexes.get(adapter);
   if (!namespaceMutexes) {
     namespaceMutexes = new Map<string, AsyncMutex>();

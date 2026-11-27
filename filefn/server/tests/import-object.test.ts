@@ -179,6 +179,16 @@ const baseInput = {
 
 describe('services.files.importObject', () => {
 
+  it('charges an import for the reserved owner anonymous to the unset principal, as its delete refunds', async () => {
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const { quota, recorded } = createQuota();
+    const fileFn = build({ storage, quota });
+
+    await fileFn.services.files.importObject({ ...baseInput, principalId: 'anonymous', fileId: 'file_anonimport01' });
+
+    expect(recorded).toEqual([{ principalId: undefined, tenantId: 'tenant', bytes: 12 }]);
+  });
+
   it('registers an existing object as a file and version without copying it, keeping createdAt', async () => {
     const database = memoryAdapter();
     const { storage, calls } = createStorage({ [baseInput.storageKey]: 12 });

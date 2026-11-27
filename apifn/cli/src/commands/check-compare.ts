@@ -6,8 +6,11 @@
 
 import { parseOpenAPI, validateOpenAPI } from "@apifn/core";
 import type { OpenAPIDocument } from "@apifn/core";
+import { openAPIReferenceContext, type OpenAPIReferenceMode as Mode } from "@apifn/core/internal/openapi-reference-context";
 import { MAX_EXPANDED_SPEC_NODES, canonicalJson } from "./check-parse.js";
 import type { JsonObject, JsonValue } from "./check-parse.js";
+
+const { childMode, entryMode, isReferenceObject, arrayItemMode, isMap } = openAPIReferenceContext;
 
 export class DereferenceError extends Error {}
 
@@ -90,77 +93,11 @@ function relocate(doc: JsonObject): JsonObject {
   return new Dereferencer(false).copy(doc, "node", { node: doc, pointer: "" }, "") as JsonObject;
 }
 
-/**
- * How a value is read: `node` (an OpenAPI or schema object, whose keys are keywords), `names` (a
- * map from names to nodes, such as `properties`), `extNames` (a names map that also takes `x-`
- * extensions: Paths and Responses), `components`, `examples` (a map of Example Objects), `example`
- * (one Example Object or its `$ref`), `links` and `link` (Link Objects, whose `parameters` and
- * `requestBody` are data), `objects` and `object` (a map of, or one, OpenAPI object that may be a
- * Reference Object: a Parameter, Response, Request Body, Header, Security Scheme or Callback),
- * `extObjects` (Responses: `objects` that also take `x-` extensions) or `literal` (data). A Callback
- * Object is an `object`: its `x-` keys are data and its expressions Path Items.
- */
-type Mode =
-  | "node" | "names" | "extNames" | "objects" | "extObjects" | "object" | "components" | "examples" | "example" | "links" | "link"
-  | "literal";
-
-/** Modes whose `$ref` is a Reference Object: only `summary` and `description` beside it apply. */
-const REFERENCE_MODES = new Set<Mode>(["object", "example", "link"]);
-/** Maps whose entries may be Reference Objects (not Schema Objects). */
-const OBJECT_MAPS = new Set(["parameters", "requestBodies", "headers", "securitySchemes", "callbacks", "responses"]);
-
 /** A schema resource: the document or the nearest schema with its own `$id`, and its pointer. */
 interface Resource {
   node: JsonValue;
   /** Its location from the document root, as a URI-fragment JSON pointer (`""` for the root). */
   pointer: string;
-}
-
-/** Keywords whose value maps names (any string, `default` and `$ref` included) to nodes. */
-const NAME_MAPS = new Set([
-  "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "schemas", "links", "pathItems",
-  "paths", "webhooks", "content", "encoding", "variables",
-]);
-/** Keywords whose value is data. */
-const LITERALS = new Set(["example", "default", "const", "enum"]);
-
-/** How the value under `key` of a node is read. */
-function childMode(key: string, value: JsonValue): Mode {
-  if (LITERALS.has(key) || key.startsWith("x-")) return "literal";
-  if (key === "examples") return Array.isArray(value) ? "literal" : "examples";
-  if (key === "components") return "components";
-  if (key === "links") return "links";
-  if (key === "paths") return "extNames";
-  if (key === "responses") return "extObjects";
-  if (key === "requestBody") return "object";
-  if (OBJECT_MAPS.has(key)) return "objects";
-  return NAME_MAPS.has(key) ? "names" : "node";
-}
-
-/** How the value under `key` of a map read in `mode` is read (null: `mode` is not a map). */
-function entryMode(mode: Mode, key: string, value: JsonValue): Mode | null {
-  switch (mode) {
-    case "names":
-      return "node";
-    case "extNames":
-      return key.startsWith("x-") ? "literal" : "node";
-    case "objects":
-      return "object";
-    case "extObjects":
-      return key.startsWith("x-") ? "literal" : "object";
-    case "components":
-      if (key.startsWith("x-")) return "literal";
-      if (key === "examples" || key === "links") return key;
-      return OBJECT_MAPS.has(key) ? "objects" : "names";
-    case "examples":
-      return "example";
-    case "links":
-      return "link";
-    case "link":
-      return key === "parameters" || key === "requestBody" ? "literal" : childMode(key, value);
-    default:
-      return null;
-  }
 }
 
 class Dereferencer {
@@ -181,16 +118,16 @@ class Dereferencer {
       throw new DereferenceError(`the $refs expand to more than ${MAX_EXPANDED_SPEC_NODES} nodes`);
     }
     if (Array.isArray(value)) {
-      const itemMode = MAP_ITEMS[mode] ?? mode;
+      const itemMode = arrayItemMode(mode);
       return value.map((item, index) => this.copy(item, itemMode, resource, `${at}/${index}`));
     }
     if (!isRecord(value)) return value;
     // Literal data is copied as data; the validator's copy drops its `$ref` keys (see relocate).
     if (mode === "literal") return this.copyRecord(value, () => "literal", resource, at, this.inline ? undefined : "$ref");
     if (typeof value.$ref === "string" && !value.$ref.startsWith("#")) throw outside(value.$ref);
-    if (MAP_MODES.has(mode)) return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
+    if (isMap(mode)) return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
     // A schema's own `$id` is the resource its `$ref` (and every fragment inside it) resolves in.
-    const own = REFERENCE_MODES.has(mode) || typeof value.$id !== "string" ? resource : { node: value, pointer: at };
+    const own = isReferenceObject(mode) || typeof value.$id !== "string" ? resource : { node: value, pointer: at };
     if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, own, at);
     if (mode === "example") return this.copyRecord(value, () => "literal", resource, at);
     if (mode === "link") return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
@@ -214,7 +151,7 @@ class Dereferencer {
   private expand(ref: string, node: Record<string, JsonValue>, mode: Mode, resource: Resource, at: string): JsonValue {
     // A Reference Object outside a schema ignores every key beside it but `summary` and
     // `description`, so an ignored key is never read (an external `$ref` inside it included).
-    const value = REFERENCE_MODES.has(mode) ? referenceFields(node) : node;
+    const value = isReferenceObject(mode) ? referenceFields(node) : node;
     const siblingMode = (key: string, item: JsonValue): Mode => (mode === "example" ? "literal" : childMode(key, item));
     // The validator's copy resolves nothing itself: the validator reports a reference that does
     // not resolve from the document root.
@@ -236,17 +173,13 @@ class Dereferencer {
     this.expanding.pop();
     const siblings = this.copyRecord(value, siblingMode, resource, at, "$ref");
     if (Object.keys(siblings).length === 0) return target;
-    if (REFERENCE_MODES.has(mode)) return withReferenceSiblings(target, siblings);
+    if (isReferenceObject(mode)) return withReferenceSiblings(target, siblings);
     if (!isRecord(target)) {
       throw new DereferenceError(`$ref '${ref}' has sibling keys but its target is not an object`);
     }
     return conjoin(target, siblings, ref, true);
   }
 }
-
-const MAP_MODES = new Set<Mode>(["names", "extNames", "objects", "extObjects", "components", "examples", "links"]);
-/** How the items of an array read in a map mode are read. */
-const MAP_ITEMS: Partial<Record<Mode, Mode>> = { names: "node", extNames: "node", objects: "object", extObjects: "object" };
 
 /**
  * A Reference Object outside a schema (OpenAPI 3.1): its `summary` and `description` replace the

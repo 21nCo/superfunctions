@@ -43,6 +43,7 @@ export interface ExampleServerInstance {
 
 export function createExampleServer(options: CreateExampleServerOptions = {}): ExampleServerInstance {
   const app = express();
+  app.disable('x-powered-by');
   const eventBuffer = options.eventBuffer ?? new ExampleEventBuffer();
   const otpInbox = options.otpInbox ?? new ExampleOtpInbox();
   const fakeOAuthProvider = options.fakeOAuthProvider ?? createFakeOAuthProvider(

@@ -96,10 +96,29 @@ export class MCPServer {
     }
   }
 
-  async createWebStandardHandler(): Promise<(request: Request) => Promise<Response>> {
+  /**
+   * Options go to McpFn's handler: for a hosted endpoint used from browsers,
+   * list their origins in `allowedOrigins` (requests carrying any other
+   * Origin are refused).
+   */
+  async createWebStandardHandler(
+    options?: Parameters<McpFnServer["createWebStandardHandler"]>[0],
+  ): ReturnType<McpFnServer["createWebStandardHandler"]> {
     const server = this.createServer();
+    // Tracked before the await so close() during it still closes the server;
+    // dropped again if the options fail validation.
     this.activeServers.add(server);
-    return await server.createWebStandardHandler();
+    let handler: Awaited<ReturnType<McpFnServer["createWebStandardHandler"]>>;
+    try {
+      handler = await server.createWebStandardHandler(options);
+    } catch (error) {
+      this.activeServers.delete(server);
+      await server.close().catch(() => undefined);
+      throw error;
+    }
+    // close() ran meanwhile and already closed the server: no live handler.
+    if (!this.activeServers.has(server)) throw new Error("MCPServer was closed");
+    return handler;
   }
 
   async close(): Promise<void> {
@@ -112,7 +131,7 @@ export class MCPServer {
     return createMcpFnServer({
       info: {
         name: "langfn",
-        version: "0.1.0",
+        version: "0.2.2",
         instructions: "Execute LangFn tools with LangFn parsing and policy enforcement."
       },
       registry: this.registry,

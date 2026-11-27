@@ -129,7 +129,10 @@ Profile projection cannot invent or rename tools. A canonical required field
 removed from the model-visible schema must be declared server-owned and restored
 by the profile enricher. Missing trusted context, forged fields, and asymmetric
 contracts fail before handler execution. Without a matching profile, the
-canonical catalog and arguments are unchanged.
+canonical catalog and arguments are unchanged, except that by default
+(`unmatchedServerOwnedArguments: "reject"`) tools any profile gives
+server-owned arguments are hidden and answer like unknown tools; `"allow"`
+keeps them, with their arguments passed through.
 
 Projection supports static references to schema locations in the input document
 or its embedded `$id` resources. Draft-07 fragment-only `$id` values and modern

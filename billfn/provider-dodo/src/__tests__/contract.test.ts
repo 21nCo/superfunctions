@@ -7,7 +7,7 @@ import type {
   BillFnSubscription,
   BillFnVerifyCheckoutInput
 } from '@billfn/core';
-import { createDodoProvider, type DodoProviderConfig } from '../index.js';
+import { DODO_PROVIDER_HTTP_DEADLINE_MS, createDodoProvider, type DodoProviderConfig } from '../index.js';
 import recorded from './fixtures/dodo-api-v1.124.0.json';
 
 /*
@@ -255,6 +255,28 @@ describe('createCheckout -> POST /checkouts', () => {
     await expect(
       provider(api.fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice })
     ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+  });
+
+  it.each([
+    [201, 'Dodo created the checkout but its session details did not arrive before the deadline', false],
+    [401, 'Dodo request failed with status 401', true]
+  ])('reports checkout HTTP %i when the body stalls', async (status, message, retryable) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status })) as typeof fetch;
+      const pending = provider(fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message,
+          retryable,
+          details: { status }
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -674,6 +696,34 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
     expect(result?.billingState).toStrictEqual(storedState);
   });
 
+  it.each([
+    [
+      'headers',
+      () => new Promise<Response>(() => {}),
+      { subscriptionReadError: { status: 0, body: expect.stringContaining('read can be retried') } }
+    ],
+    [
+      'body',
+      async () => new Response(new ReadableStream()),
+      { subscription: { bodyError: 'Dodo response body did not arrive before the deadline' } }
+    ]
+  ])('keeps a plan change applied when the follow-up read stalls before its %s', async (_label, answerRead, raw) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === 'POST' ? Response.json(recorded.changePlan.response) : answerRead()
+      ) as typeof fetch;
+      const pending = provider(fetchMock).changeSubscription?.({ ...changeInput(), subscription: storedSubscription() });
+      await Promise.all([
+        expect(pending).resolves.toMatchObject({ operationStatus: 'applied', billingState: storedState, raw }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('gives no state for a next-renewal change whose follow-up read fails, since nothing changes now', async () => {
     const api = dodoApi({
       [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: recorded.changePlan.response,
@@ -976,6 +1026,125 @@ describe('refundCharge -> POST /refunds', () => {
       code: 'BILLFN_PROVIDER_ERROR'
     });
   });
+
+  it.each([
+    ['a fractional balance', 10.5],
+    ['a negative balance', -1],
+    // 2^53 round-trips through JSON and is not a safe integer, so it must not be sent as minor units.
+    ['an unsafe balance', Number.MAX_SAFE_INTEGER + 1]
+  ])('refuses a partial refund when a line item has %s, before creating a refund', async (_label, refundableAmount) => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: {
+        ...recorded.getPaymentLineItems.response,
+        items: [
+          { items_id: 'item_seat', refundable_amount: 400 },
+          { items_id: 'item_bad', refundable_amount: refundableAmount }
+        ]
+      },
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 100 }))).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR',
+      retryable: false,
+      message: expect.stringContaining('nonnegative integer')
+    });
+    // The first line item could cover the amount. The malformed balance still refuses the refund.
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /payments/${PAYMENT_ID}/line-items`]);
+  });
+
+  it('splits a partial refund across valid line items and skips a zero balance', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: {
+        ...recorded.getPaymentLineItems.response,
+        items: [
+          { items_id: 'item_seat', refundable_amount: 400 },
+          { items_id: 'item_tax', refundable_amount: 0 },
+          { items_id: 'item_addon', refundable_amount: 900 }
+        ]
+      },
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 700 }));
+
+    expect(api.calls.at(-1)?.body).toMatchObject({
+      payment_id: PAYMENT_ID,
+      currency: 'USD',
+      items: [
+        { item_id: 'item_seat', amount: 400 },
+        { item_id: 'item_addon', amount: 300 }
+      ]
+    });
+  });
+
+  it('treats a stalled line-item body as a retryable read and does not send the refund', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/line-items')) {
+          return { ok: true, status: 200, text: () => new Promise<string>(() => {}) } as unknown as Response;
+        }
+        return Response.json(recorded.getSubscriptionPayment.response);
+      }) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }));
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: true,
+          message: expect.stringContaining('read can be retried')
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(vi.mocked(fetchMock).mock.calls.map((call) => String(call[0]))).not.toEqual(
+        expect.arrayContaining([expect.stringContaining('/refunds')])
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a refund request that gets no response as an unknown outcome', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(() => new Promise<Response>(() => {})) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput());
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: false,
+          message: expect.stringContaining('whether the change was applied is unknown')
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(vi.mocked(fetchMock).mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a refund Dodo accepted applied when the success body does not arrive before the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {})
+      }) as unknown as Response) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput());
+      await Promise.all([
+        expect(pending).resolves.toMatchObject({
+          operationStatus: 'applied',
+          raw: { bodyError: 'Dodo accepted the change but the response body did not arrive before the deadline' }
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('restorePurchases and importSubscription', () => {
@@ -1005,6 +1174,26 @@ describe('restorePurchases and importSubscription', () => {
       currentPeriodEnd: '2026-12-17T09:01:00Z'
     });
   });
+
+  it.each([404, 400, 422])('preserves import HTTP %i when the error body stalls', async (status) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status })) as typeof fetch;
+      const pending = provider(fetchMock).importSubscription?.({ providerReference: SUBSCRIPTION_ID, billingAccount, plan });
+      await Promise.all([
+        status === 404
+          ? expect(pending).resolves.toBeNull()
+          : expect(pending).rejects.toMatchObject({
+            code: 'BILLFN_VALIDATION_ERROR',
+            retryable: false,
+            details: { status }
+          }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('parseWebhook with recorded Dodo payloads', () => {
@@ -1021,6 +1210,30 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     });
     return events![0]!;
   }
+
+  it.each([
+    ['charges a subscription', { subscription_id: 'sub_mixed' }],
+    ['is flagged multi-subscription', { subscription_id: null, subscription_ids: [], is_multi_subscription: true }]
+  ])('names no product from the cart of a payment that %s', async (_name, patch) => {
+    const payment = recorded.webhooks.paymentSucceededOneTime;
+    const event = await parse({
+      ...payment,
+      data: { ...payment.data, ...patch, product_cart: [{ product_id: 'pdt_nucleus_lifetime', quantity: 1 }] }
+    });
+
+    expect(event.priceId).toBeUndefined();
+  });
+
+  it('marks a checkout reference read from metadata as metadata, and Dodo\'s own one as the provider\'s', async () => {
+    const fromMetadata = await parse(recorded.webhooks.subscriptionPastDue);
+    const fromDodo = await parse({
+      ...recorded.webhooks.subscriptionPastDue,
+      data: { ...recorded.webhooks.subscriptionPastDue.data, checkout_session_id: 'cks_native' }
+    });
+
+    expect(fromMetadata).toMatchObject({ checkoutReferenceId: 'chk_123', checkoutReferenceSource: 'metadata' });
+    expect(fromDodo).toMatchObject({ checkoutReferenceId: 'cks_native', checkoutReferenceSource: 'provider' });
+  });
 
   it('maps subscription.past_due to grace, names its product (not the checkout price) and the session', async () => {
     const event = await parse(recorded.webhooks.subscriptionPastDue);
@@ -1057,14 +1270,18 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     });
   });
 
-  it('names only the product of a subscription payment that carries its product, never the checkout price', async () => {
+  it('names a subscription payment\'s product only from its product_id, never from its cart or the checkout price', async () => {
+    // Dodo's cart lists a payment's one-time items, so it does not name the subscription's product; the
+    // subscription keeps its stored plan, and its own events carry product_id.
     const payment = recorded.webhooks.paymentSucceededForSubscription;
-    const event = await parse({
+    const fromCart = await parse({
       ...payment,
       data: { ...payment.data, product_cart: [{ product_id: 'pdt_nucleus_month', quantity: 1 }] }
     });
+    const fromProduct = await parse({ ...payment, data: { ...payment.data, product_id: 'pdt_nucleus_month' } });
 
-    expect(event.priceId).toBe('pdt_nucleus_month');
+    expect(fromCart.priceId).toBeUndefined();
+    expect(fromProduct.priceId).toBe('pdt_nucleus_month');
   });
 
   it('leaves a declined renewal payment to the subscription events instead of failing the subscription', async () => {

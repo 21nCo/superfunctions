@@ -7,7 +7,10 @@ description: Expose SearchFn as an HTTP API with authorization, logging, and sec
 
 Use `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
@@ -16,9 +19,7 @@ const server = await createSearchFnServer({
     connectionString: process.env.SEARCH_DB_URL!,
   }),
   basePath: "/searchfn",
-  authorize: async (ctx, action, payload) => {
-    return ctx.user?.role === "admin" || action === "search" || action === "status";
-  },
+  authorize: authorizeSearchRequest,
 });
 
 // Mount server.router with your HTTP framework adapter
@@ -31,8 +32,10 @@ const server = await createSearchFnServer({
 | `adapter` | `SearchAdapter` | — | Required. The search adapter to use. |
 | `basePath` | `string` | `"/searchfn"` | URL prefix for all endpoints. |
 | `limits` | `Partial<ServerLimits>` | See below | Override default validation limits. |
-| `authorize` | `(ctx, action, payload) => boolean \| Promise<boolean>` | — | Per-action authorization callback. |
-| `logger` | `SearchFnLogger` | — | Custom structured logger. |
+| `authorize` | `(ctx, action, payload, request, resources) => boolean \| Promise<boolean>` | — | Per-action authorization callback. Required unless `allowUnauthenticated` is `true`. |
+| `allowUnauthenticated` | `boolean` | `false` | Explicitly allow operations without a SearchFn authorization callback. |
+| `context` | `(request: Request) => TContext \| Promise<TContext>` | — | Populate per-request context for the callback. |
+| `observability` | `ObservabilityInput<SearchFnEvent>` | — | Structured logs and events. |
 
 ### Server Limits
 
@@ -47,7 +50,7 @@ const server = await createSearchFnServer({
 
 ## Endpoints
 
-All endpoints are prefixed with the configured `basePath`.
+All endpoints are prefixed with the configured `basePath`. POST requests require `Content-Type: application/json`.
 
 ### `GET /searchfn/status`
 
@@ -107,7 +110,7 @@ Search a single resource.
 
 ### `POST /searchfn/search-all`
 
-Search across multiple resources.
+Search across multiple resources. When `authorize` is configured, send a non-empty `resources` list.
 
 **Request:**
 ```json
@@ -161,12 +164,13 @@ Clear all documents from a resource.
 
 ## Authorization
 
-The `authorize` callback is called before every operation. It receives the request context, action name, and request payload:
+The `authorize` callback receives the request context, action name, parsed payload snapshot, original request, and validated resource names before the adapter runs. Use the [authorization guide](/docs/documentation/security/request-authz) to check access to each target.
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
+  context: async (request) => ({ user: await getVerifiedUser(request) }),
+  authorize: (ctx, action) => {
     if (action === "status") return true;
     if (action === "search" || action === "searchAll") return !!ctx.user;
     return ctx.user?.role === "admin";
@@ -187,16 +191,14 @@ Denied requests return a `FORBIDDEN` error envelope.
 
 ## Structured Logging
 
-Pass a `logger` to receive structured log events for every operation:
+Pass an `observability.logger` to receive structured log events:
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(msg, ctx),
-    warn: (msg, ctx) => console.warn(msg, ctx),
-    error: (msg, ctx) => console.error(msg, ctx),
-    debug: (msg, ctx) => console.debug(msg, ctx),
+  authorize: authorizeSearchRequest,
+  observability: {
+    logger: console,
   },
 });
 ```

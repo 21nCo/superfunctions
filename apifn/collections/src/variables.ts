@@ -40,7 +40,7 @@ export function interpolateVariables(
   }
 ): InterpolationResult {
   const warnings: string[] = [];
-  const processEnv = options?.processEnv ?? process.env;
+  const processEnv = options?.processEnv ?? {};
   let value = "";
   let cursor = 0;
 
@@ -63,7 +63,7 @@ export function interpolateVariables(
 
     if (key.startsWith("process.env.")) {
       const envVar = key.slice("process.env.".length);
-      const resolved = processEnv[envVar];
+      const resolved = Object.hasOwn(processEnv, envVar) ? processEnv[envVar] : undefined;
       if (typeof resolved === "string") {
         value += resolved;
         cursor = end + 2;

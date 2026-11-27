@@ -340,6 +340,12 @@ describe('ProcessingService Integration', () => {
     });
 
     it('should get artifact download URL', async () => {
+      // The parent file row must exist: an orphaned artifact is never served.
+      await db.create({
+        model: 'files',
+        data: { fileId: 'file_0001', ownerId: 'user_123', visibility: 'private', policy: '', name: 'photo.jpg', currentVersionId: 'ver_0001' },
+        namespace: 'filefn',
+      });
       await db.create({
         model: 'fileArtifacts',
         data: {
@@ -363,7 +369,7 @@ describe('ProcessingService Integration', () => {
         enabled: false,
       });
 
-      const { url } = await service.getArtifactDownloadUrl('art_001', {});
+      const { url } = await service.getArtifactDownloadUrl('art_001', { principalId: 'user_123' });
 
       expect(url).toBe('https://storage.test/download/test/thumb.jpg');
     });

@@ -1,6 +1,6 @@
 {
   "name": "@authfn/admin",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Framework-neutral admin routes and operations for AuthFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,14 +37,14 @@
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/admin": "0.1.6",
+    "@superfunctions/admin": "0.1.9",
     "@superfunctions/db": "0.3.4",
     "@superfunctions/http": "0.2.0",
-    "authfn": "0.8.0"
+    "authfn": "0.10.0"
   },
   "devDependencies": {
-    "@authfn/multi-region": "0.2.4",
-    "@authfn/password": "0.1.9",
+    "@authfn/multi-region": "0.2.6",
+    "@authfn/password": "0.3.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

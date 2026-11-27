@@ -42,6 +42,14 @@ const server = createMcpFnServer({
 });
 ```
 
+Mutation tools need the function form of `clientId`, returning a value per
+credential: DataFn keys idempotency records by namespace, client ID and the
+model-supplied `mutationId`, so with one fixed string two users could share
+records. A fixed string is accepted for read-only exposure, or with
+`allowSharedClientId: true`. List filters accept scalar values only; `object`
+and `array` fields are left out of the default filters and refused in an
+explicit `filterFields`.
+
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.
 
 ## Exposure reference

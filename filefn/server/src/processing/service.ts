@@ -5,6 +5,7 @@ import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import type { Logger } from '../observability/logger.js';
+import { recordProcessingDuration, type FileFnMetrics } from '../metrics.js';
 import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
@@ -17,6 +18,7 @@ import {
   normalizeMimeType,
   type ClientArtifactProcessingMetadata,
 } from './client-artifacts.js';
+import { isGrantExpired } from '../authz/grant-expiry.js';
 import { isFileOwner } from '../authz/ownership.js';
 
 export interface Processor {
@@ -192,6 +194,8 @@ export interface ProcessingServiceConfig {
   processors?: Processor[];
   flowFn?: FlowFnProvider;
   logger?: Logger;
+  /** Records processing duration when a run reaches `processing.completed`. */
+  metrics?: FileFnMetrics;
   namespace?: string;
   enabled?: boolean;
   maxFileBytes?: number;
@@ -546,16 +550,6 @@ function excludeClientCovered<T>(
   });
 }
 
-function isGrantExpired(expiresAt: string | null | undefined): boolean {
-  if (!expiresAt) {
-    return false;
-  }
-  const expiresAtMs = Date.parse(expiresAt);
-  if (Number.isNaN(expiresAtMs)) {
-    return false;
-  }
-  return expiresAtMs <= Date.now();
-}
 
 /**
  * Reads a client artifact body chunk by chunk, a Blob as a stream so it is
@@ -608,6 +602,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     processors = [],
     flowFn,
     logger,
+    metrics,
     namespace = 'filefn',
     enabled = true,
     maxFileBytes = 50 * 1024 * 1024,
@@ -1606,6 +1601,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     const artifactStorageTarget = getArtifactStorageTarget(file);
     const processingErrors: string[] = [];
     const writes = emptyWrites();
+    const startedAt = Date.now();
     const dropDeletedVersion = async (): Promise<ProcessingJobOutcome> => {
       await discardDeletedVersionOutput(input, writes, artifactStorageTarget);
       return { status: 'dropped', reason: 'version-deleted' };
@@ -1660,6 +1656,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       versionId: input.versionId,
       artifactsCreated,
     });
+    recordProcessingDuration(metrics, Date.now() - startedAt, true);
     // Recorded only after the event, so a delivery that fails before this
     // point leaves the job to notify on its next delivery.
     try {
@@ -1798,13 +1795,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       const processingErrors: string[] = [];
       let artifactsCreated = 0;
+      const startedAt = Date.now();
 
       for (const processor of applicableProcessors) {
         const run = await executeProcessor(processor, input, getData);
         if (!run.result) {
-          if (run.error) {
-            processingErrors.push(`${processor.name}: ${run.error}`);
-          }
+          processingErrors.push(`${processor.name}: ${run.error || 'processor reported failure'}`);
           continue;
         }
         const writes = emptyWrites();
@@ -1823,6 +1819,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         versionId: input.versionId,
         artifactsCreated,
       });
+      recordProcessingDuration(metrics, Date.now() - startedAt, processingErrors.length === 0);
 
       return { artifactsCreated, errors: processingErrors };
     },
@@ -2181,13 +2178,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: artifact.fileId }],
         namespace,
       });
-      if (file) {
-        await requireReadableFile(file.fileId, ctx);
-      } else if (readChecker) {
-        // No parent file to authorize against: fail closed.
+      if (!file) {
+        // An orphaned artifact has no parent file to authorize against: fail
+        // closed in every configuration, with or without a readChecker.
         throw errors.notFound('Artifact');
       }
-      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
+      await requireReadableFile(file.fileId, ctx);
+      const artifactStorageTarget = getArtifactStorageTarget(file);
 
       if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({

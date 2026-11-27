@@ -16,6 +16,16 @@ export interface WebhookVerificationContext {
   headers: Record<string, string>;
 }
 
+export interface WebhookWorkflowBinding {
+  tenantId: string;
+  connectionId: string;
+}
+
+export interface WebhookWorkflowBindingMatch extends WebhookWorkflowBinding {
+  /** Stable for this binding generation. The authority must abort it on revocation. */
+  revoked: AbortSignal;
+}
+
 export interface WebhookConfig {
   path: string;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -25,7 +35,15 @@ export interface WebhookConfig {
     secret: string,
     context: WebhookVerificationContext
   ) => Promise<boolean> | boolean;
+  /** Extract a subject authenticated by verifySignature. */
+  getWorkflowSubject?: (payload: unknown, context: WebhookVerificationContext) => string | undefined;
+  /** Identify the unambiguous workflow event from authenticated data. */
+  getWorkflowEvent?: (payload: unknown, context: WebhookVerificationContext) => string | undefined;
+  /** Extract a delivery ID only when the verifier authenticates that ID. */
+  getAuthenticatedDeliveryId?: (payload: unknown, context: WebhookVerificationContext) => string | undefined;
   transformPayload?: (payload: any) => any;
+  /** Return a fully independent event for each workflow when it contains custom class instances. */
+  cloneWorkflowEvent?: (event: Readonly<TriggerEvent & WebhookEvent>) => TriggerEvent & WebhookEvent;
   shouldDispatch?: (payload: any) => boolean;
 }
 
@@ -87,6 +105,12 @@ export interface TriggerEvent<TPayload = any> {
  */
 export type TriggerHandler<TPayload = any> = (
   event: TriggerEvent<TPayload> & WebhookEvent
+) => Promise<void> | void;
+
+/** Internal workflow dispatch also revalidates the installation registry after queued work. */
+export type ScopedTriggerHandler = (
+  event: Parameters<TriggerHandler>[0],
+  admission: { bindingIsCurrent(): Promise<boolean>; revoked: AbortSignal }
 ) => Promise<void> | void;
 
 /**

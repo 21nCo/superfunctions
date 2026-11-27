@@ -39,8 +39,8 @@
   },
   "dependencies": {
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-flow": "0.1.1",
-    "@superfunctions/oauth-storage": "0.1.1"
+    "@superfunctions/oauth-flow": "0.1.2",
+    "@superfunctions/oauth-storage": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,4 +1,5 @@
 import { cac } from "cac";
+import { version } from "../package.json";
 import { DEFAULT_CONFIG_PATH, defineConfig, loadConfig } from "./config.js";
 import { runInitCommand } from "./commands/init.js";
 import { runGenerateCommand } from "./commands/generate.js";
@@ -36,6 +37,37 @@ function toArray(value: string | string[] | undefined): string[] | undefined {
     return undefined;
   }
   return Array.isArray(value) ? value : [value];
+}
+
+// cac coerces numeric option values and treats some boolean assignments as true.
+function readCollectionTrustOptions(argv: string[]): { allowScripts: boolean; allowEnv: string[] } {
+  let allowScripts = false;
+  const allowEnv: string[] = [];
+  for (let index = 0; index < argv.length && argv[index] !== "--"; index += 1) {
+    const token = argv[index];
+    const separator = token.indexOf("=");
+    const name = separator < 0 ? token : token.slice(0, separator);
+    // CAC interprets nested keys and accepts negation with any number of dashes.
+    const trustFlag = /^(-+)(?:no-)?allow(?:-scripts|-env|Scripts|Env)(\.|$)/.exec(name);
+    if (trustFlag && (trustFlag[1] !== "--" || trustFlag[2] === ".")) {
+      throw new Error(`Invalid collection trust option '${name}'`);
+    } else if (name === "--allow-scripts" || name === "--allowScripts") {
+      if (separator >= 0) throw new Error("--allow-scripts takes no value");
+      allowScripts = true;
+    } else if (name === "--no-allow-scripts" || name === "--no-allowScripts") {
+      if (separator >= 0) throw new Error("--no-allow-scripts takes no value");
+      allowScripts = false;
+    } else if (name === "--allow-env" || name === "--allowEnv") {
+      const variableName = separator < 0 ? argv[++index] : token.slice(separator + 1);
+      if (!variableName || variableName.startsWith("-") || variableName.includes("=") || variableName.includes("\0")) {
+        throw new Error("--allow-env requires an environment variable name");
+      }
+      allowEnv.push(variableName);
+    } else if (name === "--no-allow-env" || name === "--no-allowEnv") {
+      throw new Error("--allow-env accepts only explicit environment variable names");
+    }
+  }
+  return { allowScripts, allowEnv };
 }
 
 export async function runCli(
@@ -202,6 +234,8 @@ export async function runCli(
     .option("--retries <n>", "Retry failed requests")
     .option("--delay <ms>", "Delay between sequential requests in milliseconds")
     .option("--env-var <keyValue>", "Override an environment variable (KEY=value)")
+    .option("--allow-env <name>", "Expose a named process environment variable to the collection")
+    .option("--allow-scripts", "Execute scripts in a trusted collection")
     .option("--dotenv <path>", "Load dotenv file as environment overrides")
     .option("--redact-header <name>", "Additional response/request header to redact")
     .option("--output <path>", "Write machine-readable report artifact")
@@ -242,8 +276,13 @@ export async function runCli(
           ? (reporterValue as R)
           : "console";
 
+        const trailing = cli.options["--"] as string[];
+        if (cli.args.length + trailing.length > 1) {
+          throw new Error("apifn test takes at most one collection directory");
+        }
         const result = await runTestCommand({
-          collectionDir,
+          ...trustOptions,
+          collectionDir: collectionDir ?? trailing[0],
           env: options.env,
           bail: options.bail,
           parallel: options.parallel,
@@ -512,11 +551,27 @@ export async function runCli(
     });
 
   cli.help();
-  cli.version("0.1.0");
+  cli.version(version);
+
+  let trustOptions: ReturnType<typeof readCollectionTrustOptions>;
+  try {
+    trustOptions = readCollectionTrustOptions(argv);
+  } catch (error) {
+    createOutput({ writeStdout: runOptions.stdout, writeStderr: runOptions.stderr, color: false }).error(
+      error instanceof Error ? error.message : String(error)
+    );
+    return 2;
+  }
 
   // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
   // check invocation that also names --help, instead of the usage error (exit 2).
-  let cacArgv = argv;
+  const separator = argv.indexOf("--");
+  // Give cac an explicit boolean value so it leaves the following path untouched.
+  let cacArgv = argv.map((arg, index) =>
+    (separator < 0 || index < separator) && (arg === "--allow-scripts" || arg === "--allowScripts")
+      ? "--allowScripts=true"
+      : arg
+  );
   if (isCheckInvocation(argv)) {
     try {
       parseCheckArgv(argv);
@@ -533,8 +588,7 @@ export async function runCli(
     cli.parse(["node", "apifn", ...cacArgv], { run: false });
     await cli.runMatchedCommand();
   } catch (error) {
-    // `apifn check` reserves exit 1 for a failed contract check: a usage error exits 2.
-    const usageExit = cli.matchedCommandName === "check" ? 2 : 1;
+    const usageExit = cli.matchedCommandName === "check" || cli.matchedCommandName === "test" ? 2 : 1;
     const message = error instanceof Error ? error.message : String(error);
     const output = createOutput({
       writeStdout: runOptions.stdout,

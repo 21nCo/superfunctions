@@ -19,6 +19,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -29,6 +30,7 @@ await adapter.initialize({
 
 Bun.serve({
   port: 3000,
+  hostname: "127.0.0.1",
   fetch: async (req) => {
     if (new URL(req.url).pathname.startsWith("/searchfn/")) {
       return sf.router.handle(req);
@@ -58,6 +60,7 @@ For Bun on Fly or Railway:
 
 - Use `@searchfn/adapter-postgres` for persistence (in-memory loses state on every cold start).
 - Set up a tiny startup script to call `initialize()` against your resource list.
+- Replace the demo opt-in with an [authorization policy](/docs/documentation/security/request-authz).
 
 ## Next steps
 

@@ -1,5 +1,4 @@
-const SENSITIVE_KEY_PATTERN =
-  /(authorization|token|secret|password|cookie|api[-_]?key|session[-_]?id|access[-_]?key|refresh[-_]?token)/i;
+import { isSensitiveKey } from "./sensitive-keys.js";
 
 export type DiagnosticSeverity = "error" | "warning" | "info";
 export type DiagnosticDetails = Record<string, unknown>;
@@ -80,7 +79,7 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): unkno
     try {
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
-          if (SENSITIVE_KEY_PATTERN.test(key)) {
+          if (isSensitiveKey(key)) {
             return [key, "[REDACTED]"];
           }
           return [key, redactValue(nested, seen)];

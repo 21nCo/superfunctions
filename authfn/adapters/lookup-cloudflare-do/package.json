@@ -1,6 +1,6 @@
 {
   "name": "@authfn/lookup-cloudflare-do",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Cloudflare Durable Object lookup store adapter for AuthFn multi-region routing",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@superfunctions/db": "0.3.4",
-    "authfn": "0.8.0"
+    "authfn": "0.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

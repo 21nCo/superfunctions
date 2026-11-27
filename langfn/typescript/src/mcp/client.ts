@@ -6,7 +6,7 @@ import type { MCPTool, MCPTransport } from "./types.js";
 
 export class MCPClient {
   private readonly client = new Client(
-    { name: "langfn-mcp-client", version: "0.1.0" },
+    { name: "langfn-mcp-client", version: "0.2.2" },
     { capabilities: {} }
   );
   private connected = false;

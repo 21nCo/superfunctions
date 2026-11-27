@@ -32,6 +32,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 The wrapper publishes protected-resource metadata and passes verified auth information to server context. Keep identity, tenant, scopes, and resource binding out of model-controlled arguments. The [authorization reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/auth.md) covers the generic provider adapter and diagnostic entry points.
 
 ## Complete client OAuth
@@ -100,6 +104,12 @@ Serve HTTP with `createWebStandardHandler()` and mount the resulting Web Standar
 Stateless mode creates and disposes an isolated SDK server and transport for every request. For server-initiated operations that must correlate across requests, provide a cryptographically secure `sessionIdGenerator` and retain the session transport. A `configureRequestServer` hook runs before the transport connection and can attach protocol instrumentation; a rejected initialization can invoke it without retaining a session.
 
 Initialization metadata is available only to sessionful client-profile hooks. Stateless profiles must be marked `requiresReportedClient: false` and depend on verified identity and request context. Keep a separate runtime instance per connection while sharing a registry or declaration.
+
+## Local servers and HTTP sessions
+
+A Streamable HTTP server on `127.0.0.1` or `localhost` is reachable from any web page through DNS rebinding: the page's own host name resolves to the loopback address, so the browser treats the request as same-origin. `createWebStandardHandler()` refuses requests whose `Origin` header is not listed in `allowedOrigins` (a loopback origin equal to the request's `Host` is accepted), which covers browser requests that carry `Origin`. Browsers can omit `Origin` on a same-origin GET, so also check `Host` in front of the handler and accept only the names the server listens on, or pass `enableDnsRebindingProtection: true` with `allowedHosts` (and `allowedOrigins`) so the SDK transport does both checks. Cap request bodies before building the Web `Request`. `examples/calculator-http-server.ts` does all three.
+
+Sessionful handlers bind each session to the principal that created it and answer 404 to a request from anyone else, so a leaked `mcp-session-id` is not enough to read another user's event stream or end their session. By default the principal is the subject (`authInfo.extra.subject`) and client ID of the request's `authInfo`, or the access token itself when the verifier sets no subject (a refreshed token then needs a new session); supply `sessionPrincipal` to derive it from other trusted request data (never the body). Authenticate `initialize` so anonymous callers cannot create sessions.
 
 ## Cloudflare Workers
 
@@ -372,7 +382,10 @@ Profile projection cannot invent or rename tools. A canonical required field
 removed from the model-visible schema must be declared server-owned and restored
 by the profile enricher. Missing trusted context, forged fields, and asymmetric
 contracts fail before handler execution. Without a matching profile, the
-canonical catalog and arguments are unchanged.
+canonical catalog and arguments are unchanged, except that by default
+(`unmatchedServerOwnedArguments: "reject"`) tools any profile gives
+server-owned arguments are hidden and answer like unknown tools; `"allow"`
+keeps them, with their arguments passed through.
 
 Projection supports static references to schema locations in the input document
 or its embedded `$id` resources. Draft-07 fragment-only `$id` values and modern
@@ -441,6 +454,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
 ## Client provider
@@ -450,6 +467,19 @@ Enterprise-managed authorization helpers advertise the stable ID-JAG grant profi
 metadata before opening a browser, correlates callback state, stores PKCE and
 tokens in memory unless an encrypted store is supplied, classifies token
 exchange/refresh/revocation diagnostics, and redacts credentials.
+Stored tokens and client information keep the `issuer` the MCP SDK records,
+so refresh tokens and client secrets are only presented to that authorization
+server during OAuth. The access token itself is sent to the MCP server the
+provider is used with, so give each MCP resource its own credential store (or
+encrypted-store namespace). Tokens saved without an
+`issuer` (by an earlier version) are returned without their refresh token, so
+the client authorizes again when the access token expires, and confidential
+client information (with a `client_secret`) saved without an `issuer` is not
+returned, so the client registers again; neither secret is presented to
+whichever authorization server an MCP server names. Store pre-registered
+confidential clients with their `issuer`. Callback `state` is checked by this provider's
+`validateAuthorizationState()`; a plain SDK provider without that method gets
+PKCE protection only.
 
 ```ts
 const provider = createMcpFnOAuthClientProvider({
@@ -501,6 +531,19 @@ External Client ID Metadata Documents require an explicit URL allow-policy.
 McpFn disables automatic redirects, reapplies that policy at every redirect,
 streams responses through a byte cap, and applies a ten-second deadline by
 default. `maxBytes`, `timeoutMs`, and `maxRedirects` can tighten those bounds.
+A Client ID Metadata Document must contain a `client_id` equal to its URL, be
+served with a single `application/json` media type, and use
+`token_endpoint_auth_method` `none`. Per the draft, when
+`token_endpoint_auth_methods_supported` is present it must be a nonempty list of
+strings containing any declared method, and `none` is selected whenever it is
+listed; without a list, an omitted method means `none`. Neither field may
+name a shared-secret method (`client_secret_basic`, `client_secret_post`,
+`client_secret_jwt`). Anything else is refused with `invalid_client_metadata`. Stored self-registered clients have unsafe link fields dropped
+before their metadata is used. In registrations and documents, `client_uri`, `logo_uri`,
+`tos_uri` and `policy_uri` may be omitted or `null`; any other value must be an
+absolute `https://` URL without credentials, or the client is refused with
+`invalid_client_metadata`. The `allow` policy sees only the URL: reject
+private, loopback and link-local hosts there.
 
 The AuthFn adapter uses a structural provider contract. `@superfunctions/auth`
 is an optional peer: installing or importing AuthFn is not required for other
@@ -513,7 +556,21 @@ required. A bearer-specific provider can implement
 `authenticateBearer(token, request)` directly; a standard AuthFn
 `authenticate(request)` provider is invoked with a credential-isolated request
 containing only that exact Bearer token. An AuthProvider's `authorize()` hook
-receives the normalized MCP resource URL before trusted context is created. `auth-diagnose` and
+receives the normalized MCP resource URL before trusted context is created.
+Without that hook, the principal's `resourceIds` must contain the resource,
+compared exactly as an identifier (the configured `resource`, which must be
+given in its normalized form, the identifier `createProtectedResourceMetadata`
+advertises, such as a lowercase host; any other spelling throws unless the
+provider has an `authorize()` hook;
+the default mapping copies `resourceIds` from the
+session, and a custom `map()` must return them); otherwise the credential is
+refused. Expiry is checked again right before the MCP handler runs, and a
+non-finite `expiresAt` counts as expired. `allowUnboundCredentials: true` accepts
+credentials with no `resourceIds` at all (without setting `authInfo.resource`);
+a credential bound to other resources is always refused. Sessions
+past their `expiresAt` (or a mapped principal's) are refused. The default
+mapping sets `authInfo.clientId` to the session's `metadata.clientId`, or else
+`<actorType>:<actorId>`; it never uses the session ID. `auth-diagnose` and
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.
 
@@ -766,9 +823,13 @@ const server = createMcpFnServer({
 ```
 
 For tenant- or actor-specific discovery, use `toolVisibility`. McpFn applies
-the hook to both `tools/list` and `tools/call`; a hidden call returns the same
-protocol `MethodNotFound` response as an unknown tool. The static manifest
-continues to describe the complete server contract.
+the hook to both `tools/list` and `tools/call` and passes the request in
+`requestKind` (`"tools/list"` or `"tools/call"`). A tool the hook rejects for
+`tools/list` is left out of that listing; a call the hook rejects for
+`tools/call` returns the same protocol `MethodNotFound` response as an unknown
+tool and never reaches the handler. A hook that ignores `requestKind` applies
+one decision to both. The static manifest continues to describe the complete
+server contract.
 
 ```ts
 const server = createMcpFnServer({
@@ -779,6 +840,24 @@ const server = createMcpFnServer({
     context.permissions.includes(String(tool._meta?.permission)),
 });
 ```
+
+A host may decide the two requests differently. Keep the authorization check
+for both request kinds and add any discovery-only condition separately, for
+example to keep a permitted tool out of listings while still accepting direct
+calls to it:
+
+```ts
+toolVisibility: ({ tool, context, requestKind }) => {
+  if (!context.permissions.includes(String(tool._meta?.permission))) {
+    return false;
+  }
+  return requestKind === "tools/call" || tool._meta?.hideFromDiscovery !== true;
+},
+```
+
+A hook that returns `true` for every `tools/call` lets any caller reach the
+tool by name, so do that only when the tool handler performs the same
+authorization check itself.
 
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 
@@ -791,6 +870,20 @@ included. `handleInvalidArguments` is available for existing domain packages
 that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
+
+In a tool result, only `McpFnError` (and its subclasses), the SDK's `McpError` (as code `MCPFN_TOOL_ERROR`, its JSON-RPC code not kept, with its message and its `data` as `details`) and a thrown plain `{ code, message }` object reach the client with their code, message and details. Resource, prompt, completion, subscription and other request handlers keep only `McpFnError` and `McpError`; a thrown plain object is withheld there too. Any other thrown value, such as a filesystem, database or upstream
+HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
+details: { errorId } }`; resource, prompt, completion and subscription handlers
+answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
+This covers errors from context factories, visibility hooks and task creation
+as well. The original error goes to the server's `onError({ error, errorId,
+method, tool })` sink, which is not awaited. An `McpError` from another copy of the SDK (such as the application's own) is recognised by its `McpError` name and `MCP error <code>:` message; a renamed subclass of it is withheld, so throw `McpFnError` for domain errors that must reach the client. `exposeErrors: true` restores verbatim error text. Argument validation
+stops at the first failure where the schema allows it: a large array whose
+`items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
+still reports each branch and, on `@cfworker/json-schema`, a tuple with
+`additionalItems: false` reports each extra item (responses keep at most 100
+issues), and tool arguments with more than 100,000 values in total are refused before any schema validation. Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+subscriptions.
 
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.
 
@@ -847,8 +940,16 @@ or `@cfworker/json-schema` on Cloudflare Workers and other runtimes that forbid
 code generation). Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
-invent or duplicate tools or mutate model-owned arguments. No matching profile
-preserves canonical behavior.
+invent or duplicate tools or mutate model-owned arguments.
+
+A client that matches no profile (no verified identity, or one no profile
+accepts) sees the canonical catalog without the tools that any profile gives
+server-owned arguments: it could never call them, since it may not supply
+those arguments and they are required. Calling such a tool answers like an
+unknown tool, so a client cannot pick a tenant or workspace by not matching a
+profile. Set `unmatchedServerOwnedArguments: "allow"` to list those tools and
+pass their arguments through unchanged, as before; the handler must then
+derive the value from trusted context itself.
 
 The optional `evidence` sink receives only bounded structural lifecycle
 events. It is observational: a sink failure cannot fail or change a request.
@@ -860,6 +961,18 @@ Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the 
 Task support is declared with `execution.taskSupport` and a `taskHandler`; a task-capable server must receive an official SDK `TaskStore`. `server.listRoots()`, `server.sample()`, and `server.elicit()` invoke matching client capabilities. Declare required client features in `clientRequirements` so manifests and host-profile tests can reject incompatible hosts before deployment.
 
 `createWebStandardHandler()` accepts the official SDK `HandleRequestOptions`, including validated `authInfo`. Use `@mcpfn/auth` to publish OAuth protected-resource metadata and produce that trusted value. In stateless mode, McpFn creates and disposes an isolated SDK server and transport for every request. Attach protocol instrumentation with `configureRequestServer`; it receives the live isolated server before transport connection and runs once per request, or once per session initialization attempt. Because configuration precedes SDK request validation, a rejected attempt can invoke the hook without retaining a session. Supply a cryptographically secure `sessionIdGenerator` when the server uses sampling, elicitation, or another server-to-client request that must be correlated across HTTP requests; session-enabled handlers retain their transport across the session.
+
+HTTP security defaults: a request carrying an `Origin` header is refused with
+HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
+`enableDnsRebindingProtection` hands Host and Origin checks to the SDK
+transport). A session belongs to the principal that created it
+(`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, with `extra.issuer` and `extra.tenantId` when the verifier reports them, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh; a server that trusts more than one issuer must also set `extra.issuer`, since subjects from verifiers that leave it unset share one namespace); a request
+from another principal, including GET and DELETE, gets the same 404 as an
+unknown session. In sessionful mode a configured `eventStore` is scoped per
+session, so `Last-Event-ID` resumption only replays the session's own events; a
+stateless handler has no session to scope it to, so don't share an event store
+between principals there.
 
 ## Cloudflare Workers and edge runtimes
 
@@ -963,6 +1076,14 @@ await server.serveStdio();
 ```
 
 `transports` only declares the supported transports in the manifest; it does not bind one. The example serves stdio; for Streamable HTTP, create a server instance per connection and use its `createWebStandardHandler()` as described in [Build a server](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/server.md).
+
+Mutation tools need the function form of `clientId`, returning a value per
+credential: DataFn keys idempotency records by namespace, client ID and the
+model-supplied `mutationId`, so with one fixed string two users could share
+records. A fixed string is accepted for read-only exposure, or with
+`allowSharedClientId: true`. List filters accept scalar values only; `object`
+and `array` fields are left out of the default filters and refused in an
+explicit `filterFields`.
 
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.
 
@@ -1279,7 +1400,7 @@ It includes:
 - JSON and JUnit artifacts with package/runtime provenance and failure layers;
 - orchestration of the official `@modelcontextprotocol/conformance` runner.
 
-Official conformance validates protocol behavior. McpFn scenarios validate product behavior. Production MCP servers should run both. For a protected local endpoint, use `runAuthenticatedOfficialConformance({ url, credential })`; it requires a literal loopback upstream, binds a temporary loopback-only streaming proxy, pins every request to the configured upstream path, injects bounded credential headers without printing them, and closes the proxy and attempts credential revocation/disposal after the pinned official runner exits. Credential cleanup retries up to three times. If all attempts fail, it throws `McpFnConformanceCleanupError`; retain that error and call `await error.retryCleanup()` after the provider recovers. The error contains no raw credential fields, and a successful retry releases the retained lease.
+Official conformance validates protocol behavior. McpFn scenarios validate product behavior. Production MCP servers should run both. For a protected local endpoint, use `runAuthenticatedOfficialConformance({ url, credential })`; it requires a literal loopback upstream, binds a temporary loopback-only streaming proxy, pins every request to the configured upstream path, injects bounded credential headers without printing them only into requests under a random path prefix in the proxy URL given to the runner (so another local process or a web page that finds the port gets no credentials), and closes the proxy and attempts credential revocation/disposal after the pinned official runner exits. Credential cleanup retries up to three times. If all attempts fail, it throws `McpFnConformanceCleanupError`; retain that error and call `await error.retryCleanup()` after the provider recovers. The error contains no raw credential fields, and a successful retry releases the retained lease.
 
 Deterministic client-profile compatibility is a third, separate gate. It proves
 the effective authenticated catalog, schema portability, trusted enrichment,
@@ -1582,7 +1703,7 @@ const server = declaration.createServer({
 });
 ```
 
-`toolVisibility` affects both listing and calls. A hidden call returns the same protocol `MethodNotFound` result as an unknown tool; the static manifest still describes the complete server contract. See the [core reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/core.md) for error envelopes and context details.
+`toolVisibility` affects both listing and calls, and its `requestKind` input (`"tools/list"` or `"tools/call"`) lets a host decide them separately. A hidden call returns the same protocol `MethodNotFound` result as an unknown tool; the static manifest still describes the complete server contract. See the [core reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/core.md) for error envelopes and context details.
 
 ## Match authenticated client profiles carefully
 
