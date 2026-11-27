@@ -924,7 +924,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * which decides until its `expiresAt`; a fallback settled without a
    * receipt may be contradicted by a late commit, so it never stands in for
    * the source. The single receipt read is the decision's linearization
-   * point: a receipt it returns was the key's commit when the source answered.
+   * point: a receipt it returns was the key's commit when the source answered,
+   * and a record read before it decides only while it is unexpired by the
+   * clock after the source answered.
    */
   const inspect = async (prepared: Prepared, at: number): Promise<{ done: ReceiptOutcome } | { live: Live }> => {
     const { storeKey, fingerprint, recovery } = prepared;
@@ -942,12 +944,17 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       raw = await lookupReceipt(storeKey);
     } catch (error) {
       // Only a result settled from the holder's own validated receipt stands in for an unreachable receipt source.
-      if (record?.state === "completed" && record.receiptSettled === true) return { live };
+      if (record?.state === "completed" && record.receiptSettled === true && record.expiresAt > now()) return { live };
       throw error;
     }
     // The source answered: a malformed receipt, or one for another key, fails closed over any record.
     const receipt = parseReceipt(storeKey, raw);
-    return receipt ? { done: receiptOutcome(receipt, fingerprint) } : { live };
+    if (receipt) return { done: receiptOutcome(receipt, fingerprint) };
+    // A record read before the lookup decides only if it is still unexpired when the source answered empty.
+    if (record && record.expiresAt <= now()) {
+      return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
+    }
+    return { live };
   };
 
   /** An acquired claim before its final lease check. */

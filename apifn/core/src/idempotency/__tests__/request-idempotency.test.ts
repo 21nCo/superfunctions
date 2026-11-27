@@ -2629,6 +2629,43 @@ describe("createRequestIdempotency PR round-7 live-version fence", () => {
     },
   );
 
+  it.each(["claim", "recover"] as const)(
+    "%s in flight across a contradicted fallback's deadline never replays it once the receipt lookup answers empty",
+    async (operation) => {
+      const store = new ScriptedStore();
+      const database = new FakeOrderDatabase();
+      const clock = new FakeClock();
+      let duringLookup: (() => void) | undefined;
+      const receipts: IdempotencyReceiptSource = {
+        find: async (storeKey) => {
+          const run = duringLookup;
+          duringLookup = undefined;
+          run?.(); // the lookup reads only after the fallback's deadline passed and the receipt was pruned
+          return database.receipts.find(storeKey);
+        },
+      };
+      const idempotency = createRequestIdempotency({ store, receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+      const holder = acquired(await idempotency.claim(orderRequest()));
+      store.rules.push(
+        { match: (expectedVersion) => expectedVersion === holder.version, before: async () => void (await database.createOrder(holder, "book")) },
+        { match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version, reject: "not applied" },
+      );
+      await expect(idempotency.settle(holder, { status: 503, body: "fallback" })).rejects.toThrow("store write failed");
+      const fallback = store.records.get(holder.storeKey)!;
+      expect(fallback).toMatchObject({ state: "completed", response: { status: 503 } });
+
+      // The request reads the fallback just before its deadline; the receipt is retained until just after it.
+      clock.time = fallback.expiresAt - 1;
+      duringLookup = () => {
+        clock.advance(2);
+        database.receiptsByKey.clear();
+      };
+      const result = await idempotency[operation](orderRequest());
+      expect(result.outcome).not.toBe("replay");
+      expect(result.outcome).toBe(operation === "claim" ? "acquired" : "absent");
+    },
+  );
+
   it("an applied-then-rejected replacement still reports the receipt", async () => {
     const store = new ScriptedStore();
     const { idempotency, database } = world(store);
