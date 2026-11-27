@@ -475,6 +475,7 @@ export class ChangeTrackingService {
       entries,
       (resource) => certified && recordRev && schema !== undefined && issuesRevisions(schema, resource),
       schema,
+      certified,
     );
   }
 

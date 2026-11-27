@@ -20,8 +20,8 @@ const schema = {
   relations: [],
 } as any;
 
-async function serve(database: Adapter) {
-  const server = await createDatafnServer({ schema, database, allowUnknownResources: true } as any);
+async function serve(database: Adapter, serverSchema: unknown = schema) {
+  const server = await createDatafnServer({ schema: serverSchema, database, allowUnknownResources: true } as any);
   const send = async (route: string, body: unknown): Promise<{ status: number; body: Json }> => {
     const res = await server.router.handle(
       new Request(`http://localhost/datafn/${route}`, {
@@ -197,7 +197,7 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
     expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: false });
   });
 
-  it("records a KV delete that another writer overtook as the stored record, without turning it into a tombstone", async () => {
+  it("records a KV delete that another writer overtook as the stored record, counting the delete once in the live state", async () => {
     const base = memoryAdapter() as Adapter;
     const recreate = async (target: Adapter) => {
       // Between this write's DELETE and its change read, another writer
@@ -222,8 +222,10 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
 
     const last = (await changeRows(base, "kv:prefs")).at(-1);
     expect(last).toMatchObject({ op: "upsert" });
-    // The re-creating writer's revision stands; the rewritten change raises nothing.
-    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 2, deleted: false });
+    // merge (1), the re-creating writer (2), this delete counted once in the
+    // latest committed state, which is live (3); the rewritten change carries none.
+    expect(last.rev ?? null).toBeNull();
+    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 3, deleted: false });
   });
 
   it("never turns a live record into a tombstone from a delete it cannot verify on a snapshot database", async () => {
@@ -412,5 +414,157 @@ describe("DATA-41 change-row revision columns", () => {
     expect(await ensureChangesRevColumn(db, t0 + CHANGES_REV_COLUMN_RECHECK_MS + 1)).toBe(true);
     columns = false;
     expect(await ensureChangesRevColumn(db, t0 + 10 * CHANGES_REV_COLUMN_RECHECK_MS)).toBe(true);
+  });
+});
+
+describe("DATA-41 PR review round 7: every committed write moves the ledger once, to the latest committed state", () => {
+  const kvWhere = [{ field: "id", operator: "eq" as const, value: "kv:prefs" }];
+
+  it("leaves a KV merge overtaken by a delete and a re-create live, on push and /mutation", async () => {
+    for (const route of ["push", "mutation"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let stage: "idle" | "deleteAfterWrite" | "recreateAfterSample" | "done" = "idle";
+      const db = withoutTransactions(overriding(base, (target) => ({
+        ...Object.fromEntries(["create", "update", "upsert"].map((name) => [name, async (p: any) => {
+          const out = await (target as any)[name](p);
+          if (p.model === "kv" && stage === "deleteAfterWrite") {
+            stage = "recreateAfterSample";
+            // Writer 2 deletes the record and raises its tombstone.
+            await target.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
+            await bumpTombstone(target, NS, "kv", "kv:prefs");
+          }
+          return out;
+        }])),
+        async findOne(p: any) {
+          const out = await target.findOne(p);
+          if (p.model === "kv" && stage === "recreateAfterSample" && out === null) {
+            stage = "done";
+            // Writer 3 re-creates it and raises it live, after this write sampled it absent.
+            await target.create({ model: "kv", data: { id: "kv:prefs", value: { c: 3 } }, namespace: NS } as any);
+            await bumpRevision(target, NS, "kv", "kv:prefs", false);
+          }
+          return out;
+        },
+      })));
+      const served = await serve(db);
+      const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+      expect((await send({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } })).body.ok, route).toBe(true);
+      stage = "deleteAfterWrite";
+      expect((await send({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } })).body.ok, route).toBe(true);
+
+      expect(stage, route).toBe("done");
+      expect(await base.findOne({ model: "kv", where: kvWhere, namespace: NS } as any), route).not.toBeNull();
+      // merge (1), delete (2), re-create (3), this merge once in the latest state: live (4).
+      expect(await rev(base, "kv", "kv:prefs"), route).toEqual({ rev: 4, deleted: false });
+    }
+  });
+
+  it("leaves the ledger a tombstone when the row a write sampled live is deleted before the raise", async () => {
+    for (const route of ["push", "mutation"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let stage: "idle" | "armed" | "deleteAfterSample" | "done" = "idle";
+      const db = withoutTransactions(overriding(base, (target) => ({
+        ...Object.fromEntries(["create", "update", "upsert"].map((name) => [name, async (p: any) => {
+          const out = await (target as any)[name](p);
+          if (p.model === "kv" && stage === "armed") stage = "deleteAfterSample";
+          return out;
+        }])),
+        async findOne(p: any) {
+          const out = await target.findOne(p);
+          if (p.model === "kv" && stage === "deleteAfterSample" && out !== null) {
+            stage = "done";
+            // Another writer deletes the record after this write sampled it live.
+            await target.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
+            await bumpTombstone(target, NS, "kv", "kv:prefs");
+          }
+          return out;
+        },
+      })));
+      const served = await serve(db);
+      const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+      expect((await send({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } })).body.ok, route).toBe(true);
+      stage = "armed";
+      expect((await send({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } })).body.ok, route).toBe(true);
+
+      expect(stage, route).toBe("done");
+      expect(await base.findOne({ model: "kv", where: kvWhere, namespace: NS } as any), route).toBeNull();
+      // merge (1), the other writer's delete (2), this merge once in the latest state: a tombstone (3).
+      expect(await rev(base, "kv", "kv:prefs"), route).toEqual({ rev: 3, deleted: true });
+    }
+  });
+
+  it("tombstones deletes and cascades on snapshot adapters through push, /mutation and /transact", async () => {
+    const cascadeSchema = {
+      resources: [
+        ...schema.resources,
+        {
+          name: "comment",
+          version: 1,
+          fields: [
+            { name: "body", type: "string", required: false },
+            { name: "taskId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [{ from: "comment", to: "task", type: "many-one", relation: "task", fkField: "taskId", onDelete: { to: "cascade" } }],
+    };
+    // MySQL-style (update re-selects, counts are changed rows) and Prisma-style (returns the row).
+    for (const returning of [false, true]) {
+      for (const route of ["push", "mutation", "transact"] as const) {
+        const label = `${route} returning=${returning}`;
+        const base = memoryAdapter() as Adapter;
+        const served = await serve(snapshotDatabase(base, { returning }), cascadeSchema);
+        const send = (mutation: Json) =>
+          route === "push" ? served.push(mutation) : route === "mutation" ? served.mutate(mutation) : served.transact(mutation);
+        const insert = { resource: "task", operation: "insert", id: "task:1", record: { title: "a" } };
+        expect((await send(insert)).status, label).toBe(200);
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 1, deleted: false });
+        expect((await send({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } })).status, label).toBe(200);
+
+        expect((await send({ resource: "task", operation: "delete", id: "task:1" })).status, label).toBe(200);
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 2, deleted: true });
+        expect(await rev(base, "comment", "comment:1"), label).toEqual({ rev: 2, deleted: true });
+
+        expect((await send({ ...insert, record: { title: "b" } })).status, label).toBe(200);
+        expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 3, deleted: false });
+      }
+    }
+  });
+
+  it("adopts a raise whose acknowledgement was lost after another writer advanced the record", async () => {
+    for (const route of ["push", "mutation"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let loseAck = false;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "update") return value.bind(internal);
+            return async (table: string, ...args: unknown[]) => {
+              const out = await value.apply(internal, [table, ...args]);
+              if (table === "__datafn_revisions" && loseAck && "rev" in (args[1] as Json)) {
+                loseAck = false;
+                // The raise committed; a second writer advances the record
+                // before this writer learns the outcome.
+                await bumpRevision(target, NS, "task", "task:1", false);
+                throw new Error("connection lost after commit");
+              }
+              return out;
+            };
+          },
+        }),
+      })));
+      const served = await serve(db);
+      const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+      expect((await send({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok, route).toBe(true);
+      loseAck = true;
+      expect((await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } })).body.ok, route).toBe(true);
+
+      expect(loseAck, route).toBe(false);
+      // insert (1), the merge whose acknowledgement was lost (2), the second writer (3).
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 3, deleted: false });
+      expect(await changeRows(base, "task:1"), route).toHaveLength(2);
+    }
   });
 });

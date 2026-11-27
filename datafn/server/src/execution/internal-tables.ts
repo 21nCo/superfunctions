@@ -45,6 +45,9 @@ const REVISIONS_COLUMNS: InternalColumnDef[] = [
   { name: "rev", type: "integer" },
   { name: "deleted", type: "integer" },
   { name: "updated_at", type: "text" },
+  // The marks of the latest raises, newest first, carried forward by each
+  // raise so a retry after a lost acknowledgement finds its own (revisions.ts).
+  { name: "raises", type: "text" },
 ];
 
 const IDEMPOTENCY_COLUMNS: InternalColumnDef[] = [
