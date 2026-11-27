@@ -334,6 +334,8 @@ export async function executePush(
   let latestSeq = 0;
   // Track per-resource max serverSeq so the client can advance per-table cursors (FIX-B)
   const resourceSeqs: Record<string, number> = {};
+  // DATA-41: set once a write outside a transaction sends its change rows.
+  let recordingAttempted = false;
 
   if (
     multiRegionRuntime &&
@@ -1538,6 +1540,7 @@ export async function executePush(
           // DATA-41: revisions and change rows are retried on these entries,
           // never replaying the write. The cursors cover only stored changes.
           const recorded: ChangeEntryInput[] = [];
+          recordingAttempted = true;
           await recordWriteChangesWithRetry(changeTracking, entries, writeDb, 2, logger, {
             record: sequenced,
             onRecorded: (entry) => {
@@ -1598,9 +1601,12 @@ export async function executePush(
     }
   }
 
-  // Retrieve latest cursor if not updated during loop (e.g. all deduped or empty)
+  // Retrieve latest cursor if not updated during loop (e.g. all deduped or empty).
+  // DATA-41: when a write's changes were sent but none was stored, the
+  // allocator's current value is not this push's progress: keep the cursor
+  // this push started from, so concurrent foreign changes stay pullable.
   if (latestSeq === 0) {
-    latestSeq = await changeTracking.getCurrentServerSeq();
+    latestSeq = recordingAttempted ? cursorBeforeSeq : await changeTracking.getCurrentServerSeq();
   }
 
   // Build per-resource cursors map for client to advance per-table cursors (FIX-B)

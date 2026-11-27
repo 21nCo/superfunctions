@@ -280,7 +280,7 @@ export async function bumpRevision(
   recordId: string,
   deleted: boolean,
 ): Promise<number> {
-  return (await raiseRevision(db, namespace, resource, recordId, () => ({ deleted })))!.rev;
+  return (await raiseRevision(db, namespace, resource, recordId, () => ({ deleted, byDelete: deleted })))!.rev;
 }
 
 /**
@@ -301,7 +301,7 @@ export async function bumpTombstone(
   recordId: string,
   outcome?: BumpOutcome,
 ): Promise<number> {
-  const decide = () => ({ deleted: true });
+  const decide = () => ({ deleted: true, byDelete: true });
   return (await raiseRevision(db, namespace, resource, recordId, decide, { outcome }))!.rev;
 }
 
@@ -353,9 +353,13 @@ interface RecordEvidence {
   deleted: boolean;
   /** For a delete whose adapter reports no count: a current read of whether the row is absent now. */
   absentNow?: () => Promise<boolean>;
-  /** For such a delete: whether a read just before the statement found the row, and when that read began. */
+  /** For such a delete: whether a read just before the statement found the row. */
   presentBefore?: boolean;
-  readAt?: string;
+  /**
+   * For such a delete outside a transaction: the record's revision row as read
+   * before that read (revision 0 without one); unset when it was not read.
+   */
+  ledgerBefore?: StoredRevision;
   /** For such a delete: an earlier write of the same write that changed the row and left it live. */
   before?: RecordEvidence;
 }
@@ -384,6 +388,20 @@ function countsMatchedRows(db: Adapter): boolean {
 }
 
 /**
+ * The revision row of the record a delete by id names, read before the
+ * delete, outside a transaction only (inside one a failed read could abort
+ * it); undefined when it is not or cannot be read.
+ */
+async function revisionBefore(db: Adapter, p: any, id: string): Promise<StoredRevision | undefined> {
+  if (transactionsUsable(db) || typeof p.namespace !== "string") return undefined;
+  try {
+    return (await readRevisions(db, p.namespace, p.model, [id])).get(id) ?? { rev: 0, deleted: false };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * DATA-41: `db` for one write, recording what each of its own record
  * statements proves about each record row it names by id. Every call goes to
  * the adapter's own method with its own arguments; the wrapper only reads the
@@ -407,7 +425,7 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
     ids: readonly string[],
     deleted: boolean,
     state: WriteState,
-    countless?: Pick<RecordEvidence, "absentNow" | "presentBefore" | "readAt">,
+    countless?: Pick<RecordEvidence, "absentNow" | "presentBefore" | "ledgerBefore">,
   ) => {
     for (const id of ids) log.push({ key: JSON.stringify([model, id]), deleted, state, ...countless });
   };
@@ -471,9 +489,10 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
     },
     async delete(p) {
       const ids = idsOf(p.where, false);
-      // The adapter's delete reports no count. A read just before it tells
-      // whether there was a row to remove (see raiseFromEvidence).
-      const readAt = new Date().toISOString();
+      // The adapter's delete reports no count. Reads just before it of the
+      // revision row, then of the row, tell what it may have removed (see
+      // raiseFromEvidence).
+      const ledgerBefore = ids?.length === 1 ? await revisionBefore(db, p, ids[0]) : undefined;
       const presentBefore = ids
         ? (await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })) !== null
         : undefined;
@@ -489,7 +508,7 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
       if (!ids) return;
       const absentNow = async () =>
         (await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })) === null;
-      note(p.model, ids, true, "applied", { absentNow, presentBefore, readAt });
+      note(p.model, ids, true, "applied", { absentNow, presentBefore, ledgerBefore });
     },
     async deleteMany(p) {
       const count = await db.deleteMany(p);
@@ -533,16 +552,21 @@ function takeWriteEvidence(db: Adapter): Map<string, RecordEvidence> {
     if (event.state === "applied" || !prior || (prior.state === "missed" && event.state === "unverified")) {
       const live = prior && prior.state !== "missed" && !prior.deleted ? prior : undefined;
       const before = event.absentNow ? (prior?.absentNow ? prior.before : live) : undefined;
-      const { state, deleted, absentNow, presentBefore, readAt } = event;
-      folded.set(event.key, { state, deleted, absentNow, presentBefore, readAt, before });
+      const { state, deleted, absentNow, presentBefore, ledgerBefore } = event;
+      folded.set(event.key, { state, deleted, absentNow, presentBefore, ledgerBefore, before });
     }
   }
   return folded;
 }
 
-/** What a raise leaves: a tombstone (`deleted`) or a live record. */
+/**
+ * What a raise leaves: a tombstone (`deleted`) or a live record, and whether
+ * the tombstone is a delete statement's own evidence (`byDelete`) rather than
+ * an absence another write observed.
+ */
 interface Decided {
   deleted: boolean;
+  byDelete?: boolean;
 }
 
 /**
@@ -553,9 +577,33 @@ type RaiseDecision = (row: Record<string, unknown> | null) => Promise<Decided | 
 
 const isTombstone = (row: Record<string, unknown> | null) => row !== null && Number(row.deleted) === 1;
 
-/** When the revision row was last written (the time before its raise marks), or "" without one. */
-const raisedAt = (row: Record<string, unknown> | null) =>
-  typeof row?.updated_at === "string" ? row.updated_at.split("#")[0] : "";
+/** A raise mark's suffix: the raise was a delete's own tombstone, or any other state. */
+const BY_DELETE = ":d";
+const OTHER = ":o";
+
+/** Whether `row`'s latest raise is a tombstone that a delete statement's own evidence raised. */
+const deleteEvidenced = (row: Record<string, unknown> | null) =>
+  isTombstone(row) && raiseMarks(row)[0]?.endsWith(BY_DELETE) === true;
+
+/**
+ * Outside a transaction: whether a count-less delete that leaves the row
+ * absent removed nothing, from what it read before its statement and the
+ * revision row `row` now. Whatever removed the row it found raises its
+ * tombstone once: a delete-evidenced tombstone raised since stands for it.
+ * Without a row to remove it raises nothing, unless the record was raised
+ * since that read to a state it may have removed: a live re-insert, or a
+ * tombstone a write observed after the revision row read a tombstone (the
+ * re-insert, raised after this delete removed it). A delete that found the
+ * row absent under a live revision follows one still to raise its own.
+ */
+function countlessRemovedNothing(evidence: RecordEvidence, row: Record<string, unknown> | null): boolean {
+  const before = evidence.ledgerBefore;
+  const changed = before === undefined || (row ? Number(row.rev) || 0 : 0) > before.rev;
+  if (evidence.presentBefore) return changed && deleteEvidenced(row);
+  if (!changed) return true;
+  if (!isTombstone(row)) return false;
+  return deleteEvidenced(row) || before === undefined || !before.deleted;
+}
 
 /**
  * The revision row write a raise last sent, kept by its caller across a
@@ -636,7 +684,7 @@ async function raiseRevision(
     const decided = await decide(row);
     if (decided === undefined) return undefined;
     const { deleted } = decided;
-    const mark = randomBytes(6).toString("hex");
+    const mark = randomBytes(6).toString("hex") + (decided.byDelete ? BY_DELETE : OTHER);
     const current = row ? Number(row.rev) || 0 : 0;
     Object.assign(pending, { rev: current + 1, deleted, mark });
     const stamp = `${updatedAt}#${[mark, ...raiseMarks(row)].slice(0, RAISE_HISTORY).join(" ")}`;
@@ -952,12 +1000,8 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  * - a delete without a count raises a tombstone when a read finds the row
  *   absent (a transaction sees its own delete). Inside a transaction it
  *   raises nothing over a tombstone: deletes of one row are serialized by its
- *   lock, so the row was already removed. Outside one, a read just before the
- *   statement (`presentBefore`) decides: a delete that found the row removed
- *   it (or raced another delete of it, which only skips a revision), and one
- *   that found no row removed nothing and raises nothing, unless the revision
- *   row was raised live after that read (a re-insert this delete may have
- *   removed), so the last raise leaves the latest state. When
+ *   lock, so the row was already removed. Outside one, the reads before its
+ *   statement decide (countlessRemovedNothing). When
  *   the row is present the delete may have removed nothing (a suppressed
  *   delete), and a writer that re-created it has raised past the deleted
  *   state, so it raises only for an earlier write of the same write that
@@ -997,16 +1041,17 @@ async function raiseFromEvidence(
   const removedNothing = (row: Record<string, unknown> | null) => {
     if (!unproven) return false;
     if (transactional || evidence.presentBefore === undefined) return isTombstone(row);
-    return !evidence.presentBefore && (isTombstone(row) || raisedAt(row) < evidence.readAt!);
+    return countlessRemovedNothing(evidence, row);
   };
   const decide: RaiseDecision = async (row) => {
     if (countless) {
-      if (await absentNow()) return removedNothing(row) ? undefined : { deleted: true };
+      if (await absentNow()) return removedNothing(row) ? undefined : { deleted: true, byDelete: true };
       return evidence.before && !(unproven && isTombstone(row)) ? { deleted: false } : undefined;
     }
     if (unproven && isTombstone(row)) return undefined;
-    if (ownState) return { deleted: evidence.deleted };
-    return { deleted: await absentNow() };
+    if (ownState) return { deleted: evidence.deleted, byDelete: evidence.deleted };
+    const absent = await absentNow();
+    return { deleted: absent, byDelete: absent && evidence.deleted };
   };
   const outcome: BumpOutcome = {};
   const lockFirst = unproven && transactional;

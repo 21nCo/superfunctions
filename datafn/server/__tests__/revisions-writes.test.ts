@@ -655,9 +655,6 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     const base = memoryAdapter() as Adapter;
     await base.create({ model: "task", data: { id: "task:1", title: "a" }, namespace: NS } as any);
     await bumpRevision(base, NS, "task", "task:1", false);
-    // A delete that finds no row raises only for a revision row written in
-    // or after the millisecond its read began; later deletes start after it.
-    await new Promise((resolve) => setTimeout(resolve, 2));
     return base;
   }
 
@@ -1039,6 +1036,12 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
           const insert = withWriteEvidence(countless(base));
           await insert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
           await assign(insert, insertEntry());
+          // The re-insert's writer stamped the revision row with a clock far behind.
+          const [stored] = await base.internal.findMany("__datafn_revisions", []);
+          const marks = String(stored.updated_at).split("#")[1];
+          await base.internal.update("__datafn_revisions", [{ field: "id", op: "eq", value: stored.id }], {
+            updated_at: `2000-01-01T00:00:00.000Z#${marks}`,
+          });
           await target.delete(p);
         },
       })));
@@ -1048,6 +1051,88 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
 
       // The ledger ends in the latest state: the row is absent.
       expect(await rev(base, "task", "task:1")).toEqual({ rev: 4, deleted: true });
+    });
+
+    it("raises once for two count-less deletes that both found the row, in either raise order", async () => {
+      for (const firstRaisesFirst of [true, false]) {
+        const base = await insertedTask();
+        // Both deletes read the row before either statement runs; the second removes nothing.
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        let statements = 0;
+        const paused = overriding(countless(base), (target) => ({
+          delete: async (p: any) => {
+            if (++statements === 2) release();
+            await gate;
+            await target.delete(p);
+          },
+        }));
+        const writes = [withWriteEvidence(paused), withWriteEvidence(paused)];
+        await Promise.all(writes.map((db) => db.delete({ model: "task", where, namespace: NS } as any)));
+        for (const db of firstRaisesFirst ? writes : [...writes].reverse()) await assign(db, deleteEntry());
+
+        expect(await rev(base, "task", "task:1"), `firstRaisesFirst=${firstRaisesFirst}`).toEqual({ rev: 2, deleted: true });
+      }
+    });
+
+    it("raises a delete that removed a re-insert whose raise observed the absence first", async () => {
+      const base = await insertedTask();
+      const first = withWriteEvidence(countless(base));
+      let reinsert: Adapter | undefined;
+      const late = withWriteEvidence(overriding(countless(base), (target) => ({
+        delete: async (p: any) => {
+          // After this delete's reads, the id is re-inserted; this delete removes it.
+          reinsert = withWriteEvidence(countless(base));
+          await reinsert.create({ model: "task", data: { id: "task:1", title: "c" }, namespace: NS } as any);
+          await target.delete(p);
+        },
+      })));
+      await first.delete({ model: "task", where, namespace: NS } as any);
+      await assign(first, deleteEntry());
+      // `late` reads no row under a tombstone, then removes the re-inserted row.
+      await late.delete({ model: "task", where, namespace: NS } as any);
+      await assign(reinsert!, insertEntry());
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: true });
+      await assign(late, deleteEntry());
+
+      // insert (1), delete (2), re-insert (3), its delete (4).
+      expect(await rev(base, "task", "task:1")).toEqual({ rev: 4, deleted: true });
+    });
+
+    it("keeps the push cursor where it started when no change of the push was stored", async () => {
+      const base = memoryAdapter() as Adapter;
+      let armed = false;
+      let foreign: (() => Promise<unknown>) | undefined;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "create" && key !== "createMany") return value.bind(internal);
+            return async (table: string, data: Json | Json[]) => {
+              const rows = Array.isArray(data) ? data : [data];
+              if (table === "__datafn_changes" && armed && rows.some((row) => row.record_id === "task:1")) {
+                // Another request stores a change while this one fails.
+                const run = foreign;
+                foreign = undefined;
+                await run?.();
+                throw new Error("forced change failure");
+              }
+              return value.apply(internal, [table, data]);
+            };
+          },
+        }),
+      })));
+      const served = await serve(db);
+      await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+      foreign = () => served.push({ resource: "task", operation: "insert", id: "task:9", record: { title: "z" } });
+      armed = true;
+      const result = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+
+      expect(foreign).toBeUndefined();
+      expect(JSON.stringify(result.body)).toContain("INTERNAL");
+      expect(await changeRows(base, "task:9")).toHaveLength(1);
+      expect(result.body.result.cursor).toBe(result.body.result.cursorBefore);
     });
 
     it("returns push cursors that cover only the changes stored", async () => {
