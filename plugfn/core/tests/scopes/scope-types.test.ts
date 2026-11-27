@@ -306,6 +306,26 @@ defineScopeGrammar<TtlDims, SecondsAndTtl>({ provider: 'subtype', dimensions: tt
 // @ts-expect-error an expected scope-shape subtype grammar without normalize
 const contextualSubtype: ScopeCallbackGrammar<TtlDims, SecondsAndTtl> = defineScopeGrammar({ provider: 'subtype', dimensions: ttlDims, riskOf: () => 'read' });
 void contextualSubtype;
+// So does an input that adds only an optional field, in every form.
+type OptionalSeconds = { readonly ttl: number; readonly seconds?: number };
+// @ts-expect-error an explicit input with an optional extra field, without normalize
+defineScopeGrammar<TtlDims, OptionalSeconds>({ provider: 'optional-extra', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error a stored definition with an optional extra field, without normalize
+const storedOptional: ScopeCallbackGrammarDefinition<TtlDims, OptionalSeconds> = { provider: 'optional-extra', dimensions: ttlDims, riskOf: () => 'read' };
+void storedOptional;
+// Generic factories build risk-only definitions with the canonical input.
+function riskOnlyFor<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar({ provider: 'generic', dimensions, riskOf: () => 'read' });
+}
+function riskOnlyExplicit<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar<GD, ScopeShape<GD>>({ provider: 'generic', dimensions, riskOf: () => 'read' });
+}
+function riskOnlyDefinition<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammarDefinition<GD> {
+  return { provider: 'generic', dimensions, riskOf: () => 'read' };
+}
+riskOnlyFor(ttlDims).classifyRisk({ ttl: 60 });
+riskOnlyExplicit(ttlDims).classifyRisk({ ttl: 60 });
+defineScopeGrammar(riskOnlyDefinition(ttlDims)).classifyRisk({ ttl: 60 });
 // A generic consumer forwards a definition and keeps its input type.
 function buildGrammar<GD extends ScopeDimensions, GInput>(definition: ScopeCallbackGrammarDefinition<GD, GInput>): ScopeCallbackGrammar<GD, GInput> {
   return defineScopeGrammar(definition);

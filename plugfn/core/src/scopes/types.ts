@@ -298,19 +298,30 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  * freezes the value keeps its `constructor` from being restored.
  */
 export type ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> =
-  IsScopeShape<D, TInput> extends true
-    ? ScopeCallbackGrammarFields<D, TInput>
-    : ScopeCallbackGrammarFields<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> };
+  // `normalize` is optional only when `TInput` is exactly `ScopeShape<D>`:
+  // each assignable to the other, with no key (an optional one included)
+  // outside it. Each check is written directly on `TInput`, so for a generic
+  // `D` with `TInput` = `ScopeShape<D>` the compiler relates a definition
+  // to the optional branch alone.
+  [TInput] extends [ScopeShape<D>]
+    ? [ScopeShape<D>] extends [TInput]
+      ? [keyof TInput] extends [keyof ScopeShape<D>]
+        ? ScopeCallbackGrammarFields<D, TInput>
+        : ScopeNormalizingFields<D, TInput>
+      : ScopeNormalizingFields<D, TInput>
+    : ScopeNormalizingFields<D, TInput>;
 
-/** Whether `TInput` is exactly the canonical input {@link ScopeShape} (each assignable to the other). */
-type IsScopeShape<D extends ScopeDimensions, TInput> = [TInput] extends [ScopeShape<D>] ? ([ScopeShape<D>] extends [TInput] ? true : false) : false;
+/** {@link ScopeCallbackGrammarFields} with a required `normalize`. */
+type ScopeNormalizingFields<D extends ScopeDimensions, TInput> = ScopeCallbackGrammarFields<D, TInput> & {
+  readonly normalize: (input: TInput) => ScopeShape<D>;
+};
 
 /**
  * The fields of a {@link ScopeCallbackGrammarDefinition}, where `normalize`
  * is optional whatever the input type. Declare a definition with
  * `ScopeCallbackGrammarDefinition`, which requires `normalize` for any
- * input type other than exactly `ScopeShape` (a subtype with extra fields
- * included); a generic definition type built on it is an intersection with
+ * input type other than exactly `ScopeShape` (one with extra fields,
+ * optional ones included); a generic definition type built on it is an intersection with
  * `ScopeCallbackGrammarDefinition`, which keeps that requirement (an
  * interface cannot extend a conditional type).
  */
