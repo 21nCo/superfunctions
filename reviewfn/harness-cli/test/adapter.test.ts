@@ -812,6 +812,30 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(parseCliVersion("v0.9.0")).toBe("0.9.0");
   }, 20_000);
 
+  // Built at runtime: a credential the reported version holds whole, and one it overlaps only up to the "!" that ends it.
+  it.each([
+    ["holds", ["version", "fixture", "credential"].join("-"), "1.2.3+build.", "1.2.3+build.version-fixture-credential"],
+    ["overlaps", ["partial", "fixture!value"].join("-"), "1.2.3+build.", "1.2.3+build.partial-fixture"],
+  ])("refuses a reported version that %s a registered secret, in preflight and run, without storing it", async (_label, secret, prefix, parsed) => {
+    expect(parseCliVersion(`fake-cli version ${prefix}${secret}`)).toBe(parsed);
+    const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout: `fake-cli version ${prefix}${secret}\n`, stderr: "", timedOut: false, canceled: false });
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+    const result = await harness.preflight(configuration(profile()));
+    const output = await harness.run(input(configuration(profile())));
+    expect(result.ok).toBe(false);
+    expect(result.resolved?.harnessVersion).toBeUndefined();
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
+    expect(output.observed?.harnessVersion).toBeUndefined();
+    for (const text of [JSON.stringify(result), JSON.stringify(output)]) expect(text).not.toContain(secret.slice(0, 15));
+  });
+
+  it("keeps an ordinary version with pre-release and build suffixes exact next to a registered secret", async () => {
+    const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout: "fake-cli version 1.2.3-rc.1+build.7\n", stderr: "", timedOut: false, canceled: false });
+    const result = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(configuration(profile()));
+    expect(result.resolved?.harnessVersion).toBe("1.2.3-rc.1+build.7");
+  });
+
   it("parses version tokens with a linear scan, as the documented token rule reads them", () => {
     expect(parseCliVersion("tool 1.2.3+build.7 (x)")).toBe("1.2.3+build.7");
     expect(parseCliVersion("tool 1.2.3-rc.1+build.7 (x)")).toBe("1.2.3-rc.1+build.7");
@@ -1108,6 +1132,30 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), limited(1_024)));
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toMatch(/output file .*exceeded the remaining 321-byte output budget/);
+  });
+
+  it("refuses, in stdout-last-json mode, an output file over what a runner that never reported its streams kept", async () => {
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    // 700 stdout bytes holding a valid answer and a 500-byte file: 1,200 bytes under a 1,024-byte cap, never seen live.
+    const runner = writing("f".repeat(500), `${answer}\n`.padStart(700, " "), { reported: 0 });
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ extra: ["--out", "{outputFile}"] })), limited(1_024)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/output file \(500 bytes at its largest\) exceeded the remaining 321-byte output budget/);
+  });
+
+  it("pays for no repair attempt once the first attempt's stored transcript is already over the limit", async () => {
+    let reviews = 0;
+    const invalid = `${JSON.stringify({ findings: "none" })}\n`;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      reviews += 1;
+      // 550 malformed raw bytes, decoded to 1,650 bytes of U+FFFD, then a schema-invalid answer: raw headroom remains.
+      return { code: 0, signal: null, stdout: `${"\uFFFD".repeat(550)}\n${invalid}`, stderr: "", timedOut: false, canceled: false, stdoutBytes: 551 + invalid.length, stderrBytes: 0 };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), limited(1_024)));
+    expect(reviews).toBe(1);
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/^The CLI output exceeded its 1024-byte budget once stored \(transcript \d+ bytes/);
   });
 
   it("ends timed_out, within the limit, a completed run whose stored transcript is over it only through redaction", async () => {

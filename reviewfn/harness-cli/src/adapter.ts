@@ -325,7 +325,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const { state, input, profile } = run;
     const before = attempt === 1 ? "before the CLI started" : "before the repair attempt";
     const outputBytes = state.remainingOutputBytes();
-    if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
+    // A transcript or event list already over the stored limit (raw bytes the decoder or redaction lengthened) cannot
+    // complete, so no further CLI run is paid for.
+    if (outputBytes <= 0 || state.storedOver()) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
     // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
     // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
@@ -364,7 +366,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       // The output file may have what the budget leaves after the raw stream bytes the runner kept, so neither a chunk it
       // dropped at its cap nor a character its decoder replaced hides an in-budget file's model report.
       const fileAllowance = outputBytes - keptBytes(result);
-      const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun(), fileAllowance, helper);
+      // In every outputVia mode the largest file measured must fit there too, even when the runner never called onOutput.
+      const fileOverrun = watch.overrun() ?? (watch.peak() > Math.max(0, fileAllowance) ? `The CLI output file (${watch.peak()} bytes at its largest) exceeded the remaining ${Math.max(0, fileAllowance)}-byte output budget.` : undefined);
+      const outcome = await this.judge(run, attempt, outputFile, result, fileOverrun, fileAllowance, helper);
       state.chargeMeasured(watch.peak());
       return outcome;
     } finally {
@@ -468,6 +472,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = parseCliVersion(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
+    // A version that holds or overlaps a registered secret reads differently once the output is redacted: it is refused.
+    if (parseCliVersion(redact(result.stdout, secrets), redact(result.stderr, secrets)) !== version) return { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false };
     this.versions.set(key, version);
     return { version };
   }
@@ -1294,6 +1300,11 @@ class RunState {
   public unconfirmedModel(): string | undefined {
     if (this.profile.modelReport === "none" || this.reported !== undefined) return undefined;
     return `The CLI reported no model through ${this.profile.modelReport.split(":")[0]}, so the configured ${this.model} was not confirmed.`;
+  }
+
+  /** Whether the stored transcript or events, as redacted, are already over the limit bounded() applies. */
+  public storedOver(): boolean {
+    return Buffer.byteLength(this.transcript.join("\n")) > this.maxOutputBytes || Buffer.byteLength(JSON.stringify(redactValue(this.events, this.secrets))) > this.maxOutputBytes;
   }
 
   /** The raw bytes the next attempt may produce; the redacted telemetry's limit is enforced only by bounded(). */
