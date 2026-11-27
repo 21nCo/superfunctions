@@ -236,7 +236,34 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
     expect((await push({ resource: "task", operation: "delete", id: "task:1" })).body.ok).toBe(true);
 
     expect(await base.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any)).not.toBeNull();
-    expect((await rev(base, "task", "task:1"))?.deleted).toBe(false);
+    // Neither a tombstone nor a live bump: the delete proved nothing.
+    expect(await rev(base, "task", "task:1")).toEqual({ rev: 1, deleted: false });
+  });
+
+  it("counts a KV merge once when another writer deletes the record before its change is read", async () => {
+    const base = memoryAdapter() as Adapter;
+    let overtake = false;
+    const after = async (target: Adapter, p: any) => {
+      if (p.model !== "kv" || !overtake) return;
+      overtake = false;
+      await target.delete({ model: "kv", where: [{ field: "id", operator: "eq", value: "kv:prefs" }], namespace: NS } as any);
+      await bumpTombstone(target, NS, "kv", "kv:prefs");
+    };
+    const db = withoutTransactions(overriding(base, (target) => Object.fromEntries(
+      ["create", "update", "upsert"].map((name) => [name, async (p: any) => {
+        const out = await (target as any)[name](p);
+        await after(target, p);
+        return out;
+      }]),
+    )));
+    const { push } = await serve(db);
+    expect((await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } })).body.ok).toBe(true);
+    overtake = true;
+    expect((await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } })).body.ok).toBe(true);
+
+    expect((await changeRows(base, "kv:prefs")).at(-1)).toMatchObject({ op: "delete" });
+    // merge (1), the other writer's delete (2), this merge counted once in the state that writer left (3).
+    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 3, deleted: true });
   });
 });
 
@@ -294,6 +321,31 @@ describe("DATA-41 revision assignment stays retryable", () => {
     expect(merge.body.ok).toBe(true);
     expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: false });
     expect(await changeRows(base, "task:1")).toHaveLength(2);
+  });
+
+  it("adopts a first revision row whose insert was stored before the adapter failed", async () => {
+    const base = memoryAdapter() as Adapter;
+    let failAfterInsert = true;
+    const db = withoutTransactions(overriding(base, (target) => ({
+      internal: new Proxy(target.internal as any, {
+        get(internal, key, receiver) {
+          const value = Reflect.get(internal, key, receiver);
+          if (typeof value !== "function") return value;
+          if (key !== "create") return value.bind(internal);
+          return async (table: string, ...args: unknown[]) => {
+            const out = await value.apply(internal, [table, ...args]);
+            if (table === "__datafn_revisions" && failAfterInsert) {
+              failAfterInsert = false;
+              throw new Error("connection lost after commit");
+            }
+            return out;
+          };
+        },
+      }),
+    })));
+    const { push } = await serve(db);
+    expect((await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok).toBe(true);
+    expect(await rev(base, "task", "task:1")).toEqual({ rev: 1, deleted: false });
   });
 
   it("reports a retryable INTERNAL after three attempts when revision writes keep failing without a transaction", async () => {

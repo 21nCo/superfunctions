@@ -236,6 +236,10 @@ async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promis
       await db.internal.create(REVISIONS_TABLE, row);
       return true;
     } catch (error) {
+      // The insert may have been stored before the adapter failed: a row
+      // carrying this insert's unique stamp is this insert.
+      const stored = await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }]);
+      if (stored && stored.updated_at === row.updated_at) return true;
       // A concurrent writer created it first (MySQL and SQLite reject only
       // the statement); the caller reads it and retries the bump. A plain
       // read may not see that row in this transaction's snapshot, so check by
@@ -867,11 +871,12 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  *   now and the record is not already a tombstone (a delete that removed
  *   nothing, overlapping another delete or a re-insert, raises nothing);
  * - an unverified write keeps a live record live, uncertified, and raises
- *   nothing on a tombstone; an unverified delete's change carries no revision.
+ *   nothing on a tombstone; an unverified delete raises nothing.
  * When the entry records a state other than the one the write's statement
  * left (a KV change rewritten to the stored state after another writer
- * deleted or re-created the record), nothing is raised: that writer raised
- * the revision of the state it left, and the entry carries none.
+ * deleted or re-created the record), a proven write is counted once in the
+ * state that writer left, and a delete without a count raises nothing; the
+ * entry carries no revision either way.
  * `pending` is this record's last revision row write, so a retry after an
  * unknown outcome adopts it (see PendingRaise).
  */
@@ -883,17 +888,23 @@ async function raiseFromEvidence(
   pending: PendingRaise,
 ): Promise<void> {
   const recordsDelete = entry.op === "delete";
-  if (evidence.state === "applied" && recordsDelete !== evidence.deleted) {
-    // The writer that left the recorded state raised its own revision.
+  const absentNow = evidence.absentNow;
+  const mismatch = evidence.state === "applied" && recordsDelete !== evidence.deleted;
+  // A delete without a count whose row is present again (re-created, or never
+  // removed), and a delete that may have read a snapshot, prove nothing.
+  if ((mismatch && absentNow) || (evidence.state === "unverified" && evidence.deleted)) {
     entry.rev = undefined;
     entry.revUncertified = true;
     return;
   }
   const outcome: BumpOutcome = {};
-  const absentNow = evidence.absentNow;
   let decide: RaiseDecision;
   let lockFirst = false;
-  if (evidence.state === "unverified") {
+  if (mismatch) {
+    // A proven write whose recorded state is another writer's later one:
+    // counted once, in the state that writer left; the entry carries none.
+    decide = () => recordsDelete;
+  } else if (evidence.state === "unverified") {
     decide = (row) => (isTombstone(row) ? undefined : false);
     lockFirst = readsMayBeSnapshot(db);
   } else if (evidence.deleted && absentNow) {
@@ -903,9 +914,8 @@ async function raiseFromEvidence(
     decide = () => evidence.deleted;
   }
   const rev = await raiseRevision(db, namespace, entry.resource, entry.id, decide, { lockFirst, outcome, pending });
-  // An unverified delete leaves the record live, so its change carries none.
-  entry.rev = evidence.state === "unverified" && recordsDelete ? undefined : rev;
-  if (rev !== undefined && (outcome.staleView || evidence.state === "unverified")) entry.revUncertified = true;
+  entry.rev = mismatch ? undefined : rev;
+  if (mismatch || (rev !== undefined && (outcome.staleView || evidence.state === "unverified"))) entry.revUncertified = true;
 }
 
 /**
