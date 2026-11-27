@@ -2805,3 +2805,108 @@ describe("httpExecutor security scheme $ref chains", () => {
     });
   });
 });
+
+describe("httpExecutor 407 Proxy Authentication Required", () => {
+  const headers = { "x-api-key": operatorToken };
+  const proxyBody = (size: number) => `proxy saw ${operatorToken}\n${"x".repeat(size)}`;
+  let proxy: Fixture;
+  beforeAll(async () => {
+    proxy = await fixtureApi((_request, response) => {
+      response.writeHead(407, { "content-type": "text/plain", "proxy-authenticate": 'Basic realm="fixture"' });
+      response.end(proxyBody(10));
+    });
+  });
+  afterAll(() => proxy.close());
+
+  it("reports a 407 from the default fetch as a failed request, with no credential, after one request", async () => {
+    // Fetch turns a 407 into a network error, so the status and body never reach the executor.
+    const result = await execute(httpExecutor<Context>({ baseUrl: proxy.origin, headers }), operationOf("echo"));
+    expect(result).toEqual({ isError: true, content: [{ type: "text", text: "The request to the API failed." }] });
+    expect(JSON.stringify(result)).not.toContain(operatorToken);
+    expect(proxy.received).toHaveLength(1);
+    expect(proxy.received[0]!.headers["x-api-key"]).toBe(operatorToken);
+  });
+
+  it("reports a 407 a custom fetch returns with its status and a capped, redacted excerpt", async () => {
+    const { fetch, urls } = stubFetch(() => new Response(proxyBody(5000), { status: 407, headers: { "content-type": "text/plain" } }));
+    const result = await execute(httpExecutor<Context>({ baseUrl: proxy.origin, headers, fetch }), operationOf("echo"));
+    expect(result.isError).toBe(true);
+    const match = /^The API responded with HTTP 407\.\n\n([\s\S]*)\n\[body truncated after \d+ bytes\]$/.exec(text(result));
+    expect(match).not.toBeNull();
+    expect(Buffer.byteLength(match![1]!)).toBeLessThanOrEqual(4096);
+    expect(match![1]!).toMatch(/^proxy saw \[REDACTED\]\nx+$/);
+    expect(JSON.stringify(result)).not.toContain(operatorToken);
+    expect(urls).toHaveLength(1);
+  });
+});
+
+describe("httpExecutor request bodies under an operator Content-Type with parameters", () => {
+  const documentWith = (content: Record<string, unknown>) => ({
+    openapi: "3.1.0",
+    info: { title: "content-type-parameters", version: "1.0.0" },
+    paths: { "/p": { post: { operationId: "p", requestBody: { required: true, content }, responses: ok } } },
+  });
+  const entry = (property: string) => ({ schema: { type: "object", required: [property], properties: { [property]: { type: "string" } } } });
+  const profiles = { "application/json; profile=a": entry("a"), "application/json; profile=b": entry("b") };
+  const recording = () => {
+    const sent: Array<{ contentType: string | null; body: unknown }> = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push({ contentType: new Headers(init?.headers).get("content-type"), body: init?.body });
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    return { sent, fetch };
+  };
+
+  it("chooses the entry whose parameters the record's Content-Type carries, and rejects a body for another entry", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools, skipped } = fromOpenAPI(documentWith(profiles), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json; profile=b" }, fetch }),
+      allowMutations: true,
+    });
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=b" });
+    const result = await registry.callTool("p", { body: { b: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent).toEqual([{ contentType: "application/json; profile=b", body: '{"b":"value"}' }]);
+    await expect(registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra())).rejects.toThrow(McpFnValidationError);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("matches a parameter name in any case and a quoted value by its content", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools } = fromOpenAPI(documentWith(profiles), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": 'application/json; Profile="b"' }, fetch }),
+      allowMutations: true,
+    });
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=b" });
+    await registry.callTool("p", { body: { b: "value" } }, undefined, requestExtra());
+    expect(sent).toEqual([{ contentType: 'application/json; Profile="b"', body: '{"b":"value"}' }]);
+  });
+
+  it("still accepts the first documented entry for a Content-Type with no parameters", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools } = fromOpenAPI(documentWith(profiles), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json" }, fetch }),
+      allowMutations: true,
+    });
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
+    const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent).toEqual([{ contentType: "application/json", body: '{"a":"value"}' }]);
+  });
+
+  it("refuses before fetch a function's Content-Type whose parameters the chosen entry does not carry", async () => {
+    const { sent, fetch } = recording();
+    const { registry, tools } = fromOpenAPI(documentWith(profiles), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: () => ({ "Content-Type": "application/json; profile=b" }), fetch }),
+      allowMutations: true,
+    });
+    // A function's headers are not known when the entry is chosen, so the first entry is.
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
+    const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Content-Type header does not match");
+    expect(text(result)).not.toContain("profile=b");
+    expect(sent).toEqual([]);
+  });
+});

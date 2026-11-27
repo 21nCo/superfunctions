@@ -343,7 +343,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   record with a symbol or non-enumerable key: every own key is sent or
   refused, so only an explicit `{}` sends no operator headers. An operator
   `Content-Type` is sent as written with a JSON body only when its media
-  type is the operation's documented one and any charset it names is UTF-8;
+  type is the operation's documented one, any charset it names is UTF-8, and
+  each of its other parameters (such as `profile`) has the same value in the
+  documented media type (names compared without case, values exactly);
   otherwise the call is refused before it is sent. With such a `Content-Type`
   in a record, the request body is chosen among the documented JSON entries
   it can label, by the same rule; when none can, the operation stays listed
@@ -428,7 +430,11 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   have taken effect, so it is not retried as unanswered. The MCP request's abort signal cancels
   the call, also while the `headers` function runs; a response that arrives
   after either has its body cancelled. Network failures are reported
-  without details. Pass `fetch` to use another implementation.
+  without details. With the default `fetch`, a `407 Proxy Authentication
+  Required` reaches the executor as a network error (Fetch turns it into
+  one), so it is reported as a failed request with no status or excerpt; a
+  `fetch` that returns the `407` response gets the result described above
+  for any other status. Pass `fetch` to use another implementation.
 - **Not covered.** A base URL that resolves to internal addresses (DNS
   rebinding), instructions inside upstream responses, and a local user who
   can read the operator's environment are outside this executor's guarantees.

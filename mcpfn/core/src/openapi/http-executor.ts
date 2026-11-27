@@ -1289,13 +1289,25 @@ function bodyContentType(headers: Headers, documented: string): void {
 
 /**
  * Whether an operator Content-Type cannot label a body documented as
- * `documented`: it is not the same media type, or names a charset other than
- * UTF-8. The executor uses it both to choose a request body entry and to
- * refuse a call, so the two cannot disagree.
+ * `documented`: it is not the same media type, names a charset other than
+ * UTF-8, or has a parameter other than `charset` (such as `profile`) that the
+ * documented media type lacks or gives another value (names compared without
+ * case, values exactly after unquoting). The executor uses it both to choose a
+ * request body entry and to refuse a call, so the two cannot disagree.
  */
 function contentTypeConflicts(operator: string, documented: string): boolean {
   const parsed = parseMediaType(operator);
-  return parsed === null || parsed.essence !== documentedEssence(documented) || (parsed.charset !== undefined && !isUtf8(parsed.charset));
+  if (parsed === null || parsed.essence !== documentedEssence(documented) || (parsed.charset !== undefined && !isUtf8(parsed.charset))) {
+    return true;
+  }
+  if (parsed.parameters.length === 0) return false;
+  // A name the documented media type gives two different values is ambiguous, so it matches no operator value.
+  const documentedValues = new Map<string, string | null>();
+  for (const [name, value] of parseMediaType(documented)?.parameters ?? []) {
+    const earlier = documentedValues.get(name);
+    documentedValues.set(name, earlier === undefined || earlier === value ? value : null);
+  }
+  return parsed.parameters.some(([name, value]) => documentedValues.get(name) !== value);
 }
 
 function documentedEssence(documented: string): string {
@@ -1319,11 +1331,14 @@ function charset(contentType: string | null): string | undefined | null {
 /**
  * A media type (RFC 9110: `type/subtype` then `;`-separated `name=value`
  * parameters, a value a token or a quoted string): its lowercased
- * `type/subtype` and its `charset` parameter, or null when the text cannot be
- * parsed or names two different charsets, so a `;` or `charset=` inside a
- * quoted value never picks the decoder.
+ * `type/subtype`, its `charset` parameter and its other parameters (lowercased
+ * name, unquoted value, in order), or null when the text cannot be parsed or
+ * names two different charsets, so a `;` or `charset=` inside a quoted value
+ * never picks the decoder.
  */
-function parseMediaType(text: string): { essence: string; charset: string | undefined } | null {
+function parseMediaType(
+  text: string,
+): { essence: string; charset: string | undefined; parameters: Array<[name: string, value: string]> } | null {
   let at = 0;
   const skipSpace = () => {
     while (text[at] === " " || text[at] === "\t") at += 1;
@@ -1342,9 +1357,10 @@ function parseMediaType(text: string): { essence: string; charset: string | unde
   if (subtype === undefined) return null;
   const essence = `${type}/${subtype}`.toLowerCase();
   let found: string | undefined;
+  const parameters: Array<[string, string]> = [];
   for (;;) {
     skipSpace();
-    if (at === text.length) return { essence, charset: found };
+    if (at === text.length) return { essence, charset: found, parameters };
     if (text[at] !== ";") return null;
     at += 1;
     skipSpace();
@@ -1371,7 +1387,10 @@ function parseMediaType(text: string): { essence: string; charset: string | unde
       value = token();
       if (value === undefined) return null;
     }
-    if (name.toLowerCase() !== "charset") continue;
+    if (name.toLowerCase() !== "charset") {
+      parameters.push([name.toLowerCase(), value]);
+      continue;
+    }
     if (found !== undefined && found.toLowerCase() !== value.toLowerCase()) return null;
     found = value;
   }
