@@ -14,6 +14,7 @@ import type { WebhookOptions } from '../types/config.js';
 import type { PlugFnWebhookDelivery, PlugFnWebhookReceipt } from '../types/runtime.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
+import { isRetryableStatus } from '../utils/retryable-status.js';
 
 interface VerifiedWebhook {
   triggerKey: string;
@@ -119,6 +120,16 @@ class WebhookPayloadValidationError extends WebhookHandlerError {
   constructor() {
     super('VALIDATION_ERROR', 'webhook payload validation failed');
   }
+}
+
+function isRetryableTransformError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' ||
+    !('code' in error) || typeof error.code !== 'string' ||
+    !('message' in error) || typeof error.message !== 'string') {
+    return false;
+  }
+  if ('retryable' in error && typeof error.retryable === 'boolean') return error.retryable;
+  return 'status' in error && typeof error.status === 'number' && isRetryableStatus(error.status);
 }
 
 export class WebhookHandler {
@@ -331,10 +342,16 @@ export class WebhookHandler {
     const payloadHash = isBindingId(subject) && rawBody ? sha256(rawBody) : undefined;
     const credentialFingerprint = requiresBinding && authenticated && secret ? sha256(secret) : undefined;
     let transformedPayload = parsedPayload;
-    try {
-      if (trigger.webhookConfig?.transformPayload) {
+    if (trigger.webhookConfig?.transformPayload) {
+      try {
         transformedPayload = trigger.webhookConfig.transformPayload(parsedPayload);
+      } catch (error) {
+        // Preserve standalone transform errors and let operational failures request redelivery.
+        if (!requiresBinding || isRetryableTransformError(error)) throw error;
+        throw new WebhookPayloadValidationError();
       }
+    }
+    try {
       trigger.schema.parse(transformedPayload);
     } catch {
       throw new WebhookPayloadValidationError();

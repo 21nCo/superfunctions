@@ -106,8 +106,10 @@ describe('github webhook verification', () => {
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false, legacyVerifierMissing: true },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'legacy transform' },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'legacy refinement' },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'retryable transform' },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'bound refinement' },
     { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'standalone refinement' },
+    { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'retryable transform' },
     { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
     { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
   ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload, verifier error $legacyVerifierFails, missing verifier $legacyVerifierMissing, callback failure $callbackFailure)', async ({
@@ -156,7 +158,12 @@ describe('github webhook verification', () => {
     });
     const generic = githubProvider.triggers!.pull_request;
     const specialized = githubProvider.triggers!['pull_request.closed'];
-    const throwFromValidation = vi.fn((): never => { throw new Error('test application callback failure'); });
+    const throwFromValidation = vi.fn((): never => {
+      if (callbackFailure === 'retryable transform') {
+        throw { code: 'PLUGFN_NOT_READY', message: 'test transform temporarily unavailable', status: 503 };
+      }
+      throw new Error('test application callback failure');
+    });
     const refineStandalone = callbackFailure === 'legacy refinement' || callbackFailure === 'standalone refinement';
     runtime.providers.register({
       ...githubProvider,
@@ -172,7 +179,7 @@ describe('github webhook verification', () => {
               : legacyVerifierFails
                 ? () => { throw new Error('test standalone verifier failure'); }
                 : generic.webhookConfig!.verifySignature,
-            transformPayload: callbackFailure === 'legacy transform'
+            transformPayload: callbackFailure === 'legacy transform' || callbackFailure === 'retryable transform'
               ? throwFromValidation
               : generic.webhookConfig!.transformPayload,
           },
@@ -231,10 +238,15 @@ describe('github webhook verification', () => {
         return;
       }
       if (callbackFailure) expect(throwFromValidation).toHaveBeenCalledOnce();
-      if (callbackFailure === 'bound refinement' || callbackFailure === 'standalone refinement') {
-        expect(accepted.status).toBe(400);
+      if (callbackFailure === 'bound refinement' || callbackFailure === 'standalone refinement' || callbackFailure === 'retryable transform') {
+        const retryable = callbackFailure === 'retryable transform';
+        expect(accepted.status).toBe(retryable ? 503 : 400);
         await expect(accepted.json()).resolves.toMatchObject({
-          error: { code: 'VALIDATION_ERROR', message: 'webhook payload validation failed' },
+          error: {
+            code: retryable ? 'PLUGFN_NOT_READY' : 'VALIDATION_ERROR',
+            message: retryable ? 'test transform temporarily unavailable' : 'webhook payload validation failed',
+            retryable,
+          },
         });
         expect(listener).not.toHaveBeenCalled();
         expect(action).not.toHaveBeenCalled();

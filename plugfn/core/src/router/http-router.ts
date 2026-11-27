@@ -8,6 +8,7 @@ import type { PlugFnPrincipal } from '../types/config.js';
 import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
+import { isRetryableStatus } from '../utils/retryable-status.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
 import { webhookReceiptTenantId, webhookSignatureProof } from '../storage/runtime-storage.js';
 import {
@@ -65,7 +66,6 @@ const DEFAULT_WEBHOOK_PAYLOAD_MAX_BYTES = 2 * 1024 * 1024;
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
 const WEBHOOK_INITIAL_RETRY_DELAY_MS = 30_000;
 const WEBHOOK_RETRY_PAYLOAD_TTL_MS = 24 * 60 * 60 * 1000;
-const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 export function createPlugFnRouter(
   plugFn: PlugFn,
@@ -1921,10 +1921,6 @@ function payloadTooLargeError(maxBytes: number): DeterministicError {
       maxBytes,
     },
   };
-}
-
-function isRetryableStatus(status: number): boolean {
-  return RETRYABLE_STATUS_CODES.has(status);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
