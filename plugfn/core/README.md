@@ -110,6 +110,35 @@ Other exported providers may still be useful, but they should be treated accordi
 
 See [../docs/provider-readiness-matrix.md](../docs/provider-readiness-matrix.md).
 
+## Credential scope envelopes
+
+`defineScopeGrammar` describes the scope of a provider credential request, and its grammar answers whether a request stays inside an allowed envelope and how risky the request is.
+
+```ts
+import { defineScopeGrammar } from 'plugfn';
+
+const grammar = defineScopeGrammar({
+  provider: 'example',
+  dimensions: {
+    permissions: { kind: 'exactSet', values: ['contents:read', 'contents:write'] },
+    repositories: { kind: 'prefixGlobSet' }, // literals or `prefix*`
+    ttl: { kind: 'ttlMax', minSeconds: 900, maxSeconds: 3600 },
+  },
+  riskOf: ({ value }) => (String(value).endsWith(':write') ? 'write' : 'read'),
+});
+
+grammar.isSubset(
+  { permissions: ['contents:read'], repositories: ['org/app'], ttl: 900 },
+  { permissions: ['contents:read'], repositories: ['org/*'], ttl: 3600 },
+); // { ok: true, violations: [] }
+grammar.classifyRisk({ permissions: ['contents:write'], repositories: [], ttl: 900 }); // 'write'
+```
+
+- Only four dimension kinds exist: `exactSet`, `prefixGlobSet` (a single trailing `*`), `numericMax` and `ttlMax` (whole seconds).
+- An optional `normalize(input)` maps provider-shaped input to the grammar. Its output is validated, and a request or envelope that does not fit (an unknown dimension, an interior `*`, a missing limit or a non-finite number) is rejected, never widened.
+- `classifyRisk` returns the highest `riskOf` result over every requested item and throws `ScopeError` for a malformed request.
+- Evaluation is linear in the input size.
+
 ## OAuth migration
 
 Version 0.2.0 removes the legacy `OAuthFlowHandler` export and
