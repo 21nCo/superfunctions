@@ -30,14 +30,22 @@ export function mapSelection(selection: MdfnSelection, ranges: readonly ChangedR
 }
 
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  return ranges.reduce<SidecarAnchor>((current, range) => {
-    const affinity = current.affinity ?? "after";
-    const from = mapPosition(current.from, range, affinity === "before" ? "before" : "after");
-    const to = mapPosition(current.to, range, affinity === "after" ? "after" : "before");
-    const start = Math.min(from, to);
-    const end = Math.max(from, to);
-    return start === current.from && end === current.to ? current : { ...current, from: start, to: end };
-  }, anchor);
+  if (ranges.length === 0) return anchor;
+  // Affinity is read once, including one supplied through a prototype, and kept on
+  // the result, so mapping edits together or one call at a time gives the same anchor.
+  const affinity = anchor.affinity;
+  let from = anchor.from;
+  let to = anchor.to;
+  for (const range of ranges) {
+    const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
+    const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
+    from = Math.min(mappedFrom, mappedTo);
+    to = Math.max(mappedFrom, mappedTo);
+  }
+  // An unchanged anchor is reused only when this module already detached it; a
+  // caller-owned anchor is copied so later changes to it cannot reach the result.
+  if (from === anchor.from && to === anchor.to && isImmutableValue(anchor)) return anchor;
+  return { ...anchor, from, to, ...(affinity !== undefined ? { affinity } : {}) };
 }
 
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
@@ -50,9 +58,9 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
   const mapEntry = <T extends { readonly anchor: SidecarAnchor }>(entry: T): T => {
     const current = entry.anchor;
     const anchor = mapAnchor(current, ranges);
-    if (anchor !== current) changed = true;
     if (reusable && anchor === current) return entry;
-    return { ...entry, anchor: anchor === current ? { ...current, from: current.from, to: current.to } : anchor };
+    changed = true;
+    return { ...entry, anchor };
   };
   const comments = sidecar.comments?.map(mapEntry);
   const suggestions = sidecar.suggestions?.map(mapEntry);

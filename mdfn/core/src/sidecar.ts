@@ -5,11 +5,6 @@ export interface SidecarValidationOptions {
   readonly markdownLength?: number;
   readonly maxEntries?: number;
   readonly maxTextLength?: number;
-  /**
-   * Total length of all comment messages and suggestion replacements. Defaults to
-   * maxTextLength, which keeps persisted editorial state within the size that
-   * collaboration peers accept.
-   */
   readonly maxAggregateTextLength?: number;
 }
 

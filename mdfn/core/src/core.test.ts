@@ -510,6 +510,22 @@ describe("@mdfn/core", () => {
     expect(Object.isFrozen(mapped)).toBe(true);
   });
 
+  it("copies caller-owned anchors and keeps their inherited affinity across mapping calls", () => {
+    const owned = { from: 1, to: 2 };
+    const mapped = mapAnchor(owned, [{ from: 5, to: 5, insertedLength: 1 }]);
+    owned.from = 0;
+    expect(mapped).toEqual({ from: 1, to: 2 });
+
+    const anchor = Object.create({ affinity: "before" }, { from: { value: 2, enumerable: true }, to: { value: 2, enumerable: true } });
+    const sidecar = { comments: [{ id: "c", anchor, resolved: false, messages: [] }] };
+    const later = { from: 6, to: 6, insertedLength: 1 };
+    const atAnchor = { from: 2, to: 2, insertedLength: 2 };
+    const together = mapSidecar(sidecar, [later, atAnchor]);
+    const separately = mapSidecar(mapSidecar(sidecar, [later]), [atAnchor]);
+    expect(together?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
+    expect(separately?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
+  });
+
   it("reports sidecar changes caused by source anchor mapping", () => {
     const sidecar = {
       comments: [{ id: "thread", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "message", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00.000Z" }] }],
