@@ -222,7 +222,21 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
 
     const last = (await changeRows(base, "kv:prefs")).at(-1);
     expect(last).toMatchObject({ op: "upsert" });
-    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 3, deleted: false });
+    // The re-creating writer's revision stands; the rewritten change raises nothing.
+    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 2, deleted: false });
+  });
+
+  it("never turns a live record into a tombstone from a delete it cannot verify on a snapshot database", async () => {
+    const base = memoryAdapter() as Adapter;
+    // A delete the database suppresses (a BEFORE DELETE trigger) on an
+    // adapter whose delete reports no count and whose reads may be a snapshot.
+    const db = snapshotDatabase(overriding(base, () => ({ delete: async () => undefined })), { returning: false });
+    const { push } = await serve(db);
+    expect((await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok).toBe(true);
+    expect((await push({ resource: "task", operation: "delete", id: "task:1" })).body.ok).toBe(true);
+
+    expect(await base.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any)).not.toBeNull();
+    expect((await rev(base, "task", "task:1"))?.deleted).toBe(false);
   });
 });
 
@@ -249,6 +263,37 @@ describe("DATA-41 revision assignment stays retryable", () => {
       expect(await changeRows(base, "task:1"), route).toHaveLength(1);
       expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 1, deleted: false });
     }
+  });
+
+  it("adopts a revision whose write committed before the adapter failed, instead of raising it again", async () => {
+    const base = memoryAdapter() as Adapter;
+    let failAfterWrite = false;
+    const db = withoutTransactions(overriding(base, (target) => ({
+      internal: new Proxy(target.internal as any, {
+        get(internal, key, receiver) {
+          const value = Reflect.get(internal, key, receiver);
+          if (typeof value !== "function") return value;
+          if (key !== "update") return value.bind(internal);
+          return async (table: string, ...args: unknown[]) => {
+            const out = await value.apply(internal, [table, ...args]);
+            const data = args[1] as Json;
+            if (table === "__datafn_revisions" && failAfterWrite && "rev" in data) {
+              failAfterWrite = false;
+              throw new Error("connection lost after commit");
+            }
+            return out;
+          };
+        },
+      }),
+    })));
+    const { push } = await serve(db);
+    expect((await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok).toBe(true);
+    failAfterWrite = true;
+    const merge = await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+
+    expect(merge.body.ok).toBe(true);
+    expect(await rev(base, "task", "task:1")).toEqual({ rev: 2, deleted: false });
+    expect(await changeRows(base, "task:1")).toHaveLength(2);
   });
 
   it("reports a retryable INTERNAL after three attempts when revision writes keep failing without a transaction", async () => {
