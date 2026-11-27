@@ -1,0 +1,138 @@
+mcpfn/datafn/package.json
+  s_545bb079978e5a::t_56b98f5d80687a 3,26,30
+mcpfn/core/src/openapi/types.ts
+  s_354c90d1ae0cd0::t_2152fafae2a003 109-110,139-145,150
+  s_1eb217f2cbe12c::t_1965bda8ae4036 146-149,151
+  s_b3623b85641760::t_850aa6f9ec6dc3 119,123-124,126-133,136-138,162
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_545bb079978e5a::t_748e89f514e775 1-3,5-126,136-164,173-183,190-405,407-414,426-428,447-470,475-479,481-572,574-589,592,594-599,603-616
+  s_354c90d1ae0cd0::t_5f0d6ba6354583 4,127-135,165-172,184-189,406,415-425,429-446,471-474,480,573,590-591,593,600-602,617-827
+  s_354c90d1ae0cd0::t_1d78465c0d4caf 828
+  s_354c90d1ae0cd0::t_2e4fe62e1e69e5 829-1217
+mcpfn/core/src/openapi/index.ts
+  s_b3623b85641760::t_4a96d29bbb0731 21-22
+memoryfn/admin/package.json
+  s_545bb079978e5a::t_5fee828ee40acb 36-37
+mcpfn/inspector/package.json
+  s_545bb079978e5a::t_41e4144bf997bd 3,24-25,31
+memoryfn/typescript/package.json
+  s_545bb079978e5a::t_53d20d40c0a6ef 3,45
+mcpfn/client/tests/openapi-http-executor.test.ts
+  s_545bb079978e5a::t_e324ffd465f672 1-109
+package-lock.json
+  s_354c90d1ae0cd0::t_4a66348675b385 1321
+  s_545bb079978e5a::t_ad91cf130f4b3f 1324,14892,14895,17259,17263-17266,17719,17727,18187,18659,18664,18667,19119,19122-19123,19129,19585,19589-19590,23857-23858,24239,24241,58361,58364,64171-64172
+mcpfn/core/package.json
+  s_545bb079978e5a::t_e48f4adb15b267 3
+packages/admin/package.json
+  s_545bb079978e5a::t_fead08f3f51a9b 3,31
+mcpfn/core/src/openapi/http-executor.ts
+  s_545bb079978e5a::t_f408a66225e481 292-293
+  s_1eb217f2cbe12c::t_86dedebd99a7ba 377-379,381,385-587,599,603,621-622,624,626,630,638,644,646,648
+  s_354c90d1ae0cd0::t_0c1a473e28b830 8,11-15,25-33,36,56-58,65-67,75-82,86-94,96-125,145,163,167,176-198,201-203,205-206,246,269,295,647
+  s_545bb079978e5a::t_9d8f557bc26ff1 284-285
+  s_545bb079978e5a::t_4fcf1fb2f18333 1-7,9-10,16-24,34-35,37-55,59-64,68-74,83-84,95,126-144,146-162,164-166,168-175,199-200,204,207-245,247-268,270-273,275,287,289-291,296,383,592
+  s_354c90d1ae0cd0::t_ed6e993f51baef 297-301
+  s_545bb079978e5a::t_9b727b84d99e4d 85,294
+  s_354c90d1ae0cd0::t_1b386e7a139777 286,302-376,380,382,384
+  s_545bb079978e5a::t_fde8bb935e69a9 288
+  s_545bb079978e5a::t_8e67f42cec0239 274
+  s_545bb079978e5a::t_2175b9f2cb8017 276-278,281-283
+  s_1eb217f2cbe12c::t_013b63fe8b80df 600-602
+  s_1eb217f2cbe12c::t_93964d5a7db26f 604-606,618-620
+  s_1eb217f2cbe12c::t_fe2cf4f8d61fb9 623
+  s_1eb217f2cbe12c::t_9fd12ffc21d82e 625
+  s_1eb217f2cbe12c::t_6e55c1519da480 627-629
+  s_1eb217f2cbe12c::t_135827d0a1bfb7 631-633,635-637
+  s_1eb217f2cbe12c::t_1d54e0f90f4368 639-643
+  s_1eb217f2cbe12c::t_250e535255808d 645
+  s_1eb217f2cbe12c::t_12337f1242dc2b 649-651
+  s_354c90d1ae0cd0::t_a29b482d103cf8 279-280,588-591,593-598,607-617,634,652-891
+langfn/typescript/package.json
+  s_545bb079978e5a::t_4df311dafe1e8a 3,104
+authfn/admin/package.json
+  s_354c90d1ae0cd0::t_2c8c36b2a73319 3
+  s_545bb079978e5a::t_7590e166726c4d 40
+superconsole/package.json
+  s_545bb079978e5a::t_d3ce4b85aa49f7 27-28
+mcpfn/core/src/openapi/from-openapi.ts
+  s_354c90d1ae0cd0::t_c2ee4fbb21dbd8 12
+  s_354c90d1ae0cd0::t_b3e189b35377bf 744,783
+  s_354c90d1ae0cd0::t_0a20f66df2e4b8 319-320,777-779,1452-1453,1513-1523
+  s_b3623b85641760::t_e3b45aec6b0e9a 1512
+  s_b3623b85641760::t_c484063fab5e05 28
+  s_354c90d1ae0cd0::t_66fe18a4def73a 743
+  s_354c90d1ae0cd0::t_9922bc5b45e0b5 774-776
+  s_354c90d1ae0cd0::t_cfb8da7ce7db43 780-782
+  s_354c90d1ae0cd0::t_a9cc5d996bebd7 784-786
+  s_354c90d1ae0cd0::t_73e557570d3559 1454-1456
+  s_354c90d1ae0cd0::t_b3a34affa574ac 1524-1526
+  s_354c90d1ae0cd0::t_1bab674d145b49 736-739,760-773,790,1301-1303,1345-1350,1457-1460,1527-1529,1537-1545,1578-1588
+mcpfn/client/CHANGELOG.md
+  s_b3623b85641760::t_ac58b0bfc2a7bb 3-10
+mcpfn/core/README.md
+  s_545bb079978e5a::t_e98173f046fc78 252-254,258-270,272-279,332-335,340
+  s_354c90d1ae0cd0::t_836ba85b3d096b 148-154
+  s_354c90d1ae0cd0::t_8637d63e28f975 255-257,271,280-331
+  s_545bb079978e5a::t_c90defe3a01279 341-342
+  s_545bb079978e5a::t_b81f7c89c6c10a 336
+  s_46185ec9e07894::t_8142e7b113fb7f 337-339
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_b3623b85641760::t_b71d38f6e4d3c1 449-455
+mcpfn/testing/package.json
+  s_545bb079978e5a::t_43845bd919b0b8 3,34-35
+mcpfn/core/src/openapi/headers.ts
+  s_545bb079978e5a::t_3d138514baefc8 1-17
+mcpfn/cli/package.json
+  s_545bb079978e5a::t_58baf09b272638 3,27-30
+mcpfn/client/package.json
+  s_545bb079978e5a::t_854b4be45608d1 3,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f58ff554fe00e3749e70faa374da4168761e28c3",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_354c90d1ae0cd0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ac404db-e472-4bb9-8332-1a5c99d10a14",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_46185ec9e07894": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed53028e-c790-4ffd-bb04-e403f2103dc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b3623b85641760": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b29703c-6a79-47df-aec9-7560232bbd41",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
