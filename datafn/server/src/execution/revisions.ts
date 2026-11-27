@@ -886,17 +886,20 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  * - a write that may have changed nothing (a delete without a count, or an
  *   update re-selected from a possible snapshot) moves nothing over a
  *   tombstone, read after the revision row is locked;
+ * - a delete without a count raises a tombstone only when a read finds the
+ *   row absent (a transaction sees its own delete), and raises nothing when
+ *   the row is present: it may have removed nothing (a suppressed delete),
+ *   and a writer that re-created it has raised past the deleted state;
  * - inside a transaction (`transactional`) the write's own row lock keeps the
- *   state its statement left, except that a delete without a count raises a
- *   tombstone only when a read finds the row absent (the transaction sees its
- *   own delete), and raises nothing otherwise;
+ *   state its statement left;
  * - outside a transaction, or for an entry recording another state than the
  *   statement left (a KV change rewritten to another writer's state), the
  *   state is read from the record row in each compare-and-swap attempt, after
  *   that attempt's revision row read: a writer committing later raises after
  *   its own write, so the last raise leaves the latest state.
- * The entry carries the revision only when the raise left the state the entry
- * records. `pending` is this record's last revision row write, so a retry
+ * The entry carries the revision only when it records the state its own
+ * statement left and the raise left that state; a rewritten entry carries
+ * none. `pending` is this record's last revision row write, so a retry
  * after an unknown outcome adopts it (see PendingRaise).
  */
 async function raiseFromEvidence(
@@ -910,7 +913,8 @@ async function raiseFromEvidence(
   const recordsDelete = entry.op === "delete";
   const countless = evidence.absentNow !== undefined;
   const unproven = evidence.state === "unverified" || countless;
-  const ownState = transactional && !countless && recordsDelete === evidence.deleted;
+  const rewritten = recordsDelete !== evidence.deleted;
+  const ownState = transactional && !countless && !rewritten;
   const where = [{ field: "id", operator: "eq" as const, value: entry.id }];
   const absentNow = evidence.absentNow ??
     (async () => (await db.findOne({ model: entry.resource, where, namespace })) === null);
@@ -918,12 +922,12 @@ async function raiseFromEvidence(
     if (unproven && isTombstone(row)) return undefined;
     if (ownState) return evidence.deleted;
     const absent = await absentNow();
-    return transactional && countless && !absent ? undefined : absent;
+    return countless && !absent ? undefined : absent;
   };
   const outcome: BumpOutcome = {};
   const lockFirst = unproven && transactional;
   const raised = await raiseRevision(db, namespace, entry.resource, entry.id, decide, { lockFirst, outcome, pending });
-  entry.rev = raised?.deleted === recordsDelete ? raised.rev : undefined;
+  entry.rev = !rewritten && raised?.deleted === recordsDelete ? raised.rev : undefined;
   if (raised && (entry.rev === undefined || outcome.staleView || evidence.state === "unverified")) {
     entry.revUncertified = true;
   }

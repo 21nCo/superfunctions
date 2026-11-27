@@ -9,7 +9,7 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import { NotFoundError, type Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
-import { bumpRevision, bumpTombstone, readRevisions } from "../src/execution/revisions.js";
+import { assignWriteRevisions, bumpRevision, bumpTombstone, readRevisions, withWriteEvidence } from "../src/execution/revisions.js";
 import { CHANGES_REV_COLUMN_RECHECK_MS, ensureChangesRevColumn } from "../src/execution/internal-tables.js";
 
 type Json = Record<string, any>;
@@ -197,7 +197,7 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
     expect(await rev(base, "task", "task:1")).toEqual({ rev: 3, deleted: false });
   });
 
-  it("records a KV delete that another writer overtook as the stored record, counting the delete once in the live state", async () => {
+  it("records a KV delete that another writer overtook as the stored record, without turning it into a tombstone", async () => {
     const base = memoryAdapter() as Adapter;
     const recreate = async (target: Adapter) => {
       // Between this write's DELETE and its change read, another writer
@@ -222,10 +222,8 @@ describe("DATA-41 write evidence comes from the adapter's own write methods", ()
 
     const last = (await changeRows(base, "kv:prefs")).at(-1);
     expect(last).toMatchObject({ op: "upsert" });
-    // merge (1), the re-creating writer (2), this delete counted once in the
-    // latest committed state, which is live (3); the rewritten change carries none.
-    expect(last.rev ?? null).toBeNull();
-    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 3, deleted: false });
+    // The re-creating writer's revision stands; the rewritten change raises nothing.
+    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 2, deleted: false });
   });
 
   it("never turns a live record into a tombstone from a delete it cannot verify on a snapshot database", async () => {
@@ -491,6 +489,39 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
       // merge (1), the other writer's delete (2), this merge once in the latest state: a tombstone (3).
       expect(await rev(base, "kv", "kv:prefs"), route).toEqual({ rev: 3, deleted: true });
     }
+  });
+
+  it("leaves the revision of a record a delete did not remove unchanged without a transaction", async () => {
+    for (const route of ["push", "mutation"] as const) {
+      const base = memoryAdapter() as Adapter;
+      // A delete the database suppresses (a BEFORE DELETE trigger) on an
+      // adapter whose delete reports no count.
+      const served = await serve(withoutTransactions(overriding(base, () => ({ delete: async () => undefined }))));
+      const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+      expect((await send({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } })).body.ok, route).toBe(true);
+      await send({ resource: "task", operation: "delete", id: "task:1" });
+
+      expect(await base.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any), route).not.toBeNull();
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 1, deleted: false });
+    }
+  });
+
+  it("gives a rewritten KV entry no revision while raising the ledger once to the latest state", async () => {
+    const base = memoryAdapter() as Adapter;
+    const db = withWriteEvidence(withoutTransactions(base));
+    await db.create({ model: "kv", data: { id: "kv:prefs", value: { a: 1 } }, namespace: NS } as any);
+    // Another writer deletes the record before this write's change is read,
+    // so the change is rewritten to the stored state: a delete.
+    await base.delete({ model: "kv", where: kvWhere, namespace: NS } as any);
+    await bumpTombstone(base, NS, "kv", "kv:prefs");
+    const entries: Array<{ resource: string; id: string; op: string; record: null; rev?: number }> = [
+      { resource: "kv", id: "kv:prefs", op: "delete", record: null },
+    ];
+
+    await assignWriteRevisions(db, NS, entries, () => false, schema, false);
+
+    expect(entries[0].rev).toBeUndefined();
+    expect(await rev(base, "kv", "kv:prefs")).toEqual({ rev: 2, deleted: true });
   });
 
   it("tombstones deletes and cascades on snapshot adapters through push, /mutation and /transact", async () => {
