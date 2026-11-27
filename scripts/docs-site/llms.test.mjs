@@ -383,6 +383,23 @@ describe("LLM loader front matter policy", () => {
     expect(readdirSync(scratch)).toEqual([]);
   });
 
+  // POSIX only: on Windows a backslash is the separator the provider's fast-glob listing is meant to rewrite.
+  it.skipIf(process.platform === "win32")("refuses a temp dir whose real path holds a backslash the provider's listing would rewrite", async () => {
+    write("guide/index.md", "# Guide");
+    // fast-glob would report <outer>/a/b/... for files under <outer>/a\b: this sibling must never be read.
+    const outer = external();
+    mkdirSync(join(outer, "a", "b"), { recursive: true });
+    const temporary = join(outer, "a\\b");
+    mkdirSync(temporary);
+    redirectTemporary(temporary);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error?.message).toContain(`The temporary directory ${temporary} `);
+    expect(error?.message).toContain("backslash");
+    expect(error?.message).toContain("TMPDIR");
+    expect(readdirSync(temporary)).toEqual([]);
+    expect(readdirSync(join(outer, "a", "b"))).toEqual([]);
+  });
+
   it("snapshots each collection on its own when one contains another's case variant", async (context) => {
     rmSync(join(cwd, "guide"), { recursive: true });
     write("Guide/intro.md", "# Intro");
@@ -481,5 +498,13 @@ describe("provider content check", () => {
     ["a relative root", { root: "root" }, "root"],
   ])("rejects %s", (_name, content, key) => {
     expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow(`Docs snapshot ${key} `);
+  });
+  it.skipIf(sep !== "/").each([
+    ["a root", { root: join(base, "a\\b") }, "root"],
+    ["a docs directory", { root, docsDir: join(base, "collections", "a\\b") }, "docsDir"],
+    ["a relative pages directory", { root, pagesDir: "a\\b" }, "pagesDir"],
+  ])("rejects %s holding a backslash on POSIX", (_name, content, key) => {
+    expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow(`Docs snapshot ${key} `);
+    expect(() => assertProviderContentInsideSnapshot(content, base)).toThrow("backslash");
   });
 });

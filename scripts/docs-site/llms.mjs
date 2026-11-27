@@ -24,6 +24,16 @@ const CONTROL_FILE_NAME = "meta.json";
 /** Every staging tree this prebuild creates is a temp directory with this name prefix. */
 const STAGING_PREFIX = "docs-llms-snapshot-";
 
+/**
+ * The provider lists Markdown with fast-glob, which returns every absolute path in forward-slash form.
+ * On POSIX a backslash is an ordinary file name character, so a directory whose path contains one would
+ * be listed as a different (sibling) path. Windows separators are expected to be rewritten.
+ * @param {string} path
+ */
+function hasGlobRewrittenCharacter(path) {
+  return sep === "/" && path.includes("\\");
+}
+
 /** @param {string} path */
 function isDirectory(path) {
   try { return statSync(path).isDirectory(); } catch { return false; }
@@ -172,6 +182,9 @@ function createCheckedContentSnapshot(root, content) {
   // relative TMPDIR, or one that reaches outside through a symbolic link and "..", cannot make the
   // snapshot land somewhere the check did not look, or be resolved by the provider against its root.
   const stagingParent = realpathSync.native(tmpdir());
+  if (hasGlobRewrittenCharacter(stagingParent)) {
+    throw new Error(`The temporary directory ${tmpdir()} resolves to ${stagingParent}, which contains a backslash the docs provider's file listing rewrites to a path separator; set TMPDIR to a directory without one`);
+  }
   assertStagingOutsideCollections(collections, stagingParent);
   const snapshotBase = mkdtempSync(join(stagingParent, STAGING_PREFIX));
   const snapshotRoot = join(snapshotBase, "root");
@@ -238,7 +251,9 @@ function createCheckedContentSnapshot(root, content) {
 /**
  * Check the final content configuration the provider receives: the root and every Markdown collection
  * directory (configured or left to the provider's defaults) must resolve inside this run's staging
- * tree, so the provider can only parse checked snapshot bytes. Fails closed on anything else.
+ * tree, so the provider can only parse checked snapshot bytes, and on POSIX none may contain a backslash
+ * (the provider's fast-glob listing would rewrite it to a separator and read another path). Fails closed
+ * on anything else.
  * @param {Record<string, unknown>} content
  * @param {string} snapshotBase
  */
@@ -247,11 +262,17 @@ export function assertProviderContentInsideSnapshot(content, snapshotBase) {
   if (typeof root !== "string" || !isAbsolute(root) || !isInside(snapshotBase, root)) {
     throw new Error(`Docs snapshot root ${String(root)} is outside its staging tree ${snapshotBase}`);
   }
+  if (hasGlobRewrittenCharacter(root)) {
+    throw new Error(`Docs snapshot root ${root} contains a backslash the provider's file listing would rewrite`);
+  }
   for (const key of SNAPSHOT_KEYS) {
     if (key === "root" || content[key] === undefined) continue;
     const value = content[key];
     if (typeof value !== "string" || !isInside(snapshotBase, resolve(root, value))) {
       throw new Error(`Docs snapshot ${key} ${String(value)} is outside its staging tree ${snapshotBase}`);
+    }
+    if (hasGlobRewrittenCharacter(resolve(root, value))) {
+      throw new Error(`Docs snapshot ${key} ${value} contains a backslash the provider's file listing would rewrite`);
     }
   }
 }
