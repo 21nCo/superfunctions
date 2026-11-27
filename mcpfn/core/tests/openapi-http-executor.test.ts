@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createMcpFnServer, McpFnError, McpFnRegistry, McpFnValidationError, type McpFnRequestExtra } from "../src/index.js";
-import { fromOpenAPI, httpExecutor, type HttpExecutorHeaderSource, type OpenApiOperation } from "../src/openapi/index.js";
+import { fromOpenAPI, httpExecutor, type HttpExecutorHeaderSource, type OpenApiExecutor, type OpenApiOperation } from "../src/openapi/index.js";
 import { requestExtra } from "./openapi-helpers.js";
 
 interface Received {
@@ -2524,6 +2524,145 @@ describe("httpExecutor documents read once, each property by its descriptor", ()
     expect(tools).toEqual([]);
     expect(skipped.map(({ code, reason }) => [code, reason])).toEqual([["invalid-operation", "an array has holes or own keys other than its indices"]]);
     expect(fromOpenAPI(documentWith(keyedOperation(), { "x-a": shared, "x-b": [shared, shared] }), { executor: trivial }).tools).toHaveLength(1);
+  });
+});
+
+describe("httpExecutor objects with internal slots, whatever their prototype", () => {
+  // Operator headers carry only authorization, so a caller value in X-Api-Key would reach the upstream.
+  const operatorHeaders = { authorization: `Bearer ${operatorToken}` };
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const trivial = { execute: () => ({ content: [] }) };
+  const notPlain = "the operation's security has a requirement that is not a plain object";
+  const scheme = { type: "apiKey", in: "header", name: "X-Api-Key" };
+  const documentWith = (operation: object, schemes: object = { k: { ...scheme } }): Record<string, unknown> => ({
+    openapi: "3.1.0",
+    info: { title: "branded", version: "1.0.0" },
+    components: { securitySchemes: schemes },
+    paths: { "/keyed": { get: operation } },
+  });
+  const operationFields = () => ({ operationId: "keyed", security: [{ k: [] }] as unknown[], parameters: [keyParameter], responses: ok });
+  const inputs = (tools: { inputSchema: { properties?: unknown } }[]) => tools.map((tool) => Object.keys((tool.inputSchema.properties ?? {}) as object));
+  /** `value` with a null prototype and, for an Error, no own stack or message, so only its slots set it apart from Object.create(null). */
+  const bare = (value: object): object => {
+    if (value instanceof Error) {
+      delete (value as { stack?: unknown }).stack;
+      delete (value as { message?: unknown }).message;
+    }
+    return Object.setPrototypeOf(value, null) as object;
+  };
+  const copied: [string, () => object][] = [
+    ["a DataView", () => new DataView(new ArrayBuffer(1))],
+    ["an ArrayBuffer", () => new ArrayBuffer(1)],
+    ["a Boolean object", () => Object(false) as object],
+    ["a Number object", () => Object(1) as object],
+    ["a RegExp", () => /a/],
+    ["an Error", () => new Error("test-error")],
+  ];
+  const refused: [string, () => object][] = [
+    ["a WeakMap", () => new WeakMap()],
+    ["a Promise", () => Promise.resolve()],
+  ];
+  type Listed = ReturnType<typeof fromOpenAPI>;
+  // Under a trivial executor, a requirement or operation that is not plain is reported as securityUnresolved, and a scheme that is not plain is left out of securitySchemes.
+  const unresolvedSecurity = (listed: Listed) => expect(listed.tools.map((tool) => tool.operation.securityUnresolved)).toEqual([notPlain]);
+  const unresolvedScheme = (listed: Listed) =>
+    expect(listed.tools.map((tool) => [tool.operation.security, tool.operation.securitySchemes, tool.operation.securityUnresolved])).toEqual([[[{ k: [] }], undefined, undefined]]);
+  const placements: [string, (make: () => object) => { document: Record<string, unknown>; path: string }, (listed: Listed) => void][] = [
+    [
+      "a requirement in the operation's level",
+      (make) => ({ document: documentWith({ ...operationFields(), security: [bare(make())] }), path: '$.paths["/keyed"].get.security["0"]' }),
+      unresolvedSecurity,
+    ],
+    ["the operation object", (make) => ({ document: documentWith(Object.assign(bare(make()), operationFields())), path: '$.paths["/keyed"].get' }), unresolvedSecurity],
+    [
+      "a securitySchemes entry",
+      (make) => ({ document: documentWith(operationFields(), { k: Object.assign(bare(make()), scheme) }), path: "$.components.securitySchemes.k" }),
+      unresolvedScheme,
+    ],
+  ];
+  const cases = placements.flatMap(([where, place, unresolved]) =>
+    copied.map(([kind, make]): [string, string, () => Record<string, unknown>, (listed: Listed) => void] => [kind, where, () => place(make).document, unresolved]),
+  );
+  const refusals = placements.flatMap(([where, place]) => refused.map(([kind, make]): [string, string, () => { document: Record<string, unknown>; path: string }] => [kind, where, () => place(make)]));
+
+  // Both results must fail closed: never listed with X-Api-Key as caller input, and never sending a request.
+  const expectFailsClosed = (
+    fromOpenApi: typeof fromOpenAPI,
+    executorOf: () => unknown,
+    build: () => Record<string, unknown>,
+    unresolved: (listed: Listed) => void,
+  ) => {
+    unresolved(fromOpenApi(build(), { executor: trivial }));
+    const before = api.received.length;
+    const sent = fromOpenApi(build(), { executor: executorOf() as OpenApiExecutor });
+    expect(sent.tools).toEqual([]);
+    expect(sent.skipped.map(({ code }) => code)).toEqual(["unsupported-by-executor"]);
+    expect(api.received.length).toBe(before);
+  };
+
+  it.each(cases)("never reads %s with a null prototype as a plain object, as %s", (_kind, _where, build, unresolved) => {
+    expectFailsClosed(fromOpenAPI, () => httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), build, unresolved);
+  });
+
+  it.each(refusals)("refuses %s with a null prototype, as %s, naming the path", (_kind, _where, build) => {
+    for (const executor of [httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), trivial]) {
+      const { document, path } = build();
+      let thrown: unknown;
+      try {
+        fromOpenAPI(document, { executor });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpFnValidationError);
+      expect((thrown as McpFnValidationError).message).toBe("fromOpenAPI expects a plain JSON document");
+      expect((thrown as McpFnValidationError).details).toEqual({ cause: `${path} is an object that cannot be copied` });
+    }
+  });
+
+  it("tells the same kinds by intrinsic probes where util.types is not available", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "getBuiltinModule");
+    Object.defineProperty(process, "getBuiltinModule", { value: undefined, configurable: true, writable: true });
+    let reloaded: typeof import("../src/openapi/index.js");
+    try {
+      vi.resetModules();
+      reloaded = await import("../src/openapi/index.js");
+    } finally {
+      if (descriptor) Object.defineProperty(process, "getBuiltinModule", descriptor);
+      else delete (process as { getBuiltinModule?: unknown }).getBuiltinModule;
+      vi.resetModules();
+    }
+    // A Promise has no side-effect-free probe, and an Error one only through Error.isError.
+    const probed = new Set(["a DataView", "an ArrayBuffer", "a Boolean object", "a Number object", "a RegExp"]);
+    for (const [kind, , build, unresolved] of cases) {
+      if (probed.has(kind)) {
+        expectFailsClosed(reloaded.fromOpenAPI as typeof fromOpenAPI, () => reloaded.httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), build, unresolved);
+      }
+    }
+    expect(() => reloaded.fromOpenAPI(documentWith({ ...operationFields(), security: [bare(new WeakMap())] }), { executor: trivial })).toThrow(
+      "fromOpenAPI expects a plain JSON document",
+    );
+  });
+
+  it("still reads an ordinary null-prototype requirement, operation and scheme as plain", () => {
+    const requirement = Object.assign(Object.create(null) as object, { k: [] });
+    const operation = Object.assign(Object.create(null) as object, { ...operationFields(), security: [requirement] });
+    const schemes = { k: Object.assign(Object.create(null) as object, scheme) };
+    const { tools, skipped } = fromOpenAPI(documentWith(operation, schemes), { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+    expect(skipped).toEqual([]);
+    // The apiKey requirement holds, so X-Api-Key is not caller input.
+    expect(inputs(tools)).toEqual([[]]);
+    // A genuine anonymous requirement, or no security at all, leaves X-Api-Key to the caller.
+    for (const security of [[{}], []]) {
+      const open = fromOpenAPI(documentWith({ ...operationFields(), security }), { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+      expect(inputs(open.tools)).toEqual([["header"]]);
+    }
+  });
+
+  it("copies a branded value elsewhere in the document without failing the conversion", () => {
+    const document = { ...documentWith(operationFields()), "x-values": [bare(new DataView(new ArrayBuffer(1))), new ArrayBuffer(2), Object(true) as object, /x/] };
+    const { tools, skipped } = fromOpenAPI(document, { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+    expect(skipped).toEqual([]);
+    expect(inputs(tools)).toEqual([[]]);
   });
 });
 

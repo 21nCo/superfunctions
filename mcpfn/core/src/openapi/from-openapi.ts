@@ -1620,10 +1620,16 @@ interface Filters<TContext> {
  * - a Date (a YAML timestamp) is copied by its time value, a Map or Set (of
  *   any realm, whatever its prototype) entry by entry, and a typed array by
  *   its bytes; their own properties are not read. They are not plain objects;
+ * - an object with another internal slot (told by its slots, never by its
+ *   prototype): a kind structuredClone refuses (a WeakMap, WeakSet, WeakRef,
+ *   FinalizationRegistry, Promise, generator, iterator, ...) is refused; any
+ *   other (a boxed primitive, an ArrayBuffer, a DataView, an Error, a RegExp)
+ *   is copied as below but is never a plain object, whatever its prototype;
  * - any other object is copied as a plain object of its own enumerable data
  *   properties, as structuredClone copies a class instance. It copies as read
- *   only when its prototype is null or a realm's Object.prototype and every
- *   own string key is an enumerable data property.
+ *   only when it is an ordinary object (no internal slot above) whose
+ *   prototype is null or a realm's Object.prototype and every own string key
+ *   is an enumerable data property.
  * Shared objects and cycles keep their sharing (each object is copied once),
  * so the work follows the distinct input, not the number of references.
  * Internal slots are read only through intrinsics captured at module load.
@@ -1695,38 +1701,134 @@ const typedArrays = new Map<string, TypedArrayConstructor>(
   }),
 );
 
-/** Node's util.types.isProxy, reached without an import (so other runtimes load this module too); undefined where there is none. */
-const isProxy: ((value: object) => boolean) | undefined = (() => {
+/** Node's util.types, reached without an import (so other runtimes load this module too); undefined where there is none. */
+const nodeTypes: Record<string, unknown> | undefined = (() => {
   try {
     const host = (globalThis as { process?: { getBuiltinModule?: unknown } }).process;
     const load = host?.getBuiltinModule;
     if (typeof load !== "function") return undefined;
-    const util = apply(load, host, ["node:util"]) as { types?: { isProxy?: unknown } } | undefined;
-    const check = util?.types?.isProxy;
-    return typeof check === "function" ? (value) => apply(check, undefined, [value]) === true : undefined;
+    const util = apply(load, host, ["node:util"]) as { types?: unknown } | undefined;
+    const types = util?.types;
+    return typeof types === "object" && types !== null ? (types as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }
 })();
 
-/** Whether `value` carries the internal slot `probe` reads, without running the caller's code. */
-function hasSlot(probe: (this: object) => unknown, value: object): boolean {
-  try {
-    apply(probe, value, []);
-    return true;
-  } catch {
-    return false;
-  }
+/** One of Node's util.types checks, captured now; undefined where there is none. */
+function nodeCheck(name: string): ((value: object) => boolean) | undefined {
+  const check = nodeTypes?.[name];
+  return typeof check === "function" ? (value) => apply(check, nodeTypes, [value]) === true : undefined;
+}
+
+const isProxy = nodeCheck("isProxy");
+
+/**
+ * Whether `value` carries the internal slot `probe` reads, without running the
+ * caller's code: `probe` is an intrinsic that only checks the slot (and
+ * returns a primitive or the value's own state); it throws a TypeError
+ * without it.
+ */
+function slotProbe(probe: unknown, ...args: unknown[]): ((value: object) => boolean) | undefined {
+  if (typeof probe !== "function") return undefined;
+  return (value) => {
+    try {
+      apply(probe, value, args);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** An accessor of `prototype`'s `key` (its getter), captured now; undefined where there is none. */
+function getterOf(constructor: unknown, key: string): unknown {
+  if (typeof constructor !== "function") return undefined;
+  const prototype: unknown = getOwnPropertyDescriptor(constructor, "prototype")?.value;
+  return typeof prototype === "object" && prototype !== null ? getOwnPropertyDescriptor(prototype, key)?.get : undefined;
+}
+
+/** A method of `constructor.prototype`, captured now; undefined where there is none. */
+function methodOf(constructor: unknown, key: string): unknown {
+  if (typeof constructor !== "function") return undefined;
+  const prototype: unknown = getOwnPropertyDescriptor(constructor, "prototype")?.value;
+  return typeof prototype === "object" && prototype !== null ? getOwnPropertyDescriptor(prototype, key)?.value : undefined;
 }
 
 /**
- * Whether `value` is a Map, a Set or a Date (of any realm, whatever its
- * prototype), by its internal slots, without running the caller's code. A
- * probe that fails throws a TypeError, and capturing its stack costs far more
- * than the probe; stack capture is turned off only around the probes (no
- * caller code runs there), so the copy stays proportional to the document.
+ * What an object's internal slots make it, for the copy: a Map, a Set or a
+ * Date (copied by their own rules); `branded`, another kind structuredClone
+ * copies (a boxed primitive, an ArrayBuffer, a DataView, an Error, a RegExp,
+ * an arguments object), copied as a plain object of its own enumerable data
+ * properties but never as read; or `uncopyable`, a kind structuredClone
+ * refuses (a WeakMap, WeakSet, WeakRef, FinalizationRegistry, Promise,
+ * generator, iterator, module namespace or external), refused here too.
  */
-function slotKind(value: object): "map" | "set" | "date" | undefined {
+type SlotKind = "map" | "set" | "date" | "branded" | "uncopyable";
+
+const globals = globalThis as Record<string, unknown>;
+const errorIsError = getOwnPropertyDescriptor(Error, "isError")?.value as unknown;
+const nodeKinds = nodeCheck("isMap") && nodeCheck("isSet") && nodeCheck("isDate");
+/**
+ * The brand checks, in order, all captured at module load. On Node,
+ * util.types reads the slots directly. Elsewhere each kind ECMAScript gives a
+ * side-effect-free intrinsic probe for is probed (a Promise or a generator
+ * has none, and an Error has one only through Error.isError).
+ */
+type SlotTest = [SlotKind, ((value: object) => boolean) | undefined];
+const slotCandidates: SlotTest[] = [
+  ...(nodeKinds
+    ? ([
+        ["map", "isMap"],
+        ["set", "isSet"],
+        ["date", "isDate"],
+        ["branded", "isBoxedPrimitive"],
+        ["branded", "isAnyArrayBuffer"],
+        ["branded", "isDataView"],
+        ["branded", "isNativeError"],
+        ["branded", "isRegExp"],
+        ["branded", "isArgumentsObject"],
+        ["uncopyable", "isPromise"],
+        ["uncopyable", "isWeakMap"],
+        ["uncopyable", "isWeakSet"],
+        ["uncopyable", "isGeneratorObject"],
+        ["uncopyable", "isMapIterator"],
+        ["uncopyable", "isSetIterator"],
+        ["uncopyable", "isModuleNamespaceObject"],
+        ["uncopyable", "isExternal"],
+      ] as const).map(([kind, name]): SlotTest => [kind, nodeCheck(name)])
+    : ([
+        ["map", slotProbe(mapSize)],
+        ["set", slotProbe(setSize)],
+        ["date", slotProbe(dateTime)],
+        ["branded", slotProbe(getterOf(ArrayBuffer, "byteLength"))],
+        ["branded", slotProbe(getterOf(globals.SharedArrayBuffer, "byteLength"))],
+        ["branded", slotProbe(getterOf(DataView, "buffer"))],
+        ["branded", slotProbe(methodOf(Boolean, "valueOf"))],
+        ["branded", slotProbe(methodOf(Number, "valueOf"))],
+        ["branded", slotProbe(methodOf(String, "valueOf"))],
+        ["branded", slotProbe(methodOf(globals.BigInt, "valueOf"))],
+        ["branded", slotProbe(methodOf(Symbol, "valueOf"))],
+        // Only the slot: RegExp.prototype.flags would read the caller's properties.
+        ["branded", slotProbe(getterOf(RegExp, "source"))],
+        ["uncopyable", slotProbe(methodOf(WeakMap, "has"), {})],
+        ["uncopyable", slotProbe(methodOf(WeakSet, "has"), {})],
+      ] satisfies SlotTest[])),
+  ["branded", typeof errorIsError === "function" ? (value: object) => apply(errorIsError, Error, [value]) === true : undefined],
+  ["uncopyable", slotProbe(methodOf(globals.WeakRef, "deref"))],
+  ["uncopyable", slotProbe(methodOf(globals.FinalizationRegistry, "unregister"), {})],
+];
+const slotTests = slotCandidates.flatMap(([kind, test]): [SlotKind, (value: object) => boolean][] => (test ? [[kind, test]] : []));
+
+/**
+ * What `value`'s internal slots make it (of any realm, whatever its
+ * prototype), without running the caller's code; undefined for an ordinary
+ * object. A probe that fails throws a TypeError, and capturing its stack
+ * costs far more than the probe; stack capture is turned off only around the
+ * checks (no caller code runs there), so the copy stays proportional to the
+ * document.
+ */
+function slotKind(value: object): SlotKind | undefined {
   const errors = Error as { stackTraceLimit?: unknown };
   const limit = errors.stackTraceLimit;
   let quiet = false;
@@ -1737,9 +1839,12 @@ function slotKind(value: object): "map" | "set" | "date" | undefined {
     // A frozen Error: probe with stack capture on.
   }
   try {
-    if (hasSlot(mapSize, value)) return "map";
-    if (hasSlot(setSize, value)) return "set";
-    return hasSlot(dateTime, value) ? "date" : undefined;
+    // Indexed, not for-of: no array iterator runs per object.
+    for (let index = 0; index < slotTests.length; index += 1) {
+      const test = slotTests[index]!;
+      if (test[1](value)) return test[0];
+    }
+    return undefined;
   } finally {
     if (quiet) errors.stackTraceLimit = limit;
   }
@@ -1823,6 +1928,8 @@ function privateCopy(document: object): { copy: JsonObject; provenance: Provenan
       } else if (kind === "date") {
         copy = new DateConstructor(apply(dateTime, value, []) as number);
         fill = false;
+      } else if (kind === "uncopyable") {
+        return refuse(`${pathOf(parent, key)} is an object that cannot be copied`);
       } else {
         copy = {};
       }
@@ -1874,7 +1981,8 @@ function privateCopy(document: object): { copy: JsonObject; provenance: Provenan
       if (hasOwn(array ? arrayPrototype : objectPrototype, key)) defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
       else (copy as Record<string, unknown>)[key] = value;
     }
-    const plain = array || plainPrototype(source);
+    // A branded object (recorded as not plain when it was reached) never copies as read.
+    const plain = array || (!provenance.has(copy) && plainPrototype(source));
     if (!plain || dropped.length > 0) provenance.set(copy, { plain, dropped });
   }
   return { copy: root, provenance };

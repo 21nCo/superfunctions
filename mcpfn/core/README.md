@@ -340,12 +340,18 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   time value, a `Map` or `Set` entry by entry and a typed array by its
   bytes, whatever their prototypes; any other object as a plain object of
   its own enumerable data properties (as `structuredClone` copies a class
-  instance), marked as not plain where that matters. Shared objects and
+  instance), marked as not plain where that matters. An object is plain
+  only when it is ordinary (it carries no internal slot such as a boxed
+  primitive's, an `ArrayBuffer`'s, a `DataView`'s, an `Error`'s or a
+  `RegExp`'s, told by its slots, never by its prototype) and its prototype
+  is `null` or `Object.prototype`. Shared objects and
   cycles stay shared. Whatever the executor, it throws
   `McpFnValidationError` ("fromOpenAPI expects a plain JSON document") when
   any object reachable from the document, `Map` and `Set` entries included,
   has an accessor (getter or setter) property, or holds a function, a
-  symbol or a `Proxy` (where the runtime can tell one, as Node can; elsewhere
+  symbol, an object `structuredClone` cannot copy (a `WeakMap`, `WeakSet`,
+  `WeakRef`, `FinalizationRegistry`, `Promise`, generator or iterator,
+  where the runtime can tell one) or a `Proxy` (where the runtime can tell one, as Node can; elsewhere
   a `Proxy` is read through its traps, still once per property); the error
   names the path, never a value. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
