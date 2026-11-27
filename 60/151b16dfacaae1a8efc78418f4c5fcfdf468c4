@@ -1,0 +1,104 @@
+mcpfn/core/src/openapi/from-openapi.ts
+  s_354c90d1ae0cd0::t_8daf1b98e48574 279,1275-1277
+  s_b3623b85641760::t_c484063fab5e05 27,1488-1489
+  s_354c90d1ae0cd0::t_66e683cbb343c7 280
+  s_b3623b85641760::t_30d64f2b3081ec 1490-1492
+  s_354c90d1ae0cd0::t_b3e189b35377bf 348-349,744-747,754,1421-1429,1493-1496
+langfn/typescript/package.json
+  s_545bb079978e5a::t_4df311dafe1e8a 3,104
+mcpfn/testing/package.json
+  s_545bb079978e5a::t_43845bd919b0b8 3,34-35
+mcpfn/core/src/openapi/types.ts
+  s_b3623b85641760::t_850aa6f9ec6dc3 119,123-124,126-132,135-137,154
+  s_354c90d1ae0cd0::t_2152fafae2a003 109-110,138-143
+memoryfn/admin/package.json
+  s_545bb079978e5a::t_5fee828ee40acb 36-37
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_354c90d1ae0cd0::t_5f0d6ba6354583 4,127-135,165-172,184-189,406,415-425,429-462,487-490,496,589,606-607,609,616-618,633-806
+  s_545bb079978e5a::t_748e89f514e775 1-3,5-126,136-164,173-183,190-405,407-414,426-428,463-486,491-495,497-588,590-605,608,610-615,619-632
+  s_354c90d1ae0cd0::t_1d78465c0d4caf 807-809
+  s_354c90d1ae0cd0::t_2e4fe62e1e69e5 810-939
+mcpfn/inspector/package.json
+  s_545bb079978e5a::t_41e4144bf997bd 3,24-25,31
+mcpfn/core/package.json
+  s_545bb079978e5a::t_e48f4adb15b267 3
+memoryfn/typescript/package.json
+  s_545bb079978e5a::t_53d20d40c0a6ef 3,45
+package-lock.json
+  s_545bb079978e5a::t_ad91cf130f4b3f 1324,14892,14895,17259,17263-17266,17719,17727,18187,18659,18664,18667,19119,19122-19123,19129,19585,19589-19590,23857-23858,24239,24241,58361,58364,64171-64172
+  s_354c90d1ae0cd0::t_4a66348675b385 1321
+authfn/admin/package.json
+  s_354c90d1ae0cd0::t_2c8c36b2a73319 3
+  s_545bb079978e5a::t_7590e166726c4d 40
+mcpfn/core/README.md
+  s_545bb079978e5a::t_e98173f046fc78 247-249,253-265,267-275,308-309,321-323,329
+  s_354c90d1ae0cd0::t_8637d63e28f975 250-252,266,276-307,310-320
+  s_545bb079978e5a::t_b81f7c89c6c10a 324-328
+  s_545bb079978e5a::t_c90defe3a01279 330-331
+mcpfn/client/tests/openapi-http-executor.test.ts
+  s_545bb079978e5a::t_e324ffd465f672 1-109
+mcpfn/datafn/package.json
+  s_545bb079978e5a::t_56b98f5d80687a 3,26,30
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_b3623b85641760::t_b71d38f6e4d3c1 449-455
+mcpfn/core/src/openapi/index.ts
+  s_b3623b85641760::t_4a96d29bbb0731 21-22
+packages/admin/package.json
+  s_545bb079978e5a::t_fead08f3f51a9b 3,31
+mcpfn/client/CHANGELOG.md
+  s_b3623b85641760::t_ac58b0bfc2a7bb 3-10
+mcpfn/core/src/openapi/headers.ts
+  s_545bb079978e5a::t_3d138514baefc8 1-17
+mcpfn/cli/package.json
+  s_545bb079978e5a::t_58baf09b272638 3,27-30
+superconsole/package.json
+  s_545bb079978e5a::t_d3ce4b85aa49f7 27-28
+mcpfn/core/src/openapi/http-executor.ts
+  s_545bb079978e5a::t_4fcf1fb2f18333 1-7,9-10,16-24,29,33-34,36-44,47-61,67-70,72-80,87-103,113-114,123,139-142,145-152,154-160,162-182,184-187,189-194,196-202,205-206,211,213-229,318-324,331,333-338,340,350,379-442,449-450,452-466,468-477,489,491-502,504-522,526-536,538-551,553-575,577-588,590-595,599,603,621-622,624,626,630,638,644,646,648
+  s_354c90d1ae0cd0::t_0c1a473e28b830 8,11-15,25-28,30-32,35,45-46,62-66,71,81-86,104-112,115-122,124-138,143-144,153,161,183,188,195,203-204,207-210,212,230-317,325-330,332,339,341-349,351-378,443-448,451,467,478-488,490,503,523-525,537,552,576,589,647
+  s_545bb079978e5a::t_8e67f42cec0239 596-598
+  s_545bb079978e5a::t_9d8f557bc26ff1 600-602
+  s_545bb079978e5a::t_fde8bb935e69a9 604-606,618-620
+  s_545bb079978e5a::t_38264c079a9934 623
+  s_545bb079978e5a::t_dadeb5ba03e28f 625
+  s_545bb079978e5a::t_f408a66225e481 627-629
+  s_545bb079978e5a::t_9b727b84d99e4d 631-633,635-637
+  s_545bb079978e5a::t_fbf878437a9d70 639-643
+  s_545bb079978e5a::t_c23ddaed52879a 645
+  s_545bb079978e5a::t_aa627683d2658a 649-651
+  s_354c90d1ae0cd0::t_ed6e993f51baef 607-617,634,652-731
+mcpfn/client/package.json
+  s_545bb079978e5a::t_854b4be45608d1 3,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60151b16dfacaae1a8efc78418f4c5fcfdf468c4",
+  "prompts": {},
+  "sessions": {
+    "s_354c90d1ae0cd0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ac404db-e472-4bb9-8332-1a5c99d10a14",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b3623b85641760": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b29703c-6a79-47df-aec9-7560232bbd41",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

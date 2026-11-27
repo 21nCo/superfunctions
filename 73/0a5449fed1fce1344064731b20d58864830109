@@ -1,0 +1,23 @@
+mcpfn/core/README.md
+  s_cc48e5e02ed036::t_a3effc4c75d197 323-326
+mcpfn/core/src/openapi/http-executor.ts
+  s_cc48e5e02ed036::t_dbcc1ed503a955 157,1113-1139,1143-1154,1166-1167,1169-1171,1175
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_cc48e5e02ed036::t_30314b731249c3 6,306-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "730a5449fed1fce1344064731b20d58864830109",
+  "prompts": {},
+  "sessions": {
+    "s_cc48e5e02ed036": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21965-0e2e-7ca3-a901-b121bf376746",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

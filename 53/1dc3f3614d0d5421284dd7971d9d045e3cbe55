@@ -1,0 +1,35 @@
+mcpfn/core/README.md
+  s_6919616020cfb4::t_f54639cb0aaa49 308-309,350-355,357-365
+mcpfn/core/src/openapi/from-openapi.ts
+  s_6919616020cfb4::t_5c7c0a70bd7258 1502,1557-1616
+mcpfn/core/src/openapi/http-executor.ts
+  s_6919616020cfb4::t_ac1db00c07a832 527-528,537-538,545-546,550-554,558-560,598-599,620-627,659-660,707-708,727-749,753,758-765,767-773,775-855,857,860-861,863-897,899-905,971-974,978-979,984,986-995,998-999,1001,1004-1005,1007,1014
+mcpfn/core/tests/openapi-http-executor-memory.test.ts
+  s_b132ad4cdf837b::t_d71d0a095ca210 1-43
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_6919616020cfb4::t_27dba54ca2f225 911-912,915,1104-1106,1894-1988
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "531dc3f3614d0d5421284dd7971d9d045e3cbe55",
+  "prompts": {},
+  "sessions": {
+    "s_6919616020cfb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f97debb-6d74-4057-a134-145a8e4f0851",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b132ad4cdf837b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c24b5852-5763-4313-ae83-687a52c04f23",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

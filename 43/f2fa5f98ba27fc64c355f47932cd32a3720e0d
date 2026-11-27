@@ -1,0 +1,33 @@
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_f170b485f89d0e::t_749c518250f572 2065-2249
+mcpfn/core/README.md
+  s_16be15e550007d::t_73f066995bbd45 154-158,306-309,326-329,338,373-376
+mcpfn/core/src/openapi/from-openapi.ts
+  s_16be15e550007d::t_93fc34e23f6f7b 884-886,899,1818-1829,1833-1854,1856
+mcpfn/core/src/openapi/http-executor.ts
+  s_16be15e550007d::t_0999fb3572228f 53-54,61,121-124,129-132,149,302-306,312-317,706-710,712-735,750-752,782-783,785,867-874,876-884,886-928,968,972-973,978,982,989,993-999,1230,1238-1241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43f2fa5f98ba27fc64c355f47932cd32a3720e0d",
+  "prompts": {},
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f170b485f89d0e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2198c-580a-7aa2-8ae3-d0a921594c2b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
