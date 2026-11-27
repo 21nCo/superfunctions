@@ -6,6 +6,16 @@ import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSub
  * A fresh frozen array holding the entries of `first` and then `second`,
  * copied by index: no `concat`, spread or iterator, so a polluted
  * `Symbol.isConcatSpreadable` or `Symbol.iterator` cannot nest or drop entries.
+ *
+ * Every path that runs per `normalize` or `isSubset` call follows the same
+ * rule: it never reads an input or one of the engine's own arrays through the
+ * Array iteration protocol (no `for...of`, spread or destructuring, no
+ * `new Set(iterable)` or `new Map(iterable)`) and never calls an
+ * `Array.prototype` method looked up at call time (no `push`, `map`, `pop`
+ * or `fill`). Arrays are walked with index loops and grown by index
+ * assignment, and `Array.isArray` is captured at load. A data-valued
+ * pollution, or a replaced Array iterator or method, cannot change a
+ * decision. See the trust boundary on `ScopeGrammar`.
  */
 function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] {
   const out: T[] = [];
@@ -16,7 +26,16 @@ function frozenList<T>(first: readonly T[], second: readonly T[]): readonly T[] 
 
 type Side = ScopeViolation['side'];
 type ScopeValue = readonly string[] | number;
-type ParsedScope = Map<string, ScopeValue>;
+/**
+ * A validated scope: the value of each dimension, indexed like the grammar's
+ * `dims`. Never a `Map`, so building and reading it runs no iterator.
+ */
+type ParsedScope = readonly ScopeValue[];
+/** The outcome of parsing one input: a scope, or the violations that rejected it. */
+interface ParseOutcome {
+  readonly scope: ParsedScope | undefined;
+  readonly violations: readonly ScopeViolation[];
+}
 type Clone = (value: unknown) => unknown;
 
 /**
@@ -28,6 +47,14 @@ const hostClone: Clone | undefined = (() => {
   const candidate: unknown = (globalThis as { structuredClone?: unknown }).structuredClone;
   return typeof candidate === 'function' ? (candidate.bind(globalThis) as Clone) : undefined;
 })();
+
+/** `Array.isArray`, captured at load so replacing it later changes nothing. */
+const isArray: (value: unknown) => value is unknown[] = Array.isArray;
+
+/** Appends `item` by index assignment, never through `Array.prototype.push`. */
+function append<T>(list: T[], item: T): void {
+  list[list.length] = item;
+}
 
 /**
  * The engine's private, frozen view of one dimension. It is never exposed, so
@@ -91,27 +118,36 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
  */
 function notPlainAt(root: unknown): string | null | undefined {
   const seen = new Set<object>();
-  // Objects still to visit, each with the top-level key it sits under.
-  const pending: [object, string | null][] = [];
+  // Objects still to visit, each with the top-level key it sits under, kept as
+  // a stack of two parallel arrays indexed by `top` (no tuple, push or pop).
+  const pendingValues: object[] = [];
+  const pendingAt: (string | null)[] = [];
+  let top = 0;
   /** Whether `value` is a plain leaf, or queues it; `false` when it can never be plain. */
   const accept = (value: unknown, at: string | null): boolean => {
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
     if (typeof value === 'number') return Number.isFinite(value);
     if (typeof value !== 'object' || seen.has(value)) return false;
     seen.add(value);
-    pending.push([value, at]);
+    pendingValues[top] = value;
+    pendingAt[top] = at;
+    top++;
     return true;
   };
   if (!accept(root, null)) return null;
-  while (pending.length > 0) {
-    const [value, at] = pending.pop()!;
-    if (Array.isArray(value)) {
+  while (top > 0) {
+    top--;
+    const value = pendingValues[top]!;
+    const at = pendingAt[top]!;
+    if (isArray(value)) {
       if (Object.getPrototypeOf(value) !== Array.prototype || Object.keys(value).length !== value.length) return at;
       for (let i = 0; i < value.length; i++) {
         if (!Object.hasOwn(value, i) || !accept(value[i], at)) return at;
       }
     } else if (isCloneRecord(value)) {
-      for (const key of Object.keys(value)) {
+      const keys = Object.keys(value);
+      for (let k = 0; k < keys.length; k++) {
+        const key = keys[k]!;
         const under = value === root ? key : at;
         if (!accept(value[key], under)) return under;
       }
@@ -130,7 +166,7 @@ function notPlainAt(root: unknown): string | null | undefined {
  * `values` arrive here directly.
  */
 function readArray(value: unknown): readonly unknown[] | string {
-  if (!Array.isArray(value)) return 'must be an array of strings';
+  if (!isArray(value)) return 'must be an array of strings';
   if (value.length > MAX_SET_ITEMS) return `must have at most ${MAX_SET_ITEMS} items`;
   for (let i = 0; i < value.length; i++) {
     if (!Object.hasOwn(value, i)) return `item ${i} is missing`;
@@ -408,7 +444,7 @@ function isSetKind(dim: CompiledDimension): boolean {
 function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeViolation[]): readonly string[] | undefined {
   const members = readArray(raw);
   if (typeof members === 'string') {
-    out.push(malformed(side, `dimension "${dim.name}" ${members}`, dim.name));
+    append(out, malformed(side, `dimension "${dim.name}" ${members}`, dim.name));
     return undefined;
   }
   const glob = dim.kind === 'prefixGlobSet';
@@ -421,15 +457,15 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
     const value = members[i];
     const reason = invalidMember(value, glob);
     if (reason) {
-      out.push(malformed(side, `dimension "${dim.name}" item ${i} ${reason}`, dim.name, typeof value === 'string' ? value : undefined));
+      append(out, malformed(side, `dimension "${dim.name}" item ${i} ${reason}`, dim.name, typeof value === 'string' ? value : undefined));
       continue;
     }
     const key = memberKey(value as string);
     if (dim.vocabulary && !dim.vocabulary.has(key)) {
-      out.push(malformed(side, `dimension "${dim.name}" item ${i} is not in the grammar`, dim.name, value as string));
+      append(out, malformed(side, `dimension "${dim.name}" item ${i} is not in the grammar`, dim.name, value as string));
     } else if (seen && !seen.has(key)) {
       seen.add(key);
-      unique.push(value as string);
+      append(unique, value as string);
     }
   }
   if (out.length !== before) return undefined;
@@ -446,38 +482,46 @@ function parseScalar(dim: CompiledDimension, raw: unknown, side: Side, out: Scop
   else if (dim.min !== undefined && raw < dim.min) reason = `must be at least ${dim.min}${unit}`;
   else if (dim.max !== undefined && raw > dim.max) reason = `must be at most ${dim.max}${unit}`;
   if (reason) {
-    out.push(malformed(side, `dimension "${dim.name}" ${reason}`, dim.name, typeof raw === 'number' ? raw : undefined));
+    append(out, malformed(side, `dimension "${dim.name}" ${reason}`, dim.name, typeof raw === 'number' ? raw : undefined));
     return undefined;
   }
   return raw as number;
 }
 
 /** Validates an engine-owned clone against the grammar. Never widens. */
-function parseScope(dims: readonly CompiledDimension[], byName: ReadonlyMap<string, CompiledDimension>, value: unknown, side: Side): ParsedScope | ScopeViolation[] {
-  if (!isCloneRecord(value)) return [malformed(side, 'scope must be a plain object')];
+function parseScope(dims: readonly CompiledDimension[], byName: ReadonlyMap<string, CompiledDimension>, value: unknown, side: Side): ParseOutcome {
+  if (!isCloneRecord(value)) return rejected([malformed(side, 'scope must be a plain object')]);
   const out: ScopeViolation[] = [];
-  for (const key of Object.keys(value)) {
-    if (!byName.has(key)) out.push(malformed(side, `unknown dimension ${JSON.stringify(key)}`));
+  const keys = Object.keys(value);
+  for (let k = 0; k < keys.length; k++) {
+    if (!byName.has(keys[k]!)) append(out, malformed(side, `unknown dimension ${JSON.stringify(keys[k])}`));
   }
-  const scope: ParsedScope = new Map();
-  for (const dim of dims) {
+  const scope: ScopeValue[] = [];
+  for (let d = 0; d < dims.length; d++) {
+    const dim = dims[d]!;
     if (!Object.hasOwn(value, dim.name)) {
-      if (isSetKind(dim)) scope.set(dim.name, Object.freeze([]));
-      else out.push(malformed(side, `dimension "${dim.name}" is required`, dim.name));
+      if (isSetKind(dim)) scope[d] = Object.freeze([]);
+      else append(out, malformed(side, `dimension "${dim.name}" is required`, dim.name));
       continue;
     }
     const raw = value[dim.name];
     const parsed = isSetKind(dim) ? parseSet(dim, raw, side, out) : parseScalar(dim, raw, side, out);
-    if (parsed !== undefined) scope.set(dim.name, parsed);
+    if (parsed !== undefined) scope[d] = parsed;
   }
-  return out.length > 0 ? out : scope;
+  return out.length > 0 ? rejected(out) : ownRecord<ParseOutcome>({ scope: Object.freeze(scope), violations: [] });
+}
+
+function rejected(violations: readonly ScopeViolation[]): ParseOutcome {
+  return ownRecord<ParseOutcome>({ scope: undefined, violations });
 }
 
 function compareExact(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
-  const allowed = new Set(envelope.map(memberKey));
-  for (const item of request) {
+  const allowed = new Set<string>();
+  for (let i = 0; i < envelope.length; i++) allowed.add(memberKey(envelope[i]!));
+  for (let i = 0; i < request.length; i++) {
+    const item = request[i]!;
     if (!allowed.has(memberKey(item))) {
-      out.push(violation('not_in_envelope', 'request', `"${item}" is not in the envelope for "${name}"`, name, item, undefined));
+      append(out, violation('not_in_envelope', 'request', `"${item}" is not in the envelope for "${name}"`, name, item, undefined));
     }
   }
 }
@@ -512,8 +556,11 @@ function radixNode(source: string, end: number, terminal: boolean): RadixNode {
   return new RadixNode(source, end, terminal);
 }
 
+/** Sixteen empty child slots, written as a literal: no call-time `Array.prototype.fill`. */
 function emptySlots(): (RadixNode | undefined)[] {
-  return new Array<RadixNode | undefined>(16).fill(undefined);
+  // prettier-ignore
+  return [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined];
 }
 
 /** Nibble `n` of `value`: bits of code unit `n >> 2`, most significant nibble first. */
@@ -606,16 +653,18 @@ function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
   let trie: RadixNode | undefined;
-  for (const pattern of envelope) {
+  for (let i = 0; i < envelope.length; i++) {
+    const pattern = envelope[i]!;
     if (pattern.endsWith('*')) insertPrefix((trie ??= radixNode('', 0, false)), pattern, pattern.length - 1);
     else literals.add(memberKey(pattern));
   }
-  for (const item of request) {
+  for (let i = 0; i < request.length; i++) {
+    const item = request[i]!;
     const isGlob = item.endsWith('*');
     if (!isGlob && literals.has(memberKey(item))) continue;
     const covered = trie !== undefined && hasPrefixIn(trie, item, isGlob ? item.length - 1 : item.length);
     if (!covered) {
-      out.push(violation('not_in_envelope', 'request', `"${item}" is not covered by the envelope for "${name}"`, name, item, undefined));
+      append(out, violation('not_in_envelope', 'request', `"${item}" is not covered by the envelope for "${name}"`, name, item, undefined));
     }
   }
 }
@@ -657,22 +706,22 @@ export function defineScopeGrammar<const D extends ScopeDimensions>(
 
   const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
     const result = Object.create(null) as Record<string, ScopeValue>;
-    for (const [name, value] of scope) result[name] = value;
+    for (let d = 0; d < dims.length; d++) result[dims[d]!.name] = scope[d]!;
     return Object.freeze(result) as NormalizedScope<D>;
   };
 
   /** Validates a single structured clone. Never reads or formats a thrown value. */
-  const parse = (input: ScopeShape<D>, side: Side): ParsedScope | ScopeViolation[] => {
+  const parse = (input: ScopeShape<D>, side: Side): ParseOutcome => {
     let value: unknown;
     try {
       value = clone(input);
     } catch {
-      return [malformed(side, 'scope must be plain data that structuredClone can copy')];
+      return rejected([malformed(side, 'scope must be plain data that structuredClone can copy')]);
     }
     const at = notPlainAt(value);
     if (at === undefined) return parseScope(dims, byName, value, side);
-    if (at === null || !byName.has(at)) return [malformed(side, NOT_PLAIN_DATA)];
-    return [malformed(side, `dimension "${at}" must be plain data (arrays, strings, finite numbers) without shared references`, at)];
+    if (at === null || !byName.has(at)) return rejected([malformed(side, NOT_PLAIN_DATA)]);
+    return rejected([malformed(side, `dimension "${at}" must be plain data (arrays, strings, finite numbers) without shared references`, at)]);
   };
 
   const grammar: ScopeGrammar<D> = {
@@ -681,30 +730,33 @@ export function defineScopeGrammar<const D extends ScopeDimensions>(
 
     normalize(input: ScopeShape<D>): ScopeNormalizeResult<D> {
       const parsed = parse(input, 'request');
-      return Array.isArray(parsed) ? scopeResult<D>(undefined, parsed) : scopeResult(snapshot(parsed), []);
+      return parsed.scope === undefined ? scopeResult<D>(undefined, parsed.violations) : scopeResult(snapshot(parsed.scope), []);
     },
 
     isSubset(request: ScopeShape<D>, envelope: ScopeShape<D>): ScopeSubsetResult<D> {
       // Capture the envelope before any request getter can change it.
       const env = parse(envelope, 'envelope');
       const req = parse(request, 'request');
-      if (Array.isArray(req) || Array.isArray(env)) {
-        return scopeResult<D>(undefined, frozenList(Array.isArray(req) ? req : [], Array.isArray(env) ? env : []));
+      if (req.scope === undefined || env.scope === undefined) {
+        return scopeResult<D>(undefined, frozenList(req.violations, env.violations));
       }
+      const requestScope = req.scope;
+      const envelopeScope = env.scope;
       const out: ScopeViolation[] = [];
-      for (const dim of dims) {
-        const requested = req.get(dim.name)!;
-        const allowed = env.get(dim.name)!;
+      for (let d = 0; d < dims.length; d++) {
+        const dim = dims[d]!;
+        const requested = requestScope[d]!;
+        const allowed = envelopeScope[d]!;
         if (dim.kind === 'exactSet') {
           compareExact(dim.name, requested as readonly string[], allowed as readonly string[], out);
         } else if (dim.kind === 'prefixGlobSet') {
           comparePrefixGlob(dim.name, requested as readonly string[], allowed as readonly string[], out);
         } else if ((requested as number) > (allowed as number)) {
           const message = `"${dim.name}" ${String(requested)} exceeds the envelope limit ${String(allowed)}`;
-          out.push(violation('exceeds_envelope', 'request', message, dim.name, requested as number, allowed as number));
+          append(out, violation('exceeds_envelope', 'request', message, dim.name, requested as number, allowed as number));
         }
       }
-      return out.length === 0 ? scopeResult(snapshot(req), out) : scopeResult<D>(undefined, out);
+      return out.length === 0 ? scopeResult(snapshot(requestScope), out) : scopeResult<D>(undefined, out);
     },
   };
   return Object.freeze(grammar);

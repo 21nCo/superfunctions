@@ -224,6 +224,16 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
  * cloning, and values that cannot be cloned or are not plain data are malformed.
  * The envelope is captured before any request getter runs. A caller that mints
  * a credential must use the frozen scope covered by the subset decision.
+ *
+ * The engine never reads an input or its own arrays through the Array
+ * iteration protocol or an `Array.prototype` method looked up at call time,
+ * so a data-valued pollution or a replaced Array iterator or method cannot
+ * change a decision. The realm's other built-in functions (`Set`, `Map`,
+ * `String`, `Number`, `RegExp`, `JSON`, `Object` and `Math` methods) are
+ * trusted; caller code that replaces them, including from an input getter,
+ * has the caller's own authority and is outside this boundary. An input
+ * getter is same-realm caller code: the engine guarantees only that it runs
+ * once, during the clone, with the envelope captured first.
  */
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions> {
   readonly provider: string;

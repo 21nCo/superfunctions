@@ -1084,3 +1084,103 @@ describe('radix trie insertion order', () => {
     }
   });
 });
+
+describe('decisions do not depend on the Array iteration protocol or call-time Array methods', () => {
+  const g = defineScopeGrammar({
+    provider: 'intrinsics',
+    dimensions: { perms: { kind: 'exactSet' }, repos: { kind: 'prefixGlobSet' }, ttl: { kind: 'ttlMax' } },
+  });
+  const env = { perms: [], repos: ['org/*'], ttl: 60 };
+  const requested = { perms: ['admin'], repos: ['x/secret'], ttl: 99999 };
+
+  const iterator = Array.prototype[Symbol.iterator];
+  const methods = { push: Array.prototype.push, pop: Array.prototype.pop, map: Array.prototype.map, fill: Array.prototype.fill };
+  const isArray = Array.isArray;
+  const restore = () => {
+    Array.prototype[Symbol.iterator] = iterator;
+    Object.assign(Array.prototype, methods);
+    Array.isArray = isArray;
+  };
+  const drop = (keep: (array: unknown[]) => boolean) =>
+    function (this: unknown[]) {
+      return iterator.call(keep(this) ? this : []);
+    };
+  const isViolation = (value: unknown) => {
+    const code = (value as { code?: unknown } | null)?.code;
+    return code === 'not_in_envelope' || code === 'exceeds_envelope';
+  };
+  const tampers: Record<string, () => void> = {
+    // Skips the frozen request arrays holding the requested members.
+    'an iterator that skips admin and x/secret': () => {
+      Array.prototype[Symbol.iterator] = drop(a => !(Object.isFrozen(a) && (a[0] === 'admin' || a[0] === 'x/secret')));
+    },
+    // Empties the grammar's frozen array of 3 compiled dimensions.
+    'an iterator that empties a frozen array of 3 objects': () => {
+      Array.prototype[Symbol.iterator] = drop(a => !(Object.isFrozen(a) && a.length === 3 && typeof a[0] === 'object'));
+    },
+    'an iterator that empties every array': () => {
+      Array.prototype[Symbol.iterator] = drop(() => false);
+    },
+    'a push that drops not_in_envelope and exceeds_envelope': () => {
+      Array.prototype.push = function (this: unknown[], ...items: unknown[]) {
+        for (let i = 0; i < items.length; i++) if (!isViolation(items[i])) this[this.length] = items[i];
+        return this.length;
+      };
+    },
+    'map, pop and fill that return nothing, and an Array.isArray that is always false': () => {
+      Array.prototype.map = function () {
+        return [];
+      } as never;
+      Array.prototype.pop = function () {
+        return undefined;
+      };
+      Array.prototype.fill = function (this: unknown[]) {
+        return this;
+      } as never;
+      Array.isArray = ((_: unknown) => false) as typeof Array.isArray;
+    },
+  };
+
+  /** Runs `run` with `tamper` applied by a request getter (after the envelope is captured) or before the call. */
+  function under<T>(tamper: () => void, fromGetter: boolean, run: (request: object) => T): T {
+    const request = fromGetter
+      ? {
+          get perms() {
+            tamper();
+            return requested.perms;
+          },
+          repos: requested.repos,
+          ttl: requested.ttl,
+        }
+      : requested;
+    try {
+      if (!fromGetter) tamper();
+      return run(request);
+    } finally {
+      restore();
+    }
+  }
+
+  const cases = Object.keys(tampers).flatMap(name => [
+    [name, 'from a request getter', true],
+    [name, 'before the call', false],
+  ]) as [string, string, boolean][];
+
+  it.each(cases)('isSubset still denies with %s applied %s', (name, _when, fromGetter) => {
+    const result = under(tampers[name]!, fromGetter, request => g.isSubset(request as never, env as never));
+    expect(result.ok).toBe(false);
+    expect(result.scope).toBeUndefined();
+    expect(result.violations).toEqual([
+      expect.objectContaining({ code: 'not_in_envelope', dimension: 'perms', item: 'admin' }),
+      expect.objectContaining({ code: 'not_in_envelope', dimension: 'repos', item: 'x/secret' }),
+      expect.objectContaining({ code: 'exceeds_envelope', dimension: 'ttl', item: 99999, limit: 60 }),
+    ]);
+  });
+
+  it.each(cases)('normalize keeps every dimension with %s applied %s', (name, _when, fromGetter) => {
+    const result = under(tampers[name]!, fromGetter, request => g.normalize(request as never));
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.scope).toEqual({ perms: ['admin'], repos: ['x/secret'], ttl: 99999 });
+  });
+});
