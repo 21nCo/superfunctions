@@ -321,10 +321,13 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
   is malformed (a level that is not a list, a requirement that is not a
-  plain object, such as a `Map`, `Date` or class instance, judged before
-  the document is copied, a level reached through a getter (on `security`,
-  `paths`, a path item or an operation), whose value as copied is not known,
-  scopes that are not a list of strings; `fromOpenAPI` reports it
+  plain object, such as a `Map`, `Date` or class instance, or one with a
+  non-enumerable key or a getter, judged before the document is copied, a
+  level reached through a getter or a non-enumerable property (on
+  `security`, `paths`, a path item or an operation), or held by a document
+  or operation that is not a plain object (an inherited or prototype-getter
+  `security`), whose value as copied is not known, so it never reads as
+  absent, scopes that are not a list of strings; `fromOpenAPI` reports it
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
   does not define such as `api-key`, a scheme object that is not a plain

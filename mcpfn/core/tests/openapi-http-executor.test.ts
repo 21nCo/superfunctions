@@ -2066,6 +2066,84 @@ describe("httpExecutor security levels reached through an accessor", () => {
   });
 });
 
+describe("httpExecutor security that structuredClone would drop", () => {
+  // Operator headers carry only authorization, so a caller value in X-Api-Key would reach the upstream.
+  const operatorHeaders = { authorization: `Bearer ${operatorToken}` };
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const hidden = <T extends object>(holder: T, key: string, value: unknown): T =>
+    Object.defineProperty(holder, key, { value, enumerable: false, configurable: true, writable: true });
+  const operation = () => ({ operationId: "keyed", parameters: [keyParameter], responses: ok });
+  const documentWith = (get: object, security?: unknown) => ({
+    openapi: "3.1.0",
+    info: { title: "hidden security", version: "1.0.0" },
+    components: { securitySchemes: { k: { type: "apiKey", in: "header", name: "X-Api-Key" } } },
+    ...(security === undefined ? {} : { security }),
+    paths: { "/keyed": { get } },
+  });
+  const notPlain = (where: string) => `its security cannot be read: ${where} security has a requirement that is not a plain object`;
+  class KeyedOperation {
+    operationId = "keyed";
+    parameters = [keyParameter];
+    responses = ok;
+    get security() {
+      return [{ k: [] }];
+    }
+  }
+  const variants: [string, () => object, string][] = [
+    ["a requirement with a non-enumerable key", () => documentWith({ ...operation(), security: [hidden({}, "k", [])] }), notPlain("the operation's")],
+    ["a non-enumerable operation security", () => documentWith(hidden(operation(), "security", [{ k: [] }])), notPlain("the operation's")],
+    [
+      "a non-enumerable document security an operation inherits",
+      () => hidden(documentWith(operation()), "security", [{ k: [] }]),
+      notPlain("the document's"),
+    ],
+    [
+      "an operation that inherits its security",
+      () => documentWith(Object.assign(Object.create({ security: [{ k: [] }] }) as object, operation())),
+      notPlain("the operation's"),
+    ],
+    ["an operation whose security is a prototype getter", () => documentWith(new KeyedOperation()), notPlain("the operation's")],
+  ];
+
+  it.each(variants)("skips the operation for %s, never exposing the credential header as input", async (_variant, document, reason) => {
+    const before = api.received.length;
+    const { tools, skipped } = fromOpenAPI(document(), { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+    expect(tools).toEqual([]);
+    expect(skipped.map(({ operation: skippedOperation, code, reason: why }) => [skippedOperation.operationId, code, why])).toEqual([
+      ["keyed", "unsupported-by-executor", reason],
+    ]);
+    expect(api.received.length).toBe(before);
+  });
+
+  it.each([variants[1]!, variants[3]!])(
+    "lists %s with securityUnresolved under an executor that does not check security, and httpExecutor refuses it before any request",
+    async (_variant, document) => {
+      const { tools } = fromOpenAPI(document(), { executor: { execute: () => ({ content: [] }) } });
+      expect(tools[0]!.operation.securityUnresolved).toBe("the operation's security has a requirement that is not a plain object");
+      const before = api.received.length;
+      const result = await httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }).execute({
+        operation: tools[0]!.operation,
+        args: { header: { "X-Api-Key": "test-caller-value" } },
+        context: undefined,
+        signal: new AbortController().signal,
+        hasOutputSchema: false,
+      });
+      expect(result.isError).toBe(true);
+      expect(api.received.length).toBe(before);
+    },
+  );
+
+  it("keeps plain security as before: [{ k: [] }] strips the header input, [{}] and [] leave it", () => {
+    const listed = (security: unknown) =>
+      fromOpenAPI(documentWith({ ...operation(), security }), { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) }).tools.map(
+        (tool) => Object.keys((tool.inputSchema.properties ?? {}) as object),
+      );
+    expect(listed([{ k: [] }])).toEqual([[]]);
+    expect(listed([{}])).toEqual([["header"]]);
+    expect(listed([])).toEqual([["header"]]);
+  });
+});
+
 describe("httpExecutor security of a document built in another realm", () => {
   it("reads another realm's plain objects as plain, so their security resolves as before cloning", () => {
     const realmDocument = runInNewContext(`({

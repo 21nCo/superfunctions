@@ -1614,37 +1614,42 @@ function privateCopy(document: object): JsonObject {
  * operation. Only these places are checked; a Date elsewhere (a YAML
  * timestamp) is left alone.
  *
- * The source is read only through own data properties, never by running a
- * getter again: the value checked must be the value cloned. An accessor on
- * the way to a security level (the document's `security`, `paths`, a path
- * item, an operation or its `security`) leaves the cloned level unknown, so
- * it is marked unresolved; one on the way to a scheme (`components`,
- * `securitySchemes` or a scheme) leaves the scheme, or the section, unresolved.
+ * The source is read only through own enumerable data properties, never by
+ * running a getter again: the value checked must be the value cloned, and
+ * security that structuredClone drops (a non-enumerable or inherited
+ * property) must not read as absent. A property on the way to a security
+ * level (the document's `security`, `paths`, a path item, an operation or its
+ * `security`) that is an accessor or not enumerable, or a document or
+ * operation that is not a plain object (its `security` may be inherited or a
+ * prototype getter), leaves the cloned level unknown, so it is marked
+ * unresolved; the document's level covers every operation that inherits it.
+ * The same on the way to a scheme (`components`, `securitySchemes` or a
+ * scheme) leaves the scheme, or the section, unresolved.
  */
 function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
   const markLevel = levelMarker();
   try {
-    markLevel(ownData(document, "security"), copy, "security");
+    markLevel(clonesUnchanged(document) ? ownData(document, "security") : UNKNOWN, copy, "security");
     const paths = ownData(document, "paths");
     const copiedPaths = ownValue(copy, "paths");
     if (isObject(copiedPaths)) {
       for (const path of Object.keys(copiedPaths)) {
         const copiedItem = ownValue(copiedPaths, path);
         if (!isObject(copiedItem)) continue;
-        const pathItem = paths === ACCESSOR ? ACCESSOR : ownData(paths, path);
+        const pathItem = paths === UNKNOWN ? UNKNOWN : ownData(paths, path);
         for (const key of Object.keys(copiedItem)) {
           const copiedOperation = ownValue(copiedItem, key);
           if (!METHODS.has(key) || !isObject(copiedOperation)) continue;
-          const operation = pathItem === ACCESSOR ? ACCESSOR : ownData(pathItem, key);
-          markLevel(operation === ACCESSOR ? ACCESSOR : ownData(operation, "security"), copiedOperation, "security");
+          const operation = pathItem === UNKNOWN ? UNKNOWN : ownData(pathItem, key);
+          markLevel(operation !== UNKNOWN && clonesUnchanged(operation) ? ownData(operation, "security") : UNKNOWN, copiedOperation, "security");
         }
       }
     }
     const components = ownData(document, "components");
-    if (components !== ACCESSOR && !isObject(components)) return;
+    if (components !== UNKNOWN && !isObject(components)) return;
     const copiedComponents = ownValue(copy, "components");
-    const schemes = components !== ACCESSOR && clonesUnchanged(components) ? ownData(components, "securitySchemes") : ACCESSOR;
-    if (schemes === ACCESSOR || (isObject(schemes) && !clonesUnchanged(schemes))) {
+    const schemes = components !== UNKNOWN && clonesUnchanged(components) ? ownData(components, "securitySchemes") : UNKNOWN;
+    if (schemes === UNKNOWN || (isObject(schemes) && !clonesUnchanged(schemes))) {
       // No scheme of a section that is not a plain object, or not known, resolves.
       if (isObject(copiedComponents)) setOwn(copiedComponents, "securitySchemes", {});
       return;
@@ -1654,7 +1659,7 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
     if (!isObject(copiedSchemes)) return;
     for (const name of Object.keys(copiedSchemes)) {
       const scheme = ownData(schemes, name);
-      if (scheme === ACCESSOR || (isObject(scheme) && !clonesUnchanged(scheme))) setOwn(copiedSchemes, name, null);
+      if (scheme === UNKNOWN || (isObject(scheme) && !clonesUnchanged(scheme))) setOwn(copiedSchemes, name, null);
     }
   } catch (error) {
     throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
@@ -1663,18 +1668,22 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
   }
 }
 
-/** Stands for a property an accessor defines: its value, as cloned, is not known. */
-const ACCESSOR: unique symbol = Symbol("accessor");
+/**
+ * Stands for a property whose value, as cloned, is not known: an accessor, or
+ * a property structuredClone skips (not enumerable) and so leaves absent.
+ */
+const UNKNOWN: unique symbol = Symbol("unknown");
 
 /**
- * The value of an own enumerable property (the properties structuredClone
- * copies), read from its descriptor without running code, or `ACCESSOR`.
+ * The value of an own enumerable data property (the properties structuredClone
+ * copies), read from its descriptor without running code; `undefined` when
+ * there is no own property; `UNKNOWN` for an accessor or a non-enumerable one.
  */
 function ownData(holder: unknown, key: string): unknown {
   if (!isObject(holder) && !Array.isArray(holder)) return undefined;
   const descriptor = Object.getOwnPropertyDescriptor(holder, key);
-  if (descriptor === undefined || !descriptor.enumerable) return undefined;
-  return "value" in descriptor ? descriptor.value : ACCESSOR;
+  if (descriptor === undefined) return undefined;
+  return descriptor.enumerable && "value" in descriptor ? descriptor.value : UNKNOWN;
 }
 
 /**
@@ -1699,7 +1708,9 @@ function clonesUnchanged(value: unknown): boolean {
  * Returns a function that marks the requirements of one security level. Only
  * the elements present are read (a sparse array's length costs nothing), by
  * their own keys, never by a method the caller's array could override; an
- * element defined by an accessor is marked too, as its value is not known.
+ * element defined by an accessor is marked too, as its value is not known,
+ * and so is a requirement with a key structuredClone would drop or read
+ * through a getter (not an own enumerable data property).
  * A security array many operations share is inspected once: its verdict is
  * kept by identity and applied to each copy, and a copy (structuredClone
  * keeps the sharing) is marked once, so the work follows the distinct input,
@@ -1708,8 +1719,9 @@ function clonesUnchanged(value: unknown): boolean {
 function levelMarker(): (level: unknown, holder: JsonObject, key: string) => void {
   const verdicts = new WeakMap<unknown[], number[]>();
   const marked = new WeakSet<unknown[]>();
+  const requirements = new WeakMap<object, boolean>();
   return (level, holder, key) => {
-    if (level === ACCESSOR) {
+    if (level === UNKNOWN) {
       // The level as cloned is not known: it reads as a requirement that is not a plain object.
       setOwn(holder, key, [null]);
       return;
@@ -1719,24 +1731,47 @@ function levelMarker(): (level: unknown, holder: JsonObject, key: string) => voi
     marked.add(copied);
     let indexes = verdicts.get(level);
     if (indexes === undefined) {
-      indexes = unplainRequirements(level);
+      indexes = unplainRequirements(level, requirements);
       verdicts.set(level, indexes);
     }
     for (const index of indexes) if (index < copied.length) copied[index] = null;
   };
 }
 
-/** The indexes of a security level's elements that are not plain objects, or not known. */
-function unplainRequirements(level: unknown[]): number[] {
+/**
+ * The indexes of a security level's elements that are not plain objects, or
+ * not known. Each requirement object's verdict is kept by identity in
+ * `requirements`, so one shared by many levels is inspected once.
+ */
+function unplainRequirements(level: unknown[], requirements: WeakMap<object, boolean>): number[] {
   const indexes: number[] = [];
   for (const key of Object.keys(level)) {
     if (!ARRAY_INDEX.test(key)) continue;
     const descriptor = Object.getOwnPropertyDescriptor(level, key);
     if (descriptor === undefined) continue;
     const requirement: unknown = descriptor.value;
-    if (!("value" in descriptor) || (isObject(requirement) && !clonesUnchanged(requirement))) indexes.push(Number(key));
+    if (!("value" in descriptor) || (isObject(requirement) && !plainRequirement(requirement, requirements))) indexes.push(Number(key));
   }
   return indexes;
+}
+
+/** A plain object whose every own string key is an enumerable data property, so its copy reads as it does. */
+function plainRequirement(requirement: JsonObject, requirements: WeakMap<object, boolean>): boolean {
+  let plain = requirements.get(requirement);
+  if (plain === undefined) {
+    plain = clonesUnchanged(requirement);
+    if (plain) {
+      for (const key of Object.getOwnPropertyNames(requirement)) {
+        const descriptor = Object.getOwnPropertyDescriptor(requirement, key)!;
+        if (!descriptor.enumerable || !("value" in descriptor)) {
+          plain = false;
+          break;
+        }
+      }
+    }
+    requirements.set(requirement, plain);
+  }
+  return plain;
 }
 
 const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
