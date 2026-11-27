@@ -506,6 +506,27 @@ describe("DATA-41 PR review round 7: every committed write moves the ledger once
     }
   });
 
+  it("raises a record once, live, when a delete of the same write that changed it removed nothing", async () => {
+    for (const transactional of [true, false]) {
+      const base = memoryAdapter() as Adapter;
+      const where = [{ field: "id", operator: "eq" as const, value: "task:1" }];
+      await base.create({ model: "task", data: { id: "task:1", title: "a" }, namespace: NS } as any);
+      await bumpRevision(base, NS, "task", "task:1", false);
+      // A setNull update, then a cascade delete a BEFORE DELETE trigger suppresses.
+      const db = withWriteEvidence(overriding(base, () => ({ delete: async () => undefined })));
+      await db.update({ model: "task", where, data: { title: "b" }, namespace: NS } as any);
+      await db.delete({ model: "task", where, namespace: NS } as any);
+      const entries: Array<{ resource: string; id: string; op: string; record: null; rev?: number }> = [
+        { resource: "task", id: "task:1", op: "merge", record: null },
+        { resource: "task", id: "task:1", op: "delete", record: null },
+      ];
+
+      await assignWriteRevisions(db, NS, entries, () => false, schema, transactional);
+
+      expect(await rev(base, "task", "task:1"), `transactional=${transactional}`).toEqual({ rev: 2, deleted: false });
+    }
+  });
+
   it("gives a rewritten KV entry no revision while raising the ledger once to the latest state", async () => {
     const base = memoryAdapter() as Adapter;
     const db = withWriteEvidence(withoutTransactions(base));
