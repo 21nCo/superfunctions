@@ -1,0 +1,69 @@
+clifn/core/CHANGELOG.md
+  s_5b1d5629376471::t_d5938abab553df 3-8
+clifn/core/README.md
+  s_5b1d5629376471::t_2cd07022042a43 270,403
+clifn/core/package.json
+  s_5b1d5629376471::t_1f485a6660e4cb 3
+clifn/core/src/config-loader.ts
+  s_98d523956014c8::t_3bc7087eceaa7c 17-28,32-33,51-58,76-114,117,194-197,199,201,207-221,243-248,251-253,256-258
+clifn/core/src/index.ts
+  s_050ce1f74829ec::t_f027c24fc8f39b 37
+clifn/core/tests/config-loader.test.ts
+  s_98d523956014c8::t_1a2c9a13ce7632 1-3,6,8,137-448
+clifn/docs/content/docs/configuration.md
+  s_5b1d5629376471::t_f64da9570bdbfc 26-47
+clifn/docs/content/docs/reference/core-readme.md
+  s_5b1d5629376471::t_b1eae896aefbf5 273,406
+clifn/docs/content/docs/reference/exports.md
+  s_5b1d5629376471::t_f2c13cf5b214de 13
+clifn/docs/static/llms-full.txt
+  s_98d523956014c8::t_8c370ea460a01d 112-133,602,735,776
+devfn/cli/package.json
+  s_5b1d5629376471::t_4307ca6527d3fc 17
+devfn/config/package.json
+  s_5b1d5629376471::t_5c278e2fe0eab1 22
+extfn/cli/__tests__/dev.test.ts
+  s_5b1d5629376471::t_1129258a5d4242 97
+extfn/cli/package.json
+  s_5b1d5629376471::t_46b1aee7f68d6d 38
+mailfn/cli/package.json
+  s_5b1d5629376471::t_5b70e319ae98aa 17
+package-lock.json
+  s_5b1d5629376471::t_74c8599b604852 8364,10441,10517,11117,15460,59580
+plugfn/cli/package.json
+  s_5b1d5629376471::t_468e6a23f4961b 36
+clifn/core/tests/fixtures/config-cli/cli.mjs
+  s_98d523956014c8::t_7ab4e8d3337221 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "713c76d7ef6156d38bdb0c8d552de4dec08c76d3",
+  "prompts": {},
+  "sessions": {
+    "s_050ce1f74829ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9b1a967-7755-4993-a14f-a7e97fb399cb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_5b1d5629376471": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ebb527-6b47-411d-bf81-abe70b7f81a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_98d523956014c8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d4389b3-b755-4783-b7b9-6b99d963fdbd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
