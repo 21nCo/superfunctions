@@ -557,6 +557,62 @@ describe("@mdfn/core", () => {
     expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] }, ranges)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
   });
 
+  it("returns an anchor untouched when every range is a hole and reads each field once otherwise", () => {
+    const throwing = Object.defineProperties({}, {
+      from: { get: () => { throw new Error("from read"); }, enumerable: true },
+      to: { get: () => { throw new Error("to read"); }, enumerable: true },
+    }) as unknown as Parameters<typeof mapAnchor>[0];
+    expect(mapAnchor(throwing, new Array(2))).toBe(throwing);
+
+    const reads: Record<string, number> = { from: 0, to: 0, affinity: 0 };
+    const values: Record<string, unknown> = { from: 1, to: 2, affinity: "before" };
+    const once = (key: string) => ({
+      enumerable: true,
+      get: () => {
+        reads[key] += 1;
+        if (reads[key] > 1) throw new Error(`${key} read twice`);
+        return values[key];
+      },
+    });
+    const counted = Object.defineProperties({ note: "kept" }, { from: once("from"), to: once("to"), affinity: once("affinity") });
+    const mapped = mapAnchor(counted as unknown as Parameters<typeof mapAnchor>[0], [{ from: 0, to: 0, insertedLength: 1 }]);
+    expect(mapped).toEqual({ note: "kept", from: 2, to: 3, affinity: "before" });
+    expect(reads).toEqual({ from: 1, to: 1, affinity: 1 });
+
+    let affinityReads = 0;
+    const shifting = Object.defineProperty({ from: 2, to: 2 }, "affinity", {
+      enumerable: true,
+      get: () => (++affinityReads === 1 ? "before" : "after"),
+    }) as unknown as Parameters<typeof mapAnchor>[0];
+    expect(mapAnchor(shifting, [{ from: 2, to: 2, insertedLength: 2 }])).toEqual({ from: 2, to: 2, affinity: "before" });
+    expect(affinityReads).toBe(1);
+  });
+
+  it("builds a mapped sidecar from the comments and suggestions it read", () => {
+    const reads = { comments: 0, suggestions: 0 };
+    const comments = [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
+    const suggestions = [{ id: "s", anchor: { from: 1, to: 2 }, replacement: "x", authorId: "a", status: "pending", createdAt: "2026-08-12T00:00:00.000Z" }];
+    // Each getter returns undefined on its first read and an anchored array afterwards.
+    const shifting = Object.defineProperties({ version: 1 }, {
+      comments: { enumerable: true, get: () => (++reads.comments === 1 ? undefined : comments) },
+      suggestions: { enumerable: true, get: () => (++reads.suggestions === 1 ? undefined : suggestions) },
+    }) as unknown as Parameters<typeof mapSidecar>[0];
+    const insert = [{ from: 0, to: 0, insertedLength: 1 }];
+    const mapped = mapSidecar(shifting, insert);
+    expect(mapped).toEqual({ version: 1, comments: undefined, suggestions: undefined });
+    expect(reads).toEqual({ comments: 1, suggestions: 1 });
+
+    // Read the other way round, the arrays read first are the ones mapped and kept.
+    const flipping = Object.defineProperties({}, {
+      comments: { enumerable: true, get: () => (++reads.comments === 2 ? comments : undefined) },
+      suggestions: { enumerable: true, get: () => (++reads.suggestions === 2 ? suggestions : undefined) },
+    }) as unknown as Parameters<typeof mapSidecar>[0];
+    const kept = mapSidecar(flipping, insert);
+    expect(kept?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+    expect(kept?.suggestions?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+    expect(reads).toEqual({ comments: 2, suggestions: 2 });
+  });
+
   it("reports sidecar changes caused by source anchor mapping", () => {
     const sidecar = {
       comments: [{ id: "thread", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "message", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00.000Z" }] }],

@@ -29,26 +29,50 @@ export function mapSelection(selection: MdfnSelection, ranges: readonly ChangedR
   return immutableValue(ranges.reduce<TextSelection>((current, range) => mapTextSelection(current, range), selection));
 }
 
+const hasOwn = (value: object, key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Copy the own enumerable fields of `source` as a spread would, except that each
+ * key in `overrides` takes its value from there and is never read from `source`.
+ * An override key the source does not own is added after the copied fields.
+ */
+function copyWith(source: object, overrides: Readonly<Record<string, unknown>>): Record<PropertyKey, unknown> {
+  const copy: Record<PropertyKey, unknown> = {};
+  const define = (key: PropertyKey, value: unknown) => {
+    Object.defineProperty(copy, key, { value, enumerable: true, writable: true, configurable: true });
+  };
+  for (const key of Reflect.ownKeys(source)) {
+    if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;
+    define(key, typeof key === "string" && hasOwn(overrides, key) ? overrides[key] : (source as Record<PropertyKey, unknown>)[key]);
+  }
+  for (const key of Object.keys(overrides)) if (!hasOwn(copy, key)) define(key, overrides[key]);
+  return copy;
+}
+
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  if (ranges.length === 0) return anchor;
-  // Affinity is read once, including one supplied through a prototype, and kept on
-  // the result, so mapping edits together or one call at a time gives the same anchor.
+  // filter skips holes in a sparse ranges array, as mapSelection's reduce does; with
+  // no populated range the anchor is returned before any of its fields is read.
+  const populated = ranges.filter(() => true);
+  if (populated.length === 0) return anchor;
+  // Each field is read once, including one supplied through a prototype or getter,
+  // and the result is built from those values only, so mapping edits together or
+  // one call at a time gives the same anchor.
   const affinity = anchor.affinity;
-  let from = anchor.from;
-  let to = anchor.to;
-  let mapped = false;
-  // forEach skips holes in a sparse ranges array, as mapSelection's reduce does.
-  ranges.forEach((range) => {
-    mapped = true;
+  const originalFrom = anchor.from;
+  const originalTo = anchor.to;
+  let from = originalFrom;
+  let to = originalTo;
+  for (const range of populated) {
     const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
     const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
     from = Math.min(mappedFrom, mappedTo);
     to = Math.max(mappedFrom, mappedTo);
-  });
+  }
   // An unchanged anchor is reused only when this module already detached it; a
   // caller-owned anchor is copied so later changes to it cannot reach the result.
-  if (!mapped || (from === anchor.from && to === anchor.to && isImmutableValue(anchor))) return anchor;
-  return { ...anchor, from, to, ...(affinity !== undefined ? { affinity } : {}) };
+  if (isImmutableValue(anchor) && from === originalFrom && to === originalTo) return anchor;
+  const overrides = affinity !== undefined || hasOwn(anchor, "affinity") ? { from, to, affinity } : { from, to };
+  return copyWith(anchor, overrides) as unknown as SidecarAnchor;
 }
 
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
@@ -68,5 +92,10 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
   const comments = sidecar.comments?.map(mapEntry);
   const suggestions = sidecar.suggestions?.map(mapEntry);
   if (reusable && !changed) return sidecar;
-  return immutableValue({ ...sidecar, ...(comments ? { comments } : {}), ...(suggestions ? { suggestions } : {}) });
+  // comments and suggestions come only from the values read and mapped above, so a
+  // getter is never read twice and every kept anchor went through mapAnchor.
+  const overrides: Record<string, unknown> = {};
+  if (comments !== undefined || hasOwn(sidecar, "comments")) overrides.comments = comments;
+  if (suggestions !== undefined || hasOwn(sidecar, "suggestions")) overrides.suggestions = suggestions;
+  return immutableValue(copyWith(sidecar, overrides) as unknown as MdfnSidecar);
 }
