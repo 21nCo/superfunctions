@@ -2784,3 +2784,72 @@ describe("createRequestIdempotency PR round-8 post-lookup re-read", () => {
     expect(replaced).toBe(8);
   });
 });
+
+describe("createRequestIdempotency PR round-9 absent only after a post-expiry lookup", () => {
+  /** Lease and retention both 60,000 ms; `during` runs once inside the next receipt lookup, after its read and before it answers. */
+  function world() {
+    const store = new FakeAtomicStore();
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock(0);
+    const gate: { during?: () => Promise<void> } = {};
+    const lookupStarts: number[] = [];
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey) => {
+        lookupStarts.push(clock.now());
+        const run = gate.during;
+        gate.during = undefined;
+        const found = await database.receipts.find(storeKey);
+        await run?.();
+        return found;
+      },
+    };
+    const idempotency = createRequestIdempotency({ store, receipts, clock, leaseMs: 60_000, retentionMs: 60_000, nonce: testNonce });
+    return { store, database, clock, gate, lookupStarts, idempotency };
+  }
+
+  it("V1: recover over a commit that lands during a lookup the claim's deadline passes replays the receipt, never absent", async () => {
+    const { store, database, clock, gate, lookupStarts, idempotency } = world();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    lookupStarts.length = 0;
+    clock.time = 59_998;
+    let committed: IdempotentResponse | undefined;
+    gate.during = async () => {
+      clock.time = 59_999;
+      committed = await database.createOrder(holder, "book"); // the holder commits and never settles
+      clock.time = 60_001; // the empty lookup answers after the pending claim's deadline
+    };
+    const result = await idempotency.recover(orderRequest());
+    // The store still holds the same expired claim version.
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "pending", version: holder.version, expiresAt: 60_000 });
+    expect(result).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    expect(lookupStarts).toEqual([59_998, 60_001]);
+  });
+
+  it("V2: with no commit, recover answers absent only from a second lookup issued after the claim's deadline", async () => {
+    const { clock, gate, lookupStarts, idempotency } = world();
+    acquired(await idempotency.claim(orderRequest()));
+    lookupStarts.length = 0;
+    clock.time = 59_998;
+    gate.during = async () => {
+      clock.time = 60_001;
+    };
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "absent" });
+    expect(lookupStarts).toHaveLength(2);
+    expect(lookupStarts[1]).toBeGreaterThan(60_000);
+  });
+
+  it("V3: claim over a commit that lands during a lookup the claim's deadline passes replays with zero store writes", async () => {
+    const { store, database, clock, gate, idempotency } = world();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const writes = store.writes;
+    clock.time = 59_998;
+    let committed: IdempotentResponse | undefined;
+    gate.during = async () => {
+      clock.time = 59_999;
+      committed = await database.createOrder(holder, "book");
+      clock.time = 60_001;
+    };
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    expect(store.writes).toBe(writes);
+  });
+});

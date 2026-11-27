@@ -928,7 +928,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * the source. The single receipt read is the decision's linearization
    * point: a receipt it returns was the key's commit when the source answered,
    * and a record read before it decides only while it is unexpired by the
-   * clock after the source answered (see `afterEmptyLookup`).
+   * clock after the source answered (see `afterEmptyLookup`); otherwise the
+   * step runs again, so absent always comes from a lookup issued after the
+   * record was seen expired.
    */
   const inspect = async (prepared: Prepared, at: number): Promise<Inspected> => {
     const { storeKey, fingerprint, recovery } = prepared;
@@ -952,7 +954,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     // The source answered: a malformed receipt, or one for another key, fails closed over any record.
     const receipt = parseReceipt(storeKey, raw);
     if (receipt) return { done: receiptOutcome(receipt, fingerprint) };
-    return record ? afterEmptyLookup(storeKey, record, live) : { live };
+    return record ? afterEmptyLookup(record, live) : { live };
   };
 
   type Inspected = { done: ReceiptOutcome } | { live: Live } | { rerun: true };
@@ -960,21 +962,14 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   /**
    * An empty lookup over a record read before it. The record decides only if
    * it is still unexpired by the clock after the source answered. Once it has
-   * expired, the store is read again and judged by the clock after that read:
-   * the key is absent only while the store still holds that expired version.
-   * A writer that replaced it (a settle, a takeover, a release or a delete)
-   * may have done so after a commit the lookup missed, so the step runs again
-   * with a fresh store read and receipt lookup; absent is never reported over
-   * a replaced version.
+   * expired, the lookup proves nothing about the key: it was issued while the
+   * record was live, and the handler commits its receipt in its own
+   * transaction, so a commit can land during the lookup with no store write.
+   * The step runs again, with a fresh store read and a receipt lookup issued
+   * after the expiry was observed; absent is never reported from this lookup.
    */
-  const afterEmptyLookup = async (storeKey: string, record: IdempotencyRecord, live: Live): Promise<Inspected> => {
-    if (record.expiresAt > now()) return { live };
-    const raw = await store.get(storeKey);
-    const again = liveOf(raw, now());
-    const version = again.kind === "present" ? again.record.version : again.expectedVersion;
-    if (version !== record.version) return { rerun: true };
-    return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
-  };
+  const afterEmptyLookup = (record: IdempotencyRecord, live: Live): Inspected =>
+    record.expiresAt > now() ? { live } : { rerun: true };
 
   /** An acquired claim before its final lease check. */
   type Acquired = { outcome: "acquired"; token: IdempotencyToken; leaseExpiresAt: number; prepared: Prepared };
@@ -1415,7 +1410,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return result;
   };
 
-  /** One read-decide step with no write. Returns undefined when a writer replaced the record during the lookup. */
+  /** One read-decide step with no write. Returns undefined when the record it read expired during the receipt lookup. */
   const recoverStep = async (prepared: Prepared): Promise<IdempotencyRecoverResult | undefined> => {
     const at = now();
     const inspected = await inspect(prepared, at);
@@ -1438,10 +1433,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       emit({ action: "recover", outcome: prepared.invalid.outcome, operation: prepared.operation });
       return prepared.invalid;
     }
-    // Recover makes no store write; a step runs again only when a writer replaced the record during its lookup.
+    // Recover makes no store write; a step runs again only when the record it read expired during its lookup.
     let result: IdempotencyRecoverResult | undefined;
     for (let attempt = 0; attempt < MAX_ATTEMPTS && result === undefined; attempt += 1) result = await recoverStep(prepared);
-    // Persistent contention: writers kept replacing the record during each lookup.
+    // Persistent contention: each lookup outlasted the record read before it.
     result ??= { outcome: "in_progress", retryAfterMs: 1 };
     emit({ action: "recover", outcome: result.outcome, operation: prepared.operation, storeKey: prepared.storeKey });
     return result;
