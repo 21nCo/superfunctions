@@ -235,6 +235,14 @@ describe("relation delete policies", () => {
       }
       await originalDelete(params);
     };
+    // A delete by id runs as a counted deleteMany (its revision evidence).
+    const originalDeleteMany = transactionalDb.deleteMany.bind(transactionalDb);
+    transactionalDb.deleteMany = async (params) => {
+      if (params.model === "project") {
+        throw new Error("parent delete failed");
+      }
+      return originalDeleteMany(params);
+    };
     const transactionalServer = await createDatafnServer({
       allowUnknownResources: true,
       schema,

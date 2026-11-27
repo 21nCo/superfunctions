@@ -27,6 +27,8 @@ export type DfqlQuery = {
   having?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   temporal?: DatafnTemporalClause | readonly DatafnTemporalClause[];
+  /** DATA-41: read from the server and return each complete row's revision as `$rev`. */
+  withRevisions?: boolean;
   // QRY-001: AbortSignal for cancellable queries
   signal?: AbortSignal;
 };

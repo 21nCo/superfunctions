@@ -197,6 +197,95 @@ export function hasResourceReadPolicy(schema: DatafnSchema, resourceName: string
 }
 
 /**
+ * DATA-41: whether a caller may read every field of the resource (each
+ * schema field, and each key of `row` when given), so a row and its
+ * revision may be returned whole. Decided from the policy, not only the keys
+ * a row happens to carry: an unset hidden field still hides writes to it.
+ * Resources without a policy are read in full by anyone the route already
+ * let through (`allowUnknownResources`).
+ */
+export function canReadEveryField(
+  schema: DatafnSchema,
+  resourceName: string,
+  row?: Record<string, unknown>,
+): boolean {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource) return false;
+  if (!resolvePermissions(schema, resource)) return true;
+  const declared = resourceFieldNames(resource);
+  const fields = new Set([...declared, ...Object.keys(row ?? {})]);
+  return [...fields].every(
+    (field) =>
+      isStoragePartitionField(declared, field) ||
+      isRevisionMetadata(declared, field) ||
+      canReadField(schema, resource, field),
+  );
+}
+
+/**
+ * `__ns` is the storage partition column a namespaced adapter adds to rows,
+ * unless the resource declares its own `__ns` field: a declared `__ns` is an
+ * ordinary application field and its read policy applies to it.
+ */
+function isStoragePartitionField(declared: readonly string[], field: string): boolean {
+  return field === "__ns" && !declared.includes("__ns");
+}
+
+/** `$rev` is revision metadata unless the resource declares its own `$rev` field. */
+function isRevisionMetadata(declared: readonly string[], field: string): boolean {
+  return field === "$rev" && !declared.includes("$rev");
+}
+
+/**
+ * DATA-41: a copy of `row` without the fields the resource's read policy
+ * withholds (and without `$rev` revision metadata, which only a complete row
+ * may carry; a resource's own declared `$rev` field is an ordinary field).
+ * Resources without a policy are returned unchanged.
+ */
+export function withoutUnreadableFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = resourceFieldNames(resource);
+  const readable: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(row)) {
+    if (
+      isStoragePartitionField(declared, field) ||
+      (!isRevisionMetadata(declared, field) && canReadField(schema, resource, field))
+    ) {
+      readable[field] = value;
+    }
+  }
+  return readable;
+}
+
+/**
+ * DATA-41: a copy of `row` without the declared schema fields of the
+ * resource that its read policy withholds. Keys the schema does not declare
+ * (aggregation aliases, a resource's own declared `$rev` is declared and kept
+ * when readable) are returned unchanged.
+ */
+export function withoutHiddenDeclaredFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = new Set(resourceFieldNames(resource));
+  const hidden = Object.keys(row).filter(
+    (field) => declared.has(field) && !canReadField(schema, resource, field),
+  );
+  if (hidden.length === 0) return row;
+  const copy = { ...row };
+  for (const field of hidden) delete copy[field];
+  return copy;
+}
+
+/**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").
  */

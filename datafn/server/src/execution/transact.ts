@@ -44,7 +44,11 @@ export interface TransactResult {
 }
 
 /**
- * Execute a transaction (sequence of mutations/queries) as an atomic unit
+ * Execute a transaction (sequence of mutations/queries) as an atomic unit.
+ *
+ * Precondition (DATA-41): the caller has created `__datafn_revisions` (the
+ * /transact route runs ensureRevisionsTable first), since creating it inside
+ * the open transaction would abort it on PostgreSQL.
  */
 export async function executeTransaction(
   request: { atomic?: boolean; steps: TransactStep[] },
@@ -155,6 +159,7 @@ export async function executeTransaction(
 
   const results: Array<any> = [];
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+  changeTracking.useRevisionsOf(schema);
   type DeferredPermissionDirectorySync = (
     committedDb: Adapter,
   ) => Promise<void>;
@@ -277,6 +282,8 @@ export async function executeTransaction(
         // not need these tables and must not perform mutation-side DDL.
         await idempotencyStore.ensureReady?.();
         await changeTracking.ensureReady();
+        // DATA-41: every write inside raises a revision, so its table too.
+        await changeTracking.ensureRevisionsReady();
       }
       await (db as any).transaction(async (tx: Adapter) => {
         deferredPermissionDirectorySyncs.length = 0;
@@ -295,10 +302,12 @@ export async function executeTransaction(
           for (let j = 0; j < i; j++) {
             const priorResult = results[j];
             if (priorResult && typeof priorResult === "object" && priorResult.ok) {
+              // DATA-41: a rolled-back step committed no revision.
+              const { rev: _uncommitted, ...rolledBackResult } = priorResult as { rev?: number } & Record<string, unknown>;
               results[j] = {
                 ok: false,
                 rolledBack: true,
-                result: priorResult,
+                result: rolledBackResult,
               };
             }
           }
