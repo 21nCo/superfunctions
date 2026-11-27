@@ -45,6 +45,7 @@ interface CompiledDimension {
   readonly integer: boolean;
 }
 
+const NOT_PLAIN_DATA = 'scope must be plain data (objects, arrays, strings, finite numbers, booleans, null) without cycles or shared references';
 const DIMENSION_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
 const { maxSetItems: MAX_SET_ITEMS, maxMemberLength: MAX_MEMBER_LENGTH } = SCOPE_LIMITS;
 /** Private copy of the risk order, independent of the exported array. */
@@ -76,6 +77,43 @@ function hasControlChar(value: string): boolean {
  */
 function isCloneRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/**
+ * Whether an engine-owned clone is plain JSON-like data: objects whose
+ * prototype is `Object.prototype`, dense arrays without extra keys, strings,
+ * finite numbers, booleans and `null`. Anything else a structured clone can
+ * hold (a SharedArrayBuffer, which stays shared with the caller, an
+ * ArrayBuffer or view, a Map, Set, Date, RegExp, Error, Blob or boxed value,
+ * `undefined` or a bigint) fails. Iterative, so depth cannot overflow the call
+ * stack, and each object is visited once: a second visit (a cycle or a shared
+ * reference) fails, so the walk is linear in the clone's size.
+ */
+function isPlainData(root: unknown): boolean {
+  const seen = new Set<object>();
+  const pending: unknown[] = [root];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') continue;
+    if (typeof value === 'number') {
+      if (Number.isFinite(value)) continue;
+      return false;
+    }
+    if (typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype || Object.keys(value).length !== value.length) return false;
+      for (let i = 0; i < value.length; i++) {
+        if (!Object.hasOwn(value, i)) return false;
+        pending.push(value[i]);
+      }
+    } else if (isCloneRecord(value)) {
+      for (const key of Object.keys(value)) pending.push(value[key]);
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -286,15 +324,29 @@ interface RadixNode {
   end: number;
   /** Some envelope prefix ends at this node; it covers everything below. */
   terminal: boolean;
-  children: Map<number, RadixNode> | undefined;
+  /**
+   * Children in ascending order of their first code unit, searched by
+   * bisection: a lookup costs at most 17 comparisons whatever the code units,
+   * with no hash function an input could make collide.
+   */
+  children: RadixNode[] | undefined;
 }
 
 function radixNode(source: string, start: number, end: number, terminal: boolean): RadixNode {
   return { source, start, end, terminal, children: undefined };
 }
 
-/** Adds the prefix `prefix[0, length)`. Linear in `length`. */
-function insertPrefix(root: RadixNode, prefix: string, length: number): void {
+function firstCode(node: RadixNode): number {
+  return node.source.charCodeAt(node.start);
+}
+
+/**
+ * Adds the prefix `prefix[0, length)`. Prefixes must arrive in ascending
+ * code-unit order: then a new branch always sorts after its siblings, so the
+ * only child it can share an edge with is the last one, and insertion is an
+ * append, linear in `length`.
+ */
+function insertSortedPrefix(root: RadixNode, prefix: string, length: number): void {
   let node = root;
   let i = 0;
   for (;;) {
@@ -306,10 +358,11 @@ function insertPrefix(root: RadixNode, prefix: string, length: number): void {
       return;
     }
     const code = prefix.charCodeAt(i);
-    const children: Map<number, RadixNode> = (node.children ??= new Map());
-    const child = children.get(code);
-    if (!child) {
-      children.set(code, radixNode(prefix, i, length, true));
+    const children: RadixNode[] = (node.children ??= []);
+    const last = children.length - 1;
+    const child = children[last];
+    if (!child || firstCode(child) !== code) {
+      children.push(radixNode(prefix, i, length, true));
       return;
     }
     let j = child.start;
@@ -320,9 +373,9 @@ function insertPrefix(root: RadixNode, prefix: string, length: number): void {
     if (j < child.end) {
       // Split the edge where the new prefix leaves it (or ends inside it).
       const middle = radixNode(child.source, child.start, j, false);
-      middle.children = new Map([[child.source.charCodeAt(j), child]]);
+      middle.children = [child];
       child.start = j;
-      children.set(code, middle);
+      children[last] = middle;
       node = middle;
     } else {
       node = child;
@@ -330,14 +383,29 @@ function insertPrefix(root: RadixNode, prefix: string, length: number): void {
   }
 }
 
-/** Whether some prefix in the trie is a prefix of `body[0, length)`: at most `length` steps. */
+/** The child whose edge starts with `code`, by bisection over the sorted children. */
+function childFor(children: readonly RadixNode[], code: number): RadixNode | undefined {
+  let low = 0;
+  let high = children.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const child = children[middle]!;
+    const childCode = firstCode(child);
+    if (childCode === code) return child;
+    if (childCode < code) low = middle + 1;
+    else high = middle - 1;
+  }
+  return undefined;
+}
+
+/** Whether some prefix in the trie is a prefix of `body[0, length)`: one bounded step per character. */
 function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
   let node = root;
   let i = 0;
   for (;;) {
     if (node.terminal) return true;
     if (i === length || !node.children) return false;
-    const child = node.children.get(body.charCodeAt(i));
+    const child = childFor(node.children, body.charCodeAt(i));
     if (!child) return false;
     for (let j = child.start; j < child.end; j++, i++) {
       if (i === length || child.source.charCodeAt(j) !== body.charCodeAt(i)) return false;
@@ -349,18 +417,23 @@ function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
 /**
  * A literal `v` is covered by the literal `v` or by a glob `p*` with `p` a
  * prefix of `v`. A glob `q*` is covered only by a glob `p*` with `p` a prefix
- * of `q`. The envelope prefixes form a radix trie, so every request item is
- * checked with one walk over its own characters: time is linear in the input
- * size whatever the strings look like, and memory is linear in the number of
- * envelope globs.
+ * of `q`. The envelope prefixes are sorted by code unit and form a radix trie,
+ * so every request item is checked with one walk over its own characters, each
+ * step a bisection over at most 65,536 siblings: the cost of a lookup does not
+ * depend on any hash function, and memory is linear in the number of envelope
+ * globs.
  */
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
-  let trie: RadixNode | undefined;
+  const prefixes: string[] = [];
   for (const pattern of envelope) {
-    if (pattern.endsWith('*')) insertPrefix((trie ??= radixNode('', 0, 0, false)), pattern, pattern.length - 1);
+    if (pattern.endsWith('*')) prefixes.push(pattern.slice(0, -1));
     else literals.add(pattern);
   }
+  // Default sort order is ascending UTF-16 code units, the order insertion needs.
+  prefixes.sort();
+  let trie: RadixNode | undefined;
+  for (const prefix of prefixes) insertSortedPrefix((trie ??= radixNode('', 0, 0, false)), prefix, prefix.length);
   for (const item of request) {
     const isGlob = item.endsWith('*');
     if (!isGlob && literals.has(item)) continue;
@@ -445,7 +518,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
 
   /**
    * Reads one untrusted input: one structured clone, `normalize` on that
-   * clone, one clone of its result, and plain validation of the engine-owned
+   * clone once it is checked to be plain data, one clone of its result, and plain validation of the engine-owned
    * copy. Never throws; messages are fixed and never format a thrown value.
    */
   const parse = (input: TInput, side: Side): ParseResult => {
@@ -456,6 +529,8 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       return fail(side, 'scope must be plain data that structuredClone can copy', error);
     }
     if (normalize) {
+      // normalize sees only plain JSON-like data: never memory shared with the caller.
+      if (!isPlainData(value)) return fail(side, NOT_PLAIN_DATA, undefined);
       let mapped: unknown;
       try {
         mapped = normalize(value as TInput);

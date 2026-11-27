@@ -120,6 +120,35 @@ if (mixedDimension !== undefined) {
   void kind;
 }
 
+// An explicitly typed definition with an optional key takes the widened types:
+// the grammar may not have that dimension at runtime.
+type OptionalDims = {
+  readonly names: { kind: 'exactSet' };
+  readonly labels?: { kind: 'exactSet' };
+  readonly limit?: { kind: 'numericMax' };
+};
+const optionalDims: OptionalDims = { names: { kind: 'exactSet' } };
+const optionalGrammar = defineScopeGrammar({ provider: 'optional', dimensions: optionalDims, riskOf: () => 'read' });
+// @ts-expect-error an optional dimension may be absent from the published dimensions
+void optionalGrammar.dimensions.labels.kind;
+// @ts-expect-error even a required key of a definition with an optional key may be undefined
+void optionalGrammar.dimensions.names.kind;
+const optionalScope = optionalGrammar.normalize({ names: ['a'] });
+if (optionalScope.ok) {
+  // @ts-expect-error an optional set dimension may be absent from the snapshot
+  const labels: readonly string[] | number = optionalScope.scope.labels;
+  // @ts-expect-error an optional scalar dimension may be absent from the snapshot
+  const limit: readonly string[] | number = optionalScope.scope.limit;
+  const maybe: readonly string[] | number | undefined = optionalScope.scope.labels;
+  void labels;
+  void limit;
+  void maybe;
+}
+// The optional scalar is not required on input (the engine judges its presence).
+optionalGrammar.isSubset({ names: ['a'] }, { names: ['a'] });
+const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;
+void optionalItem;
+
 const widenedItems: [
   Equal<ScopeItem<ScopeDimensions>['dimension'], string>,
   Equal<ScopeItem<typeof mixed>['dimension'], string>,
@@ -129,7 +158,7 @@ const widenedItems: [
 void widenedItems;
 
 // Any grammar can be passed where every provider is accepted.
-const accepted: AnyScopeGrammar[] = [concrete, loose, mixedGrammar, templatedGrammar, unionGrammar];
+const accepted: AnyScopeGrammar[] = [concrete, loose, mixedGrammar, templatedGrammar, unionGrammar, optionalGrammar];
 void accepted;
 
 // Output objects have a null prototype: inherited members are not callable on any of them.

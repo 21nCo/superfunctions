@@ -78,20 +78,26 @@ export type ScopeDimensionValue<T> = T extends SetDimension ? readonly string[] 
 /** `true` for a key that stands for many names: `string`, `number` or a template-literal pattern. */
 type IsIndexKey<K extends PropertyKey> = Record<never, never> extends Record<K, 1> ? true : false;
 
+/** `true` for an optional key (`name?:`): the grammar may not have that dimension at runtime. */
+type IsOptionalKey<D, K extends keyof D> = Record<never, never> extends Pick<D, K> ? true : false;
+
 type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
 
 /**
  * `true` only for an exact definition: not a union, and every key a single
- * literal name. Exact definitions get precise types; every other definition
- * (one widened to {@link ScopeDimensions}, a mixed declared-and-index one, a
- * template-literal key or a union) gets the widened types as a whole, because
- * the type cannot tell which names the grammar really has.
+ * required literal name. Exact definitions get precise types; every other
+ * definition (one widened to {@link ScopeDimensions}, a mixed
+ * declared-and-index one, a template-literal key, an optional key or a union)
+ * gets the widened types as a whole, because the type cannot tell which names
+ * the grammar really has.
  */
 export type IsExactDimensions<D> = [true] extends [IsUnion<D>]
   ? false
   : [true] extends [{ [K in keyof D]-?: IsIndexKey<K> }[keyof D]]
     ? false
-    : true;
+    : [true] extends [{ [K in keyof D]-?: IsOptionalKey<D, K> }[keyof D]]
+      ? false
+      : true;
 
 /** Keys of an exact definition whose dimension may be a set kind; these may be omitted (an empty set). */
 type SetKeys<D> = { [K in keyof D]-?: [Extract<D[K], SetDimension>] extends [never] ? never : K }[keyof D];
@@ -206,7 +212,12 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   /**
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
    * envelopes alike. It receives the engine's structured clone of the input,
-   * never the caller's object, and its result is cloned again and validated:
+   * never the caller's object, and only when that clone is plain JSON-like
+   * data: objects (prototype `Object.prototype`), dense arrays, strings,
+   * finite numbers, booleans and `null`, without cycles or shared references.
+   * Any other clone (a SharedArrayBuffer, an ArrayBuffer or view, a Map, Set,
+   * Date, RegExp, Error, Blob, boxed value or `undefined`) is `malformed` and
+   * `normalize` is not called. Its result is cloned again and validated:
    * a throw, or a result that is not plain data or does not fit the grammar,
    * is `malformed`. Defaults to the identity.
    *
@@ -236,10 +247,12 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
  * own enumerable string-keyed data is what counts, getters run once during the
  * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
  * request), and anything that cannot be cloned (a Proxy, a promise, a
- * function) is `malformed`. Without `normalize`, a clone holding anything
- * other than plain objects, arrays, strings and numbers (a Map, Set, Date or
- * boxed value) is `malformed`; with `normalize`, the clone is passed to it as
- * it is, and only its result is cloned again and checked for plain data. The verdict
+ * function) is `malformed`. A clone holding anything other than plain
+ * objects, arrays, strings and numbers (a Map, Set, Date, SharedArrayBuffer or
+ * boxed value) is `malformed`; with `normalize`, the clone is checked to be
+ * plain JSON-like data before `normalize` sees it (see
+ * {@link ScopeGrammarDefinition.normalize}), and its result is cloned again
+ * and validated the same way. The verdict
  * covers only that clone. A caller that mints a credential must mint from the
  * frozen `scope` that `isSubset` or `normalize` returns, and classify it with
  * `classifyScope`, never by reading the raw input again.

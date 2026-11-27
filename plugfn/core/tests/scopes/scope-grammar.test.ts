@@ -778,6 +778,90 @@ describe('normalize works on engine-owned copies (I2)', () => {
     }
   });
 
+  const notPlain = (side: string) =>
+    expect.objectContaining({
+      code: 'malformed',
+      side,
+      message: 'scope must be plain data (objects, arrays, strings, finite numbers, booleans, null) without cycles or shared references',
+    });
+
+  it('passes only plain JSON-like data to normalize: shared memory and other clonable objects are malformed', () => {
+    // normalize records what it is given: only the plain side of each call may reach it.
+    const seen: unknown[] = [];
+    const g = defineScopeGrammar({
+      provider: 'plain-in',
+      dimensions,
+      normalize: (value: unknown) => {
+        seen.push(value);
+        return { names: ['a'] };
+      },
+      riskOf,
+    });
+    const shared = new SharedArrayBuffer(8);
+    const inputs: unknown[] = [
+      shared,
+      { names: shared },
+      { names: [new Int32Array(shared)] },
+      { nested: { deeper: [{ view: new DataView(new ArrayBuffer(4)) }] } },
+      { names: new ArrayBuffer(4) },
+      new Map([['names', ['a']]]),
+      { names: ['a'], when: new Date(0) },
+      { names: ['a'], pattern: /a/ },
+      { names: ['a'], error: new Error('test-error') },
+      { names: [new String('a')] },
+      { names: ['a'], missing: undefined },
+      { names: ['a'], big: 1n },
+      { names: ['a'], limit: Number.NaN },
+      { names: Object.assign(['a'], { extra: 1 }) },
+      // eslint-disable-next-line no-sparse-arrays
+      { names: ['a', , 'b'] },
+    ];
+    for (const input of inputs) {
+      expect(g.isSubset(input as never, { names: ['a'] }).violations).toEqual([notPlain('request')]);
+      expect(g.isSubset({ names: ['a'] }, input as never).violations).toEqual([notPlain('envelope')]);
+      expect(g.normalize(input as never)).toEqual({ ok: false, violations: [notPlain('request')] });
+      expect(thrownBy(() => g.classifyRisk(input as never))).toBeInstanceOf(ScopeError);
+    }
+    // Only the plain { names: ['a'] } side of each isSubset call reached normalize.
+    expect(seen).toHaveLength(2 * inputs.length);
+    expect(seen.every(value => JSON.stringify(value) === '{"names":["a"]}')).toBe(true);
+    // Plain JSON-like data of every allowed kind still reaches normalize.
+    const plain = { names: ['a'], flag: true, none: null, count: 1, nested: { list: [{}] } };
+    expect(g.normalize(plain as never).ok).toBe(true);
+    expect(seen.at(-1)).toEqual(plain);
+  });
+
+  it('rejects cycles and shared references before normalize, and survives deep nesting', () => {
+    let calls = 0;
+    const g = defineScopeGrammar({
+      provider: 'plain-graph',
+      dimensions,
+      normalize: () => {
+        calls++;
+        return { names: [] };
+      },
+      riskOf,
+    });
+    const cyclic: Record<string, unknown> = { names: [] };
+    cyclic.self = cyclic;
+    const member = ['a'];
+    const sharedReference = { names: member, again: member };
+    for (const input of [cyclic, sharedReference]) {
+      expect(g.normalize(input as never)).toEqual({ ok: false, violations: [notPlain('request')] });
+    }
+    expect(calls).toBe(0);
+
+    // 500 levels clone and pass the walk; 100k levels exceed structuredClone's
+    // own depth limit and are malformed. Neither throws.
+    for (const levels of [500, 100_000]) {
+      let deep: unknown = [];
+      for (let i = 0; i < levels; i++) deep = { inner: deep };
+      const result = g.normalize(deep as never);
+      expect(result.ok || result.violations.every(v => v.code === 'malformed' && v.side === 'request')).toBe(true);
+    }
+    expect(calls).toBeGreaterThanOrEqual(1);
+  });
+
   it('reports a normalize throw with a fixed message and keeps it as the classifyRisk cause', () => {
     const thrown = new Proxy({}, { get: () => { throw new Error('trap ran'); } });
     const g = defineScopeGrammar({
@@ -1080,6 +1164,53 @@ describe('performance', () => {
     expect(result?.ok).toBe(true);
     expect(globs.isSubset({ paths: [`${prefixes[0]!.slice(0, -1)}y`] }, longEnvelope).ok).toBe(false);
     expect(elapsed).toBeLessThan(100);
+  });
+
+  /**
+   * The unseeded 32-bit integer hash V8 applies to small-integer Map keys
+   * (ComputeUnseededHash). It is fixed, so an envelope can pick sibling code
+   * units that all land in one bucket of a code-unit-keyed Map.
+   */
+  function v8SmiHash(key: number): number {
+    let x = key >>> 0;
+    x = (~x + (x << 15)) >>> 0;
+    x = (x ^ (x >>> 12)) >>> 0;
+    x = (x + (x << 2)) >>> 0;
+    x = (x ^ (x >>> 4)) >>> 0;
+    x = Math.imul(x, 2057) >>> 0;
+    x = (x ^ (x >>> 16)) >>> 0;
+    return x & 0x3fffffff;
+  }
+
+  it('stays within 50 ms when sibling code units collide in the runtime integer hash', () => {
+    // One main-path glob plus 200 hash-colliding sibling globs at each of 50
+    // depths of that path (10,001 envelope items), and 10k request items that
+    // walk the whole path. A child index keyed by the runtime's integer hash
+    // walks a 200-entry bucket chain at every depth and takes about 600 ms.
+    const main = 0x61;
+    const depth = 50;
+    const buckets = 128;
+    const target = v8SmiHash(main) & (buckets - 1);
+    const siblings: number[] = [];
+    for (let code = 0x21; code < 0x10000 && siblings.length < 200; code++) {
+      if (code === main || code === 0x2a || (code >= 0xd800 && code <= 0xdfff)) continue;
+      if ((v8SmiHash(code) & (buckets - 1)) === target) siblings.push(code);
+    }
+    expect(siblings).toHaveLength(200);
+    const mainPath = `${'a'.repeat(depth)}z`;
+    const paths = [`${mainPath}*`];
+    for (let d = 0; d < depth; d++) {
+      for (const code of siblings) paths.push(`${'a'.repeat(d)}${String.fromCharCode(code)}*`);
+    }
+    const globs = defineScopeGrammar({ provider: 'smi-collisions', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf: () => 'read' });
+    const collidingRequest = { paths: Array.from({ length: n }, (_, i) => `${mainPath}${i}`) };
+    let result: ReturnType<typeof globs.isSubset> | undefined;
+    const elapsed = bestOfThree(() => {
+      result = globs.isSubset(collidingRequest, { paths });
+    });
+    expect(result?.ok).toBe(true);
+    expect(globs.isSubset({ paths: [`${'a'.repeat(depth)}y`] }, { paths }).ok).toBe(false);
+    expect(elapsed).toBeLessThan(50);
   });
 
   it('classifies 10k items in under 50 ms', () => {
