@@ -45,7 +45,7 @@ import {
   canonicalizePrincipalFromLegacyUserId,
   getSpv2MigrationRuntimeConfig,
 } from "../execution/migration/spv2.js";
-import { hasTemporalGrouping } from "@datafn/core";
+import { endpointList, findRelationMatch, hasTemporalGrouping, relationTargetEndpoint } from "@datafn/core";
 import { projectFieldsPushdown } from "../execution/query/pushdown.js";
 import {
   getDatafnMultiRegionRuntimeConfig,
@@ -1142,21 +1142,40 @@ export function createQueryHandler(
     };}
 
 /**
+ * DATA-41: how the client reads one result slot (a query index), captured
+ * before the afterQuery hooks. `versioned`: a query sent with `withRevisions`
+ * that certifies rows of `resource`. `issuing`: a plain read of rows of
+ * resources that issue revisions, which therefore cannot declare `$rev`.
+ * `application`: a read of rows that may declare `$rev` as their own field (a
+ * resource that issues no revisions, an unknown resource, or a relation
+ * reaching one). `own` holds the rows (canonical) the query returned with a
+ * `$rev`.
+ */
+type SlotTie =
+  | { kind: "versioned"; resource: string; own: Set<string> }
+  | { kind: "issuing"; own: Set<string> }
+  | { kind: "application"; own: Set<string> };
+
+/** Canonical rows with a `$rev`, and their `[id, $rev]` pairs. */
+interface RevisionRows {
+  rows: Set<string>;
+  keys: Set<string>;
+}
+
+/**
  * DATA-41: what each query of a batch returned before the afterQuery hooks,
- * by query index, so a `$rev` after them is tied to the query that certified
- * it rather than to the result slot a hook moved it to.
+ * so a `$rev` after them is tied to the query it came from rather than to the
+ * result slot a hook moved it to.
  */
 interface RevisionTies {
-  /** The resource each query read, by query index. */
-  resources: Array<string | undefined>;
-  /** Rows (canonical, with `$rev`) certified by a versioned query, by its resource. */
-  certified: Map<string, Set<string>>;
-  /** `[id, $rev]` of each certified row: the revisions the server issued. */
-  serverRevisions: Set<string>;
-  /** Rows (canonical) of the other queries that carried a `$rev` of their own. */
-  plainRows: Set<string>;
-  /** Whether another query read rows that may declare an application `$rev`. */
-  applicationRevisions: boolean;
+  /** Each query's slot, by query index. */
+  slots: SlotTie[];
+  /** The rows certified by the versioned queries, by resource. */
+  certified: Map<string, RevisionRows>;
+  /** The rows certified by any versioned query. */
+  allCertified: RevisionRows;
+  /** The rows the `application` slots returned with their own `$rev`. */
+  application: RevisionRows;
 }
 
 /** The top-level rows of a query result that carry a `$rev`. */
@@ -1167,7 +1186,42 @@ function rowsWithRevision(value: unknown): Array<Record<string, unknown>> {
     row !== null && typeof row === "object" && REVISION_FIELD in row);
 }
 
-const issuedRevisionKey = (row: Record<string, unknown>) => JSON.stringify([row.id, row[REVISION_FIELD]]);
+const revisionKey = (row: Record<string, unknown>) => JSON.stringify([row.id, row[REVISION_FIELD]]);
+const revisionRows = (): RevisionRows => ({ rows: new Set(), keys: new Set() });
+
+function addRevisionRow(target: RevisionRows, canonical: string, key: string): void {
+  target.rows.add(canonical);
+  target.keys.add(key);
+}
+
+/** Whether every resource the rows of a plain `query` belong to issues revisions. */
+function readsIssuingRows(query: Record<string, unknown>, schema: DatafnSchema): boolean {
+  if (typeof query.resource !== "string") return false;
+  if (query.relation === undefined) return issuesRevisions(schema, query.resource);
+  if (typeof query.relation !== "string") return false;
+  const match = findRelationMatch(schema as any, query.resource, query.relation);
+  if (!match) return false;
+  return endpointList(relationTargetEndpoint(match.relation, match.direction))
+    .every((target) => issuesRevisions(schema, target));
+}
+
+function slotTie(query: Record<string, unknown>, versioned: boolean, schema: DatafnSchema): SlotTie {
+  const own = new Set<string>();
+  if (versioned) return { kind: "versioned", resource: String(query.resource), own };
+  return readsIssuingRows(query, schema) ? { kind: "issuing", own } : { kind: "application", own };
+}
+
+/** The set `slot`'s rows are recorded in besides its own, if any. */
+function tiedRowsOf(slot: SlotTie, ties: RevisionTies): RevisionRows | undefined {
+  if (slot.kind === "application") return ties.application;
+  if (slot.kind === "issuing") return undefined;
+  let certified = ties.certified.get(slot.resource);
+  if (!certified) {
+    certified = revisionRows();
+    ties.certified.set(slot.resource, certified);
+  }
+  return certified;
+}
 
 /** Captures `results` (by query index, before the afterQuery hooks); undefined when no query is versioned. */
 function captureRevisionTies(
@@ -1177,30 +1231,16 @@ function captureRevisionTies(
 ): RevisionTies | undefined {
   const versioned = queries.map((q) => isVersionedQuery(q as Record<string, unknown>, schema));
   if (!versioned.includes(true)) return undefined;
-  const ties: RevisionTies = {
-    resources: [],
-    certified: new Map(),
-    serverRevisions: new Set(),
-    plainRows: new Set(),
-    applicationRevisions: false,
-  };
+  const ties: RevisionTies = { slots: [], certified: new Map(), allCertified: revisionRows(), application: revisionRows() };
   queries.forEach((q, index) => {
-    const { resource, relation } = q as { resource?: unknown; relation?: unknown };
-    const name = typeof resource === "string" ? resource : undefined;
-    ties.resources.push(name);
-    const rows = rowsWithRevision(results[index]);
-    if (!versioned[index]) {
-      // A resource that issues no revisions (or a relation's rows) may
-      // declare `$rev` as its own field.
-      ties.applicationRevisions ||= name === undefined || relation !== undefined || !issuesRevisions(schema, name);
-      for (const row of rows) ties.plainRows.add(canonicalRow(row));
-      return;
-    }
-    const certified = ties.certified.get(name!) ?? new Set<string>();
-    ties.certified.set(name!, certified);
-    for (const row of rows) {
-      certified.add(canonicalRow(row));
-      ties.serverRevisions.add(issuedRevisionKey(row));
+    const slot = slotTie(q as Record<string, unknown>, versioned[index], schema);
+    ties.slots.push(slot);
+    const tied = tiedRowsOf(slot, ties);
+    for (const row of rowsWithRevision(results[index])) {
+      const canonical = canonicalRow(row);
+      slot.own.add(canonical);
+      if (tied) addRevisionRow(tied, canonical, revisionKey(row));
+      if (slot.kind === "versioned") addRevisionRow(ties.allCertified, canonical, revisionKey(row));
     }
   });
   return ties;
@@ -1208,35 +1248,46 @@ function captureRevisionTies(
 
 /**
  * DATA-41: with a versioned query in the request (`ties`), serialize
- * `{ ok: true, result }` once and remove each server `$rev`
- * that cannot be tied back to the query that certified it. A row keeps its
- * `$rev` when it equals, in its wire form, a row certified by a versioned
- * query of the resource the client reads that result slot as, or a row
- * another query returned with its own `$rev`. A changed or moved row carrying
- * a revision the server issued loses it. Any other `$rev` is application data
- * when another query read a resource that issues no revisions, and is removed
- * otherwise. Only the rows of `data` arrays are checked; nested values are
- * left as they are. The returned value is plain JSON, so okResponse
- * re-serializes it byte-identically.
+ * `{ ok: true, result }` once and remove each server `$rev` that cannot be
+ * tied back to the query that certified it (keepsRevision). A result entry is
+ * read as the slot of the query with its index; a batch result a hook
+ * reshaped (no longer an array) or extended has entries no query answers.
+ * Only the rows of `data` arrays are checked; nested values are left as they
+ * are. The returned value is plain JSON, so okResponse re-serializes it
+ * byte-identically.
  */
 function withTiedRevisionsOnly(result: unknown, isBatch: boolean, ties: RevisionTies | undefined): unknown {
   if (!ties) return result;
   const wire = JSON.parse(JSON.stringify({ ok: true, result })) as { result?: unknown };
-  // A batch's results answer its queries by index; a reshaped batch result
-  // that is no longer an array answers none of them.
   const slotted = !isBatch || Array.isArray(wire.result);
   const entries = isBatch && Array.isArray(wire.result) ? wire.result : [wire.result];
   entries.forEach((entry, index) => {
-    const certified = slotted ? ties.certified.get(ties.resources[index] ?? "") : undefined;
+    const slot = slotted ? ties.slots[index] : undefined;
     for (const row of rowsWithRevision(entry)) {
-      if (!keepsRevision(row, certified, ties)) delete row[REVISION_FIELD];
+      if (!keepsRevision(row, slot, ties)) delete row[REVISION_FIELD];
     }
   });
   return wire.result;
 }
 
-function keepsRevision(row: Record<string, unknown>, certified: Set<string> | undefined, ties: RevisionTies): boolean {
+/**
+ * DATA-41: whether a row keeps its `$rev` in `slot`. An unchanged row keeps
+ * it where it is tied: a certified row in a versioned slot of its resource, a
+ * plain row in its own query's slot, and a row with a declared application
+ * `$rev` anywhere. Another unchanged certified row loses it. A changed row is
+ * tied by its `[id, $rev]`: it keeps an application `$rev` (a pair an
+ * application slot returned) unless, in a versioned slot, its resource
+ * certified the same pair; in an application slot it also keeps a `$rev` no
+ * versioned query issued. Any other `$rev` is a server revision that a hook
+ * moved or rewrote, and is removed.
+ */
+function keepsRevision(row: Record<string, unknown>, slot: SlotTie | undefined, ties: RevisionTies): boolean {
   const canonical = canonicalRow(row);
-  if (certified?.has(canonical) || ties.plainRows.has(canonical)) return true;
-  return ties.applicationRevisions && !ties.serverRevisions.has(issuedRevisionKey(row));
+  if (slot?.own.has(canonical) || ties.application.rows.has(canonical)) return true;
+  if (slot?.kind === "versioned" && ties.certified.get(slot.resource)?.rows.has(canonical)) return true;
+  if (ties.allCertified.rows.has(canonical)) return false;
+  const key = revisionKey(row);
+  if (slot?.kind === "application") return ties.application.keys.has(key) || !ties.allCertified.keys.has(key);
+  const issued = slot?.kind === "versioned" ? ties.certified.get(slot.resource)?.keys : ties.allCertified.keys;
+  return ties.application.keys.has(key) && !issued?.has(key);
 }

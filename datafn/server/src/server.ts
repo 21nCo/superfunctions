@@ -605,20 +605,11 @@ function splicedBody(upstream: ReadableStream<Uint8Array>, guard?: ReadBackGuard
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let bytes: Uint8Array | undefined;
   let offset = 0;
-  let onAbort: (() => void) | undefined;
-  const release = () => {
-    if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
-  };
+  let release = () => {};
   const cancelUpstream = () => cancelQuietly(reader ?? upstream);
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      if (!guard) return;
-      onAbort = () => {
-        controller.error(readBackExpiredError());
-        cancelUpstream();
-      };
-      if (guard.signal.aborted) onAbort();
-      else guard.signal.addEventListener("abort", onAbort, { once: true });
+      if (guard) release = cancelOnAbort(guard, controller, cancelUpstream);
     },
     async pull(controller) {
       if (guardExpired(guard)) {
@@ -668,18 +659,69 @@ function spliceable(response: Response): response is Response & { body: Readable
 /** Headers that describe the exact bytes of a body, which a splice changes. */
 const BODY_BYTES_HEADERS = ["content-length", "content-digest", "repr-digest", "digest"];
 
-/** A read-back body passed through as it is, which still ends at the deadline. */
+/**
+ * Errors `controller` with the read-back's expiry and cancels `upstream` (its
+ * reader once one is taken) as soon as `guard` aborts, without waiting on any
+ * consumer; returns the listener's release.
+ */
+function cancelOnAbort(
+  guard: ReadBackGuard,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  cancelUpstream: () => void,
+): () => void {
+  const onAbort = () => {
+    try {
+      controller.error(readBackExpiredError());
+    } catch {
+      // Already closed or errored.
+    }
+    cancelUpstream();
+  };
+  if (guard.signal.aborted) onAbort();
+  else guard.signal.addEventListener("abort", onAbort, { once: true });
+  return () => guard.signal.removeEventListener("abort", onAbort);
+}
+
+/**
+ * A read-back body passed through as it is, chunk by chunk as it is pulled,
+ * which still ends at the deadline: once the guard aborts, reads of it (and
+ * of branches teed from it) are errored and the upstream is cancelled at
+ * once, even while a teed branch middleware kept is left unread. Chunks a
+ * branch already buffered cannot be revoked.
+ */
 function guardedPassThrough(response: Response, guard: ReadBackGuard): Response {
   if (!response.body) return response;
-  const passThrough = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      if (guardExpired(guard)) controller.error(readBackExpiredError());
-      else controller.enqueue(chunk);
+  const upstream = response.body;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let release = () => {};
+  const cancelUpstream = () => cancelQuietly(reader ?? upstream);
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      release = cancelOnAbort(guard, controller, cancelUpstream);
     },
-  });
-  return new Response(response.body.pipeThrough(passThrough, { signal: guard.signal }), {
-    status: response.status, statusText: response.statusText, headers: response.headers,
-  });
+    async pull(controller) {
+      if (guardExpired(guard)) {
+        release();
+        cancelUpstream();
+        controller.error(readBackExpiredError());
+        return;
+      }
+      reader ??= upstream.getReader();
+      const chunk = await reader.read();
+      if (guard.signal.aborted) return;
+      if (chunk.done) {
+        release();
+        controller.close();
+      } else {
+        controller.enqueue(chunk.value);
+      }
+    },
+    cancel() {
+      release();
+      cancelUpstream();
+    },
+  }, { highWaterMark: 0 });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 /**
@@ -711,6 +753,24 @@ function withRevisionCapability<A extends unknown[]>(
     return new Response(splicedBody(response.body, guard), {
       status: response.status, statusText: response.statusText, headers,
     });
+  };
+}
+
+/**
+ * DATA-41: the first-party public-link routes answer with DataFn envelopes,
+ * so they announce the revision capability too (their rate-limit and
+ * placement errors included). Other plugins' routes define their own
+ * response bodies and are returned as they are.
+ */
+function withPluginRouteRevisionCapability<TContext>(
+  schema: DatafnSchema,
+  pluginName: string,
+  route: DatafnComposableRoute<TContext>,
+): DatafnComposableRoute<TContext> {
+  if (pluginName !== "datafn-public-links") return route;
+  return {
+    ...route,
+    handler: withRevisionCapability(schema, async (...args: Parameters<typeof route.handler>) => route.handler(...args)),
   };
 }
 
@@ -2224,14 +2284,17 @@ export async function createDatafnServer<TContext = any>(
         schema: validatedSchema,
         maxPayloadBytes: publicLinkBodyLimit,
       }) as DatafnComposableRoute<TContext>[];
+      const announce = (route: DatafnComposableRoute<TContext>) =>
+        withPluginRouteRevisionCapability(validatedSchema, plugin.name, route);
       for (const route of pluginRoutes) {
         const isPublicLinkResolve = plugin.name === "datafn-public-links" &&
           route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH;
         const limitedRoute = withPluginRouteRateLimit(route);
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
-          routes.push(limitedRoute);
+          const announced = announce(limitedRoute);
+          routes.push(announced);
           if (publicLinkBodyLimit !== undefined && isPublicLinkResolve) {
-            boundedResolveRoute = limitedRoute;
+            boundedResolveRoute = announced;
           }
           continue;
         }
@@ -2243,9 +2306,9 @@ export async function createDatafnServer<TContext = any>(
         }
         if (isPublicLinkResolve) {
           // Count all token resolutions, including those rejected by placement.
-          routes.push(withPluginRouteRateLimit(withPluginRoutePlacement(route, declaration)));
+          routes.push(announce(withPluginRouteRateLimit(withPluginRoutePlacement(route, declaration))));
         } else {
-          routes.push(withPluginRoutePlacement(limitedRoute, declaration));
+          routes.push(announce(withPluginRoutePlacement(limitedRoute, declaration)));
         }
       }
     }

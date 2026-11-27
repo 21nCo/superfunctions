@@ -6,6 +6,7 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
+import { createDatafnPublicLinksPlugin } from "../src/index.js";
 import {
   READ_CHUNK,
   assignWriteRevisions,
@@ -4081,6 +4082,107 @@ describe("DATA-95: a versioned query's $rev after the afterQuery hooks", () => {
   });
 });
 
+describe("DATA-95: a $rev is tied to the query it came from (local review round 1)", () => {
+  // `ledger` issues no revisions: its `$rev` is a declared number, so its
+  // `[id, $rev]` pairs can equal the ones the server issues for `task`.
+  const ledgerSchema = {
+    ...schema,
+    resources: [
+      ...schema.resources,
+      {
+        name: "ledger",
+        version: 1,
+        fields: [{ name: "$rev", type: "number" as const, required: false }, { name: "note", type: "string" as const, required: false }],
+      },
+    ],
+  };
+  type Rewrite = (batch: Json[]) => Json[];
+  const editRows = (entry: Json, edit: (row: Json) => Json) => ({ ...entry, data: entry.data.map(edit) });
+  async function batch(queries: Json[], rewrite: Rewrite) {
+    const hooks = {
+      name: "batch",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? rewrite(result) : result),
+    };
+    const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "ledger", operation: "insert", id: "task:1", record: { $rev: 1 } });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const res = await served.send("query", queries.map((query) => ({ version: 1, ...query })));
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    return res.body.result as Json[];
+  }
+  const mixed = [{ resource: "task", withRevisions: true }, { resource: "ledger" }];
+
+  it("keeps a declared $rev that a hook edited when its [id, $rev] equals a server revision", async () => {
+    const result = await batch(mixed, ([task, ledger]) => [task, editRows(ledger, (row) => ({ ...row, note: "x" }))]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1, note: "x" }]);
+  });
+
+  it("removes the server $rev of an edited certified row whose [id, $rev] equals a declared one", async () => {
+    const result = await batch(mixed, ([task, ledger]) => [editRows(task, (row) => ({ ...row, title: "edited" })), ledger]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "edited" })]);
+    expect(result[0].data[0]).not.toHaveProperty("$rev");
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+  });
+
+  it("removes the $rev of a certified row whose id or $rev a hook rewrote, beside a resource that issues none", async () => {
+    for (const edit of [(row: Json) => ({ ...row, id: "task:2" }), (row: Json) => ({ ...row, $rev: 7 })]) {
+      const result = await batch(mixed, ([task, ledger]) => [editRows(task, edit), ledger]);
+      expect(result[0].data).toHaveLength(1);
+      expect(result[0].data[0]).not.toHaveProperty("$rev");
+      expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+    }
+  });
+
+  it("removes the $rev of an unchanged certified row moved into a plain query of the same resource", async () => {
+    const result = await batch([{ resource: "task", withRevisions: true }, { resource: "task" }], ([versioned, plain]) => [plain, versioned]);
+    for (const entry of result) {
+      expect(entry.data).toEqual([expect.objectContaining({ id: "task:1", title: "a" })]);
+      expect(entry.data[0]).not.toHaveProperty("$rev");
+    }
+  });
+
+  it("removes the $rev of a certified row moved into a relation query that reaches its resource", async () => {
+    const queries = [{ resource: "task", withRevisions: true }, { resource: "comment", id: "comment:1", relation: "task" }];
+    const result = await batch(queries, ([versioned, related]) => [versioned, { ...related, data: versioned.data }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", $rev: 1 })]);
+    expect(result[1].data).toEqual([expect.objectContaining({ id: "task:1", title: "a" })]);
+    expect(result[1].data[0]).not.toHaveProperty("$rev");
+  });
+
+  it("keeps the $rev of an unchanged certified row moved to another versioned query of its resource", async () => {
+    const queries = [{ resource: "task", withRevisions: true }, { resource: "task", withRevisions: true, filters: { title: "none" } }];
+    const result = await batch(queries, ([first, second]) => [second, first]);
+    expect(result[0].data).toEqual([]);
+    expect(result[1].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+  });
+});
+
+describe("DATA-95: a certified versioned row is the stored row (local review round 1)", () => {
+  it("returns the row clone returns, unprojected, while a plain query projects it", async () => {
+    const served = await serve();
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    // A stored column the schema does not declare, and an explicit null.
+    await served.database.update({
+      model: "task",
+      where: [{ field: "id", operator: "eq", value: "task:1" }],
+      data: { undeclared: "stored", projectId: null },
+      namespace: NS,
+    } as any);
+    const versioned = (await served.send("query", { version: 1, resource: "task", withRevisions: true })).body.result.data;
+    const clone = (await served.send("clone", { clientId: "client:b", tables: ["task"] })).body.result.data.task;
+    const plain = (await served.send("query", { version: 1, resource: "task" })).body.result.data;
+    // DATA-41's design: a certified row is exactly the clone row (what push
+    // compares its post-write row against), not the plain query's projection.
+    expect(versioned).toEqual(clone);
+    expect(versioned[0]).toMatchObject({ id: "task:1", title: "a", undeclared: "stored", projectId: null, $rev: 1 });
+    expect(plain[0]).not.toHaveProperty("$rev");
+    expect(plain[0]).not.toHaveProperty("undeclared");
+  });
+});
+
 describe("DATA-95: push read-back and the capability splice", () => {
   const isQuery = (request: Request) => new URL(request.url).pathname.endsWith("/query");
   const queryRoute = (served: { server: { router: { handle(request: Request): Promise<Response> } } }, body: string) =>
@@ -4117,6 +4219,45 @@ describe("DATA-95: push read-back and the capability splice", () => {
     // Its later reads were cancelled with the read-back.
     expect(state).toBe("errored");
   }, 10_000);
+
+  it("cancels a passed-through read-back's upstream when the push settles, while middleware keeps an unread clone", async () => {
+    const events: string[] = [];
+    let kept: Response | undefined;
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: async ({ action, response }: { action: string; response: Response }) => {
+        if (action !== "query") return response;
+        await response.body?.cancel();
+        // A non-2xx, non-JSON answer whose body always has more to send.
+        const upstream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("unavailable"));
+          },
+          cancel() {
+            events.push("upstream:cancel");
+          },
+        });
+        return new Response(upstream, { status: 503, headers: { "content-type": "text/plain" } });
+      },
+    } } });
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (isQuery(request)) {
+        kept = response.clone();
+        events.push("clone:kept");
+        // Lets the body's upstream start flowing before the read-back reads it.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      return response;
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    events.push("push");
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    // The upstream was cancelled when the read-back settled, before the push
+    // returned, although no one read the clone.
+    expect(events).toEqual(["clone:kept", "upstream:cancel", "push"]);
+    expect(kept?.bodyUsed).toBe(false);
+    await expect(kept!.text()).rejects.toThrow();
+  });
 
   it("gives router middleware byte-identical envelopes for an external /query and the read-back", async () => {
     const served = await serve();
@@ -4188,6 +4329,63 @@ describe("DATA-95: push read-back and the capability splice", () => {
 
     mode = "utf16";
     expect(new Uint8Array(await (await queryRoute(served, body)).arrayBuffer())).toEqual(utf16);
+  });
+});
+
+describe("DATA-95: public-link envelopes announce the revision capability", () => {
+  const linkSchema = {
+    resources: [{
+      name: "linkTag",
+      version: 1,
+      idPrefix: "tag",
+      capabilities: ["timestamps", "audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private", supportsScopeGrants: true } }],
+      fields: [{ name: "id", type: "string", required: true }, { name: "label", type: "string", required: false }],
+    }],
+    relations: [],
+  } as any;
+
+  async function linkRoutes(enabled: boolean) {
+    const server = await createDatafnServer({
+      schema: linkSchema,
+      database: memoryAdapter(),
+      allowUnknownResources: true,
+      publicLinks: createDatafnPublicLinksPlugin<{ actorId: string }>({
+        authenticateOwner: (request) => {
+          const actorId = request.headers.get("x-owner-actor");
+          return actorId ? { actorId } : null;
+        },
+        getOwnerActorId: (session) => session.actorId,
+        getOwnerNamespace: (actorId) => `user:${actorId}`,
+        directory: createMemoryIndexedDirectoryStore(),
+        resourceRegion: "region:public-links",
+      }),
+      ...(enabled ? { revisions: { enabled: true } } : {}),
+    } as any);
+    const post = async (path: string, body: unknown, owner?: string) => {
+      const res = await server.router.handle(new Request(`http://localhost/datafn/public-links${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(owner ? { "x-owner-actor": owner } : {}) },
+        body: JSON.stringify(body),
+      }), {});
+      return { status: res.status, body: (await res.json()) as Json };
+    };
+    const created = await post("", { resource: "linkTag", scope: "resource", level: "viewer" }, "owner");
+    const resolved = await post("/resolve", { token: created.body.result?.token });
+    const rejected = await post("/resolve", { token: "not-a-link-token" });
+    await server.close();
+    return { created, resolved, rejected };
+  }
+
+  it("carries capabilities.revisions on create, resolve and error envelopes only with revisions on", async () => {
+    const on = await linkRoutes(true);
+    expect(on.created.status, JSON.stringify(on.created.body)).toBe(200);
+    expect(on.resolved.status, JSON.stringify(on.resolved.body)).toBe(200);
+    expect(on.rejected.status).toBeGreaterThanOrEqual(400);
+    for (const { body } of [on.created, on.resolved, on.rejected]) expect(body.capabilities).toEqual({ revisions: true });
+
+    const off = await linkRoutes(false);
+    expect(off.created.status).toBe(200);
+    for (const { body } of [off.created, off.resolved, off.rejected]) expect(body).not.toHaveProperty("capabilities");
   });
 });
 
