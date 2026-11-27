@@ -100,6 +100,23 @@ type SetKeys<D> = { [K in keyof D]-?: [Extract<D[K], SetDimension>] extends [nev
 export type WidenedScope = { readonly [dimension: string]: readonly string[] | number | undefined };
 
 /**
+ * The engine's output objects (scope snapshots, `grammar.dimensions`) have a
+ * null prototype, so the members every object normally inherits
+ * (`toString`, `hasOwnProperty`, ...) are absent at runtime. For an exact
+ * definition, each such name that is not a declared dimension is typed
+ * `undefined`; a dimension that happens to use one of these names keeps its
+ * own type. For a widened definition any of them may be a dimension, so each
+ * is typed as the lookup value `V`. Either way, calling one is a type error.
+ * Applied to output types only: input types keep ordinary object types, so a
+ * plain object literal stays assignable.
+ */
+type InheritedMember = 'constructor' | 'hasOwnProperty' | 'isPrototypeOf' | 'propertyIsEnumerable' | 'toLocaleString' | 'toString' | 'valueOf';
+type NoInheritedMembers<Declared extends PropertyKey, V> = { readonly [K in Exclude<InheritedMember, Declared>]?: V };
+
+/** A scope as the engine returns it for a definition that is not exact. */
+export type WidenedNormalizedScope = WidenedScope & NoInheritedMembers<never, readonly string[] | number | undefined>;
+
+/**
  * Canonical scope input. Set dimensions may be omitted (an empty set); scalar
  * dimensions are required, because an absent limit would mean "unbounded".
  * For a definition that is not exact every key is optional: the type cannot
@@ -119,7 +136,9 @@ export type ScopeShape<D extends ScopeDimensions> =
  * definition that is not exact, a lookup may yield `undefined`.
  */
 export type NormalizedScope<D extends ScopeDimensions> =
-  IsExactDimensions<D> extends true ? { readonly [K in keyof D]-?: ScopeDimensionValue<D[K]> } : WidenedScope;
+  IsExactDimensions<D> extends true
+    ? { readonly [K in keyof D]-?: ScopeDimensionValue<D[K]> } & NoInheritedMembers<keyof D, undefined>
+    : WidenedNormalizedScope;
 
 type ReadonlyArrays<T> = T extends readonly (infer U)[] ? readonly U[] : T;
 
@@ -132,8 +151,8 @@ export type PublishedScopeDimension<T> = { readonly [P in keyof T]: ReadonlyArra
  */
 export type PublishedScopeDimensions<D extends ScopeDimensions> =
   IsExactDimensions<D> extends true
-    ? { readonly [K in keyof D]-?: PublishedScopeDimension<D[K]> }
-    : { readonly [dimension: string]: ScopeDimension | undefined };
+    ? { readonly [K in keyof D]-?: PublishedScopeDimension<D[K]> } & NoInheritedMembers<keyof D, undefined>
+    : { readonly [dimension: string]: ScopeDimension | undefined } & NoInheritedMembers<never, ScopeDimension | undefined>;
 
 /** One requested item, as passed to `riskOf`. */
 export interface ScopeItem<D extends ScopeDimensions = ScopeDimensions> {
@@ -217,8 +236,10 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
  * own enumerable string-keyed data is what counts, getters run once during the
  * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
  * request), and anything that cannot be cloned (a Proxy, a promise, a
- * function) or clones to something other than plain objects, arrays, strings
- * and numbers (a Map, Set, Date or boxed value) is `malformed`. The verdict
+ * function) is `malformed`. Without `normalize`, a clone holding anything
+ * other than plain objects, arrays, strings and numbers (a Map, Set, Date or
+ * boxed value) is `malformed`; with `normalize`, the clone is passed to it as
+ * it is, and only its result is cloned again and checked for plain data. The verdict
  * covers only that clone. A caller that mints a credential must mint from the
  * frozen `scope` that `isSubset` or `normalize` returns, and classify it with
  * `classifyScope`, never by reading the raw input again.

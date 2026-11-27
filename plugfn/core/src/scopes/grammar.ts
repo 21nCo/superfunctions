@@ -30,7 +30,9 @@ const hostClone: Clone | undefined = (() => {
 
 /**
  * The engine's private, frozen view of one dimension. It is never exposed, so
- * nothing a caller does to `grammar.dimensions` can change an evaluation.
+ * nothing a caller does to `grammar.dimensions` can change an evaluation. It
+ * has a null prototype and every field is own, so a polluted
+ * `Object.prototype` can never supply or change a field.
  */
 interface CompiledDimension {
   readonly name: string;
@@ -78,8 +80,8 @@ function isCloneRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * The members of a cloned array, or why it is not a usable set. The length is
- * checked against {@link SCOPE_LIMITS} before any member is visited, and a
- * hole is rejected rather than skipped.
+ * checked against {@link SCOPE_LIMITS} before any member is validated (the
+ * clone has already copied them), and a hole is rejected rather than skipped.
  */
 function readArray(value: unknown): readonly unknown[] | string {
   if (!Array.isArray(value)) return 'must be an array of strings';
@@ -103,6 +105,19 @@ function invalidMember(value: unknown, glob: boolean): string | undefined {
   return undefined;
 }
 
+/**
+ * An own property of a record, or `undefined`: a value inherited from a
+ * (possibly polluted) prototype is never read.
+ */
+function own(record: object, key: string): unknown {
+  return Object.hasOwn(record, key) ? (record as Record<string, unknown>)[key] : undefined;
+}
+
+/** A frozen null-prototype record holding exactly the given own fields. */
+function ownRecord<T extends object>(fields: T): T {
+  return Object.freeze(Object.assign(Object.create(null) as T, fields));
+}
+
 function malformed(side: Side, message: string, dimension?: string, item?: string | number): ScopeViolation {
   return { code: 'malformed', side, message, ...(dimension === undefined ? {} : { dimension }), ...(item === undefined ? {} : { item }) };
 }
@@ -122,12 +137,20 @@ interface CompileResult {
   readonly published: ScopeDimension;
 }
 
-/** Compiles one dimension of the cloned definition; options left `undefined` are absent. */
+function compiledDimension(name: string, kind: ScopeDimensionKind, integer: boolean, min?: number, max?: number, vocabulary?: ReadonlySet<string>): CompiledDimension {
+  return ownRecord<CompiledDimension>({ name, kind, vocabulary, min, max, integer });
+}
+
+/**
+ * Compiles one dimension of the cloned definition; options left `undefined`
+ * are absent. Only own properties are read, so a polluted prototype can never
+ * supply a kind or an option.
+ */
 function compileDimension(provider: string, name: string, def: unknown): CompileResult {
   const where = `Scope grammar "${provider}": dimension "${name}"`;
   if (!DIMENSION_NAME.test(name)) throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
   if (!isCloneRecord(def)) throw new TypeError(`${where} must be an object`);
-  const kind = def.kind;
+  const kind = own(def, 'kind');
   if (typeof kind !== 'string' || !Object.hasOwn(DIMENSION_KEYS, kind)) {
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : typeof kind}`);
   }
@@ -138,40 +161,43 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
   let compiled: CompiledDimension;
   switch (kind as ScopeDimensionKind) {
     case 'exactSet': {
-      compiled = { name, kind: 'exactSet', integer: false };
-      if (def.values === undefined) break;
-      const members = readArray(def.values);
+      const values = own(def, 'values');
+      if (values === undefined) {
+        compiled = compiledDimension(name, 'exactSet', false);
+        break;
+      }
+      const members = readArray(values);
       if (typeof members === 'string') throw new TypeError(`${where} values ${members}`);
       for (const value of members) {
         const reason = invalidMember(value, false);
         if (reason) throw new TypeError(`${where} value ${reason}`);
       }
-      compiled = { ...compiled, vocabulary: new Set(members as string[]) };
+      compiled = compiledDimension(name, 'exactSet', false, undefined, undefined, new Set(members as string[]));
       break;
     }
     case 'prefixGlobSet':
-      compiled = { name, kind: 'prefixGlobSet', integer: false };
+      compiled = compiledDimension(name, 'prefixGlobSet', false);
       break;
     case 'numericMax': {
-      const min = readBound(where, 'min', def.min, false);
-      const max = readBound(where, 'max', def.max, false);
-      const integer = def.integer;
+      const min = readBound(where, 'min', own(def, 'min'), false);
+      const max = readBound(where, 'max', own(def, 'max'), false);
+      const integer = own(def, 'integer');
       if (integer !== undefined && typeof integer !== 'boolean') throw new TypeError(`${where} integer must be a boolean`);
       if (min !== undefined && max !== undefined && min > max) throw new TypeError(`${where} min exceeds max`);
-      compiled = { name, kind: 'numericMax', min, max, integer: integer === true };
+      compiled = compiledDimension(name, 'numericMax', integer === true, min, max);
       break;
     }
     case 'ttlMax': {
-      const min = readBound(where, 'minSeconds', def.minSeconds, true);
-      const max = readBound(where, 'maxSeconds', def.maxSeconds, true);
+      const min = readBound(where, 'minSeconds', own(def, 'minSeconds'), true);
+      const max = readBound(where, 'maxSeconds', own(def, 'maxSeconds'), true);
       if (min !== undefined && max !== undefined && min > max) throw new TypeError(`${where} minSeconds exceeds maxSeconds`);
-      compiled = { name, kind: 'ttlMax', min, max, integer: true };
+      compiled = compiledDimension(name, 'ttlMax', true, min, max);
       break;
     }
   }
   // The validated clone, minus options left undefined; arrays are copied and frozen.
   const published = Object.entries(def).flatMap(([key, value]) => (value === undefined ? [] : [[key, Array.isArray(value) ? Object.freeze([...value]) : value]]));
-  return { compiled: Object.freeze(compiled), published: Object.freeze(Object.fromEntries(published)) as ScopeDimension };
+  return { compiled, published: Object.freeze(Object.fromEntries(published)) as ScopeDimension };
 }
 
 function isSetKind(dim: CompiledDimension): boolean {
@@ -354,8 +380,16 @@ function readCallback(provider: string, label: string, value: unknown, optional:
   return value as (arg: never) => unknown;
 }
 
-/** A validated scope, or why reading failed; `cause` (a clone or normalize error) is kept for `ScopeError` and never formatted. */
-type ParseResult = { readonly scope?: ParsedScope; readonly violations: ScopeViolation[]; readonly cause?: unknown };
+/**
+ * A validated scope, or why reading failed; `cause` (a clone or normalize
+ * error) is kept for `ScopeError` and never formatted. Built only by
+ * {@link parseResult}, so every field is own and none is inherited.
+ */
+type ParseResult = { readonly scope: ParsedScope | undefined; readonly violations: ScopeViolation[]; readonly cause: unknown };
+
+function parseResult(scope: ParsedScope | undefined, violations: ScopeViolation[], cause?: unknown): ParseResult {
+  return ownRecord<ParseResult>({ scope, violations, cause });
+}
 
 /**
  * Defines a provider scope grammar. Throws `TypeError` for an invalid
@@ -372,12 +406,14 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   for (const key of Object.keys(definition)) {
     if (!DEFINITION_KEYS.has(key)) throw new TypeError(`Scope grammar definition has unsupported option ${JSON.stringify(key)}`);
   }
-  const { provider, dimensions } = definition as { provider: unknown; dimensions: unknown };
+  // Own properties only: a polluted prototype never supplies a field or callback.
+  const provider = own(definition, 'provider');
+  const dimensions = own(definition, 'dimensions');
   if (typeof provider !== 'string' || provider.trim() === '' || hasControlChar(provider)) {
     throw new TypeError('Scope grammar provider must be a non-empty string');
   }
-  const normalize = readCallback(provider, 'normalize', definition.normalize, true) as ((input: TInput) => unknown) | undefined;
-  const riskOf = readCallback(provider, 'riskOf', definition.riskOf, false) as (item: ScopeItem<D>) => unknown;
+  const normalize = readCallback(provider, 'normalize', own(definition, 'normalize'), true) as ((input: TInput) => unknown) | undefined;
+  const riskOf = readCallback(provider, 'riskOf', own(definition, 'riskOf'), false) as (item: ScopeItem<D>) => unknown;
 
   let dimensionDefs: unknown;
   try {
@@ -386,7 +422,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     throw new TypeError(`Scope grammar "${provider}": dimensions must be plain data`, { cause: error });
   }
   if (!isCloneRecord(dimensionDefs)) throw new TypeError(`Scope grammar "${provider}": dimensions must be an object`);
-  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, dimensionDefs[name]));
+  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name)));
   if (results.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
@@ -405,7 +441,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
     return frozen as NormalizedScope<D>;
   };
 
-  const fail = (side: Side, message: string, cause: unknown): ParseResult => ({ violations: [malformed(side, message)], cause });
+  const fail = (side: Side, message: string, cause: unknown): ParseResult => parseResult(undefined, [malformed(side, message)], cause);
 
   /**
    * Reads one untrusted input: one structured clone, `normalize` on that
@@ -433,7 +469,7 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       }
     }
     const parsed = parseScope(dims, byName, value, side);
-    return Array.isArray(parsed) ? { violations: parsed } : { scope: parsed, violations: [] };
+    return Array.isArray(parsed) ? parseResult(undefined, parsed) : parseResult(parsed, []);
   };
 
   /**

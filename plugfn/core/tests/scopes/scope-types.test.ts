@@ -132,6 +132,47 @@ void widenedItems;
 const accepted: AnyScopeGrammar[] = [concrete, loose, mixedGrammar, templatedGrammar, unionGrammar];
 void accepted;
 
+// Output objects have a null prototype: inherited members are not callable on any of them.
+if (normalized.ok) {
+  // @ts-expect-error an exact snapshot has no toString at runtime
+  normalized.scope.toString();
+  const absent: undefined = normalized.scope.hasOwnProperty;
+  void absent;
+}
+// @ts-expect-error exact published dimensions have no hasOwnProperty at runtime
+concrete.dimensions.hasOwnProperty('names');
+if (looseScope.ok) {
+  // @ts-expect-error a widened snapshot has no toString at runtime
+  looseScope.scope.toString();
+  const member: readonly string[] | number | undefined = looseScope.scope.constructor;
+  void member;
+}
+// @ts-expect-error widened published dimensions have no hasOwnProperty at runtime
+loose.dimensions.hasOwnProperty('anything');
+const anyGrammar: AnyScopeGrammar = loose;
+const anyScope = anyGrammar.normalize({});
+if (anyScope.ok) {
+  // @ts-expect-error the AnyScopeGrammar snapshot has no valueOf at runtime
+  anyScope.scope.valueOf();
+}
+// A declared dimension that uses an inherited name keeps its own type.
+const inheritedNames = defineScopeGrammar({
+  provider: 'inherited-names',
+  dimensions: { constructor: { kind: 'numericMax' }, toString: { kind: 'exactSet' } },
+  riskOf: () => 'read',
+});
+const inheritedScope = inheritedNames.normalize({ constructor: 1, toString: ['a'] });
+if (inheritedScope.ok) {
+  const ctor: number = inheritedScope.scope.constructor;
+  const text: readonly string[] = inheritedScope.scope.toString;
+  // @ts-expect-error a name that is neither declared nor present stays absent
+  inheritedScope.scope.valueOf();
+  void ctor;
+  void text;
+}
+const ctorDimension: { readonly kind: 'numericMax' } = inheritedNames.dimensions.constructor;
+void ctorDimension;
+
 // A per-key union of kinds in an exact definition keeps both possibilities.
 type Mixed = { readonly d: { kind: 'exactSet' } | { kind: 'numericMax' } };
 const mixedSet: ScopeShape<Mixed> = { d: ['a'] };

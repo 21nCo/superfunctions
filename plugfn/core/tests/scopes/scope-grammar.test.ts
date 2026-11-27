@@ -444,7 +444,70 @@ describe('fail closed', () => {
     }
   });
 
-  it('rejects sets and members beyond the input limits, checking the length before any member', () => {
+  it('never takes a dimension kind, option or callback from a polluted prototype at define time', () => {
+    const objectProto = Object.prototype as Record<string, unknown>;
+    const injected = () => ({});
+    const pollution: Record<string, unknown> = { kind: 'prefixGlobSet', values: ['other'], max: -1, integer: true, normalize: injected };
+    Object.assign(objectProto, pollution);
+    let missingKind: unknown;
+    let defined: ReturnType<typeof defineScopeGrammar> | undefined;
+    try {
+      missingKind = thrownBy(() => defineScopeGrammar({ provider: 'polluted', dimensions: { paths: {} } as never, riskOf }));
+      defined = defineScopeGrammar({ provider: 'polluted', dimensions: { names: { kind: 'exactSet' }, rate: { kind: 'numericMax' } }, riskOf });
+    } finally {
+      for (const key of Object.keys(pollution)) delete objectProto[key];
+    }
+    expect(missingKind).toBeInstanceOf(TypeError);
+    expect((missingKind as Error).message).toMatch(/unsupported kind undefined/);
+    // No vocabulary, max, integer or normalize was taken from the prototype.
+    const scope = { names: ['x'], rate: 1.5 };
+    expect(defined!.isSubset(scope, { names: ['x'], rate: 2 })).toMatchObject({ ok: true, scope });
+    expect(defined!.isSubset({ names: ['x'], rate: 3 }, { names: ['x'], rate: 2 }).violations).toEqual([
+      expect.objectContaining({ code: 'exceeds_envelope', dimension: 'rate' }),
+    ]);
+  });
+
+  it('keeps every result and never throws a native error when the prototype is polluted after define', () => {
+    const vectors: [unknown, unknown][] = [
+      [base, envelope],
+      [{ ...base, permissions: ['contents:write'], resources: ['org/app-1'], rate: 100, ttl: 3600 }, envelope],
+      [{ ...base, permissions: ['admin'], resources: ['org/x'], rate: 101, ttl: 3601 }, envelope],
+      [{ ...base, permissions: ['nope'] }, envelope],
+      [base, { ...envelope, rate: 'x' }],
+    ];
+    const run = () =>
+      vectors.map(([request, env]) => {
+        const risk = (() => {
+          try {
+            return grammar.classifyRisk(request as never);
+          } catch (error) {
+            return error instanceof ScopeError ? 'ScopeError' : error;
+          }
+        })();
+        return { subset: grammar.isSubset(request as never, env as never), normalized: grammar.normalize(request as never), risk };
+      });
+    const expected = JSON.stringify(run());
+    const objectProto = Object.prototype as Record<string, unknown>;
+    const pollution: Record<string, unknown> = {
+      vocabulary: {},
+      min: 1e9,
+      max: -1,
+      integer: true,
+      scope: new Map([['rate', 0]]),
+      cause: 'polluted',
+    };
+    Object.assign(objectProto, pollution);
+    let polluted: string;
+    try {
+      polluted = JSON.stringify(run());
+    } finally {
+      for (const key of Object.keys(pollution)) delete objectProto[key];
+    }
+    expect(polluted).toBe(expected);
+    expect(expected).toContain('"ok":true');
+  });
+
+  it('rejects sets beyond the input limits on the cloned value, before validating any member', () => {
     const tooMany = Array.from({ length: SCOPE_LIMITS.maxSetItems + 1 }, (_, i) => `l-${i}`);
     expect(violationsOf({ ...base, labels: tooMany }).violations).toEqual([
       expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels' }),
