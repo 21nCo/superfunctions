@@ -319,6 +319,20 @@ defineScopeGrammar<TtlDims, SecondsOrMinutes>({ provider: 'union-extra', dimensi
 // @ts-expect-error a stored union input whose members add fields, without normalize
 const storedUnion: ScopeCallbackGrammarDefinition<TtlDims, SecondsOrMinutes> = { provider: 'union-extra', dimensions: ttlDims, riskOf: () => 'read' };
 void storedUnion;
+// Broad input types admit non-scope values even when every dimension is optional.
+type NamesDims = { readonly names: { kind: 'exactSet' } };
+const namesDims: NamesDims = { names: { kind: 'exactSet' } };
+// @ts-expect-error an empty-object input, without normalize
+defineScopeGrammar<NamesDims, {}>({ provider: 'broad', dimensions: namesDims, riskOf: () => 'read' });
+// @ts-expect-error an object input, without normalize
+defineScopeGrammar<NamesDims, object>({ provider: 'broad', dimensions: namesDims, riskOf: () => 'read' });
+// @ts-expect-error a union with a broad member, without normalize
+const storedBroad: ScopeCallbackGrammarDefinition<NamesDims, ScopeShape<NamesDims> | {}> = { provider: 'broad', dimensions: namesDims, riskOf: () => 'read' };
+void storedBroad;
+// A narrowed canonical input, such as a literal TTL, needs no normalize.
+const literalTtl: ScopeCallbackGrammar<TtlDims, { readonly ttl: 60 }> = defineScopeGrammar({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
+literalTtl.classifyRisk({ ttl: 60 });
+defineScopeGrammar<TtlDims, { readonly ttl: 60 }>({ provider: 'literal-ttl', dimensions: ttlDims, riskOf: () => 'read' });
 // Generic factories build risk-only definitions with the canonical input.
 function riskOnlyFor<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
   return defineScopeGrammar({ provider: 'generic', dimensions, riskOf: () => 'read' });

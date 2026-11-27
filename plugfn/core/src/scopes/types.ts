@@ -298,14 +298,16 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  * freezes the value keeps its `constructor` from being restored.
  */
 export type ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> =
-  // `normalize` is optional only when `TInput` is exactly `ScopeShape<D>`:
-  // each assignable to the other, with no key (an optional one, or one of
-  // any union member, included) outside it. Each check is written directly on `TInput`, so for a generic
-  // `D` with `TInput` = `ScopeShape<D>` the compiler relates a definition
-  // to the optional branch alone.
+  // `normalize` is optional only when `TInput` is canonical input: assignable
+  // to `ScopeShape<D>` (a narrowed value, such as a literal TTL, included),
+  // and every union member has exactly its keys, optional ones included, so
+  // neither an extra field nor a broad type such as `{}` or `object` passes.
+  // Each check is written directly on `TInput`, so for a generic `D` with
+  // `TInput` = `ScopeShape<D>` the compiler relates a definition to the
+  // optional branch alone.
   [TInput] extends [ScopeShape<D>]
-    ? [ScopeShape<D>] extends [TInput]
-      ? [InputKeys<TInput>] extends [keyof ScopeShape<D>]
+    ? [InputKeys<TInput>] extends [keyof ScopeShape<D>]
+      ? [keyof ScopeShape<D>] extends [keyof TInput]
         ? ScopeCallbackGrammarFields<D, TInput>
         : ScopeNormalizingFields<D, TInput>
       : ScopeNormalizingFields<D, TInput>
@@ -323,8 +325,9 @@ type ScopeNormalizingFields<D extends ScopeDimensions, TInput> = ScopeCallbackGr
  * The fields of a {@link ScopeCallbackGrammarDefinition}, where `normalize`
  * is optional whatever the input type. Declare a definition with
  * `ScopeCallbackGrammarDefinition`, which requires `normalize` for any
- * input type other than exactly `ScopeShape` (one with extra fields,
- * optional ones included); a generic definition type built on it is an intersection with
+ * input type that is not canonical: one that is not assignable to
+ * `ScopeShape`, or whose union members do not all have exactly its keys
+ * (extra fields, optional ones included, and broad types such as `{}`); a generic definition type built on it is an intersection with
  * `ScopeCallbackGrammarDefinition`, which keeps that requirement (an
  * interface cannot extend a conditional type).
  */
