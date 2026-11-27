@@ -211,7 +211,11 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * data properties. A class instance, an inherited option, a getter or
    * setter, or a non-enumerable or symbol-keyed property makes
    * `defineScopeGrammar` throw `TypeError`, because the engine would not
-   * enforce it. The checked data is then read once as its structured clone.
+   * enforce it. A `values` array must also be dense, with no extra key. Each
+   * object is read once, through its property descriptors, into the engine's
+   * own copy, and only that copy is compiled and published: changing the
+   * definition objects later, even from a Proxy trap during the read, cannot
+   * change what the grammar enforces.
    */
   readonly dimensions: D;
   /**

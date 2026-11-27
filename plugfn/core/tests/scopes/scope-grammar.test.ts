@@ -139,10 +139,10 @@ describe('defineScopeGrammar', () => {
   });
 
   it('reads the definition once as plain data and never runs a definition getter', () => {
-    // A Proxy or a function option still cannot be cloned.
-    expect(() =>
-      defineScopeGrammar({ provider: 'p', dimensions: new Proxy({ ttl: { kind: 'ttlMax' as const } }, {}), riskOf }),
-    ).toThrow(TypeError);
+    // A transparent Proxy is read once as the data it reports; a function option still throws.
+    const proxied = defineScopeGrammar({ provider: 'p', dimensions: new Proxy({ ttl: { kind: 'ttlMax' as const, maxSeconds: 60 } }, {}), riskOf });
+    expect(proxied.dimensions.ttl).toEqual({ kind: 'ttlMax', maxSeconds: 60 });
+    expect(proxied.isSubset({ ttl: 120 }, { ttl: 120 }).ok).toBe(false);
     expect(() =>
       defineScopeGrammar({ provider: 'p', dimensions: { ttl: { kind: 'ttlMax', maxSeconds: () => 60 } } as never, riskOf }),
     ).toThrow(TypeError);
@@ -221,6 +221,102 @@ describe('defineScopeGrammar', () => {
     expect(nullProto.isSubset({ ttl: 86_400, names: ['a'] }, { ttl: 86_400, names: ['a'] }).ok).toBe(false);
     expect(nullProto.isSubset({ ttl: 60, names: ['b'] }, { ttl: 60, names: ['a', 'b'] }).ok).toBe(false);
     expect(nullProto.isSubset({ ttl: 60, names: ['a'] }, { ttl: 60, names: ['a'] }).ok).toBe(true);
+  });
+
+  it('compiles only its own copy of the dimensions, so a trap that changes the author objects mid-read cannot drop a checked bound', () => {
+    // A sibling Proxy entry, read before ttl, hides the ttl cap and swaps itself out.
+    const ttl = { kind: 'ttlMax' as const, maxSeconds: 30 };
+    const dims: Record<string, unknown> = {};
+    let swapped = false;
+    dims.p = new Proxy(
+      { kind: 'prefixGlobSet' },
+      {
+        ownKeys(target) {
+          if (!swapped) {
+            swapped = true;
+            Object.defineProperty(ttl, 'maxSeconds', { enumerable: false });
+            dims.p = { kind: 'prefixGlobSet' };
+          }
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    dims.ttl = ttl;
+    const outcome = (() => {
+      try {
+        return defineScopeGrammar({ provider: 'p', dimensions: dims as never, riskOf });
+      } catch (error) {
+        return error;
+      }
+    })();
+    if (outcome instanceof Error) {
+      expect(outcome).toBeInstanceOf(TypeError);
+    } else {
+      const defined = outcome as AnyScopeGrammar;
+      expect(defined.dimensions.ttl).toEqual({ kind: 'ttlMax', maxSeconds: 30 });
+      expect(defined.isSubset({ ttl: 86_400 }, { ttl: 86_400 }).ok).toBe(false);
+    }
+
+    // A dimensions Proxy whose trap changes a sibling while it is read, and
+    // changes to the author objects after define: the grammar enforces exactly
+    // what it publishes, and nothing after the read reaches it.
+    const rate = { kind: 'numericMax' as const, max: 10 };
+    const names = { kind: 'exactSet' as const, values: ['a'] };
+    const dimensions = new Proxy(
+      { rate, names },
+      {
+        ownKeys(target) {
+          rate.max = 20;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    const defined = defineScopeGrammar({ provider: 'p', dimensions, riskOf });
+    rate.max = 1_000_000;
+    names.values.push('b');
+    Object.defineProperty(rate, 'max', { enumerable: false });
+    expect(defined.dimensions).toEqual({ rate: { kind: 'numericMax', max: 20 }, names: { kind: 'exactSet', values: ['a'] } });
+    expect(defined.isSubset({ rate: 20, names: ['a'] }, { rate: 20, names: ['a'] }).ok).toBe(true);
+    expect(defined.isSubset({ rate: 21, names: ['a'] }, { rate: 21, names: ['a'] }).ok).toBe(false);
+    expect(defined.isSubset({ rate: 1, names: ['b'] }, { rate: 1, names: ['a', 'b'] }).ok).toBe(false);
+  });
+
+  it('never lets a polluted descriptor default make an accessor look like data', () => {
+    const objectProto = Object.prototype as Record<string, unknown>;
+    let reads = 0;
+    const getter = (value: unknown) => ({
+      enumerable: true,
+      get: () => {
+        reads++;
+        return value;
+      },
+    });
+    const accessorOption = Object.defineProperty({ kind: 'ttlMax' }, 'maxSeconds', getter(30));
+    const accessorEntry = Object.defineProperty({}, 'ttl', getter({ kind: 'ttlMax', maxSeconds: 30 }));
+    const accessorField = Object.defineProperty({ provider: 'p', riskOf }, 'dimensions', getter({ ttl: { kind: 'ttlMax' } }));
+    const cases: [string, unknown][] = [
+      ['an accessor option', { provider: 'p', dimensions: { ttl: accessorOption }, riskOf }],
+      ['an accessor entry', { provider: 'p', dimensions: accessorEntry, riskOf }],
+      ['an accessor definition field', accessorField],
+    ];
+    const pollution: Record<string, unknown> = { value: 30, enumerable: true, writable: true };
+    Object.assign(objectProto, pollution);
+    const errors: unknown[] = [];
+    try {
+      for (const [, definition] of cases) errors.push(thrownBy(() => defineScopeGrammar(definition as never)));
+    } finally {
+      for (const key of Object.keys(pollution)) delete objectProto[key];
+    }
+    errors.forEach((error, i) => {
+      expect(error, cases[i]![0]).toBeInstanceOf(TypeError);
+      expect((error as Error).message, cases[i]![0]).toMatch(/must be plain data/);
+    });
+    expect(reads).toBe(0);
+  });
+
+  it('rejects a definition values array with an extra key', () => {
+    const values = Object.assign(['a'], { extra: 'b' });
+    expect(() => defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
   });
 
   it('rejects an exactSet vocabulary that is too large, sparse or not made of strings', () => {
@@ -1386,6 +1482,71 @@ describe('performance', () => {
     expect(result?.ok).toBe(true);
     expect(globs.isSubset({ paths: [`${'a'.repeat(depth)}y`] }, { paths }).ok).toBe(false);
     expect(elapsed).toBeLessThan(50);
+  });
+
+  describe('integer-like members, which V8 hashes without its seed', () => {
+    // String(i * 4096) and String(i * 65536) are array-index strings: V8
+    // hashes them from their numeric value, so they share one bucket chain in
+    // a Set keyed by the member itself.
+    const literals = defineScopeGrammar({
+      provider: 'index-strings',
+      dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' } },
+      riskOf: () => 'read',
+    });
+    const colliding = (step: number) => Array.from({ length: n }, (_, i) => String(i * step));
+
+    for (const step of [4096, 65_536]) {
+      it(`compares 10k exactSet members String(i * ${step}) in under 50 ms`, () => {
+        const items = colliding(step);
+        let result: ReturnType<typeof literals.isSubset> | undefined;
+        const elapsed = bestOfThree(() => {
+          result = literals.isSubset({ ids: items }, { ids: items });
+        });
+        expect(result?.ok).toBe(true);
+        expect(literals.isSubset({ ids: ['1'] }, { ids: items }).ok).toBe(false);
+        expect(elapsed).toBeLessThan(50);
+      });
+
+      it(`compares 10k prefixGlobSet literals String(i * ${step}) in under 50 ms`, () => {
+        const items = colliding(step);
+        let result: ReturnType<typeof literals.isSubset> | undefined;
+        const elapsed = bestOfThree(() => {
+          result = literals.isSubset({ paths: items }, { paths: items });
+        });
+        expect(result?.ok).toBe(true);
+        expect(literals.isSubset({ paths: ['1'] }, { paths: items }).ok).toBe(false);
+        expect(elapsed).toBeLessThan(50);
+      });
+
+      it(`deduplicates a request of 10k colliding members String(i * ${step}) in under 50 ms`, () => {
+        // 5k distinct members, each twice.
+        const items = colliding(step).map((_, i) => String((i % half) * step));
+        let result: ReturnType<typeof literals.normalize> | undefined;
+        const elapsed = bestOfThree(() => {
+          result = literals.normalize({ ids: items });
+        });
+        expect(result?.ok).toBe(true);
+        expect(result?.ok && result.scope.ids).toHaveLength(half);
+        expect(result?.ok && result.scope.ids.slice(0, 2)).toEqual(['0', String(step)]);
+        expect(elapsed).toBeLessThan(50);
+      });
+
+      it(`checks 10k members against a 10k-value vocabulary of String(i * ${step}) in under 50 ms`, () => {
+        const items = colliding(step);
+        const vocabulary = defineScopeGrammar({
+          provider: 'index-vocabulary',
+          dimensions: { ids: { kind: 'exactSet', values: items } },
+          riskOf: () => 'read',
+        });
+        let result: ReturnType<typeof vocabulary.isSubset> | undefined;
+        const elapsed = bestOfThree(() => {
+          result = vocabulary.isSubset({ ids: items }, { ids: items });
+        });
+        expect(result?.ok).toBe(true);
+        expect(vocabulary.normalize({ ids: ['1'] })).toMatchObject({ ok: false, violations: [expect.objectContaining({ code: 'malformed', item: '1' })] });
+        expect(elapsed).toBeLessThan(50);
+      });
+    }
   });
 
   it('stays within 50 ms for 10k shuffled envelope globs sharing a 64-unit prefix', () => {

@@ -159,6 +159,21 @@ function invalidMember(value: unknown, glob: boolean): string | undefined {
 }
 
 /**
+ * The key a validated set member is stored under in every engine `Set`. V8
+ * hashes a string that reads as an array index from its numeric value,
+ * without the per-process hash seed, so untrusted members such as
+ * `String(i * 4096)` could all land in one bucket chain. Only a string that
+ * starts with a digit can be an index; it is keyed with a leading control
+ * character, which no member may contain, so keys stay distinct, none is an
+ * index and every one is hashed with the seed. Members are at most
+ * `maxMemberLength` code units, so a key is always hashed in full.
+ */
+function memberKey(value: string): string {
+  const first = value.charCodeAt(0);
+  return first >= 0x30 && first <= 0x39 ? `\u0001${value}` : value;
+}
+
+/**
  * An own property of a record, or `undefined`: a value inherited from a
  * (possibly polluted) prototype is never read.
  */
@@ -167,51 +182,111 @@ function own(record: object, key: string): unknown {
 }
 
 const PLAIN_DEFINITION = 'must be plain data: objects with a prototype of Object.prototype or null, arrays, and only enumerable string-keyed data properties (no getters or setters)';
+const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /**
- * The own data properties of one trusted definition object, read once through
- * its descriptors into a null-prototype record. Throws unless the object is
- * plain: a prototype of exactly `Object.prototype` or `null` (or
- * `Array.prototype` for an array) and only enumerable string-keyed data
- * properties. Nothing is inherited and no getter runs, so the record is exactly
- * the data the author wrote. `structuredClone` would silently drop an
- * inherited, non-enumerable or symbol-keyed property or a prototype accessor,
- * and a dropped bound or dimension would weaken the grammar the types describe.
+ * Whether a property descriptor describes a data property: it has its own
+ * `value` and no own `get` or `set`. Every field is read only when own, so a
+ * polluted `Object.prototype.value` or `.enumerable` cannot make an accessor
+ * look like data.
  */
-function readDefinitionData(where: string, value: object): Record<string, unknown> {
-  const isArray = Array.isArray(value);
-  const proto: unknown = Object.getPrototypeOf(value);
-  if (isArray ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
-  // Bound the descriptor read: no definition array may exceed the set limit.
-  if (isArray && (value as unknown[]).length > MAX_SET_ITEMS) throw new TypeError(`${where} arrays must have at most ${MAX_SET_ITEMS} items`);
+function isDataDescriptor(descriptor: PropertyDescriptor): boolean {
+  return Object.hasOwn(descriptor, 'value') && !Object.hasOwn(descriptor, 'get') && !Object.hasOwn(descriptor, 'set');
+}
+
+function isEnumerable(descriptor: PropertyDescriptor): boolean {
+  return Object.hasOwn(descriptor, 'enumerable') && descriptor.enumerable === true;
+}
+
+/**
+ * Every own property descriptor of one trusted definition object, read once
+ * (a Proxy's traps run at most once here). Throws unless every key is a
+ * string and every property is data, never an accessor, so no getter runs.
+ */
+function readDescriptors(where: string, value: object): [string, PropertyDescriptor][] {
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const data = Object.create(null) as Record<string, unknown>;
+  const entries: [string, PropertyDescriptor][] = [];
   for (const key of Reflect.ownKeys(descriptors)) {
     const descriptor = descriptors[key as keyof typeof descriptors] as PropertyDescriptor;
-    const arrayLength = isArray && key === 'length';
-    if (typeof key !== 'string' || !('value' in descriptor) || !(descriptor.enumerable === true || arrayLength)) {
-      throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
-    }
-    if (!arrayLength) data[key] = descriptor.value;
+    if (typeof key !== 'string' || !isDataDescriptor(descriptor)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+    entries.push([key, descriptor]);
+  }
+  return entries;
+}
+
+/**
+ * A fresh null-prototype record holding the own data of one trusted
+ * definition object, read once through its descriptors. Throws unless the
+ * object is plain: a prototype of exactly `Object.prototype` or `null` and
+ * only enumerable string-keyed data properties. Nothing is inherited and no
+ * getter runs. The engine compiles and publishes only from such copies and
+ * never reads the author's object again, so the grammar enforces exactly the
+ * data checked here.
+ */
+function readDefinitionData(where: string, value: object): Record<string, unknown> {
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (Array.isArray(value) || (proto !== Object.prototype && proto !== null)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+  const data = Object.create(null) as Record<string, unknown>;
+  for (const [key, descriptor] of readDescriptors(where, value)) {
+    if (!isEnumerable(descriptor)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+    data[key] = descriptor.value;
   }
   return data;
 }
 
 /**
- * Checks a trusted definition subtree (the `dimensions` object, its entries
- * and their options) with {@link readDefinitionData} before it is cloned:
- * with no accessor anywhere, the clone runs no author code and copies exactly
- * the data checked here. A Proxy or function still fails in the clone.
+ * A fresh dense copy of one trusted definition array, read once through its
+ * descriptors: its prototype is `Array.prototype` and it holds only its
+ * enumerable index data properties (no hole, no extra key) and at most
+ * `maxSetItems` of them.
  */
-function assertPlainDefinition(where: string, root: unknown): void {
-  const seen = new Set<object>();
-  const pending: unknown[] = [root];
-  while (pending.length > 0) {
-    const value = pending.pop();
-    if (typeof value !== 'object' || value === null || seen.has(value)) continue;
-    seen.add(value);
-    for (const member of Object.values(readDefinitionData(where, value))) pending.push(member);
+function readDefinitionArray(where: string, value: readonly unknown[]): unknown[] {
+  if (Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+  // Bound the descriptor read before it allocates one descriptor per member.
+  if (value.length > MAX_SET_ITEMS) throw new TypeError(`${where} must have at most ${MAX_SET_ITEMS} items`);
+  const members: unknown[] = [];
+  let length = 0;
+  let count = 0;
+  for (const [key, descriptor] of readDescriptors(where, value)) {
+    if (key === 'length') {
+      length = descriptor.value as number;
+    } else if (ARRAY_INDEX.test(key) && isEnumerable(descriptor)) {
+      members[Number(key)] = descriptor.value;
+      count++;
+    } else {
+      throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+    }
   }
+  if (length > MAX_SET_ITEMS) throw new TypeError(`${where} must have at most ${MAX_SET_ITEMS} items`);
+  if (count !== length || members.length !== length) throw new TypeError(`${where} must not have missing items`);
+  return members;
+}
+
+/**
+ * The engine's own copy of the trusted `dimensions` definition, made in one
+ * read of each author object: a null-prototype record of null-prototype
+ * entries, with each array option copied into a fresh array. The schema is
+ * three levels deep, so the walk is bounded and a cycle cannot recur. Any
+ * other value is copied as it is, and {@link compileDimension} rejects every
+ * one that is not a valid option.
+ */
+function readDimensionsDefinition(provider: string, dimensions: unknown): Record<string, Record<string, unknown>> {
+  const where = `Scope grammar "${provider}": dimensions`;
+  if (typeof dimensions !== 'object' || dimensions === null) throw new TypeError(`${where} must be an object`);
+  const entries = readDefinitionData(where, dimensions);
+  const copy = Object.create(null) as Record<string, Record<string, unknown>>;
+  for (const name of Object.keys(entries)) {
+    const entryWhere = `Scope grammar "${provider}": dimension "${name}"`;
+    const entry = entries[name];
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new TypeError(`${entryWhere} must be an object`);
+    const options = readDefinitionData(entryWhere, entry);
+    for (const key of Object.keys(options)) {
+      const option = options[key];
+      if (Array.isArray(option)) options[key] = readDefinitionArray(`${entryWhere} ${key}`, option);
+    }
+    copy[name] = options;
+  }
+  return copy;
 }
 
 /** A frozen null-prototype record holding exactly the given own fields. */
@@ -243,14 +318,14 @@ function compiledDimension(name: string, kind: ScopeDimensionKind, integer: bool
 }
 
 /**
- * Compiles one dimension of the cloned definition; options left `undefined`
- * are absent. Only own properties are read, so a polluted prototype can never
- * supply a kind or an option.
+ * Compiles one dimension of the engine's copy of the definition (see
+ * {@link readDimensionsDefinition}); options left `undefined` are absent. Only
+ * own properties are read, so a polluted prototype can never supply a kind or
+ * an option.
  */
-function compileDimension(provider: string, name: string, def: unknown): CompileResult {
+function compileDimension(provider: string, name: string, def: Record<string, unknown>): CompileResult {
   const where = `Scope grammar "${provider}": dimension "${name}"`;
   if (!DIMENSION_NAME.test(name)) throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
-  if (!isCloneRecord(def)) throw new TypeError(`${where} must be an object`);
   const kind = own(def, 'kind');
   if (typeof kind !== 'string' || !Object.hasOwn(DIMENSION_KEYS, kind)) {
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : typeof kind}`);
@@ -273,7 +348,7 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
         const reason = invalidMember(value, false);
         if (reason) throw new TypeError(`${where} value ${reason}`);
       }
-      compiled = compiledDimension(name, 'exactSet', false, undefined, undefined, new Set(members as string[]));
+      compiled = compiledDimension(name, 'exactSet', false, undefined, undefined, new Set((members as string[]).map(memberKey)));
       break;
     }
     case 'prefixGlobSet':
@@ -296,8 +371,11 @@ function compileDimension(provider: string, name: string, def: unknown): Compile
       break;
     }
   }
-  // The validated clone, minus options left undefined; arrays are copied and frozen.
-  const published = Object.entries(def).flatMap(([key, value]) => (value === undefined ? [] : [[key, Array.isArray(value) ? Object.freeze([...value]) : value]]));
+  // The validated copy, minus options left undefined; arrays are copied and frozen.
+  const published = Object.keys(def).flatMap(key => {
+    const value = def[key];
+    return value === undefined ? [] : [[key, Array.isArray(value) ? Object.freeze([...value]) : value]];
+  });
   return { compiled, published: Object.freeze(Object.fromEntries(published)) as ScopeDimension };
 }
 
@@ -315,20 +393,25 @@ function parseSet(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeVi
   // Only the request is deduplicated (it becomes the snapshot); the envelope
   // is engine-owned and read only by the comparisons.
   const seen = side === 'request' ? new Set<string>() : undefined;
+  const unique: string[] = [];
   const before = out.length;
   for (let i = 0; i < members.length; i++) {
     const value = members[i];
     const reason = invalidMember(value, glob);
     if (reason) {
       out.push(malformed(side, `dimension "${dim.name}" item ${i} ${reason}`, dim.name, typeof value === 'string' ? value : undefined));
-    } else if (dim.vocabulary && !dim.vocabulary.has(value as string)) {
+      continue;
+    }
+    const key = memberKey(value as string);
+    if (dim.vocabulary && !dim.vocabulary.has(key)) {
       out.push(malformed(side, `dimension "${dim.name}" item ${i} is not in the grammar`, dim.name, value as string));
-    } else {
-      seen?.add(value as string);
+    } else if (seen && !seen.has(key)) {
+      seen.add(key);
+      unique.push(value as string);
     }
   }
   if (out.length !== before) return undefined;
-  return seen ? Object.freeze([...seen]) : (members as readonly string[]);
+  return seen ? Object.freeze(unique) : (members as readonly string[]);
 }
 
 function parseScalar(dim: CompiledDimension, raw: unknown, side: Side, out: ScopeViolation[]): number | undefined {
@@ -369,9 +452,9 @@ function parseScope(dims: readonly CompiledDimension[], byName: ReadonlyMap<stri
 }
 
 function compareExact(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
-  const allowed = new Set(envelope);
+  const allowed = new Set(envelope.map(memberKey));
   for (const item of request) {
-    if (!allowed.has(item)) {
+    if (!allowed.has(memberKey(item))) {
       out.push({ code: 'not_in_envelope', side: 'request', dimension: name, item, message: `"${item}" is not in the envelope for "${name}"` });
     }
   }
@@ -491,20 +574,20 @@ function hasPrefixIn(root: RadixNode, body: string, length: number): boolean {
  * of `q`. The envelope's glob prefixes go into a nibble radix trie in the
  * order given, with no sort: building it is linear in the envelope's code
  * units, and each request item is then checked with one walk over its own code
- * units, each child lookup one array index. Evaluation is linear in the input,
- * no hash function decides the cost, and memory is linear in the number of
- * envelope globs.
+ * units, each child lookup one array index. Literals are looked up by
+ * {@link memberKey}, so no input chooses its hash. Evaluation is linear in the
+ * input, and memory is linear in the number of envelope globs.
  */
 function comparePrefixGlob(name: string, request: readonly string[], envelope: readonly string[], out: ScopeViolation[]): void {
   const literals = new Set<string>();
   let trie: RadixNode | undefined;
   for (const pattern of envelope) {
     if (pattern.endsWith('*')) insertPrefix((trie ??= radixNode('', 0, false)), pattern, pattern.length - 1);
-    else literals.add(pattern);
+    else literals.add(memberKey(pattern));
   }
   for (const item of request) {
     const isGlob = item.endsWith('*');
-    if (!isGlob && literals.has(item)) continue;
+    if (!isGlob && literals.has(memberKey(item))) continue;
     const covered = trie !== undefined && hasPrefixIn(trie, item, isGlob ? item.length - 1 : item.length);
     if (!covered) {
       out.push({ code: 'not_in_envelope', side: 'request', dimension: name, item, message: `"${item}" is not covered by the envelope for "${name}"` });
@@ -557,17 +640,11 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   const normalize = readCallback(provider, 'normalize', fields.normalize, true) as ((input: TInput) => unknown) | undefined;
   const riskOf = readCallback(provider, 'riskOf', fields.riskOf, false) as (item: ScopeItem<D>) => unknown;
 
-  // The dimensions are checked as plain data, then cloned and compiled from
-  // that one clone: the engine enforces exactly what the author wrote.
-  assertPlainDefinition(`Scope grammar "${provider}": dimensions`, dimensions);
-  let dimensionDefs: unknown;
-  try {
-    dimensionDefs = clone(dimensions);
-  } catch (error) {
-    throw new TypeError(`Scope grammar "${provider}": dimensions must be plain data`, { cause: error });
-  }
-  if (!isCloneRecord(dimensionDefs)) throw new TypeError(`Scope grammar "${provider}": dimensions must be an object`);
-  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, own(dimensionDefs, name)));
+  // One read of each dimensions object builds the engine's own copy, and only
+  // that copy is compiled and published: the engine enforces exactly the data
+  // it checked and never reads the author's objects again.
+  const dimensionDefs = readDimensionsDefinition(provider, dimensions);
+  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, dimensionDefs[name]!));
   if (results.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
