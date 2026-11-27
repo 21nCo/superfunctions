@@ -295,12 +295,14 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   /** On a cold version cache, read the version first: a probe that hangs or overruns its output bound ends timed_out. */
   private async confirmVersion(run: Prepared, executable: string, key: string): Promise<SlotHarnessOutput | undefined> {
-    const timeoutMs = Math.max(1, Math.min(VERSION_TIMEOUT_MS, run.deadline - Date.now()));
-    // A cached observation this run's own secrets refuse is no verdict: the run reads the version again within its deadline.
+    // A cached observation this run's own secrets refuse is no verdict: the run reads the version again, only if it is
+    // neither canceled nor out of time, and within what remains of its deadline.
     const cached = this.versions.get(key);
     const warm = cached && publishable(cached, run.secrets);
-    const probed = warm && !("error" in warm) ? warm : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
+    const remaining = run.deadline - Date.now();
+    const probed = warm && !("error" in warm) ? warm : run.input.signal?.aborted || remaining <= 0 ? undefined : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, Math.min(VERSION_TIMEOUT_MS, remaining), run.input.signal);
     if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
+    if (!probed) return run.state.finish("timed_out", "The CLI exceeded its configured bound before its version was read.");
     if (!("error" in probed)) { run.state.harnessVersion = probed.version; return undefined; }
     return run.state.finish(probed.timedOut ? "timed_out" : "failed", probed.error);
   }
@@ -674,14 +676,15 @@ function redact(text: string, secrets: readonly string[], withheld: ReadonlyArra
 }
 
 /**
- * A version observation's token, published only when the transcript pipeline, redact(), leaves it as written at its own
- * place in the probe output and on its own: whatever redact() reaches it through (a registered secret, escaped or across
- * both streams, or a credential shape core redactText() redacts) refuses it, and a label redaction keeps does not.
+ * A version observation's token, published only when the transcript pipeline, redact(), leaves its own span as written:
+ * no registered secret span (escaped or across both streams) reaches it, the whole output redacts exactly as the text
+ * before it and the text from it do apart, so no credential shape core redactText() redacts crosses into it, the latter
+ * still starts with the token, and the version redacts to itself. A label core keeps before a redacted value is not counted.
  */
-function publishable({ version, start, output }: VersionObservation, secrets: readonly string[]): { version: string } | { error: string; timedOut: boolean } {
-  const whole = redact(output, secrets);
-  const before = redact(output.slice(0, start), secrets);
-  return whole.startsWith(before) && whole.startsWith(version, before.length) && redact(version, secrets) === version ? { version } : { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false };
+function publishable({ version, start, end, output }: VersionObservation, secrets: readonly string[]): { version: string } | { error: string; timedOut: boolean } {
+  const rest = redact(output.slice(start), secrets);
+  const intact = !coverage(output, secrets)?.some((to, from) => from < end && to > start) && rest.startsWith(output.slice(start, end)) && redact(output, secrets) === redact(output.slice(0, start), secrets) + rest && redact(version, secrets) === version;
+  return intact ? { version } : { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false };
 }
 
 /** What redact() covers in `text`: reach[i] is the furthest end of a covered span that starts at i (0: none), if any is. */
