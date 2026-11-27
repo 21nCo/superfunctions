@@ -322,11 +322,13 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   fetch manages, which operator headers cannot carry, and one whose security
   is malformed (a level that is not a list, a requirement that is not a
   plain object, such as a `Map`, `Date` or class instance, judged before
-  the document is copied, scopes that are not a list of strings; `fromOpenAPI` reports it
+  the document is copied, a level reached through a getter (on `security`,
+  `paths`, a path item or an operation), whose value as copied is not known,
+  scopes that are not a list of strings; `fromOpenAPI` reports it
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
   does not define such as `api-key`, a scheme object that is not a plain
-  object) or an `apiKey` scheme without a usable `name` and `in` (a header
+  object or is reached through a getter) or an `apiKey` scheme without a usable `name` and `in` (a header
   or cookie name must be an HTTP token, a query name not empty), since the parameter that carries its credential is then
   unknown. It sets `outputSchemaRule: "every-success"`
   (see Outputs).

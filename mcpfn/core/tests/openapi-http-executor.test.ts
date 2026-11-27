@@ -1983,6 +1983,89 @@ describe("httpExecutor security objects structuredClone would flatten", () => {
   });
 });
 
+describe("httpExecutor security levels reached through an accessor", () => {
+  class EmptyRequirement {}
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const scheme = { type: "apiKey", in: "header", name: "X-Api-Key" };
+  // An enumerable getter that gives one value to the first read (structuredClone) and another to every later one.
+  const flipping = <T extends object>(holder: T, key: string, first: () => unknown, later: () => unknown): T =>
+    Object.defineProperty(holder, key, { enumerable: true, configurable: true, get: (() => { let reads = 0; return () => (++reads === 1 ? first() : later()); })() });
+  const operation = (security?: unknown) => ({
+    operationId: "keyed",
+    ...(security === undefined ? {} : { security }),
+    parameters: [keyParameter],
+    responses: ok,
+  });
+  const documentWith = (fields: { security?: unknown; paths?: unknown; components?: unknown }) => ({
+    openapi: "3.1.0",
+    info: { title: "accessors", version: "1.0.0" },
+    components: { securitySchemes: { headerKey: scheme } },
+    security: [{ headerKey: [] }],
+    ...fields,
+  });
+  const notPlain = (where: string) => `its security cannot be read: ${where} security has a requirement that is not a plain object`;
+
+  it.each([
+    [
+      "the operation's security",
+      () => documentWith({ paths: { "/keyed": { get: flipping(operation(), "security", () => [new EmptyRequirement()], () => [{}]) } } }),
+      notPlain("the operation's"),
+    ],
+    [
+      "the document's security, inherited",
+      () => flipping(documentWith({ paths: { "/keyed": { get: operation() } } }), "security", () => [new EmptyRequirement()], () => [{}]),
+      notPlain("the document's"),
+    ],
+    [
+      "the operation object",
+      () => documentWith({ paths: { "/keyed": flipping({}, "get", () => operation([new EmptyRequirement()]), () => operation([{}])) } }),
+      notPlain("the operation's"),
+    ],
+    [
+      "the path item",
+      () => documentWith({ paths: flipping({}, "/keyed", () => ({ get: operation([new EmptyRequirement()]) }), () => ({ get: operation([{}]) })) }),
+      notPlain("the operation's"),
+    ],
+    [
+      "the paths object",
+      () => flipping(documentWith({}), "paths", () => ({ "/keyed": { get: operation([new EmptyRequirement()]) } }), () => ({ "/keyed": { get: operation([{}]) } })),
+      notPlain("the operation's"),
+    ],
+    [
+      "a security scheme",
+      () =>
+        documentWith({
+          // Cloned, the instance reads as the plain scheme the later reads return.
+          components: { securitySchemes: flipping({}, "headerKey", () => Object.assign(new (class Scheme {})(), scheme), () => scheme) },
+          paths: { "/keyed": { get: operation() } },
+        }),
+      'the security scheme "headerKey" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+    ],
+  ])("skips the operation when %s is an accessor, never exposing the credential header as input", (_where, document, reason) => {
+    const { tools, skipped } = fromOpenAPI(document(), { executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }) });
+    expect(tools).toEqual([]);
+    expect(skipped.map(({ operation: skippedOperation, code, reason: why }) => [skippedOperation.operationId, code, why])).toEqual([
+      ["keyed", "unsupported-by-executor", reason],
+    ]);
+  });
+
+  it("refuses, before any request, a call of an operation listed by an executor that does not check security", async () => {
+    const getter = flipping(operation(), "security", () => [new EmptyRequirement()], () => [{}]);
+    const { tools } = fromOpenAPI(documentWith({ paths: { "/keyed": { get: getter } } }), { executor: { execute: () => ({ content: [] }) } });
+    expect(tools[0]!.operation.securityUnresolved).toBe("the operation's security has a requirement that is not a plain object");
+    const before = api.received.length;
+    const result = await httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }).execute({
+      operation: tools[0]!.operation,
+      args: { header: { "X-Api-Key": "test-caller-value" } },
+      context: undefined,
+      signal: new AbortController().signal,
+      hasOutputSchema: false,
+    });
+    expect(result.isError).toBe(true);
+    expect(api.received.length).toBe(before);
+  });
+});
+
 describe("httpExecutor security of a document built in another realm", () => {
   it("reads another realm's plain objects as plain, so their security resolves as before cloning", () => {
     const realmDocument = runInNewContext(`({
@@ -2426,6 +2509,45 @@ describe("httpExecutor security arrays shared by many operations", () => {
         id,
         "unsupported-by-executor",
         "its security cannot be read: the operation's security has a requirement that is not a plain object",
+      ]),
+    );
+  });
+});
+
+describe("httpExecutor security requirements and scope lists shared by reference", () => {
+  const oauth = { type: "oauth2", flows: { clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: {} } } };
+  const documentWith = (operations: Record<string, unknown[]>) => ({
+    openapi: "3.1.0",
+    info: { title: "shared-requirements", version: "1.0.0" },
+    components: { securitySchemes: { oauth } },
+    paths: {
+      ...Object.fromEntries(Object.entries(operations).map(([id, security]) => [`/${id}`, { get: { operationId: id, security, responses: ok } }])),
+      "/plain": { get: { operationId: "plain", responses: ok } },
+    },
+  });
+
+  it("checks one requirement's scopes once, however many times a level lists it", () => {
+    const requirement = { oauth: Array.from({ length: 50_000 }, (_, index) => `scope-${index}`) };
+    const started = performance.now();
+    const { tools } = fromOpenAPI(documentWith({ aliased: Array.from({ length: 50_000 }, () => requirement) }), {
+      executor: httpExecutor({ baseUrl: api.origin }),
+    });
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["aliased", "plain"]);
+  });
+
+  it("still reports a non-string scope of a shared list for every operation that uses it", () => {
+    const scopes: unknown[] = ["read", 7];
+    const { tools, skipped } = fromOpenAPI(
+      documentWith({ first: [{ oauth: scopes }], second: [{ oauth: scopes }, { oauth: scopes }], third: [{}, { oauth: scopes }] }),
+      { executor: httpExecutor({ baseUrl: api.origin }) },
+    );
+    expect(tools.map((tool) => tool.name)).toEqual(["plain"]);
+    expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual(
+      ["first", "second", "third"].map((id) => [
+        id,
+        "unsupported-by-executor",
+        'its security cannot be read: the scopes of the security scheme "oauth" are not a list of strings',
       ]),
     );
   });
