@@ -1,0 +1,62 @@
+plugfn/core/package.json
+  s_cff285c8033656::t_ee4177b36d68e7 79
+plugfn/providers/tests/webhook-raw-body.test.ts
+  s_cff285c8033656::t_ee4177b36d68e7 217-218
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_7993780f8548e1 36,108-112,426-427
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_ee4177b36d68e7 403,405
+  s_cff285c8033656::t_e16ceb73bf5732 392,400-401
+  s_cff285c8033656::t_279d2983bffae4 344,346,361-365,386-391,393-399,402,404,406
+  s_cff285c8033656::t_d1a6c6e69336d9 407-408
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_5d9724c6c2a520 149-151
+  s_cff285c8033656::t_7993780f8548e1 12,38,147-148,155,158-160,169,171-173,230-231,233
+  s_cff285c8033656::t_e16ceb73bf5732 185,190-192
+plugfn/core/src/schema.ts
+  s_cff285c8033656::t_ee4177b36d68e7 8-9,14
+  s_cff285c8033656::t_e16ceb73bf5732 182,199-202
+  s_cff285c8033656::t_67a2d27e87bd72 203
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_cff285c8033656::t_f4a356bb6c7c47 7,12,19,21-25,28-30,243,248,386,396,402-417,421-424,428-429
+  s_cff285c8033656::t_73f8909e51a142 20,26-27,390,418-420,425-427
+  s_cff285c8033656::t_fc83913a1df759 430
+plugfn/core/tests/schema.test.ts
+  s_cff285c8033656::t_ee4177b36d68e7 12-13,18,28
+  s_cff285c8033656::t_e16ceb73bf5732 14-17,24-26
+  s_cff285c8033656::t_194debef00ed8f 27
+plugfn/core/README.md
+  s_cff285c8033656::t_4897477befcc85 163,174-176
+  s_cff285c8033656::t_73f8909e51a142 160-162
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_e16ceb73bf5732 327,581
+plugfn/core/src/storage/adapters/memory.ts
+  s_cff285c8033656::t_7993780f8548e1 13,249-250,252
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_cff285c8033656::t_c2c4161fcb63d1 231,235-236
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_ee4177b36d68e7 950,986-987,1026,1037-1038,1051
+  s_cff285c8033656::t_5d9724c6c2a520 965
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_7993780f8548e1 13,124-128,484-485
+  s_cff285c8033656::t_e16ceb73bf5732 491-495
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_e16ceb73bf5732 75
+  s_cff285c8033656::t_7993780f8548e1 68-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0613c315879f752a5a8bb29e7a9ec49bf638bd6c",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

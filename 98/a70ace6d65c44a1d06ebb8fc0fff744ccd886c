@@ -1,0 +1,39 @@
+mcpfn/core/src/registry.ts
+  s_1eb217f2cbe12c::t_d0bf5da452c03a 5,48-114,550-551,557,577-588,647,649,824
+mcpfn/core/tests/declaration.test.ts
+  s_1eb217f2cbe12c::t_4cd98ef4cd63c7 97-139
+mcpfn/core/tests/server.test.ts
+  s_1eb217f2cbe12c::t_71f625563dedbf 11,107-186
+plugfn/core/src/core/connection-manager.ts
+  s_1eb217f2cbe12c::t_b491c3235dd262 5,263-297,328,359-410,925-949
+plugfn/core/src/core/plug-fn.ts
+  s_1eb217f2cbe12c::t_f5b6892dac7695 20,85,90,402,407
+plugfn/core/src/types/connection.ts
+  s_1eb217f2cbe12c::t_3534574c4af21f 132-133,144-156
+plugfn/core/src/utils/request.ts
+  s_1eb217f2cbe12c::t_f59141bb7cc508 50-52,58,61-65,287-290
+plugfn/core/tests/connection-manager.test.ts
+  s_1eb217f2cbe12c::t_7cfabd7b889fe2 106-149,656-715,761-773
+plugfn/core/tests/http-client-redirect.test.ts
+  s_1eb217f2cbe12c::t_2362361528e03b 1-99
+plugfn/providers/src/github/index.ts
+  s_1eb217f2cbe12c::t_68cd96508e5a43 23-26,1191
+plugfn/providers/tests/github/github-provider.test.ts
+  s_1eb217f2cbe12c::t_578b1ff769167a 48-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98a70ace6d65c44a1d06ebb8fc0fff744ccd886c",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

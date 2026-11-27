@@ -1,0 +1,25 @@
+mcpfn/core/tests/server.test.ts
+  s_dc294dc10efad3::t_ceda8e25cc772a 187-254
+mcpfn/core/src/registry.ts
+  s_dc294dc10efad3::t_0e1c7753fbc0b1 562-566
+plugfn/core/src/core/connection-manager.ts
+  s_dc294dc10efad3::t_cbde5299548fd4 258-260,362,372-373,382-385,407,966-996,999
+plugfn/core/tests/connection-manager.test.ts
+  s_dc294dc10efad3::t_d13370c15857b5 835-941
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa86874a62b54c35cbf8242eb4565332b2e83ae3",
+  "prompts": {},
+  "sessions": {
+    "s_dc294dc10efad3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c7102e40-751d-4210-9b38-42cf32196278",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

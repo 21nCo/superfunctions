@@ -1,0 +1,29 @@
+clifn/core/src/update-check.ts
+  s_cff0ae0a5b34aa::t_a4d5cd3ca891b0 92-93,310-311,314,316,433-471,478-479,483-485,489-505
+clifn/core/tests/update-check-delivery.test.ts
+  s_50b2a8a9bf95f8::t_c5114201872649 225-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "922dc3054737a6c3ab720237747876d1e3febb5c",
+  "prompts": {},
+  "sessions": {
+    "s_50b2a8a9bf95f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85074dbd-f50c-4960-a67d-6ace7b39d493",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cff0ae0a5b34aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21727-e51a-72a0-95e9-cae9b11c023b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+plugfn/providers/src/github/index.ts
+  s_3bab1fa7afb201::t_e517894bf06c57 1175-1183,1185,1223-1228
+plugfn/providers/tests/github/github-provider.test.ts
+  s_3bab1fa7afb201::t_b6a0b2ce491a88 61-68
+plugfn/providers/tests/github/github-read-cache.test.ts
+  s_3bab1fa7afb201::t_3cb4c4e0aef0c4 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad286a9aab92f1c99a64fd710122869ac0a6b81c",
+  "prompts": {},
+  "sessions": {
+    "s_3bab1fa7afb201": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2b4e16a-d661-488b-ab3d-b9cb5328ee50",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

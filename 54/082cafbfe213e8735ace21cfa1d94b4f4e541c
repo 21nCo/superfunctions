@@ -1,0 +1,23 @@
+mcpfn/core/src/registry.ts
+  s_2018406097b2e5::t_6ff3802bab6e36 294-298,302-303,306,310-321,324-333,482-487,1049-1050,1096,1180,1182-1191
+mcpfn/core/src/validation.ts
+  s_2018406097b2e5::t_f53f80d9e2efee 580-667,669-677,680-691
+mcpfn/core/tests/registry-custom-compiler.test.ts
+  s_2018406097b2e5::t_f8f6644774b336 315-429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54082cafbfe213e8735ace21cfa1d94b4f4e541c",
+  "prompts": {},
+  "sessions": {
+    "s_2018406097b2e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2018406097b2e5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
