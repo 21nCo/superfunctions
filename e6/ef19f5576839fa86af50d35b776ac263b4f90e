@@ -1,0 +1,20 @@
+datafn/server/src/server.ts
+  h_bdc5b81c173ee9 470,478-501,1261,1282,1310-1311,1625,1644-1647,1649-1650,1704
+datafn/server/src/execution/sync/push.ts
+  h_bdc5b81c173ee9 270-271,537
+datafn/server/src/execution/revisions.ts
+  h_bdc5b81c173ee9 187-202,225-228,327-329
+datafn/server/__tests__/revisions.test.ts
+  h_bdc5b81c173ee9 17,3167-3175,3186-3193,3316-3375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6ef19f5576839fa86af50d35b776ac263b4f90e",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+mcpfn/core/README.md
+  s_1249bd91e0e351::t_53e76069c57369 168-172,213-215,221-223
+mcpfn/core/package.json
+  s_1249bd91e0e351::t_be942cad3e2de0 28
+mcpfn/core/src/openapi/from-openapi.ts
+  s_1249bd91e0e351::t_835b4a7e3ead53 949-951,954
+mcpfn/core/src/openapi/schema.ts
+  s_1249bd91e0e351::t_0e870e692b5c99 323-326,512-513,1006-1009,1011-1012,1023,1033-1037,2177-2181,2218-2219,2229,2231,2245,2248-2249,2253
+mcpfn/core/tests/fixtures/openapi/skip-prototype-parameter-name.json
+  s_1249bd91e0e351::t_aece83781dcd15 27-46
+mcpfn/core/tests/fixtures/openapi/skip-prototype-property-name.json
+  s_1249bd91e0e351::t_f02768c11549fb 81-161
+mcpfn/core/tests/openapi-cfworker.test.ts
+  s_5802051189a626::t_0a833745806866 452,459,462,472-476,497-499,506-507,513-514,517-522,524,526,529-530,537-541
+package-lock.json
+  s_1249bd91e0e351::t_8577dad173585b 18354,18372-18377
+mcpfn/core/tests/openapi-forms.test.ts
+  s_1249bd91e0e351::t_604ec5adc35a29 17,410,416-418,450,452-456
+mcpfn/core/src/validation.ts
+  s_19ae5e7b0702bc::t_8dda6d4af824c9 69-71
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_19ae5e7b0702bc::t_6f25542b8434f8 11-17
+mcpfn/core/vitest.config.ts
+  s_19ae5e7b0702bc::t_bba2bc2601808a 7-8,20,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fffdc0e6fcc752e2c98ba9e62734e45c44e728fa",
+  "prompts": {},
+  "sessions": {
+    "s_1249bd91e0e351": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2131a-2ee1-7040-aaeb-f4b9e01820a7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_19ae5e7b0702bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "366fd25a-e70d-4c65-8802-67719d90813e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_5802051189a626": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21350-a5c9-7a30-9e89-1b44ee700d0d",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

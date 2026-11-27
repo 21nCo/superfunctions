@@ -1,0 +1,47 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_83fa589146e8c6::t_ebc512f6d0a714 50,52,81-82
+datafn/docs/public/llms-full.txt
+  s_83fa589146e8c6::t_caf22081ab167d 19181,19183,19212-19213
+datafn/server/__tests__/revisions-drizzle-sqlite.test.ts
+  s_83fa589146e8c6::t_64b7f55e754f00 1-105
+datafn/server/__tests__/revisions.test.ts
+  s_83fa589146e8c6::t_ed49223c4edcbd 704,708-711,852-973
+datafn/server/src/execution/internal-tables.ts
+  s_6dbb9548b2274a::t_2cb4da6b994630 148-160,162,164
+datafn/server/src/execution/revisions.ts
+  s_6dbb9548b2274a::t_68aadcdf816506 421-427,429
+datafn/server/src/execution/sync/change-tracking.ts
+  s_6dbb9548b2274a::t_2c78af6a98bcb4 203-212,399-401
+datafn/server/src/execution/sync/pull.ts
+  s_6dbb9548b2274a::t_d721589791a8e9 10,1000-1001,1085-1089,1198-1203
+datafn/server/src/routes/query.ts
+  s_6dbb9548b2274a::t_9c904f6780d1ed 42,895-907,909-914,917-920,922,924-925,928
+datafn/server/src/routes/transact.ts
+  s_6dbb9548b2274a::t_22ab7719fd7179 200-203
+datafn/server/src/validation/authz.ts
+  s_6dbb9548b2274a::t_72bf702bbb42ec 199-200,202,206-210,213-214,224,227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "922ceb44b86d08b828b5a1d051ce6a2a7d25581f",
+  "prompts": {},
+  "sessions": {
+    "s_6dbb9548b2274a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6dbb9548b2274a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

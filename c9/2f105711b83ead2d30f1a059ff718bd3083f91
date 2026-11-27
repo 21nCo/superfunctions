@@ -1,0 +1,35 @@
+hostfn/cli/src/commands/server/setup.ts
+  s_545bb079978e5a::t_bbc9c41a8a4c5a 73,95,210
+uifn/examples/shared/turbo.json
+  s_545bb079978e5a::t_96d524424c0409 10
+scripts/turbo-inputs-guard.test.mjs
+  s_545bb079978e5a::t_96d524424c0409 780,782,792
+scripts/generate-uifn-catalog-accessibility.mjs
+  s_545bb079978e5a::t_96d524424c0409 13,19-20,23-24,26-29
+datafn/examples/apple-webview-host/DatafnAppleHostTests/HostTopologyTests.swift
+  s_545bb079978e5a::t_ec99ff6d832414 5-16
+datafn/examples/apple-webview-host/DatafnAppleHost/App/EmbeddedWebView.swift
+  s_545bb079978e5a::t_bbc9c41a8a4c5a 48,54,62-64
+uifn/examples/shared/src/catalog-presentation.ts
+  s_545bb079978e5a::t_96d524424c0409 14,1300-1301,1303
+uifn/examples/shared/tsconfig.json
+  s_545bb079978e5a::t_96d524424c0409 6
+uifn/examples/shared/src/catalog-accessibility.generated.json
+  s_545bb079978e5a::t_0f498c17fb1ffc 1-590,592-1013
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c92f105711b83ead2d30f1a059ff718bd3083f91",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

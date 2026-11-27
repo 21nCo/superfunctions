@@ -1,0 +1,35 @@
+clifn/core/CHANGELOG.md
+  s_9892411a0e6ceb::t_29a2255ae4d39a 8-9
+clifn/core/README.md
+  s_9892411a0e6ceb::t_746e5b81e6eb55 265
+clifn/docs/content/docs/reference/core-readme.md
+  s_9892411a0e6ceb::t_e0d0bda41d76fc 268
+clifn/docs/static/llms-full.txt
+  s_9892411a0e6ceb::t_809a37e31e324c 576
+clifn/core/tests/runner-document-bounds.test.ts
+  s_905acd4f00d687::t_ee744cee979bf1 591-592
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2667fe2e57b49cb9b89109a32f83c31a74a69855",
+  "prompts": {},
+  "sessions": {
+    "s_905acd4f00d687": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b7481b9-7965-40a7-aff0-b34e67726170",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_9892411a0e6ceb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212dc-e229-77a3-82aa-1e5c1489684c",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

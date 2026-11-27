@@ -1,0 +1,67 @@
+datafn/admin/package.json
+  s_83fa589146e8c6::t_1ac47d69c65c26 41
+datafn/cli/package.json
+  s_83fa589146e8c6::t_40d96115b8c919 30-31
+datafn/client/__tests__/revisions.test.ts
+  s_83fa589146e8c6::t_471ff52310e22d 154-157,166-167,169
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_533f37de0bc5b0::t_fb148b0d104011 50,52
+datafn/docs/public/llms-full.txt
+  s_6bf709baff0b06::t_4ad6d7df87654b 15584,15590,18107,18119,18124-18134,18138,19186,19188,22762,22764,22770,22775-22785,22787,22790-22795,22805,23916-23922
+datafn/extfn/package.json
+  s_83fa589146e8c6::t_2ce8e9b3276ad3 34-35
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_83fa589146e8c6::t_53d4086383ae92 14,117-289
+datafn/server/__tests__/revisions.test.ts
+  s_83fa589146e8c6::t_d45c995012054a 328,335-340,367-370,828-840,842,844,848,850-882,886-893,898,901-911,913-938,1077,1084-1085,1221,1227-1228
+datafn/server/src/execution/query/pushdown.ts
+  s_83fa589146e8c6::t_a9aaf68a8e3e01 271,282-283,547
+datafn/server/src/execution/query/search.ts
+  s_83fa589146e8c6::t_ec31cb4ad8a8dc 43,109,152
+datafn/server/src/execution/query/select.ts
+  s_83fa589146e8c6::t_281d61ffb431c2 234
+datafn/server/src/execution/sync/pull.ts
+  s_83fa589146e8c6::t_ef7d3cfcc0b606 10,918-922,924-936,1012-1014,1090-1093,1111,1116-1121,1123-1124,1128-1131,1188,1195-1198,1207,1214-1218
+datafn/server/src/routes/query.ts
+  s_83fa589146e8c6::t_b982cfc3d3e1e5 31-36,47-48,916,926,947-957,959-976,978-980
+datafn/server/src/routes/query/execute.ts
+  s_83fa589146e8c6::t_0d2abaa0b2d050 239,317,353
+datafn/svelte/package.json
+  s_83fa589146e8c6::t_b4ff06451bda3d 22
+datafn/swift-bridge/package.json
+  s_83fa589146e8c6::t_8eaa536174de26 26-27
+package-lock.json
+  s_83fa589146e8c6::t_d4b73f413be030 8783,8897-8898,10140-10141,10244,10478-10479
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0736c189242c0c2af11fe59571e8b1da7fcec6ed",
+  "prompts": {},
+  "sessions": {
+    "s_533f37de0bc5b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d29bc56-19ce-4155-99d2-820126a823b6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_6bf709baff0b06": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212ec-b795-7580-90be-400cc04674d2",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

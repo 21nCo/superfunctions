@@ -1,0 +1,29 @@
+.github/workflows/apifn-api-check-smoke.yml
+  s_0183d950db4822::t_b9a084195a3e4e 12-15,43,56-58,73-75,89-91,124-128,130
+.github/workflows/apifn-api-check.yml
+  s_0183d950db4822::t_6236cb9b762eea 184-188,197,199,253-256,303-352,465-467,480-482,568,572,736,1061-1063,1065,1071-1073,1090,1102-1103,1105,1129,1134-1137
+apifn/README.md
+  s_0183d950db4822::t_5db99d791534e5 149-150,153-155,165
+apifn/examples/ci-cd/github-actions.yml
+  s_0183d950db4822::t_95058095cffca1 9-10
+scripts/verify-owners.mjs
+  s_0183d950db4822::t_6f0de7269fa574 126-132,355-358,370-371
+scripts/verify-owners.test.mjs
+  s_0183d950db4822::t_1a6f3dec6e3ef4 14,608-617,646,688-703
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4da010e54b2eddef5ee987fb38bd8216079c4873",
+  "prompts": {},
+  "sessions": {
+    "s_0183d950db4822": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9e19c475-0abd-4806-a133-9cd244f1cc74",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

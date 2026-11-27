@@ -1,0 +1,53 @@
+apifn/README.md
+  s_3a117204595abf::t_38275303a4b51a 24-31,33
+apifn/admin/package.json
+  s_3a117204595abf::t_7e4928b61f478c 3,41,47
+apifn/cli/package.json
+  s_3a117204595abf::t_63d1868b853f55 3,26-31
+apifn/collections/package.json
+  s_3a117204595abf::t_39d11903be2a12 3,23
+apifn/contracts/package.json
+  s_3a117204595abf::t_eb9ce65b407c45 3,43
+apifn/core/README.md
+  s_3a117204595abf::t_35a4dc89f580bc 189-190,194-195
+apifn/core/__tests__/watchfn-integration.test.ts
+  s_3a117204595abf::t_46e62988ab1770 2,164-165
+apifn/core/package.json
+  s_3a117204595abf::t_83673364df20d8 3
+apifn/core/src/integrations/__tests__/watchfn-middleware.test.ts
+  s_3a117204595abf::t_18d54fcb239dc5 1-232
+apifn/core/src/integrations/watchfn.ts
+  s_3a117204595abf::t_cb78137c1e4b23 7-8,11,198-200,205-210,212,215,217,233-238,254-255,258-276,278-279,283,286-294,296-298
+apifn/docsfn/package.json
+  s_3a117204595abf::t_9c8ba32ec0e595 32
+apifn/mock/package.json
+  s_3a117204595abf::t_e8108ee5b58623 3,23
+apifn/react/package.json
+  s_3a117204595abf::t_73527df1580903 22
+apifn/sdk/package.json
+  s_3a117204595abf::t_3287a879d54949 3,32
+apifn/sdk/src/version.ts
+  s_3a117204595abf::t_b476a0ef01621c 3
+apifn/snippets/package.json
+  s_3a117204595abf::t_9a5adeaefccf30 3,23
+apifn/svelte/package.json
+  s_3a117204595abf::t_539bb84633db41 50
+package-lock.json
+  s_3a117204595abf::t_859265edbd1aec 93,96,99,110,113-118,137,140,263,266,305,395,429,432,446,809,812,846,849,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9185445e66ab093aa93386b45e54bb026b93055f",
+  "prompts": {},
+  "sessions": {
+    "s_3a117204595abf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "904a8445-84e1-4f74-bada-72b39c8fff82",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

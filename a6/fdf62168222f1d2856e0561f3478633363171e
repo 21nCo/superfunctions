@@ -1,0 +1,21 @@
+.github/workflows/apifn-api-check-smoke.yml
+  s_b20646d8f9ade1::t_33685b21917517 122-124,136,194
+apifn/cli/__tests__/check-smoke-fixtures.test.ts
+  s_b20646d8f9ade1::t_f6d2516f307322 57-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6fdf62168222f1d2856e0561f3478633363171e",
+  "prompts": {},
+  "sessions": {
+    "s_b20646d8f9ade1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e60f0d-0c79-4d7b-9bba-1dc75c7577fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

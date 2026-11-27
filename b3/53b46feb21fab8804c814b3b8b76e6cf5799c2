@@ -1,0 +1,29 @@
+clifn/core/CHANGELOG.md
+  s_f8f6af9e4c8b66::t_0a11e70cf515c4 5
+clifn/core/README.md
+  s_f8f6af9e4c8b66::t_635687253448d3 290
+clifn/core/src/update-check.ts
+  s_f8f6af9e4c8b66::t_c26b992087c957 70-80,269-272,275-278,284,288,297,299,303-311,394-396,425-457,465-470,487-491,495-496,500-502,508,526,545
+clifn/core/tests/update-check-delivery.test.ts
+  s_f8f6af9e4c8b66::t_88f9d800a14cfd 14-15,36-38,92,348-487
+clifn/docs/content/docs/reference/core-readme.md
+  s_f8f6af9e4c8b66::t_d8f8ca27fb86e8 293
+clifn/docs/static/llms-full.txt
+  s_f8f6af9e4c8b66::t_3e44d6fae48c4c 601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b353b46feb21fab8804c814b3b8b76e6cf5799c2",
+  "prompts": {},
+  "sessions": {
+    "s_f8f6af9e4c8b66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd2958e-12b6-47d9-bac4-e280f57b5fce",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

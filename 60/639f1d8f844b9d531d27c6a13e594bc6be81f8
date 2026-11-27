@@ -1,0 +1,21 @@
+clifn/core/tests/runner-update-check.test.ts
+  s_5bc591e1846aa3::t_f7d866380b3c4b 210
+clifn/core/tests/update-check-deadline.test.ts
+  s_5bc591e1846aa3::t_76106dcfacede6 44,52,56-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60639f1d8f844b9d531d27c6a13e594bc6be81f8",
+  "prompts": {},
+  "sessions": {
+    "s_5bc591e1846aa3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21845-8094-7a21-b345-8e95ec186361",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

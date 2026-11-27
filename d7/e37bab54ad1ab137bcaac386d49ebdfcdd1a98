@@ -1,0 +1,36 @@
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_da5bd67edd8a1a 506,516-517
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_fad19f3d7058c0 216-218,248,312-313,323-324
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_e7cd7496880ab4 872
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_fe756c7044a94f 133,232,567-587,592-593,595
+  s_cff285c8033656::t_048ed6e725c97b 588-591,594
+  s_cff285c8033656::t_0eb10cfbac4b51 132,190
+  s_50b2a8a9bf95f8::t_8cdeb6498cb1e4 596-597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7e37bab54ad1ab137bcaac386d49ebdfcdd1a98",
+  "prompts": {},
+  "sessions": {
+    "s_50b2a8a9bf95f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85074dbd-f50c-4960-a67d-6ace7b39d493",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

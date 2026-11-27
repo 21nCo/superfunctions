@@ -1,0 +1,45 @@
+filefn/python/tests/test_upload_flow.py
+  s_545bb079978e5a::t_974aa6af5e096d 546-569
+  s_545bb079978e5a::t_1e4b05643c96ed 545
+authfn/examples/shared/src/server/fake-oauth-provider.ts
+  s_545bb079978e5a::t_55b375378169b9 1,85,116
+authfn/examples/shared/src/server/create-example-server.ts
+  s_545bb079978e5a::t_55b375378169b9 46
+packages/examples/http-frameworks/express/server.ts
+  s_545bb079978e5a::t_55b375378169b9 12
+hostfn/cli/src/runtimes/nodejs/index.ts
+  s_545bb079978e5a::t_d8f4e09cd19fc5 57
+  s_545bb079978e5a::t_f55bc3165ab891 58
+hostfn/docs/content/docs/documentation/server-management/setup.mdx
+  s_545bb079978e5a::t_d8f4e09cd19fc5 71,81,84,187,194-195,198
+filefn/python/filefn/server/upload_sessions/service.py
+  s_545bb079978e5a::t_d8f4e09cd19fc5 819,829-837,853-865
+  s_545bb079978e5a::t_ea982a6eb66060 866
+hostfn/cli/src/commands/server/setup.ts
+  s_545bb079978e5a::t_f55bc3165ab891 1,9,71-73,104-107,111,117-125,128-133,141,143,149,169-170,198,200,210-226
+hostfn/examples/express-api/src/index.ts
+  s_545bb079978e5a::t_55b375378169b9 4
+datafn/examples/apple-webview-host/DatafnAppleHost/App/EmbeddedWebView.swift
+  s_545bb079978e5a::t_55b375378169b9 10-13,27,29-30,33,44-87
+scripts/generate-uifn-catalog-accessibility.mjs
+  s_545bb079978e5a::t_22cd80f26fc938 16-25,31-32,41
+  s_545bb079978e5a::t_974aa6af5e096d 26-29
+uifn/examples/shared/src/catalog-accessibility.generated.ts
+  s_545bb079978e5a::t_80ebbbf0dc6e59 2-589,591-662
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d45e8cd30d1aa6c4b8a788e14cbad2359ef5d949",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

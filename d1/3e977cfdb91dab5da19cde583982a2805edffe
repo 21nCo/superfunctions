@@ -1,0 +1,47 @@
+clifn/docs/package.json
+  s_1e5ab457420093::t_de7884ead68389 10
+clifn/docs/scripts/generate-llms.test.mjs
+  s_1e5ab457420093::t_b46660f4c81e20 1-108
+scripts/docs-site/README.md
+  s_1e5ab457420093::t_da6db406c15f93 13
+scripts/docs-site/front-matter.d.mts
+  s_1e5ab457420093::t_6f78f8dcf21f3a 1-8
+scripts/docs-site/front-matter.mjs
+  s_1e5ab457420093::t_a2db0a44ecbd9f 1-48
+scripts/docs-site/front-matter.test.mjs
+  s_1e5ab457420093::t_21c3e44f6b8681 1-50
+scripts/docs-site/llms.mjs
+  s_1e5ab457420093::t_e205b3214d6b1b 1-4,6-130,133,147-162
+scripts/docs-site/llms.test.mjs
+  s_1e5ab457420093::t_b477f02f895e79 1-2,4,37-161
+scripts/docs-site/runtime.test.ts
+  s_7f097ce8c15e3f::t_5fae8b713bf742 111-144
+scripts/docs-site/runtime.ts
+  s_1e5ab457420093::t_a118222a47920d 24,423,498,502-503
+scripts/docs-site/vitest.config.ts
+  s_1e5ab457420093::t_8f30d1e6f07805 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d13e977cfdb91dab5da19cde583982a2805edffe",
+  "prompts": {},
+  "sessions": {
+    "s_1e5ab457420093": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6c8b518-b4cb-4a3f-bdb9-cb9a070fbeea",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_7f097ce8c15e3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2b219eb-d518-431b-9635-c883ac27a1e8",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_452260ff66b74a::t_4ef3e33c931641 101,120,153-154
+datafn/server/__tests__/revisions.test.ts
+  s_452260ff66b74a::t_e35a597bb65b2a 8,127-135,138-141,4067-4070,4073,4075,4078-4083,4086-4090,4093-4099,4127,4135,4181,4185-4301
+datafn/server/src/routes/query.ts
+  s_2d2226a9f6f7d4::t_7ed9ca34a22ee4 180-181,189,192,956-957,962,1062-1063,1093-1096,1152-1159,1161-1170,1176,1181-1184,1187-1188,1191,1194-1196,1199,1210-1212,1215-1218,1223,1225-1226,1228,1230,1234-1235,1243-1250,1257,1260-1265,1270-1275,1277-1297,1299-1303
+datafn/server/src/server.ts
+  s_452260ff66b74a::t_e215bb379e06fc 686-692,966-971
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "347d88204cf18f343c476150408cd17f187d3d27",
+  "prompts": {},
+  "sessions": {
+    "s_2d2226a9f6f7d4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21dc3-75ab-77a1-8832-4e3d4f8c35f3",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_452260ff66b74a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21da4-b9bb-7012-8ec5-405753827d30",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

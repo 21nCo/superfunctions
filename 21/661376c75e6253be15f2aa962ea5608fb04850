@@ -1,0 +1,21 @@
+mcpfn/core/src/registry.ts
+  s_14bcc46d2e5b3f::t_dcfcc0a68b9c2e 112-117,120,122,124
+mcpfn/core/tests/registry-clone-empty.test.ts
+  s_14bcc46d2e5b3f::t_0fa21079560c59 1-2,525-582
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21661376c75e6253be15f2aa962ea5608fb04850",
+  "prompts": {},
+  "sessions": {
+    "s_14bcc46d2e5b3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_14bcc46d2e5b3f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

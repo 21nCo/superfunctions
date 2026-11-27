@@ -1,0 +1,25 @@
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_cff285c8033656::t_c404418ac44422 14-16,18-20,23-63,65-73
+  s_cff285c8033656::t_a00c14fe38e257 17,21-22
+  s_cff285c8033656::t_9fbc6ca885da92 64,171-172,175-181
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_722488830f7e0e 292-299
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_36e9f2ec8cffef 901-902,918
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "817f7479ab6d9dea3f1bd9e74c0cb988c8bfca38",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
