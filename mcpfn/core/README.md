@@ -501,9 +501,13 @@ const server = createMcpFnServer({
 ```
 
 For tenant- or actor-specific discovery, use `toolVisibility`. McpFn applies
-the hook to both `tools/list` and `tools/call`; a hidden call returns the same
-protocol `MethodNotFound` response as an unknown tool. The static manifest
-continues to describe the complete server contract.
+the hook to both `tools/list` and `tools/call` and passes the request in
+`requestKind` (`"tools/list"` or `"tools/call"`). A tool the hook rejects for
+`tools/list` is left out of that listing; a call the hook rejects for
+`tools/call` returns the same protocol `MethodNotFound` response as an unknown
+tool and never reaches the handler. A hook that ignores `requestKind` applies
+one decision to both. The static manifest continues to describe the complete
+server contract.
 
 ```ts
 const server = createMcpFnServer({
@@ -514,6 +518,24 @@ const server = createMcpFnServer({
     context.permissions.includes(String(tool._meta?.permission)),
 });
 ```
+
+A host may decide the two requests differently. Keep the authorization check
+for both request kinds and add any discovery-only condition separately, for
+example to keep a permitted tool out of listings while still accepting direct
+calls to it:
+
+```ts
+toolVisibility: ({ tool, context, requestKind }) => {
+  if (!context.permissions.includes(String(tool._meta?.permission))) {
+    return false;
+  }
+  return requestKind === "tools/call" || tool._meta?.hideFromDiscovery !== true;
+},
+```
+
+A hook that returns `true` for every `tools/call` lets any caller reach the
+tool by name, so do that only when the tool handler performs the same
+authorization check itself.
 
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 

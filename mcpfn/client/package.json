@@ -56,7 +56,7 @@
   },
   "devDependencies": {
     "@hono/node-server": "2.1.11",
-    "@mcpfn/core": "0.2.0",
+    "@mcpfn/core": "0.3.0",
     "@superfunctions/oauth-core": "0.1.1",
     "@types/node": "^20.0.0",
     "esbuild": "0.21.5",

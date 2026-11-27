@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json"
   },
   "dependencies": {
-    "@mcpfn/core": "0.2.0",
+    "@mcpfn/core": "0.3.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/db": "0.2.0",
     "drizzle-orm": "^0.45.1",
