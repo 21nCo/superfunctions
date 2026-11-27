@@ -104,10 +104,14 @@ describe('github webhook verification', () => {
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, legacyVerifierFails: true },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false, legacyVerifierMissing: true },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'legacy transform' },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'legacy refinement' },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'bound refinement' },
+    { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true, callbackFailure: 'standalone refinement' },
     { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
     { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
-  ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload, verifier error $legacyVerifierFails, missing verifier $legacyVerifierMissing)', async ({
-    scoped, hasInstallation, event, ingress, legacyPayload, legacyVerifierFails, legacyVerifierMissing,
+  ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload, verifier error $legacyVerifierFails, missing verifier $legacyVerifierMissing, callback failure $callbackFailure)', async ({
+    scoped, hasInstallation, event, ingress, legacyPayload, legacyVerifierFails, legacyVerifierMissing, callbackFailure,
   }) => {
     const binding = {
       tenantId: 'test-tenant',
@@ -151,21 +155,33 @@ describe('github webhook verification', () => {
       } : undefined,
     });
     const generic = githubProvider.triggers!.pull_request;
-    runtime.providers.register(legacyVerifierFails || legacyVerifierMissing ? {
+    const specialized = githubProvider.triggers!['pull_request.closed'];
+    const throwFromValidation = vi.fn((): never => { throw new Error('test application callback failure'); });
+    const refineStandalone = callbackFailure === 'legacy refinement' || callbackFailure === 'standalone refinement';
+    runtime.providers.register({
       ...githubProvider,
       triggers: {
         ...githubProvider.triggers,
         pull_request: {
           ...generic,
+          schema: refineStandalone ? generic.schema.refine(throwFromValidation) : generic.schema,
           webhookConfig: {
             ...generic.webhookConfig!,
             verifySignature: legacyVerifierMissing
               ? undefined
-              : () => { throw new Error('test standalone verifier failure'); },
+              : legacyVerifierFails
+                ? () => { throw new Error('test standalone verifier failure'); }
+                : generic.webhookConfig!.verifySignature,
+            transformPayload: callbackFailure === 'legacy transform'
+              ? throwFromValidation
+              : generic.webhookConfig!.transformPayload,
           },
         },
+        'pull_request.closed': callbackFailure === 'bound refinement'
+          ? { ...specialized, schema: specialized.schema.refine(throwFromValidation) }
+          : specialized,
       },
-    } : githubProvider);
+    });
     const listener = vi.fn();
     const otherListener = vi.fn();
     runtime.webhooks.on('github', 'pull_request', listener);
@@ -214,6 +230,19 @@ describe('github webhook verification', () => {
         expect(await database.findMany({ model: 'plugfn_webhook_receipts' })).toEqual([]);
         return;
       }
+      if (callbackFailure) expect(throwFromValidation).toHaveBeenCalledOnce();
+      if (callbackFailure === 'bound refinement' || callbackFailure === 'standalone refinement') {
+        expect(accepted.status).toBe(400);
+        await expect(accepted.json()).resolves.toMatchObject({
+          error: { code: 'VALIDATION_ERROR', message: 'webhook payload validation failed' },
+        });
+        expect(listener).not.toHaveBeenCalled();
+        expect(action).not.toHaveBeenCalled();
+        expect(await database.findMany({ model: 'plugfn_webhook_receipts' })).toEqual(scoped
+          ? []
+          : [expect.objectContaining({ verificationStatus: 'failed' })]);
+        return;
+      }
       expect(accepted.status).toBe(200);
       const result = await accepted.json();
       expect(result).toMatchObject({ data: { event: { event, verified: true } } });
@@ -227,7 +256,8 @@ describe('github webhook verification', () => {
     }
     if (scoped && hasInstallation) expect(resolveBinding).toHaveBeenCalledWith('42');
     else expect(resolveBinding).not.toHaveBeenCalled();
-    if (legacyPayload) {
+    const legacyListenerRuns = legacyPayload && !callbackFailure;
+    if (legacyListenerRuns) {
       expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: 'pull_request' }));
     } else {
       expect(listener).not.toHaveBeenCalled();
@@ -249,7 +279,7 @@ describe('github webhook verification', () => {
       code: 'WEBHOOK_SIGNATURE_INVALID',
     });
     expect(resolveBinding).toHaveBeenCalledTimes(resolutionsAfterDispatch);
-    expect(listener).toHaveBeenCalledTimes(legacyPayload ? 1 : 0);
+    expect(listener).toHaveBeenCalledTimes(legacyListenerRuns ? 1 : 0);
   });
 
   it('does not classify review, review thread, or unknown-action bodies as pull requests', () => {

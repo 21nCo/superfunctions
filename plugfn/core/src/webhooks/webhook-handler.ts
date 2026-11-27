@@ -330,17 +330,14 @@ export class WebhookHandler {
       : undefined;
     const payloadHash = isBindingId(subject) && rawBody ? sha256(rawBody) : undefined;
     const credentialFingerprint = requiresBinding && authenticated && secret ? sha256(secret) : undefined;
-    const transformedPayload = trigger.webhookConfig?.transformPayload
-      ? trigger.webhookConfig.transformPayload(parsedPayload)
-      : parsedPayload;
-    if (requiresBinding) {
-      if (!trigger.schema.safeParse(transformedPayload).success) throw new WebhookPayloadValidationError();
-    } else {
-      try {
-        trigger.schema.parse(transformedPayload);
-      } catch {
-        throw new WebhookPayloadValidationError();
+    let transformedPayload = parsedPayload;
+    try {
+      if (trigger.webhookConfig?.transformPayload) {
+        transformedPayload = trigger.webhookConfig.transformPayload(parsedPayload);
       }
+      trigger.schema.parse(transformedPayload);
+    } catch {
+      throw new WebhookPayloadValidationError();
     }
 
     const prepared = {
@@ -438,7 +435,7 @@ export class WebhookHandler {
                 );
               } catch (error) {
                 if (!(error instanceof WebhookPayloadValidationError)) throw error;
-                this.logger.warn(`Standalone webhook payload did not match ${provider}.${legacyKey}`);
+                this.logger.warn(`Standalone webhook payload validation failed for ${provider}.${legacyKey}`);
               }
             }
           }
