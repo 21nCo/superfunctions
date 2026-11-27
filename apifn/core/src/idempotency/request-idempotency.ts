@@ -823,8 +823,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return recovery;
   };
 
-  const readLive = async (storeKey: string, at: number): Promise<Live> => {
-    const raw = await store.get(storeKey);
+  /** Classifies a stored record by the clock sample `at`. */
+  const liveOf = (raw: unknown, at: number): Live => {
     if (raw === undefined || raw === null) return { kind: "absent", expectedVersion: null, previousGeneration: 0 };
     // A fresh validated copy: every later step reads it, never the object the store returned.
     const stored = parseRecord(raw);
@@ -835,6 +835,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     }
     return { kind: "present", record: stored };
   };
+
+  const readLive = async (storeKey: string, at: number): Promise<Live> => liveOf(await store.get(storeKey), at);
 
   /** The receipt source's raw answer. Only its rejection is a source outage; validation happens in `parseReceipt`. */
   const lookupReceipt = async (storeKey: string): Promise<unknown> => (receipts ? receipts.find(storeKey) : undefined);
@@ -926,9 +928,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * the source. The single receipt read is the decision's linearization
    * point: a receipt it returns was the key's commit when the source answered,
    * and a record read before it decides only while it is unexpired by the
-   * clock after the source answered.
+   * clock after the source answered (see `afterEmptyLookup`).
    */
-  const inspect = async (prepared: Prepared, at: number): Promise<{ done: ReceiptOutcome } | { live: Live }> => {
+  const inspect = async (prepared: Prepared, at: number): Promise<Inspected> => {
     const { storeKey, fingerprint, recovery } = prepared;
     const live = await readLive(storeKey, at);
     const record = live.kind === "present" ? live.record : undefined;
@@ -950,11 +952,28 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     // The source answered: a malformed receipt, or one for another key, fails closed over any record.
     const receipt = parseReceipt(storeKey, raw);
     if (receipt) return { done: receiptOutcome(receipt, fingerprint) };
-    // A record read before the lookup decides only if it is still unexpired when the source answered empty.
-    if (record && record.expiresAt <= now()) {
-      return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
-    }
-    return { live };
+    return record ? afterEmptyLookup(storeKey, record, live) : { live };
+  };
+
+  type Inspected = { done: ReceiptOutcome } | { live: Live } | { rerun: true };
+
+  /**
+   * An empty lookup over a record read before it. The record decides only if
+   * it is still unexpired by the clock after the source answered. Once it has
+   * expired, the store is read again and judged by the clock after that read:
+   * the key is absent only while the store still holds that expired version.
+   * A writer that replaced it (a settle, a takeover, a release or a delete)
+   * may have done so after a commit the lookup missed, so the step runs again
+   * with a fresh store read and receipt lookup; absent is never reported over
+   * a replaced version.
+   */
+  const afterEmptyLookup = async (storeKey: string, record: IdempotencyRecord, live: Live): Promise<Inspected> => {
+    if (record.expiresAt > now()) return { live };
+    const raw = await store.get(storeKey);
+    const again = liveOf(raw, now());
+    const version = again.kind === "present" ? again.record.version : again.expectedVersion;
+    if (version !== record.version) return { rerun: true };
+    return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
   };
 
   /** An acquired claim before its final lease check. */
@@ -968,6 +987,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   const claimStep = async (prepared: Prepared): Promise<ClaimStepResult | undefined> => {
     const at = now();
     const inspected = await inspect(prepared, at);
+    if ("rerun" in inspected) return undefined;
     if ("done" in inspected) return inspected.done;
     const { live } = inspected;
     if (live.kind === "absent") {
@@ -1395,9 +1415,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return result;
   };
 
-  const recoverStep = async (prepared: Prepared): Promise<IdempotencyRecoverResult> => {
+  /** One read-decide step with no write. Returns undefined when a writer replaced the record during the lookup. */
+  const recoverStep = async (prepared: Prepared): Promise<IdempotencyRecoverResult | undefined> => {
     const at = now();
     const inspected = await inspect(prepared, at);
+    if ("rerun" in inspected) return undefined;
     if ("done" in inspected) return inspected.done;
     const { live } = inspected;
     if (live.kind === "absent") return { outcome: "absent" };
@@ -1416,8 +1438,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       emit({ action: "recover", outcome: prepared.invalid.outcome, operation: prepared.operation });
       return prepared.invalid;
     }
-    // Recover makes no store write, so one read-decide step answers.
-    const result = await recoverStep(prepared);
+    // Recover makes no store write; a step runs again only when a writer replaced the record during its lookup.
+    let result: IdempotencyRecoverResult | undefined;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && result === undefined; attempt += 1) result = await recoverStep(prepared);
+    // Persistent contention: writers kept replacing the record during each lookup.
+    result ??= { outcome: "in_progress", retryAfterMs: 1 };
     emit({ action: "recover", outcome: result.outcome, operation: prepared.operation, storeKey: prepared.storeKey });
     return result;
   };

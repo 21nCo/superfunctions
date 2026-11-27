@@ -2681,3 +2681,106 @@ describe("createRequestIdempotency PR round-7 live-version fence", () => {
     expect(store.records.get(holder.storeKey)).toMatchObject({ state: "released" });
   });
 });
+
+describe("createRequestIdempotency PR round-8 post-lookup re-read", () => {
+  /** Lease and retention both 60,000 ms; `during` runs once inside the next receipt lookup, after its read and before it answers. */
+  function world() {
+    const store = new FakeAtomicStore();
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock(0);
+    const gate: { during?: () => Promise<void> } = {};
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey) => {
+        const run = gate.during;
+        gate.during = undefined;
+        const found = await database.receipts.find(storeKey);
+        await run?.();
+        return found;
+      },
+    };
+    const idempotency = createRequestIdempotency({ store, receipts, clock, leaseMs: 60_000, retentionMs: 60_000, nonce: testNonce });
+    return { store, database, clock, gate, idempotency };
+  }
+
+  it("V1: recover over a claim its holder settles during the lookup replays the live completed record, never absent", async () => {
+    const { store, clock, gate, idempotency } = world();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    clock.time = 59_999;
+    gate.during = async () => {
+      expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toMatchObject({ outcome: "settled" });
+      clock.time = 60_001; // the empty lookup answers after the pending claim's deadline
+    };
+    const result = await idempotency.recover(orderRequest());
+    expect(store.records.get(holder.storeKey)).toMatchObject({ state: "completed", expiresAt: 119_999 });
+    expect(result).toEqual({ outcome: "replay", response: { status: 503, headers: {}, body: "fallback" }, source: "store" });
+  });
+
+  it("V1b: recover over a commit the lookup missed decides from a fresh receipt lookup, never the record re-read alone", async () => {
+    const { database, clock, gate, idempotency } = world();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    clock.time = 59_999;
+    let committed: IdempotentResponse | undefined;
+    gate.during = async () => {
+      committed = await database.createOrder(holder, "book");
+      expect(await idempotency.settle(holder, { status: 201, body: "book" })).toMatchObject({ outcome: "settled" });
+      clock.time = 60_001;
+    };
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+  });
+
+  it("V2: recover over a takeover during the lookup answers in_progress from the new live claim", async () => {
+    const { clock, gate, idempotency } = world();
+    acquired(await idempotency.claim(orderRequest()));
+    clock.time = 59_999;
+    let takeover: IdempotencyToken | undefined;
+    gate.during = async () => {
+      clock.time = 60_001;
+      takeover = acquired(await idempotency.claim(orderRequest()));
+    };
+    const result = await idempotency.recover(orderRequest());
+    expect(takeover?.generation).toBe(2);
+    expect(result).toEqual({ outcome: "in_progress", retryAfterMs: 60_000 });
+  });
+
+  it.each(["settled", "taken over"] as const)("V3: claim over a claim %s during the lookup never acquires over the live replacement", async (race) => {
+    const { store, clock, gate, idempotency } = world();
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    clock.time = 59_999;
+    let writes = 0;
+    gate.during = async () => {
+      if (race === "settled") await idempotency.settle(holder, { status: 503, body: "fallback" });
+      clock.time = 60_001;
+      if (race === "taken over") acquired(await idempotency.claim(orderRequest()));
+      writes = store.writes;
+    };
+    const result = await idempotency.claim(orderRequest());
+    // The claim itself writes nothing: only the race's own write happened.
+    expect(store.writes).toBe(writes);
+    if (race === "settled") expect(result).toEqual({ outcome: "replay", response: { status: 503, headers: {}, body: "fallback" }, source: "store" });
+    else expect(result).toEqual({ outcome: "in_progress", retryAfterMs: 60_000 });
+  });
+
+  it("recover reports in_progress when writers replace the record during every lookup", async () => {
+    const store = new FakeAtomicStore();
+    const clock = new FakeClock(0);
+    let replaced = 0;
+    let racing = false;
+    const receipts: IdempotencyReceiptSource = {
+      find: async (storeKey) => {
+        const record = store.records.get(storeKey) as Extract<IdempotencyRecord, { state: "pending" }> | undefined;
+        if (!racing || !record) return undefined;
+        // Each lookup answers after the record it follows expired, and a writer has replaced it.
+        clock.advance(2);
+        store.records.set(storeKey, { ...record, version: `test-replaced-${(replaced += 1)}`, leaseExpiresAt: clock.now() + 1, expiresAt: clock.now() + 1 });
+        return undefined;
+      },
+    };
+    const idempotency = createRequestIdempotency({ store, receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    // The claim's record is one tick from its deadline when recover reads it.
+    store.records.set(holder.storeKey, { ...(store.records.get(holder.storeKey) as Extract<IdempotencyRecord, { state: "pending" }>), leaseExpiresAt: clock.now() + 1, expiresAt: clock.now() + 1 });
+    racing = true;
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "in_progress", retryAfterMs: 1 });
+    expect(replaced).toBe(8);
+  });
+});
