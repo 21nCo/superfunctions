@@ -1,6 +1,6 @@
 {
   "name": "@plugfn/cli",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "CLI for PlugFn scaffolding and runtime diagnostics",
   "bin": {
     "plugfn": "./dist/index.js"

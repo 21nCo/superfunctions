@@ -5,18 +5,14 @@ PlugFn for TypeScript is the reference runtime for the shared PlugFn product con
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db@0.3.2 @superfunctions/http@0.2.0
+npm install plugfn @plugfn/providers @superfunctions/db@0.3.4 @superfunctions/http@0.2.0
 ```
 
 ## Quick start
 
 ```ts
-import {
-  createPlugFnRouter,
-  githubProvider,
-  linearProvider,
-  plugFn,
-} from 'plugfn';
+import { createPlugFnRouter, plugFn } from 'plugfn';
+import { githubProvider, linearProvider } from '@plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
@@ -194,12 +190,27 @@ signature verification disabled, rejects with `WEBHOOK_WORKFLOW_BINDING_REQUIRED
 Use a credential for the same signing authority for a scoped delivery. The
 lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
-Apply PlugFn schema version 9 with `superfunctions generate` and your adapter's
-migration runner before starting the upgraded webhook workers. The migration
+In the host application that contains your upgraded PlugFn dependency and
+migration config, install the Superfunctions CLI and TypeScript together.
+CLI 0.2.2 uses TypeScript to find the PlugFn initialization in your source files.
+
+```sh
+npm install --save-dev @superfunctions/cli@0.2.2 typescript
+npx superfunctions generate-migration plugfn
+```
+
+The command defaults to `superfunctions.config.js`. It accepts JavaScript
+(`.js`, `.mjs`, or `.cjs`) and JSON config files. For a different name, pass
+`--config <path>`. Compile a TypeScript config to JavaScript before passing it.
+
+Apply the generated schema version 9 migration with your adapter's migration
+runner before deploying upgraded HTTP or SDK ingress and retry workers, even if
+workflow bindings are disabled. The migration
 preserves existing receipt keys and adds a separately indexed workflow receipt
 key and a scope marker on deliveries. Upgrade all retry workers before enabling
-workflow bindings. Scoped deliveries enter through provider redelivery or the SDK
-with the original body, signature headers, and verification credential.
+workflow bindings. Resubmit scoped deliveries through the provider or the SDK. For GitHub Apps,
+request redelivery manually or through the GitHub API. SDK resubmission needs the
+original body, signature headers, and verification credential.
 
 Previously stored definitions without both binding fields are skipped during
 webhook registration. To restore automatic dispatch, an administrator should
