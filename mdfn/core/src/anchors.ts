@@ -36,8 +36,10 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
   const affinity = anchor.affinity;
   let from = anchor.from;
   let to = anchor.to;
+  let mapped = false;
   // forEach skips holes in a sparse ranges array, as mapSelection's reduce does.
   ranges.forEach((range) => {
+    mapped = true;
     const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
     const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
     from = Math.min(mappedFrom, mappedTo);
@@ -45,7 +47,7 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
   });
   // An unchanged anchor is reused only when this module already detached it; a
   // caller-owned anchor is copied so later changes to it cannot reach the result.
-  if (from === anchor.from && to === anchor.to && isImmutableValue(anchor)) return anchor;
+  if (!mapped || (from === anchor.from && to === anchor.to && isImmutableValue(anchor))) return anchor;
   return { ...anchor, from, to, ...(affinity !== undefined ? { affinity } : {}) };
 }
 

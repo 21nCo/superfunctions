@@ -530,6 +530,8 @@ describe("@mdfn/core", () => {
     const ranges: { from: number; to: number; insertedLength: number }[] = [];
     ranges[1] = { from: 0, to: 0, insertedLength: 1 };
     expect(mapAnchor({ from: 1, to: 2 }, ranges)).toEqual({ from: 2, to: 3 });
+    const frozen = Object.freeze({ from: 1, to: 2 });
+    expect(mapAnchor(frozen, new Array(2))).toBe(frozen);
     expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] }, ranges)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
   });
 
