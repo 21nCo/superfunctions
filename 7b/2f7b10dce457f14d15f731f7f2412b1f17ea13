@@ -1,0 +1,49 @@
+.github/workflows/datafn-postgres.yml
+  s_2504f4a4138452::t_4273e37a56d104 4-5,91
+datafn/admin/package.json
+  s_2504f4a4138452::t_b8860ef89665d2 41
+datafn/server/__tests__/revisions-drizzle-sqlite.test.ts
+  s_2504f4a4138452::t_20b488209e0cc1 1-242
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_2504f4a4138452::t_ac73dae2bad2ba 1-247
+datafn/server/__tests__/revisions.test.ts
+  s_2504f4a4138452::t_721254b5ea3c0e 1-4232
+datafn/server/package.json
+  s_2504f4a4138452::t_3c14022905afab 3
+datafn/server/src/execution/query/pushdown.ts
+  s_2504f4a4138452::t_b95134f4874488 271,282-283,547
+datafn/server/src/execution/query/search.ts
+  s_2504f4a4138452::t_924f1f1e5a989c 43,109,152
+datafn/server/src/execution/sync/clone.ts
+  s_2504f4a4138452::t_87c4aaefac79b8 10-15,18-19,189-214,248-256,326-334,368-375
+datafn/server/src/execution/sync/pull.ts
+  s_2504f4a4138452::t_69d1c6b41c0cdd 9-17,65-66,91-96,160-167,811-814,840,854-858,875-877,883-884,908-913,943-975,1034-1037,1046-1055,1060,1092,1108,1134,1152,1158-1169,1172-1175,1181,1215-1217,1221-1224,1238,1240,1247-1250,1258,1260,1268-1271,1309-1312
+datafn/server/src/index.ts
+  s_2504f4a4138452::t_13a5b049de5d48 44
+datafn/server/src/routes/query.ts
+  s_2504f4a4138452::t_e172f984d1f26f 26-27,31-37,49,78-215,247-248,250,253,301,384,386,389,780-784,947,1005-1008,1012-1032,1047,1054,1056-1057,1086-1091,1095-1099,1143-1242
+datafn/server/src/routes/query/execute.ts
+  s_2504f4a4138452::t_2d72c1135ee5dc 239,317,353
+datafn/server/src/routes/sync.ts
+  s_2504f4a4138452::t_3553a4e007ee57 13,33-34,256-266,283-290,479
+datafn/server/src/server.ts
+  s_2504f4a4138452::t_2ef9d6be29e688 29-34,43,81,401-408,456-964,1023,1084,1483,1677-1683,1685,1690,1697-1703,1726-1727,1748-1749,1776,1780-1781,1973-1975,1981,2008-2014
+package-lock.json
+  s_2504f4a4138452::t_b6f4e196b7e53e 8783,10131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b2f7b10dce457f14d15f731f7f2412b1f17ea13",
+  "prompts": {},
+  "sessions": {
+    "s_2504f4a4138452": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21d62-e759-7360-a261-eb40be3de864",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

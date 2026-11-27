@@ -1,0 +1,17 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "645311f9fb448ebc35f3d064e346a2fc58f3f4f8",
+  "prompts": {},
+  "sessions": {
+    "s_2504f4a4138452": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21d62-e759-7360-a261-eb40be3de864",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
