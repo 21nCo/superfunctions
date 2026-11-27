@@ -266,12 +266,8 @@ export class WebhookHandler {
     }
     const verifier = trigger.webhookConfig?.verifySignature;
     const requireSignatureProof = options.requireSignatureProof === true;
-    if ((requireSignatureProof || this.options.verifySignatures === true) && !verifier) {
-      throw new WebhookHandlerError(
-        'WEBHOOK_SIGNATURE_REQUIRED',
-        `signature verifier not configured for ${provider}.${triggerKey}`,
-        500
-      );
+    if (requireSignatureProof && !verifier) {
+      throw missingSignatureVerifier(provider, triggerKey);
     }
     // Scoped delivery must extract and dispatch from the same bytes the verifier sees.
     const rawBody = requiresBinding && options.rawBody ? copyWebhookBody(options.rawBody) : options.rawBody;
@@ -280,6 +276,9 @@ export class WebhookHandler {
       rawBody,
       headers: normalizedHeaders,
     };
+    if (this.options.verifySignatures === true && !verifier) {
+      throw missingSignatureVerifier(provider, triggerKey);
+    }
 
     let verified = this.options.verifySignatures !== false;
     let signatureVerified = false;
@@ -683,6 +682,12 @@ export function webhookBindingRequired(message = 'webhook has no unique verified
     'WEBHOOK_WORKFLOW_BINDING_REQUIRED',
     message,
     403
+  );
+}
+
+function missingSignatureVerifier(provider: string, triggerKey: string): WebhookHandlerError {
+  return new WebhookHandlerError(
+    'WEBHOOK_SIGNATURE_REQUIRED', `signature verifier not configured for ${provider}.${triggerKey}`, 500,
   );
 }
 

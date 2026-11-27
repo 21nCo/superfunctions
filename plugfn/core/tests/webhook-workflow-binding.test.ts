@@ -618,6 +618,19 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('preserves malformed standalone payload errors when the configured verifier is missing', async () => {
+    const { runtime } = startRuntime(database, { withResolver: false, withVerifier: false, verifySignatures: true });
+    const handle = (rawBody: string) => runtime.webhooks.handle(
+      'test-provider', 'test.event', undefined, {}, signingCredential, { rawBody: Buffer.from(rawBody) },
+    );
+    await expect(handle('test-malformed-json')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR', status: 400,
+    });
+    await expect(handle(JSON.stringify({ id: 'test-delivery' }))).rejects.toMatchObject({
+      code: 'WEBHOOK_SIGNATURE_REQUIRED', status: 500,
+    });
+  });
+
   it('resolves installations only within the verified signing authority', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { send, action, resolveBinding, resolveAlternateBinding } = startRuntime(database);
