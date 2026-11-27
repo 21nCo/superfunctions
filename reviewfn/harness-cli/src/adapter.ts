@@ -302,7 +302,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const remaining = run.deadline - Date.now();
     const probed = warm && !("error" in warm) ? warm : run.input.signal?.aborted || remaining <= 0 ? undefined : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, Math.min(VERSION_TIMEOUT_MS, remaining), run.input.signal);
     if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
-    if (!probed) return run.state.finish("timed_out", "The CLI exceeded its configured bound before its version was read.");
+    if (!probed || Date.now() >= run.deadline) return run.state.finish("timed_out", "The CLI exceeded its configured bound before its version was read.");
     if (!("error" in probed)) { run.state.harnessVersion = probed.version; return undefined; }
     return run.state.finish(probed.timedOut ? "timed_out" : "failed", probed.error);
   }

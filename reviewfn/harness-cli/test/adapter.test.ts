@@ -996,6 +996,24 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(JSON.stringify(output)).not.toContain(secret);
   });
 
+  it("ends timed_out, not a pin mismatch, a run whose replacement version probe returns after its deadline", async () => {
+    const secret = ["slow", "fixture", "credential"].join("-");
+    let probes = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+      if ((probes += 1) === 2) await new Promise(resolve => setTimeout(resolve, 150));
+      return { code: 0, signal: null, stdout: `fake-cli version ${probes === 1 ? `1.2.3+build.${secret}` : "9.8.7"}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+    const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
+    const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
+    expect((await harness.preflight(allowlisted)).ok).toBe(true);
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 50 } };
+    const output = await harness.run(input(designated, { policy }));
+    expect([output.terminal, output.error]).toEqual(["timed_out", "The CLI exceeded its configured bound before its version was read."]);
+    expect(probes).toBe(2);
+  });
+
   it("caches nothing an interrupted version probe printed, so a later run probes again", async () => {
     const secret = ["interrupted", "fixture", "credential"].join("-");
     const controller = new AbortController();
@@ -1173,7 +1191,7 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 50 } };
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { policy }));
     expect(output.terminal).toBe("timed_out");
-    expect(output.error).toBe("The CLI exceeded its configured bound before the CLI started.");
+    expect(output.error).toBe("The CLI exceeded its configured bound before its version was read.");
     expect(spawned).toBe(1);
   });
 
