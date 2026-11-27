@@ -244,6 +244,7 @@ export class WebhookHandler {
     options: {
       rawBody?: Uint8Array;
       standaloneEvent?: string;
+      requireSignatureProof?: boolean;
     } = {}
   ): Promise<PreparedWebhook & { authenticatedWithoutSubject: boolean; admit(): Promise<WebhookAdmission> }> {
     const providerObj = this.providerRegistry.get(provider);
@@ -263,6 +264,15 @@ export class WebhookHandler {
     if (requiresBinding && this.options.verifySignatures === false) {
       throw webhookBindingRequired('webhook providers with workflow bindings require signature verification enabled');
     }
+    const verifier = trigger.webhookConfig?.verifySignature;
+    const requireSignatureProof = options.requireSignatureProof === true;
+    if ((requireSignatureProof || this.options.verifySignatures === true) && !verifier) {
+      throw new WebhookHandlerError(
+        'WEBHOOK_SIGNATURE_REQUIRED',
+        `signature verifier not configured for ${provider}.${triggerKey}`,
+        500
+      );
+    }
     // Scoped delivery must extract and dispatch from the same bytes the verifier sees.
     const rawBody = requiresBinding && options.rawBody ? copyWebhookBody(options.rawBody) : options.rawBody;
     const parsedPayload = requiresBinding || payload == null ? parseWebhookPayload(rawBody) : payload;
@@ -270,15 +280,6 @@ export class WebhookHandler {
       rawBody,
       headers: normalizedHeaders,
     };
-
-    const verifier = trigger.webhookConfig?.verifySignature;
-    if (this.options.verifySignatures === true && !verifier) {
-      throw new WebhookHandlerError(
-        'WEBHOOK_SIGNATURE_REQUIRED',
-        `signature verifier not configured for ${provider}.${triggerKey}`,
-        500
-      );
-    }
 
     let verified = this.options.verifySignatures !== false;
     let signatureVerified = false;
@@ -304,6 +305,9 @@ export class WebhookHandler {
       }
       signatureVerified = verified === true;
     }
+    if (requireSignatureProof && !signatureVerified) {
+      throw new WebhookHandlerError('WEBHOOK_SIGNATURE_INVALID', 'signature verification failed');
+    }
 
     const authenticated = Boolean(rawBody?.length && signatureVerified && secret);
     const subject = requiresBinding && authenticated
@@ -311,7 +315,7 @@ export class WebhookHandler {
       : undefined;
     if (requiresBinding && authenticated && subject === undefined && options.standaloneEvent !== undefined && options.standaloneEvent !== event) {
       const standalone = await this[prepareWebhookDelivery](
-        provider, options.standaloneEvent, payload, headers, secret, { rawBody },
+        provider, options.standaloneEvent, payload, headers, secret, { rawBody, requireSignatureProof: true },
       );
       // Both triggers must agree that the verified delivery has no workflow subject.
       if (!standalone.authenticatedWithoutSubject) {
@@ -429,15 +433,10 @@ export class WebhookHandler {
             scope.standalone = null;
             if (legacyKey && this.getHandlerCount(provider, legacyKey) > 0) {
               try {
-                const legacy = await this[prepareWebhookDelivery](
-                  provider, standaloneEvent, payload, headers, secret, { rawBody: options.rawBody },
+                scope.standalone = await this[prepareWebhookDelivery](
+                  provider, standaloneEvent, payload, headers, secret,
+                  { rawBody: options.rawBody, requireSignatureProof: true },
                 );
-                if (!legacy.signatureVerified) {
-                  throw new WebhookHandlerError(
-                    'WEBHOOK_SIGNATURE_REQUIRED', `signature verifier not configured for ${provider}.${legacyKey}`, 500,
-                  );
-                }
-                scope.standalone = legacy;
               } catch (error) {
                 if (!(error instanceof WebhookPayloadValidationError)) throw error;
                 this.logger.warn(`Standalone webhook payload did not match ${provider}.${legacyKey}`);

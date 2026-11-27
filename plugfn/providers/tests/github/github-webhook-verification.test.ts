@@ -103,10 +103,11 @@ describe('github webhook verification', () => {
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'SDK', legacyPayload: true },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false },
     { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true, legacyVerifierFails: true },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false, legacyVerifierMissing: true },
     { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
     { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
-  ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload, verifier error $legacyVerifierFails)', async ({
-    scoped, hasInstallation, event, ingress, legacyPayload, legacyVerifierFails,
+  ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload, verifier error $legacyVerifierFails, missing verifier $legacyVerifierMissing)', async ({
+    scoped, hasInstallation, event, ingress, legacyPayload, legacyVerifierFails, legacyVerifierMissing,
   }) => {
     const binding = {
       tenantId: 'test-tenant',
@@ -150,7 +151,7 @@ describe('github webhook verification', () => {
       } : undefined,
     });
     const generic = githubProvider.triggers!.pull_request;
-    runtime.providers.register(legacyVerifierFails ? {
+    runtime.providers.register(legacyVerifierFails || legacyVerifierMissing ? {
       ...githubProvider,
       triggers: {
         ...githubProvider.triggers,
@@ -158,7 +159,9 @@ describe('github webhook verification', () => {
           ...generic,
           webhookConfig: {
             ...generic.webhookConfig!,
-            verifySignature: () => { throw new Error('test standalone verifier failure'); },
+            verifySignature: legacyVerifierMissing
+              ? undefined
+              : () => { throw new Error('test standalone verifier failure'); },
           },
         },
       },
@@ -201,10 +204,10 @@ describe('github webhook verification', () => {
         headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sign(rawBody, secret) },
         body: rawBody,
       }));
-      if (legacyVerifierFails) {
-        expect(accepted.status).toBe(400);
+      if (legacyVerifierFails || legacyVerifierMissing) {
+        expect(accepted.status).toBe(legacyVerifierMissing ? 500 : 400);
         await expect(accepted.json()).resolves.toMatchObject({
-          error: { code: 'WEBHOOK_SIGNATURE_INVALID' },
+          error: { code: legacyVerifierMissing ? 'WEBHOOK_SIGNATURE_REQUIRED' : 'WEBHOOK_SIGNATURE_INVALID' },
         });
         expect(listener).not.toHaveBeenCalled();
         expect(action).not.toHaveBeenCalled();
