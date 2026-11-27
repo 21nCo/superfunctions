@@ -1,0 +1,25 @@
+clifn/docs/scripts/generate-llms.test.mjs
+  s_1b8827e8fc7104::t_fa1695feb29715 26-27,53-55
+scripts/docs-site/README.md
+  s_1b8827e8fc7104::t_3e1003674a3505 13
+scripts/docs-site/llms.mjs
+  s_1b8827e8fc7104::t_ddf60ad00b0fc8 3,7,30-33,37-38,42,75-110,116-123,130,132-134,137-138,149-154,157,159,163-165,167,169-173,175,177-178,182,185
+scripts/docs-site/llms.test.mjs
+  s_1b8827e8fc7104::t_967d5dbfae759e 4,7,39-45,80,87-90,104-116,243-278,312-337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "255f3d0fe4f050b205ed6824109cfe5191d26916",
+  "prompts": {},
+  "sessions": {
+    "s_1b8827e8fc7104": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34a1837b-4f73-459f-bc84-b56d24c9b5a8",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

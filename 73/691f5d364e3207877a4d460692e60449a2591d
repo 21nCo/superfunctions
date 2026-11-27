@@ -1,0 +1,41 @@
+datafn/server/__tests__/data-integrity-high.test.ts
+  s_8c21976cbfc5a0::t_b9d216859a456e 365-368
+.github/workflows/datafn-postgres.yml
+  s_d39386d6da64f0::t_5cdf4c100d7944 1-90
+datafn/server/__tests__/revisions-postgres-writes.test.ts
+  s_d39386d6da64f0::t_4e2ffb7e3b7ab6 1-216
+datafn/server/__tests__/revisions-writes.test.ts
+  s_d39386d6da64f0::t_c09f866d624a7a 1-319
+datafn/server/src/execution/internal-tables.ts
+  s_d39386d6da64f0::t_f027efb73924ad 132-135,141-145,147-174,199-200
+datafn/server/src/execution/revisions.ts
+  s_d39386d6da64f0::t_17a939c36904c1 267,288,319-329,331-335,337-342,347-368,371-384,387-394,398-401,405,410,416,426,429-435,441-450,456-467,473,499-501,503-504,506-509,514-519,521,528-530,536,539-540,542-543,805-810,814,816,822-880,885-895,904-905,910-915,917-919,922-923,933
+datafn/server/src/execution/sync/change-tracking.ts
+  s_d39386d6da64f0::t_17bb07a164a6a5 19,28-37,39,41-45,47-48,50,53-54,60-72,83-91,93-113,115,140,193-197
+datafn/server/src/execution/sync/push.ts
+  s_d39386d6da64f0::t_04c277fd7ce6e3 22,1423-1425,1527-1529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73691f5d364e3207877a4d460692e60449a2591d",
+  "prompts": {},
+  "sessions": {
+    "s_8c21976cbfc5a0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21b52-29cb-7e23-9cf0-d837d88dddef",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d39386d6da64f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d39386d6da64f0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

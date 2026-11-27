@@ -1,0 +1,23 @@
+datafn/server/__tests__/revisions-write-paths.test.ts
+  s_b9dd23933a7ed4::t_52dcf12a54b116 1-316
+datafn/server/__tests__/revisions-writes.test.ts
+  s_b9dd23933a7ed4::t_fb9061fe286ab3 225-239,268-298
+datafn/server/src/execution/revisions.ts
+  s_b9dd23933a7ed4::t_f6f8d9e6fa2021 14,243,337,355-358,361,459-465,467-468,524-534,541,546-550,553-554,563-565,574,582,838,855,870,873-876,883,886-891,905-907,949-951
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fa1c967d1477e287fa62bdd10405eae54d43760",
+  "prompts": {},
+  "sessions": {
+    "s_b9dd23933a7ed4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5dc44339-4be4-4ef1-8c8f-68cd6ff5da58",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
