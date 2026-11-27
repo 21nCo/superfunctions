@@ -1,6 +1,6 @@
 {
   "name": "@clifn/core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Reusable CLI primitives runtime for the Superfunctions ecosystem",
   "type": "module",
   "main": "./dist/index.js",
