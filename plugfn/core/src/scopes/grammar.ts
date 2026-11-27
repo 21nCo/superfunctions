@@ -70,21 +70,36 @@ function dataDescriptor(value: unknown, flags: boolean): PropertyDescriptor {
 const IntrinsicObject = Object;
 const intrinsicObjectPrototype: object = IntrinsicObject.prototype;
 
+/** How many levels of `Object`'s prototype chain the species check walks (three in a normal realm). */
+const MAX_SPECIES_CHAIN_DEPTH = 16;
+
 /**
  * Whether `then` on a promise whose prototype is `Object.prototype` (with no
  * own `constructor`) uses the default species: `Object.prototype.constructor`
- * is still the intrinsic `Object` as a data property, and `Object` has no
- * `Symbol.species`. When it holds, a failed `then` was the brand check, so
- * the retry is skipped and a plain record never sees a `defineProperty`.
+ * is still the intrinsic `Object` as a data property, and no `Symbol.species`
+ * is defined anywhere on `Object`'s prototype chain (`Object` itself,
+ * `Function.prototype`, `Object.prototype`), which `then` reads with a full
+ * property lookup. When it holds, a failed `then` was the brand check, so the
+ * retry is skipped and a plain record never sees a `defineProperty`. The walk
+ * is bounded; a longer chain, or one whose lookup throws (a Proxy), counts as
+ * not default, so the retry runs.
  */
 function ambientSpeciesIsDefault(): boolean {
-  const constructor = Object.getOwnPropertyDescriptor(intrinsicObjectPrototype, 'constructor');
-  return (
-    constructor !== undefined &&
-    Object.hasOwn(constructor, 'value') &&
-    constructor.value === IntrinsicObject &&
-    Object.getOwnPropertyDescriptor(IntrinsicObject, Symbol.species) === undefined
-  );
+  try {
+    const constructor = Object.getOwnPropertyDescriptor(intrinsicObjectPrototype, 'constructor');
+    if (constructor === undefined || !Object.hasOwn(constructor, 'value') || constructor.value !== IntrinsicObject) {
+      return false;
+    }
+    let level: unknown = IntrinsicObject;
+    for (let depth = 0; depth < MAX_SPECIES_CHAIN_DEPTH; depth++) {
+      if (level === null) return true;
+      if (Object.getOwnPropertyDescriptor(level as object, Symbol.species) !== undefined) return false;
+      level = Object.getPrototypeOf(level);
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -106,7 +121,8 @@ function ambientSpeciesIsDefault(): boolean {
  *   defined for the retry and deleted afterwards. It is skipped when the
  *   prototype is `null`, or `Object.prototype` while the ambient species is
  *   the default (`Object.prototype.constructor` is the intrinsic `Object`
- *   and `Object` has no `Symbol.species`), since `then` then failed on the
+ *   and no `Symbol.species` is defined anywhere on `Object`'s prototype
+ *   chain), since `then` then failed on the
  *   brand check; so a plain record never takes the retry;
  * - configurable (data or accessor): it is redefined to that data property
  *   for the retry and the saved descriptor is restored afterwards;
@@ -158,30 +174,73 @@ function containPromise(value: unknown): void {
   }
 }
 
-/** Whether `key` is an array index: a canonical integer string below 2^32 - 1. */
-function isArrayIndex(key: string): boolean {
-  if (!/^(?:0|[1-9]\d{0,9})$/.test(key)) return false;
-  return Number(key) < 4294967295;
-}
+/**
+ * The standard `Array.prototype` method names copied into
+ * {@link NORMALIZE_ARRAY_PROTOTYPE}, plus `Symbol.iterator`. A fixed list, so
+ * no other name added to `Array.prototype` (even before load) reaches an
+ * input array.
+ */
+const NORMALIZE_ARRAY_METHODS: readonly PropertyKey[] = Object.freeze([
+  'at',
+  'concat',
+  'copyWithin',
+  'entries',
+  'every',
+  'fill',
+  'filter',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'flat',
+  'flatMap',
+  'forEach',
+  'includes',
+  'indexOf',
+  'join',
+  'keys',
+  'lastIndexOf',
+  'map',
+  'pop',
+  'push',
+  'reduce',
+  'reduceRight',
+  'reverse',
+  'shift',
+  'slice',
+  'some',
+  'sort',
+  'splice',
+  'toLocaleString',
+  'toReversed',
+  'toSorted',
+  'toSpliced',
+  'toString',
+  'unshift',
+  'values',
+  'with',
+  Symbol.iterator,
+]);
 
 /**
  * The prototype of every array the engine hands to `normalize`: a frozen
- * null-prototype object holding the `Array.prototype` methods captured once
- * at load: only own data properties whose value is a function, under symbol
- * keys or non-index string keys, without `constructor`. Accessors, other
- * data (`length`, `Symbol.unscopables`) and index keys are left out, so data
- * pollution present even before load (`Array.prototype[0]`, say) is never
- * copied. Array methods work as usual, nothing added to or replaced on
- * `Array.prototype` or `Object.prototype` later is visible, and
- * `ArraySpeciesCreate` sees no `constructor`, so `map` and friends create
- * intrinsic arrays.
+ * null-prototype object holding the standard `Array.prototype` methods
+ * captured once at load. Only the names in {@link NORMALIZE_ARRAY_METHODS}
+ * are copied, each only when it is an own data property whose value is a
+ * function; an absent name is skipped. So no other name (a method or data
+ * added to `Array.prototype` even before load, `Array.prototype[0]`, say),
+ * no accessor and no `constructor` is ever copied. Array methods work as
+ * usual, nothing added to or replaced on `Array.prototype` or
+ * `Object.prototype` later is visible, and `ArraySpeciesCreate` sees no
+ * `constructor`, so `map` and friends create intrinsic arrays.
  */
 const NORMALIZE_ARRAY_PROTOTYPE: object = (() => {
   const proto = Object.create(null) as object;
-  for (const key of Reflect.ownKeys(Array.prototype)) {
-    if (key === 'constructor' || (typeof key === 'string' && isArrayIndex(key))) continue;
-    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key)!;
-    if (!Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') continue;
+  for (const key of NORMALIZE_ARRAY_METHODS) {
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
+    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') {
+      continue;
+    }
     Object.defineProperty(proto, key, dataDescriptor(descriptor.value, true));
   }
   return Object.freeze(proto);

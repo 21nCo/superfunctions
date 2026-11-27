@@ -238,11 +238,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * `normalize` is not called. The engine detaches every record and array of
    * the clone it receives from the shared realm: every record has a null
    * prototype, and every array (still an array, `length` own) has a frozen
-   * null-prototype prototype holding the `Array.prototype` methods captured
-   * at load (only own data properties whose value is a function, under
-   * symbol or non-index string keys, so data present on `Array.prototype`
-   * even before load is never copied), without `constructor`. So a field inherited from a polluted
-   * `Object.prototype` or `Array.prototype` never appears in the input.
+   * null-prototype prototype holding the standard `Array.prototype` methods
+   * captured at load (a fixed list of method names plus `Symbol.iterator`,
+   * each copied only when it is an own data property whose value is a
+   * function, so no other name, method or data, present on `Array.prototype`
+   * even before load is ever copied), without `constructor`. So a field
+   * inherited from a polluted `Object.prototype` or `Array.prototype` never
+   * appears in the input.
    * Boundary: primitive values (read through the `String`, `Number` and
    * `Boolean` prototypes) and every object `normalize` builds itself belong
    * to the callback's realm, so a polluted realm can change what `normalize`
@@ -267,8 +269,9 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * when redefining it throws after applying the change. With no own
    * `constructor`, the retry is skipped when the prototype is `null`, or
    * `Object.prototype` while `Object.prototype.constructor` is the intrinsic
-   * `Object` and `Object` has no `Symbol.species` (`then` then failed on the
-   * brand check), so a plain record never takes it.
+   * `Object` and no `Symbol.species` is defined anywhere on `Object`'s
+   * prototype chain (`then` then failed on the brand check), so a plain
+   * record never takes it.
    * Residual: a promise whose lookup throws and whose own `constructor` is a
    * non-configurable accessor or non-configurable non-writable data, or a
    * non-extensible promise with no own `constructor`, cannot be marked

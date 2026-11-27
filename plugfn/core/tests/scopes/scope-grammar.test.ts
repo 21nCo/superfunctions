@@ -1217,6 +1217,56 @@ describe('every record the engine hands out is its own (I7)', () => {
       }
     });
 
+    it('copy only the standard Array.prototype method names, never a method added before load', async () => {
+      const arrayPrototype = Array.prototype as unknown as Record<PropertyKey, unknown>;
+      const pollutedSymbol = Symbol.for('test-polluted');
+      const allowed = new Set<PropertyKey>([
+        'at', 'concat', 'copyWithin', 'entries', 'every', 'fill', 'filter', 'find', 'findIndex', 'findLast',
+        'findLastIndex', 'flat', 'flatMap', 'forEach', 'includes', 'indexOf', 'join', 'keys', 'lastIndexOf', 'map',
+        'pop', 'push', 'reduce', 'reduceRight', 'reverse', 'shift', 'slice', 'some', 'sort', 'splice',
+        'toLocaleString', 'toReversed', 'toSorted', 'toSpliced', 'toString', 'unshift', 'values', 'with',
+        Symbol.iterator,
+      ]);
+      const prototypes: object[] = [];
+      let results: { ok: boolean; perms: unknown };
+      vi.resetModules();
+      try {
+        arrayPrototype.defaultPermissions = function defaultPermissions() {
+          return ['admin'];
+        };
+        arrayPrototype[pollutedSymbol] = function testPolluted() {
+          return ['admin'];
+        };
+        const fresh = await import('../../src/scopes/grammar.js');
+        const g = fresh.defineScopeGrammar({
+          provider: 'preload-array-names',
+          dimensions: { perms: { kind: 'exactSet', values: ['test-read', 'admin'] } },
+          normalize: ((input: { rules: string[] & Record<PropertyKey, unknown> }) => {
+            prototypes.push(Object.getPrototypeOf(input.rules) as object);
+            const perms = input.rules.slice();
+            if (input.rules.defaultPermissions || input.rules[pollutedSymbol]) perms.push('admin');
+            return { perms };
+          }) as never,
+          riskOf,
+        });
+        results = {
+          ok: g.isSubset({ rules: ['admin'] } as never, { rules: [] } as never).ok,
+          perms: g.normalize({ rules: [] } as never).scope?.perms,
+        };
+      } finally {
+        delete arrayPrototype.defaultPermissions;
+        delete arrayPrototype[pollutedSymbol];
+        vi.resetModules();
+      }
+      expect(results).toEqual({ ok: false, perms: [] });
+      expect(prototypes.length).toBeGreaterThan(0);
+      for (const proto of prototypes) {
+        expect(Reflect.ownKeys(proto).filter(key => !allowed.has(key))).toEqual([]);
+        expect(Object.hasOwn(proto, 'defaultPermissions') || Object.hasOwn(proto, pollutedSymbol)).toBe(false);
+        expect(Object.hasOwn(proto, 'map') && Object.hasOwn(proto, Symbol.iterator)).toBe(true);
+      }
+    });
+
     it('call the Array.prototype methods captured at load, not a later replacement', () => {
       const original = Array.prototype.map;
       const inputArrays = new Set<unknown>();
@@ -1671,13 +1721,19 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         riskOf,
       });
       const viaRisk = defineScopeGrammar({ provider: 'p', dimensions: names, riskOf: record as never });
+      const scope = viaRisk.normalize({ names: ['a'] }).scope!;
       return [
         viaNormalize.isSubset({ names: ['reject'] }, { names: [] }).violations.map(v => v.side),
         viaNormalize.isSubset({ names: [] }, { names: ['reject'] }).violations.map(v => v.side),
         viaNormalize.normalize({ names: ['reject'] }).ok,
         thrownBy(() => viaRisk.classifyRisk({ names: ['a'] })) instanceof ScopeError,
+        thrownBy(() => viaRisk.classifyScope(scope)) instanceof ScopeError,
       ];
     }
+
+    /** What `runAll` returns when every path fails closed, and how many values it makes. */
+    const FAILED_CLOSED = [['request'], ['envelope'], false, true, true];
+    const PATHS = FAILED_CLOSED.length;
 
     it.each(makers)('contains %s on every path and restores the own constructor exactly', async (_label, make) => {
       const made: [object, PropertyDescriptor | undefined][] = [];
@@ -1686,8 +1742,8 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         results = runAll(make, made);
       });
       expect(seen).toEqual([]);
-      expect(results).toEqual([['request'], ['envelope'], false, true]);
-      expect(made).toHaveLength(4);
+      expect(results).toEqual(FAILED_CLOSED);
+      expect(made).toHaveLength(PATHS);
       for (const [value, before] of made) {
         const after = Object.getOwnPropertyDescriptor(value, 'constructor');
         expect(after).toEqual(before);
@@ -1708,7 +1764,7 @@ describe('callbacks are synchronous and a returned promise is contained, never a
             },
           },
         );
-      expect(runAll(proxied, [])).toEqual([['request'], ['envelope'], false, true]);
+      expect(runAll(proxied, [])).toEqual(FAILED_CLOSED);
       expect(defines).toBe(0);
     });
 
@@ -1737,6 +1793,23 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           },
         },
       ],
+      ...[
+        ['Function.prototype', Function.prototype],
+        ['Object.prototype', Object.prototype],
+      ].flatMap(([where, target]) => [
+        [
+          `${where as string}[Symbol.species] throws`,
+          target,
+          Symbol.species,
+          {
+            configurable: true,
+            get() {
+              throw new Error('inherited species threw');
+            },
+          },
+        ],
+        [`${where as string}[Symbol.species] is not a constructor`, target, Symbol.species, { value: 'test-not-a-constructor', writable: true, configurable: true }],
+      ]),
     ] as [string, object, PropertyKey, PropertyDescriptor][])(
       'contains a promise reparented to Object.prototype when %s',
       async (_label, target, key, descriptor) => {
@@ -1748,8 +1821,8 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           });
         });
         expect(seen).toEqual([]);
-        expect(results).toEqual([['request'], ['envelope'], false, true]);
-        expect(made).toHaveLength(4);
+        expect(results).toEqual(FAILED_CLOSED);
+        expect(made).toHaveLength(PATHS);
         for (const [value] of made) expect(Object.hasOwn(value, 'constructor')).toBe(false);
       },
     );
@@ -1780,9 +1853,9 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           },
         });
       };
-      expect(runAll(proxied, [])).toEqual([['request'], ['envelope'], false, true]);
+      expect(runAll(proxied, [])).toEqual(FAILED_CLOSED);
       expect(traps).toBeGreaterThan(0);
-      expect(targets).toHaveLength(4);
+      expect(targets).toHaveLength(PATHS);
       for (const [target, before] of targets) {
         const after = Object.getOwnPropertyDescriptor(target, 'constructor');
         expect(after).toEqual(before);
@@ -1808,8 +1881,8 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         }
       });
       expect(seen).toEqual([]);
-      expect(results).toEqual([['request'], ['envelope'], false, true]);
-      expect(made).toHaveLength(4);
+      expect(results).toEqual(FAILED_CLOSED);
+      expect(made).toHaveLength(PATHS);
       for (const [value] of made) expect(Object.hasOwn(value, 'constructor')).toBe(false);
     });
 
@@ -1824,7 +1897,7 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         Object.defineProperty(Promise.resolve('settled'), 'constructor', { value: throwingSpeciesHolder(), writable: false, configurable: false });
       const nonExtensible = () => Object.preventExtensions(ThrowingSpecies.resolve('settled' as never));
       for (const make of [nonConfigurableAccessor, nonConfigurableReadOnly, nonExtensible]) {
-        expect(runAll(make, [])).toEqual([['request'], ['envelope'], false, true]);
+        expect(runAll(make, [])).toEqual(FAILED_CLOSED);
       }
     });
   });
