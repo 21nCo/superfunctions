@@ -145,11 +145,19 @@ function ignoreRejection(): void {
 }
 
 /**
- * Whether a callback result is a native promise. A rejection handler is
- * attached first, so a rejecting async `normalize` or `riskOf` never becomes
- * an unhandled rejection. Never throws: `Promise.prototype.then` brand-checks
- * its receiver without running a trap, and any error from a hostile promise
- * subclass is swallowed.
+ * Whether a callback result is a native promise, attaching a rejection
+ * handler when it can. Never throws.
+ *
+ * Boundary: `Promise.prototype.then` brand-checks its receiver and then looks
+ * up its species constructor (`constructor`, then `Symbol.species`) before it
+ * attaches the handler. For a native promise, including a null-prototype one
+ * or a well-behaved subclass, the handler is attached, so a rejecting async
+ * `normalize` or `riskOf` does not become an unhandled rejection. A promise
+ * whose `constructor` or species lookup throws cannot be marked handled
+ * without running that code: `then` throws before attaching, the error is
+ * swallowed and the value is still rejected as a result, but its own
+ * rejection stays the grammar author's responsibility. Pure JavaScript has
+ * no trap-free promise brand check that avoids this.
  */
 function isNativePromise(value: unknown): boolean {
   if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return false;
@@ -157,8 +165,9 @@ function isNativePromise(value: unknown): boolean {
     Promise.prototype.then.call(value, undefined, ignoreRejection);
     return true;
   } catch {
-    // Not a native promise, or a promise subclass whose species constructor
-    // throws. Either way the value is not a valid result and is rejected.
+    // Not a native promise, or a promise whose constructor or species lookup
+    // throws (no handler is attached then; see the boundary above). Either
+    // way the value is not a valid result and is rejected.
     return false;
   }
 }

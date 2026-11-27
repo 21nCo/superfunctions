@@ -156,13 +156,17 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
    * envelopes alike. Its output is validated; a throw, a promise or an output
    * that does not fit the grammar is rejected. Must be synchronous. Defaults
-   * to the identity.
+   * to the identity. A returned native promise gets a rejection handler, but
+   * one whose `constructor` or `Symbol.species` lookup throws cannot be
+   * marked handled, so its rejection stays the grammar author's
+   * responsibility.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**
    * Risk of one requested item. Must synchronously return one of
    * {@link SCOPE_RISK_LEVELS}; any other result (a promise included), or a
-   * throw, makes `classifyRisk` throw `ScopeError`.
+   * throw, makes `classifyRisk` throw `ScopeError`. A returned promise is
+   * handled as described for `normalize`.
    */
   readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }

@@ -647,6 +647,92 @@ describe('asynchronous callbacks', () => {
     expect(() => resolving.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
   });
 
+  it('attaches a rejection handler to a rejected null-prototype promise', async () => {
+    const nullPrototypeRejection = (): Promise<never> => {
+      const promise = Promise.reject(new Error('null-prototype rejection'));
+      Object.setPrototypeOf(promise, null);
+      return promise;
+    };
+    const seen = await unhandledRejectionsDuring(() => {
+      const viaNormalize = defineScopeGrammar({
+        provider: 'null-proto-normalize',
+        dimensions: { names: { kind: 'exactSet' } },
+        normalize: nullPrototypeRejection as never,
+        riskOf: () => 'read',
+      });
+      expect(viaNormalize.isSubset({}, {}).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
+        expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
+      ]);
+      const viaRisk = defineScopeGrammar({
+        provider: 'null-proto-risk',
+        dimensions: { names: { kind: 'exactSet' } },
+        riskOf: nullPrototypeRejection as never,
+      });
+      expect(() => viaRisk.classifyRisk({ names: ['a'] })).toThrow(/promise/);
+    });
+    expect(seen).toEqual([]);
+  });
+
+  it('still rejects a rejected promise whose species or constructor lookup throws, leaving its rejection to the author', async () => {
+    // Pins the documented boundary: `Promise.prototype.then` runs these lookups
+    // before attaching a handler, so the engine cannot mark such a promise
+    // handled. It still rejects the value synchronously; the test handles each
+    // rejection itself once the lookups are disarmed.
+    let armed = true;
+    const lookups: string[] = [];
+    class SpeciesThrowingPromise extends Promise<unknown> {
+      static override get [Symbol.species](): PromiseConstructor {
+        lookups.push('species');
+        if (armed) throw new Error('species getter failed');
+        return Promise;
+      }
+    }
+    const constructorThrowing = (promise: Promise<unknown>): Promise<unknown> =>
+      Object.defineProperty(promise, 'constructor', {
+        get() {
+          lookups.push('constructor');
+          if (armed) throw new Error('constructor getter failed');
+          return Promise;
+        },
+      });
+    const created: Promise<unknown>[] = [];
+    const factories: Array<() => Promise<unknown>> = [
+      () => SpeciesThrowingPromise.reject(new Error('species rejection')),
+      () => constructorThrowing(Promise.reject(new Error('constructor rejection'))),
+    ];
+    const seen = await unhandledRejectionsDuring(() => {
+      for (const make of factories) {
+        const produce = (): Promise<unknown> => {
+          const promise = make();
+          created.push(promise);
+          return promise;
+        };
+        const viaNormalize = defineScopeGrammar({
+          provider: 'throwing-lookup-normalize',
+          dimensions: { names: { kind: 'exactSet' } },
+          normalize: produce as never,
+          riskOf: () => 'read',
+        });
+        expect(viaNormalize.isSubset({}, {}).violations).toEqual([
+          expect.objectContaining({ code: 'malformed', side: 'request' }),
+          expect.objectContaining({ code: 'malformed', side: 'envelope' }),
+        ]);
+        const viaRisk = defineScopeGrammar({
+          provider: 'throwing-lookup-risk',
+          dimensions: { names: { kind: 'exactSet' } },
+          riskOf: produce as never,
+        });
+        expect(() => viaRisk.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
+      }
+      expect(lookups).toEqual(expect.arrayContaining(['species', 'constructor']));
+      armed = false;
+      for (const promise of created) promise.catch(() => undefined);
+    });
+    expect(created).toHaveLength(6);
+    expect(seen).toEqual([]);
+  });
+
   it('rejects hostile thenables without throwing', () => {
     class HostilePromise extends Promise<unknown> {
       static override get [Symbol.species](): PromiseConstructor {
