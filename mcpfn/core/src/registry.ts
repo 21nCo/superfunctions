@@ -6,7 +6,7 @@ import {
   type SchemaCompiler,
   type SchemaIssue,
 } from "./validation.js";
-import { registryInternals } from "./registry-internals.js";
+import { OUTPUT_VALIDATOR, registryInternals } from "./registry-internals.js";
 import type {
   CallToolResult,
   CompleteResult,
@@ -1066,6 +1066,11 @@ export class McpFnRegistry<TContext = undefined> {
       // A copy keeps no declaration's retries once its declaration ends.
       copy.parked = new Map();
     };
+    Object.defineProperty(McpFnRegistry.prototype, OUTPUT_VALIDATOR, {
+      value(this: McpFnRegistry<unknown>, name: string): ((value: unknown) => boolean) | undefined {
+        return this.tools.get(name)?.validateOutput;
+      },
+    });
   }
 
   /** Park the validators this copy compiled itself, for a retry to reuse. */

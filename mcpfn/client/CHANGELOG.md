@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+### Changed
+
+- Tests run against `@mcpfn/core` 0.2.0 and include an end-to-end call of an
+  OpenAPI tool through `fromOpenAPI` and `httpExecutor`. The published client
+  does not depend on `@mcpfn/core` at runtime.
+
 ## 0.1.1
 
 ### Changed

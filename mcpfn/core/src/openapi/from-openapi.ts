@@ -24,6 +24,8 @@ import {
   TOO_DEEP,
   type OpenApiVersion,
 } from "./schema.js";
+import { OUTPUT_VALIDATOR } from "../registry-internals.js";
+import { isForbiddenHeader, isHttpToken } from "./headers.js";
 import type {
   FromOpenApiOptions,
   FromOpenApiResult,
@@ -35,6 +37,8 @@ import type {
   OpenApiOperationRef,
   OpenApiOperationRequestBody,
   OpenApiParameterLocation,
+  OpenApiParameterQuery,
+  OpenApiSecurityScheme,
   OpenApiServer,
   OpenApiSkippedOperation,
   OpenApiToolInfo,
@@ -58,18 +62,6 @@ const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 const MAX_NAME_LENGTH = 128;
 const MAX_DESCRIPTION_LENGTH = 2000;
 
-// D9: credentials and transport headers are the executor's job, never inputs.
-// OpenAPI itself says Accept, Content-Type and Authorization header parameters
-// SHALL be ignored.
-const FORBIDDEN_HEADERS = new Set([
-  "authorization",
-  "cookie",
-  "host",
-  "content-length",
-  "accept",
-  "content-type",
-]);
-
 /** A remembered resolution: its target, or its skip thrown afresh. */
 function settled(outcome: JsonObject | OpenApiSkip): JsonObject {
   if (outcome instanceof OpenApiSkip) throw new OpenApiSkip(outcome.code, outcome.message);
@@ -79,11 +71,6 @@ function settled(outcome: JsonObject | OpenApiSkip): JsonObject {
 function entryObject(value: unknown, kind: string): JsonObject {
   if (!isObject(value)) throw new OpenApiSkip("invalid-operation", `a ${kind} entry is not an object`);
   return value;
-}
-
-function isForbiddenHeader(name: string): boolean {
-  const lower = name.toLowerCase();
-  return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
 }
 
 interface SelectorSet {
@@ -216,13 +203,80 @@ function servers(...levels: unknown[]): OpenApiServer[] {
 function security(...levels: unknown[]): OpenApiOperation["security"] {
   for (const level of levels) {
     if (Array.isArray(level)) {
-      const requirements = documentItems(level, "invalid-operation").filter(isObject);
+      const requirements = documentItems(level, "invalid-operation").filter(isPlainRecord);
       // Scope lists reach the executor and the naming callback as arrays.
       for (const requirement of requirements) checkMetadata(checkedRequirements, requirement, (scopes) => scopes);
       return requirements as Record<string, string[]>[];
     }
   }
   return undefined;
+}
+
+/**
+ * Why the effective security requirements cannot be read strictly: a level
+ * that is present but not a list, a requirement that is not an object, or
+ * one whose scopes are not a list of strings. `security` leaves such a
+ * requirement out, so an executor that sends credentials must refuse the
+ * operation rather than read the rest as the whole requirement.
+ */
+function securityProblem(...levels: unknown[]): string | undefined {
+  for (const [index, level] of levels.entries()) {
+    if (level === undefined) continue;
+    const where = index === 0 ? "the operation's" : "the document's";
+    if (!Array.isArray(level)) return `${where} security is not a list of requirements`;
+    // A shared list (the document's) is read once.
+    let problem = securityProblems.get(level);
+    if (problem === undefined) {
+      problem = requirementsProblem(level) ?? null;
+      securityProblems.set(level, problem);
+    }
+    return problem === null ? undefined : problem.replace("{where}", where);
+  }
+  return undefined;
+}
+
+const securityProblems = new WeakMap<object, string | null>();
+
+function requirementsProblem(level: readonly unknown[]): string | undefined {
+  for (const requirement of level) {
+    // A Map, Date or other class instance would read as `{}` (no credential), so only a plain object is a requirement.
+    if (!isPlainRecord(requirement)) return "{where} security has a requirement that is not a plain object";
+    // A requirement (and a scopes list) many references share is read once.
+    let problem = requirementProblems.get(requirement);
+    if (problem === undefined) {
+      problem = scopesProblem(requirement);
+      requirementProblems.set(requirement, problem);
+    }
+    if (problem !== null) return problem;
+  }
+  return undefined;
+}
+
+const requirementProblems = new WeakMap<object, string | null>();
+const stringLists = new WeakMap<unknown[], boolean>();
+
+function scopesProblem(requirement: JsonObject): string | null {
+  for (const [name, scopes] of Object.entries(requirement)) {
+    if (!Array.isArray(scopes)) return `the scopes of the security scheme ${JSON.stringify(name)} are not a list of strings`;
+    let strings = stringLists.get(scopes);
+    if (strings === undefined) {
+      strings = (scopes as unknown[]).every((scope) => typeof scope === "string");
+      stringLists.set(scopes, strings);
+    }
+    if (!strings) return `the scopes of the security scheme ${JSON.stringify(name)} are not a list of strings`;
+  }
+  return null;
+}
+
+/** A plain object (prototype `Object.prototype` or `null`), as JSON and YAML parsing produce. */
+function isPlainRecord(value: unknown): value is JsonObject {
+  if (!isObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function securityUnresolved(problem: string | undefined): { securityUnresolved?: string } {
+  return problem === undefined ? {} : { securityUnresolved: problem };
 }
 
 /** Server variables, whose `enum` lists reach the executor and the naming callback as arrays. */
@@ -262,6 +316,36 @@ function checkMetadata(checked: WeakMap<object, OpenApiSkip | null>, metadata: J
 
 function optionalSecurity(requirements: OpenApiOperation["security"]): { security?: OpenApiOperation["security"] } {
   return requirements === undefined ? {} : { security: requirements };
+}
+
+function optionalSchemes(
+  schemes: OpenApiOperation["securitySchemes"],
+): { securitySchemes?: OpenApiOperation["securitySchemes"] } {
+  return schemes === undefined ? {} : { securitySchemes: schemes };
+}
+
+const SCHEME_TYPES = new Set(["apiKey", "http", "oauth2", "openIdConnect", "mutualTLS"]);
+
+/** What an executor needs of a security scheme object: its type and, for `apiKey` and `http`, where the credential goes. */
+function schemeInfo(raw: JsonObject): OpenApiSecurityScheme | undefined {
+  // A type OpenAPI does not define (such as "api-key") does not resolve, so its credential is not guessed.
+  if (typeof raw.type !== "string" || !SCHEME_TYPES.has(raw.type)) return undefined;
+  // A name its location cannot carry (empty, or not a header or cookie token) leaves the credential unplaced.
+  const placed =
+    raw.type === "apiKey" &&
+    typeof raw.name === "string" &&
+    (raw.in === "query" ? raw.name !== "" : (raw.in === "header" || raw.in === "cookie") && isHttpToken(raw.name));
+  return {
+    type: raw.type,
+    ...(placed ? { name: raw.name as string, in: raw.in as "header" | "query" | "cookie" } : {}),
+    ...(raw.type === "http" && typeof raw.scheme === "string" ? { scheme: raw.scheme } : {}),
+  };
+}
+
+/** Whether a parameter is the one an apiKey scheme sends its credential in; header names compare without case. */
+function isCredentialParameter(scheme: OpenApiSecurityScheme, name: string, location: string): boolean {
+  if (scheme.type !== "apiKey" || scheme.in !== location || scheme.name === undefined) return false;
+  return location === "header" ? scheme.name.toLowerCase() === name.toLowerCase() : scheme.name === name;
 }
 
 function isJsonMediaType(key: string): boolean {
@@ -331,6 +415,12 @@ class OperationConverter {
     version: OpenApiVersion,
     /** Whether tools may share identical schema objects (see `toolSchema`). */
     private readonly shareSchemas: boolean,
+    /** Whether an output schema must describe every documented success (`OpenApiExecutor.outputSchemaRule`). */
+    private readonly everySuccess = false,
+    /** Query and header parameters the executor supplies itself (`OpenApiExecutor.ownsParameter`). */
+    private readonly ownsParameter?: (parameter: OpenApiParameterQuery) => boolean,
+    /** Request body media types the executor can send (`OpenApiExecutor.sendsRequestMedia`). */
+    private readonly sendsRequestMedia?: (contentType: string) => boolean,
   ) {
     this.components = isObject(document.components) ? document.components : {};
     const dialect = document.jsonSchemaDialect;
@@ -460,7 +550,86 @@ class OperationConverter {
       ...(body ? { requestBody: body.info } : {}),
       servers: servers(raw.servers, pathItem.servers, this.document.servers),
       ...optionalSecurity(security(raw.security, this.document.security)),
+      ...securityUnresolved(securityProblem(raw.security, this.document.security)),
+      ...optionalSchemes(this.securitySchemes(raw)),
     };
+  }
+
+  /** The resolved schemes named by each security requirement list, by list. */
+  private readonly schemesByLevel = new WeakMap<object, Readonly<Record<string, OpenApiSecurityScheme>> | undefined>();
+  /** Each security scheme name's resolution (null: it does not resolve). */
+  private readonly schemeOutcomes = new Map<string, OpenApiSecurityScheme | null>();
+
+  /**
+   * The schemes the operation's effective security requirements name that
+   * `components.securitySchemes` defines. A name that does not resolve
+   * (also one whose `type` OpenAPI does not define) is left out, so an executor can tell it from `security` and refuse the
+   * operation (`httpExecutor` does) rather than guess its credential.
+   */
+  securitySchemes(raw: JsonObject): Readonly<Record<string, OpenApiSecurityScheme>> | undefined {
+    const level = [raw.security, this.document.security].find(Array.isArray);
+    if (level === undefined) return undefined;
+    if (this.schemesByLevel.has(level)) return this.schemesByLevel.get(level);
+    let requirements: unknown[];
+    try {
+      requirements = documentItems(level, "invalid-operation");
+    } catch (error) {
+      if (error instanceof OpenApiSkip) return undefined;
+      throw error;
+    }
+    const found = new Map<string, OpenApiSecurityScheme>();
+    for (const requirement of requirements) {
+      if (!isPlainRecord(requirement)) continue;
+      for (const name of Object.keys(requirement)) {
+        const scheme = found.has(name) ? undefined : this.securityScheme(name);
+        if (scheme) found.set(name, scheme);
+      }
+    }
+    const result = found.size === 0 ? undefined : deepFreeze(Object.fromEntries(found));
+    this.schemesByLevel.set(level, result);
+    return result;
+  }
+
+  /**
+   * A security scheme of `components.securitySchemes`, its `$ref` chain
+   * followed; a chain that ends nowhere (a cycle, a missing or external
+   * target) gives none. Every name the walk passes resolves as the name it
+   * started from, so each outcome is recorded for all of them and no name is
+   * walked twice in a conversion: the work is linear in the number of schemes.
+   */
+  private securityScheme(name: string): OpenApiSecurityScheme | undefined {
+    const known = this.schemeOutcomes.get(name);
+    if (known !== undefined) return known ?? undefined;
+    const section = isObject(this.components.securitySchemes) ? this.components.securitySchemes : {};
+    let current: unknown = Object.hasOwn(section, name) ? section[name] : undefined;
+    const chain = [name];
+    const visited = new Set(chain);
+    // A name already resolved ends the walk with its outcome, null included; the
+    // `$ref` object the walk stopped at is then never read as a scheme itself.
+    let cached: OpenApiSecurityScheme | null | undefined;
+    while (isObject(current) && "$ref" in current) {
+      this.schemas.chargeWork(1);
+      let target: string;
+      try {
+        target = parseComponentRef(current.$ref, "securitySchemes");
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        current = undefined;
+        break;
+      }
+      if (visited.has(target) || !Object.hasOwn(section, target)) {
+        current = undefined;
+        break;
+      }
+      cached = this.schemeOutcomes.get(target);
+      if (cached !== undefined) break;
+      visited.add(target);
+      chain.push(target);
+      current = section[target];
+    }
+    const outcome = cached !== undefined ? cached : ((isPlainRecord(current) ? schemeInfo(current) : undefined) ?? null);
+    for (const walked of chain) this.schemeOutcomes.set(walked, outcome);
+    return outcome ?? undefined;
   }
 
   /**
@@ -746,11 +915,19 @@ class OperationConverter {
    * The schema of the first 2xx `application/json` response entry that has
    * one. It is always converted, so the skip rules apply whatever its shape
    * or method; it becomes the output schema only when it accepts objects and
-   * nothing else, and never for `HEAD`, whose response has no body.
+   * nothing else, and never for `HEAD`, whose response has no body. Under the
+   * `every-success` rule, also only when every documented 2xx response
+   * offers only JSON content with that same schema and no `default`
+   * response is documented (it covers the 2xx statuses not listed, the
+   * bodyless `204` and `205` among them): a call that may succeed with
+   * another body (or none) has no single output. Under that rule a
+   * `204` or `205` entry is never the schema's source: those statuses carry
+   * no body, so a schema written there is neither converted nor compiled.
    */
   outputSchema(raw: JsonObject, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const schema = this.responseSchema(raw);
-    return schema === undefined ? undefined : this.convertOutput(schema, method);
+    if (schema === undefined) return undefined;
+    return this.convertOutput(schema, method, !this.everySuccess || this.everySuccessHas(raw, schema));
   }
 
   private responseSchema(raw: JsonObject): unknown {
@@ -758,6 +935,7 @@ class OperationConverter {
     // Key order: integer status codes ascend (JavaScript object order), then 2XX.
     for (const [status, value] of Object.entries(raw.responses)) {
       if (!SUCCESS_STATUS.test(status)) continue;
+      if (this.everySuccess && /^20[45]$/.test(status)) continue;
       const content = this.resolve(value, "responses").content;
       for (const [mediaType, media] of Object.entries(isObject(content) ? content : {})) {
         if (isApplicationJson(mediaType) && isObject(media) && media.schema !== undefined) return media.schema;
@@ -766,11 +944,49 @@ class OperationConverter {
     return undefined;
   }
 
-  private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
+  /**
+   * Whether every documented 2xx response has content, all of it JSON
+   * (`application/json` or `*+json`) declaring `schema`. A `2XX` range,
+   * `204` or `205` answers no: those statuses carry no body. A `default`
+   * response answers no too: it covers every 2xx status not listed, which
+   * includes an unlisted `204` or `205` (a listed one already answers no).
+   * A response that cannot be resolved describes no known body, so it
+   * answers no; it never skips the operation.
+   */
+  private everySuccessHas(raw: JsonObject, schema: unknown): boolean {
+    if (!isObject(raw.responses)) return false;
+    for (const [status, value] of Object.entries(raw.responses)) {
+      // A default or a 2XX range also covers 204 and 205, which carry no body.
+      if (status === "default") return false;
+      if (!SUCCESS_STATUS.test(status)) continue;
+      if (/^(?:2XX|20[45])$/i.test(status)) return false;
+      if (!this.onlyJsonWith(value, schema)) return false;
+    }
+    return true;
+  }
+
+  /** Whether a response has content, all of it JSON declaring `schema`. */
+  private onlyJsonWith(response: unknown, schema: unknown): boolean {
+    let content: unknown;
+    try {
+      content = this.resolve(response, "responses").content;
+    } catch (error) {
+      if (error instanceof OpenApiSkip) return false;
+      throw error;
+    }
+    const entries = Object.entries(isObject(content) ? content : {});
+    if (entries.length === 0) return false;
+    for (const [mediaType, media] of entries) {
+      if (!isJsonMediaType(mediaType) || !isObject(media) || !sameSchema(media.schema, schema)) return false;
+    }
+    return true;
+  }
+
+  private convertOutput(schema: unknown, method: OpenApiMethod, exclusive: boolean): McpFnObjectSchema | undefined {
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
     const { values } = this.schemas.admits(schema);
-    const objectOnly = method !== "HEAD" && values.size === 1 && values.has("object");
+    const objectOnly = exclusive && method !== "HEAD" && values.size === 1 && values.has("object");
     // A schema the registry would reject is not hidden by discarding it, nor
     // by leaving out writeOnly properties: those are checked as written
     // (which applies the same skip rules as converting it).
@@ -900,8 +1116,9 @@ class OperationConverter {
 
   private parameters(path: string, pathItem: JsonObject, raw: JsonObject): ResolvedParameter[] {
     const resolved: ResolvedParameter[] = [];
+    const schemes = Object.values(this.securitySchemes(raw) ?? {});
     for (const parameter of this.mergedParameters(pathItem, raw)) {
-      const converted = this.parameter(parameter);
+      const converted = this.parameter(parameter, schemes);
       if (converted) resolved.push(converted);
     }
     const templateNames = templateVariables(path);
@@ -937,9 +1154,11 @@ class OperationConverter {
     return merged.values();
   }
 
-  private parameter(raw: JsonObject): ResolvedParameter | undefined {
+  private parameter(raw: JsonObject, schemes: readonly OpenApiSecurityScheme[]): ResolvedParameter | undefined {
     const name = raw.name as string;
     const location = raw.in as string;
+    // D9: a credential of the operation's own apiKey schemes is the executor's, never an input.
+    if (schemes.some((scheme) => isCredentialParameter(scheme, name, location))) return undefined;
     if (location === "cookie") {
       throw new OpenApiSkip("cookie-parameter", `parameter ${name} is sent in a cookie`);
     }
@@ -947,6 +1166,9 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
+    if (location !== "path" && this.ownsParameter?.({ name, in: location, required: raw.required === true }) === true) {
+      return undefined;
+    }
     // A name every object inherits is never a group property: Ajv reads it
     // through the prototype and @cfworker/json-schema reads own properties only.
     if (isPrototypeName(name)) {
@@ -1028,8 +1250,9 @@ class OperationConverter {
   /**
    * The JSON media entries of a declared request body, in the order they are
    * tried: object-valued `application/json` entries, then `*+json` ones
-   * (none without a request body). A declared body without such an entry is
-   * skipped, whether or not it is required, since the tool could never send it.
+   * (none without a request body), keeping only those the executor can send
+   * when it can send any. A declared body without such an entry is skipped,
+   * whether or not it is required, since the tool could never send it.
    * Parameters and the request body are resolved per occurrence: a parsed
    * document may share one operation object between path items, and the
    * path-level parameters and template differ.
@@ -1042,10 +1265,16 @@ class OperationConverter {
     }
     const content = body.content;
     const keys = Object.keys(content);
-    const candidates = [
+    let candidates = [
       ...keys.filter(isApplicationJson),
       ...keys.filter((key) => isJsonMediaType(key) && !isApplicationJson(key)),
     ].filter((key) => isObject(content[key]));
+    if (this.sendsRequestMedia) {
+      // An entry the executor cannot send is not tried while a sendable one exists;
+      // with none, the executor's `unsupported` reports the operation as before.
+      const sendable = candidates.filter(this.sendsRequestMedia);
+      if (sendable.length > 0) candidates = sendable;
+    }
     if (candidates.length === 0) {
       if (keys.some(isJsonMediaType)) {
         throw new OpenApiSkip(
@@ -1281,6 +1510,15 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
   if (!options.executor || typeof options.executor.execute !== "function") {
     throw new McpFnValidationError("fromOpenAPI requires an executor with an execute function");
   }
+  if (options.executor.unsupported !== undefined && typeof options.executor.unsupported !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.unsupported must be a function");
+  }
+  if (options.executor.ownsParameter !== undefined && typeof options.executor.ownsParameter !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.ownsParameter must be a function");
+  }
+  if (options.executor.sendsRequestMedia !== undefined && typeof options.executor.sendsRequestMedia !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.sendsRequestMedia must be a function");
+  }
   if (options.name !== undefined && typeof options.name !== "function") {
     throw new McpFnValidationError("fromOpenAPI name must be a function");
   }
@@ -1314,15 +1552,26 @@ export function fromOpenAPI<TContext>(
   if (!isObject(document)) {
     throw new McpFnValidationError("fromOpenAPI expects a parsed OpenAPI document object");
   }
-  const version = documentVersion(document as JsonObject);
+  // Work on a private copy, read once: later changes to the caller's object
+  // cannot alter registered schemas or the operations given to the executor,
+  // and every check below reads what was copied (see privateCopy).
+  const { copy: source, provenance } = privateCopy(document);
+  const version = documentVersion(source);
   validateOptions(options);
   const filters: Filters<TContext> = {
     include: compileSelectors("include", options.include),
     exclude: compileSelectors("exclude", options.exclude),
     options,
   };
-  const source = privateCopy(document);
-  const converter = new OperationConverter(source, version, options.registry === undefined);
+  markSecurity(source, provenance);
+  const converter = new OperationConverter(
+    source,
+    version,
+    options.registry === undefined,
+    options.executor.outputSchemaRule === "every-success",
+    options.executor.ownsParameter ? (parameter) => options.executor.ownsParameter!(parameter) : undefined,
+    options.executor.sendsRequestMedia ? (contentType) => options.executor.sendsRequestMedia!(contentType) === true : undefined,
+  );
   const skipped: OpenApiSkippedOperation[] = [];
   const candidates: Candidate[] = [];
   for (const [path, pathItem] of Object.entries(isObject(source.paths) ? source.paths : {})) {
@@ -1358,16 +1607,544 @@ interface Filters<TContext> {
   options: FromOpenApiOptions<TContext>;
 }
 
-function privateCopy(document: object): JsonObject {
+/*
+ * The private copy of the operator's document.
+ *
+ * fromOpenAPI reads the document once. One iterative copier reads each own
+ * property of each reachable object exactly once, through its descriptor, and
+ * every later decision (the security levels, requirements and schemes in
+ * particular) is made from that copy and from what the copier recorded about
+ * each object, never from the operator's object again. So what is checked is
+ * what was copied: no getter, toString, valueOf, Symbol.toPrimitive, iterator
+ * or structuredClone runs on the operator's objects, and nothing the copy
+ * leaves out can read as absent.
+ *
+ * Rules, by kind of value:
+ * - a primitive is kept (a symbol is refused);
+ * - a function is refused, and so is a Proxy where the runtime can tell one
+ *   (Node's util.types.isProxy, reached without an import); elsewhere a Proxy
+ *   is read through its traps like any object, still once per property;
+ * - an own accessor property (getter or setter, enumerable or not) anywhere is
+ *   refused, naming its JSON path and never a value;
+ * - an array is copied with its length, its present indices and any other own
+ *   enumerable keys (holes stay holes, which later readers refuse);
+ * - a Date (a YAML timestamp) is copied by its time value, a Map or Set (of
+ *   any realm, whatever its prototype) entry by entry, and a typed array by
+ *   its bytes; their own properties are not read. They are not plain objects;
+ * - an object with another internal slot (told by its slots, never by its
+ *   prototype): a kind structuredClone refuses (a WeakMap, WeakSet, WeakRef,
+ *   FinalizationRegistry, Promise, generator, iterator, ...) is refused; any
+ *   other (a boxed primitive, an ArrayBuffer, a DataView, an Error, a RegExp)
+ *   is copied as below but is never a plain object, whatever its prototype;
+ * - any other object is copied as a plain object of its own enumerable data
+ *   properties, as structuredClone copies a class instance. It copies as read
+ *   only on positive proof, never because no known slot was found: its
+ *   prototype is null or a realm's Object.prototype (a prototype that is a
+ *   Proxy, or a foreign one where the runtime cannot tell a Proxy, is never
+ *   read and never plain), it has no own symbol key and every own string key
+ *   is an enumerable data property, and, when it has no own key at all (the
+ *   case that would read as an anonymous requirement), structuredClone of
+ *   that one empty object, which runs no caller code, returns an ordinary
+ *   object. structuredClone refuses a Proxy, every engine exotic it does not
+ *   know (iterators, Intl objects, ...) and every host object (URL, Headers,
+ *   ...), and returns a boxed primitive, an Error or a RegExp as one, so any
+ *   of these fails the proof. An object with an own enumerable key is not
+ *   cloned (that would read its values again), so an exotic object given a
+ *   plain prototype and own keys copies as those keys, which is how JSON
+ *   reads it; it never copies as `{}`.
+ * Shared objects and cycles keep their sharing (each object is copied once),
+ * so the work follows the distinct input, not the number of references.
+ * Internal slots are read only through intrinsics captured at module load.
+ */
+
+/** One object queued for the copy, with the way it was first reached (for an error's path). */
+interface Reached {
+  source: object;
+  copy: object;
+  parent: Reached | undefined;
+  key: string;
+}
+
+/**
+ * What the copier recorded about a copied object that does not copy as read:
+ * one that is not a plain object or array (`plain: false`: a class instance,
+ * a Date, a Map, an Error, ...), or one with own string keys the copy leaves
+ * out because they are not enumerable (`dropped`). A copied object the record
+ * does not hold copied as read. Keyed by the copy.
+ */
+interface Provenance {
+  plain: boolean;
+  /** Own keys the copy left out: non-enumerable string keys and every symbol key. */
+  dropped: readonly (string | symbol)[];
+}
+
+type Provenances = WeakMap<object, Provenance>;
+
+const { apply, ownKeys } = Reflect;
+const { getOwnPropertyDescriptor, getPrototypeOf, defineProperty } = Object;
+const { isArray } = Array;
+const { isView } = ArrayBuffer;
+const { hasOwn } = Object;
+const objectPrototype = Object.prototype;
+const arrayPrototype = Array.prototype;
+const functionText = Function.prototype.toString;
+const mapSize = getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const mapForEach = Map.prototype.forEach;
+const mapSet = Map.prototype.set;
+const setSize = getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const setForEach = Set.prototype.forEach;
+const setAdd = Set.prototype.add;
+const dateTime = Date.prototype.getTime;
+const DateConstructor = Date;
+const typedArrayPrototype = getPrototypeOf(Uint8Array.prototype) as object;
+const typedArrayTag = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag)!.get!;
+const typedArrayBuffer = getOwnPropertyDescriptor(typedArrayPrototype, "buffer")!.get!;
+const typedArrayOffset = getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")!.get!;
+const typedArrayBytes = getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!.get!;
+const typedArraySet = (typedArrayPrototype as { set: (source: ArrayLike<number>) => void }).set;
+const Bytes = Uint8Array;
+type TypedArrayConstructor = new (buffer: ArrayBuffer) => object;
+const typedArrays = new Map<string, TypedArrayConstructor>(
+  [
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+  ].flatMap((name): [string, TypedArrayConstructor][] => {
+    const constructor = (globalThis as Record<string, unknown>)[name];
+    return typeof constructor === "function" ? [[name, constructor as TypedArrayConstructor]] : [];
+  }),
+);
+
+/** Node's util.types, reached without an import (so other runtimes load this module too); undefined where there is none. */
+const nodeTypes: Record<string, unknown> | undefined = (() => {
   try {
-    // Work on a private copy: later changes to the caller's object cannot
-    // alter registered schemas or the operations given to the executor.
-    return structuredClone(document) as JsonObject;
-  } catch (error) {
-    throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
-      cause: error instanceof Error ? error.message : String(error),
-    });
+    const host = (globalThis as { process?: { getBuiltinModule?: unknown } }).process;
+    const load = host?.getBuiltinModule;
+    if (typeof load !== "function") return undefined;
+    const util = apply(load, host, ["node:util"]) as { types?: unknown } | undefined;
+    const types = util?.types;
+    return typeof types === "object" && types !== null ? (types as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
   }
+})();
+
+/** One of Node's util.types checks, captured now; undefined where there is none. */
+function nodeCheck(name: string): ((value: object) => boolean) | undefined {
+  const check = nodeTypes?.[name];
+  return typeof check === "function" ? (value) => apply(check, nodeTypes, [value]) === true : undefined;
+}
+
+const isProxy = nodeCheck("isProxy");
+const cloneValue: unknown = (globalThis as { structuredClone?: unknown }).structuredClone;
+
+/**
+ * Run `check` with stack capture turned off: a probe or clone that fails
+ * throws, and capturing its stack costs far more than the check. No caller
+ * code runs inside, so the copy stays proportional to the document. A frozen
+ * Error is checked with stack capture on.
+ */
+function withoutStacks<T>(check: () => T): T {
+  const errors = Error as { stackTraceLimit?: unknown };
+  const limit = errors.stackTraceLimit;
+  let quiet = false;
+  try {
+    errors.stackTraceLimit = 0;
+    quiet = true;
+  } catch {
+    // A frozen Error.
+  }
+  try {
+    return check();
+  } finally {
+    if (quiet) errors.stackTraceLimit = limit;
+  }
+}
+
+/**
+ * Whether `value` carries the internal slot `probe` reads, without running the
+ * caller's code: `probe` is an intrinsic that only checks the slot (and
+ * returns a primitive or the value's own state); it throws a TypeError
+ * without it.
+ */
+function slotProbe(probe: unknown, ...args: unknown[]): ((value: object) => boolean) | undefined {
+  if (typeof probe !== "function") return undefined;
+  return (value) => {
+    try {
+      apply(probe, value, args);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** An accessor of `prototype`'s `key` (its getter), captured now; undefined where there is none. */
+function getterOf(constructor: unknown, key: string): unknown {
+  if (typeof constructor !== "function") return undefined;
+  const prototype: unknown = getOwnPropertyDescriptor(constructor, "prototype")?.value;
+  return typeof prototype === "object" && prototype !== null ? getOwnPropertyDescriptor(prototype, key)?.get : undefined;
+}
+
+/** A method of `constructor.prototype`, captured now; undefined where there is none. */
+function methodOf(constructor: unknown, key: string): unknown {
+  if (typeof constructor !== "function") return undefined;
+  const prototype: unknown = getOwnPropertyDescriptor(constructor, "prototype")?.value;
+  return typeof prototype === "object" && prototype !== null ? getOwnPropertyDescriptor(prototype, key)?.value : undefined;
+}
+
+/**
+ * What an object's internal slots make it, for the copy: a Map, a Set or a
+ * Date (copied by their own rules); `branded`, another kind structuredClone
+ * copies (a boxed primitive, an ArrayBuffer, a DataView, an Error, a RegExp,
+ * an arguments object), copied as a plain object of its own enumerable data
+ * properties but never as read; or `uncopyable`, a kind structuredClone
+ * refuses (a WeakMap, WeakSet, WeakRef, FinalizationRegistry, Promise,
+ * generator, iterator, module namespace or external), refused here too.
+ */
+type SlotKind = "map" | "set" | "date" | "branded" | "uncopyable";
+
+const globals = globalThis as Record<string, unknown>;
+const errorIsError = getOwnPropertyDescriptor(Error, "isError")?.value as unknown;
+const nodeKinds = nodeCheck("isMap") && nodeCheck("isSet") && nodeCheck("isDate");
+/**
+ * The brand checks, in order, all captured at module load. On Node,
+ * util.types reads the slots directly. Elsewhere each kind ECMAScript gives a
+ * side-effect-free intrinsic probe for is probed (a Promise or a generator
+ * has none, and an Error has one only through Error.isError).
+ */
+type SlotTest = [SlotKind, ((value: object) => boolean) | undefined];
+const slotCandidates: SlotTest[] = [
+  ...(nodeKinds
+    ? ([
+        ["map", "isMap"],
+        ["set", "isSet"],
+        ["date", "isDate"],
+        ["branded", "isBoxedPrimitive"],
+        ["branded", "isAnyArrayBuffer"],
+        ["branded", "isDataView"],
+        ["branded", "isNativeError"],
+        ["branded", "isRegExp"],
+        ["branded", "isArgumentsObject"],
+        ["uncopyable", "isPromise"],
+        ["uncopyable", "isWeakMap"],
+        ["uncopyable", "isWeakSet"],
+        ["uncopyable", "isGeneratorObject"],
+        ["uncopyable", "isMapIterator"],
+        ["uncopyable", "isSetIterator"],
+        ["uncopyable", "isModuleNamespaceObject"],
+        ["uncopyable", "isExternal"],
+      ] as const).map(([kind, name]): SlotTest => [kind, nodeCheck(name)])
+    : ([
+        ["map", slotProbe(mapSize)],
+        ["set", slotProbe(setSize)],
+        ["date", slotProbe(dateTime)],
+        ["branded", slotProbe(getterOf(ArrayBuffer, "byteLength"))],
+        ["branded", slotProbe(getterOf(globals.SharedArrayBuffer, "byteLength"))],
+        ["branded", slotProbe(getterOf(DataView, "buffer"))],
+        ["branded", slotProbe(methodOf(Boolean, "valueOf"))],
+        ["branded", slotProbe(methodOf(Number, "valueOf"))],
+        ["branded", slotProbe(methodOf(String, "valueOf"))],
+        ["branded", slotProbe(methodOf(globals.BigInt, "valueOf"))],
+        ["branded", slotProbe(methodOf(Symbol, "valueOf"))],
+        // Only the slot: RegExp.prototype.flags would read the caller's properties.
+        ["branded", slotProbe(getterOf(RegExp, "source"))],
+        ["uncopyable", slotProbe(methodOf(WeakMap, "has"), {})],
+        ["uncopyable", slotProbe(methodOf(WeakSet, "has"), {})],
+      ] satisfies SlotTest[])),
+  ["branded", typeof errorIsError === "function" ? (value: object) => apply(errorIsError, Error, [value]) === true : undefined],
+  ["uncopyable", slotProbe(methodOf(globals.WeakRef, "deref"))],
+  ["uncopyable", slotProbe(methodOf(globals.FinalizationRegistry, "unregister"), {})],
+];
+const slotTests = slotCandidates.flatMap(([kind, test]): [SlotKind, (value: object) => boolean][] => (test ? [[kind, test]] : []));
+
+/**
+ * What `value`'s internal slots make it (of any realm, whatever its
+ * prototype), without running the caller's code; undefined when no known
+ * slot was found (which proves nothing: see `ordinaryEmpty`).
+ */
+function slotKind(value: object): SlotKind | undefined {
+  return withoutStacks(() => {
+    // Indexed, not for-of: no array iterator runs per object.
+    for (let index = 0; index < slotTests.length; index += 1) {
+      const test = slotTests[index]!;
+      if (test[1](value)) return test[0];
+    }
+    return undefined;
+  });
+}
+
+/**
+ * A DOMException's brand check, captured now. Node implements DOMException in
+ * JavaScript, keeping its state outside the object, so structuredClone of one
+ * with a null prototype returns `{}`; the check (which throws without the
+ * brand) tells it.
+ */
+const isDomException = slotProbe(getterOf(globals.DOMException, "code"));
+
+/**
+ * Whether `value`, an object with no own key at all (string or symbol) whose
+ * prototype is null or a realm's Object.prototype, is an ordinary object:
+ * structuredClone of it returns an ordinary object of this realm. With no own
+ * key there is nothing to read, so no caller code runs; the clone throws for
+ * a Proxy (without running its traps), an engine exotic it does not know and
+ * a host object, and returns a boxed primitive, an Error, a RegExp, a buffer
+ * or a view as itself. Run only here, on an empty candidate, so a plain
+ * object does not pay for it. Without structuredClone nothing is proven.
+ */
+function ordinaryEmpty(value: object): boolean {
+  if (typeof cloneValue !== "function") return false;
+  return withoutStacks(() => {
+    try {
+      const copy: unknown = apply(cloneValue, globalThis, [value]);
+      if (typeof copy !== "object" || copy === null || isArray(copy) || getPrototypeOf(copy) !== objectPrototype) return false;
+    } catch {
+      return false;
+    }
+    return !isDomException?.(value);
+  });
+}
+
+function refuse(cause: string): never {
+  throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", { cause });
+}
+
+/** The JSON path of `key` under `parent`, such as `$.paths["/a"].get.description`; keys only, never a value. */
+function pathOf(parent: Reached | undefined, key: string): string {
+  const keys: string[] = [];
+  if (parent !== undefined) keys.push(key);
+  for (let at = parent; at?.parent !== undefined; at = at.parent) keys.push(at.key);
+  let path = "$";
+  for (const step of keys.reverse()) path += /^[A-Za-z_$][\w$]*$/.test(step) ? `.${step}` : `[${JSON.stringify(step)}]`;
+  return path;
+}
+
+/**
+ * An object whose prototype is `null` or a realm's `Object.prototype` (a
+ * document may be built in a vm context), read once. No object is read
+ * reflectively before it is known not to be a Proxy, so no trap runs: a
+ * prototype or constructor that is a Proxy is not plain, and where the
+ * runtime cannot tell a Proxy, a prototype other than `null` or this realm's
+ * `Object.prototype` is not plain and is never read.
+ */
+function plainPrototype(value: object): boolean {
+  const prototype: unknown = getPrototypeOf(value);
+  if (prototype === null || prototype === objectPrototype) return true;
+  if (isProxy === undefined || typeof prototype !== "object" || isProxy(prototype) || getPrototypeOf(prototype) !== null) return false;
+  const constructor = getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    typeof constructor === "function" &&
+    !isProxy(constructor) &&
+    getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
+    apply(functionText, constructor, []) === "function Object() { [native code] }"
+  );
+}
+
+/** A copy of a typed array's bytes, as the same kind of typed array of this realm. */
+function copyTypedArray(value: object, Kind: TypedArrayConstructor, at: () => string): object {
+  try {
+    const length = apply(typedArrayBytes, value, []) as number;
+    const bytes = new Bytes(length);
+    apply(typedArraySet, bytes, [new Bytes(apply(typedArrayBuffer, value, []) as ArrayBuffer, apply(typedArrayOffset, value, []) as number, length)]);
+    return new Kind(bytes.buffer);
+  } catch {
+    // Such as a detached buffer.
+    return refuse(`${at()} is a typed array that cannot be read`);
+  }
+}
+
+/**
+ * Copy the operator's document under the rules above. Returns the copy and
+ * the record of the copied objects that do not copy as read.
+ */
+function privateCopy(document: object): { copy: JsonObject; provenance: Provenances } {
+  const copies = new WeakMap<object, object>();
+  const provenance: Provenances = new WeakMap();
+  const pending: Reached[] = [];
+  // The copy of a value reached at `key` of `parent`: a primitive as is, or
+  // the object's copy (made empty and filled when it leaves `pending`).
+  const copyOf = (value: unknown, parent: Reached | undefined, key: string): unknown => {
+    if (typeof value === "function") refuse(`${pathOf(parent, key)} is a function`);
+    if (typeof value === "symbol") refuse(`${pathOf(parent, key)} is a symbol`);
+    if (typeof value !== "object" || value === null) return value;
+    const known = copies.get(value);
+    if (known !== undefined) return known;
+    if (isProxy?.(value)) refuse(`${pathOf(parent, key)} is a Proxy`);
+    let copy: object;
+    let fill = true;
+    if (isArray(value)) {
+      copy = new Array<unknown>(getOwnPropertyDescriptor(value, "length")!.value as number);
+    } else {
+      const tag: unknown = isView(value) ? apply(typedArrayTag, value, []) : undefined;
+      const Kind = typeof tag === "string" ? typedArrays.get(tag) : undefined;
+      const kind = Kind ? undefined : slotKind(value);
+      if (Kind) {
+        copy = copyTypedArray(value, Kind, () => pathOf(parent, key));
+        fill = false;
+      } else if (kind === "map") {
+        copy = new Map();
+      } else if (kind === "set") {
+        copy = new Set();
+      } else if (kind === "date") {
+        copy = new DateConstructor(apply(dateTime, value, []) as number);
+        fill = false;
+      } else if (kind === "uncopyable") {
+        return refuse(`${pathOf(parent, key)} is an object that cannot be copied`);
+      } else {
+        copy = {};
+      }
+      if (Kind || kind) provenance.set(copy, { plain: false, dropped: [] });
+    }
+    copies.set(value, copy);
+    if (fill) pending.push({ source: value, copy, parent, key });
+    return copy;
+  };
+  const root = copyOf(document, undefined, "") as JsonObject;
+  while (pending.length > 0) {
+    const reached = pending.pop()!;
+    const { source, copy } = reached;
+    if (copy instanceof Map) {
+      let index = 0;
+      apply(mapForEach, source, [
+        (entry: unknown, key: unknown) => {
+          apply(mapSet, copy, [copyOf(key, reached, `<map key ${index}>`), copyOf(entry, reached, `<map value ${index}>`)]);
+          index += 1;
+        },
+      ]);
+      continue;
+    }
+    if (copy instanceof Set) {
+      let index = 0;
+      apply(setForEach, source, [
+        (entry: unknown) => {
+          apply(setAdd, copy, [copyOf(entry, reached, `<set entry ${index}>`)]);
+          index += 1;
+        },
+      ]);
+      continue;
+    }
+    const array = isArray(copy);
+    const dropped: (string | symbol)[] = [];
+    const keys = ownKeys(source);
+    for (const key of keys) {
+      if (typeof key === "symbol") {
+        // Not copied (and its descriptor not read); recorded so an object that held one never copies as read.
+        dropped.push(key);
+        continue;
+      }
+      if (array && key === "length") continue;
+      const descriptor = getOwnPropertyDescriptor(source, key);
+      if (descriptor === undefined) continue;
+      if (!("value" in descriptor)) refuse(`${pathOf(reached, key)} is an accessor property`);
+      if (!descriptor.enumerable) {
+        dropped.push(key);
+        continue;
+      }
+      const value = copyOf(descriptor.value, reached, key);
+      // Assigned, so the copy keeps fast elements and properties, except a
+      // key its prototype chain holds (such as `__proto__`, a setter, or a
+      // frozen `toString`; an array inherits Object.prototype's too), which is
+      // defined, so every own key stays an own data property and no inherited
+      // setter runs.
+      if (hasOwn(objectPrototype, key) || (array && hasOwn(arrayPrototype, key))) {
+        defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
+      }
+      else (copy as Record<string, unknown>)[key] = value;
+    }
+    // A branded object (recorded as not plain when it was reached) never
+    // copies as read; any other copies as read only on positive proof that it
+    // is ordinary (see the rules above).
+    const plain = array || (!provenance.has(copy) && plainPrototype(source) && (keys.length > 0 || ordinaryEmpty(source)));
+    if (!plain || dropped.length > 0) provenance.set(copy, { plain, dropped });
+  }
+  return { copy: root, provenance };
+}
+
+/**
+ * Mark, in the copy, the security the copier could not copy as read, so an
+ * executor that sends credentials refuses the operation rather than reading
+ * it as anonymous. Decided only from the copy and its provenance:
+ * - a document or operation that is not a plain object (its `security` may be
+ *   inherited or a prototype getter), or whose `security` the copy left out
+ *   (not enumerable), gets `security: [null]`, a requirement that is not a
+ *   plain object; the document's level covers every operation that inherits it;
+ * - a requirement that is not a plain object, or has a key the copy left out,
+ *   becomes `null` in its level;
+ * - a `securitySchemes` section of a `components` object that is not plain (or
+ *   that the copy left out of it), or a section that is not plain itself,
+ *   resolves no scheme; a scheme that does not copy as read (such as one with
+ *   a non-enumerable `$ref`) becomes `null`, unresolved.
+ * Genuine `[{}]` and `[]` keep their meanings. A level many operations share
+ * is one copied array, marked once.
+ */
+function markSecurity(copy: JsonObject, provenance: Provenances): void {
+  const marked = new WeakSet<unknown[]>();
+  const asRead = (value: unknown): boolean => {
+    if (typeof value !== "object" || value === null) return true;
+    const record = provenance.get(value);
+    return record === undefined || (record.plain && record.dropped.length === 0);
+  };
+  const keeps = (holder: object, key: string): boolean => {
+    const record = provenance.get(holder);
+    return record === undefined || (record.plain && !record.dropped.includes(key));
+  };
+  const markLevel = (holder: object, key: string): void => {
+    if (!keeps(holder, key)) {
+      setOwn(holder, key, [null]);
+      return;
+    }
+    const level = ownValue(holder, key);
+    if (!isArray(level) || marked.has(level)) return;
+    marked.add(level);
+    for (const index of Object.keys(level)) {
+      if (ARRAY_INDEX.test(index) && !asRead(level[Number(index)])) level[Number(index)] = null;
+    }
+  };
+  markLevel(copy, "security");
+  const paths = ownValue(copy, "paths");
+  if (isObject(paths)) {
+    for (const path of Object.keys(paths)) {
+      const pathItem = ownValue(paths, path);
+      if (!isObject(pathItem)) continue;
+      for (const key of Object.keys(pathItem)) {
+        const operation = ownValue(pathItem, key);
+        if (METHODS.has(key) && isObject(operation)) markLevel(operation, "security");
+      }
+    }
+  }
+  const components = ownValue(copy, "components");
+  if (!isObject(components)) return;
+  const schemes = ownValue(components, "securitySchemes");
+  if (!keeps(components, "securitySchemes") || (isObject(schemes) && provenance.get(schemes)?.plain === false)) {
+    // No scheme of a section that is not a plain object, or not known, resolves.
+    setOwn(components, "securitySchemes", {});
+    return;
+  }
+  if (!isObject(schemes)) return;
+  for (const name of Object.keys(schemes)) {
+    const scheme = ownValue(schemes, name);
+    if (isObject(scheme) && !asRead(scheme)) setOwn(schemes, name, null);
+  }
+}
+
+const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
+
+/** An own property's value (never one inherited, such as `__proto__`). */
+function ownValue(holder: unknown, key: string): unknown {
+  return isObject(holder) || Array.isArray(holder) ? Object.getOwnPropertyDescriptor(holder, key)?.value : undefined;
+}
+
+function setOwn(holder: object, key: string, value: unknown): void {
+  Object.defineProperty(holder, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
 function pathItemSkip(path: string, pathItem: unknown): OpenApiSkippedOperation | undefined {
@@ -1424,11 +2201,19 @@ function register<TContext>(
   options: FromOpenApiOptions<TContext>,
 ): FromOpenApiResult<TContext> {
   const registry = options.registry ?? new McpFnRegistry<TContext>();
+  const executor = options.executor;
+  // Operations the executor cannot send are skipped before any name is chosen or checked.
+  candidates = candidates.filter(({ operation }) => {
+    const unsupported = executor.unsupported?.(operation);
+    if (typeof unsupported !== "string") return true;
+    converter.dropOperation(operation);
+    skipped.push({ operation: operationRef(operation), code: "unsupported-by-executor", reason: unsupported });
+    return false;
+  });
   const names = new ToolNames(options, registry);
   // name() results are checked before anything is registered.
   const chosen = options.name ? candidates.map(({ operation }) => names.choose(operation)) : undefined;
   const tools: OpenApiToolInfo[] = [];
-  const executor = options.executor;
   // Shared schemas (see OperationConverter.toolSchema) leave the registry's
   // Ajv as fresh copies would: it resolves later schemas against the
   // anonymous schema it compiled last, which a cached object does not
@@ -1476,6 +2261,22 @@ function register<TContext>(
     const name = chosen ? chosen[index]! : names.next(operation);
     const description = toolDescription(operation);
     const annotations = toolAnnotations(operation.method);
+    // Lets an executor tell a success the registry would reject from one it
+    // accepts, with the validator the registry applies (its compileSchema's,
+    // or the built-in compiler's), taken once the tool is registered. A
+    // server's copy of the registry shares a custom compiler, so it agrees.
+    let validateOutput: ((value: unknown) => boolean) | undefined;
+    const checkOutput = outputSchema
+      ? (value: Record<string, unknown>) => {
+          if (validateOutput === undefined) return true;
+          try {
+            return validateOutput(value) === true;
+          } catch {
+            // Such as a value nested too deeply to validate.
+            return false;
+          }
+        }
+      : undefined;
     try {
       registry.register({
         name,
@@ -1483,7 +2284,15 @@ function register<TContext>(
         inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         annotations,
-        handler: (args, _context, extra) => executor.execute({ operation, args, signal: extra.signal }),
+        handler: (args, context, extra) =>
+          executor.execute({
+            operation,
+            args,
+            context,
+            signal: extra.signal,
+            hasOutputSchema: outputSchema !== undefined,
+            ...(checkOutput ? { checkOutput } : {}),
+          }),
       });
     } catch (error) {
       converter.releaseCopy(catalogNodes);
@@ -1499,6 +2308,7 @@ function register<TContext>(
       }
       return;
     }
+    if (outputSchema) validateOutput = registeredOutputValidator(registry, name);
     names.claim(name);
     // The catalog gets its own copies: changing them cannot make the listed
     // schemas disagree with the ones the registry compiled.
@@ -1515,6 +2325,63 @@ function register<TContext>(
 }
 
 const NO_OUTPUT = Object.freeze({});
+
+/** The output validator `registry` applies to the tool `name` (see OUTPUT_VALIDATOR). */
+function registeredOutputValidator(registry: object, name: string): ((value: unknown) => boolean) | undefined {
+  const lookup = getOwnPropertyDescriptor(McpFnRegistry.prototype, OUTPUT_VALIDATOR)?.value as unknown;
+  if (typeof lookup !== "function") return undefined;
+  try {
+    const validator: unknown = apply(lookup, registry, [name]);
+    return typeof validator === "function" ? (validator as (value: unknown) => boolean) : undefined;
+  } catch {
+    // Not a registry of this package: its own verdict stands.
+    return undefined;
+  }
+}
+
+/** Pairs of schema values `sameSchema` compares at most before it answers no. */
+const SAME_SCHEMA_BUDGET = 10_000;
+
+/**
+ * The same schema object, or one written identically (as in two responses
+ * with the same inline schema): plain records and arrays with equal keys and
+ * values, whatever the key order. Shared values (YAML aliases) are compared
+ * once per pair and a pair already being compared counts as equal, so the
+ * work is bounded by the values, not their expansion; when equality is not
+ * shown within `SAME_SCHEMA_BUDGET` pairs (or the nesting is too deep), the
+ * answer is no, which only leaves out the output schema.
+ */
+function sameSchema(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  let budget = SAME_SCHEMA_BUDGET;
+  const compared = new Map<object, Set<object>>();
+  const plain = (value: object) => {
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return Array.isArray(value) || prototype === Object.prototype || prototype === null;
+  };
+  const equal = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true;
+    budget -= 1;
+    if (budget < 0) throw new RangeError("schema comparison budget exhausted");
+    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b) || !plain(a) || !plain(b)) return false;
+    let partners = compared.get(a);
+    if (partners?.has(b)) return true;
+    if (!partners) compared.set(a, (partners = new Set()));
+    partners.add(b);
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every(
+      (key) => Object.hasOwn(b, key) && equal((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+    );
+  };
+  try {
+    return equal(left, right);
+  } catch {
+    return false;
+  }
+}
 
 function operationRef(operation: OpenApiOperation): OpenApiOperationRef {
   return {

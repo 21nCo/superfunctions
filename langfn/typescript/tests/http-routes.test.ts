@@ -14,7 +14,7 @@ describe("langfn http routes", () => {
     expect(body).toEqual({
       ok: true,
       traceId: null,
-      data: { status: "ok", name: "langfn", version: "0.2.1" },
+      data: { status: "ok", name: "langfn", version: "0.2.2" },
       error: null
     });
   });
