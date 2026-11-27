@@ -204,7 +204,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * the version arguments and the probe's environment. A pin is satisfied only by an observation of the invocation that
    * serves the slot, never by another profile's environment or by an executable since replaced at the same path.
    */
-  private readonly versions = new Map<string, string>();
+  private readonly versions = new Map<string, { version: string; output: string }>();
 
   public constructor(options: CliHarnessOptions = {}) {
     this.runner = options.runner ?? runProcessGroup;
@@ -247,7 +247,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     } catch (error) { return state.finish("failed", `The CLI executable is unavailable: ${message(error)}`); }
     const unconfirmed = await this.confirmVersion(prepared, executable, key);
     if (unconfirmed) return unconfirmed;
-    state.harnessVersion = this.versions.get(key);
+    state.harnessVersion = this.versions.get(key)?.version;
     // The slot's pin is checked here, on a cold or a warm cache, so a CLI of another version never runs the review.
     const pinned = input.slot?.harness.version;
     if (pinned !== undefined && state.harnessVersion !== pinned) return state.finish("failed", `The CLI reported version ${String(state.harnessVersion)}, not the pinned ${pinned}, so the review was not run.`);
@@ -290,10 +290,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   /** On a cold version cache, read the version first: a probe that hangs or overruns its output bound ends timed_out. */
   private async confirmVersion(run: Prepared, executable: string, key: string): Promise<SlotHarnessOutput | undefined> {
-    if (this.versions.has(key)) return undefined;
     const timeoutMs = Math.max(1, Math.min(VERSION_TIMEOUT_MS, run.deadline - Date.now()));
-    const probed = await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
-    if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
+    const warm = this.versions.has(key);
+    const probed = warm ? this.checkedVersion(key, run.secrets) : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
+    if (!warm && run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
     if (!("error" in probed)) return undefined;
     return run.state.finish(probed.timedOut ? "timed_out" : "failed", probed.error);
   }
@@ -325,8 +325,6 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const { state, input, profile } = run;
     const before = attempt === 1 ? "before the CLI started" : "before the repair attempt";
     const outputBytes = state.remainingOutputBytes();
-    // A transcript or event list already over the stored limit (raw bytes the decoder or redaction lengthened) cannot
-    // complete, so no further CLI run is paid for.
     if (outputBytes <= 0 || state.storedOver()) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
     // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
@@ -472,10 +470,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = parseCliVersion(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
-    // A version that holds or overlaps a registered secret reads differently once the output is redacted: it is refused.
-    if (parseCliVersion(redact(result.stdout, secrets), redact(result.stderr, secrets)) !== version) return { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false };
-    this.versions.set(key, version);
-    return { version };
+    this.versions.set(key, { version, output: `${result.stdout}\n${result.stderr}` });
+    return this.checkedVersion(key, secrets);
+  }
+
+  /** A cached version, refused when any occurrence in its joined version output overlaps a secret the caller registers. */
+  private checkedVersion(key: string, secrets: readonly string[]): { version: string } | { error: string; timedOut: boolean } {
+    const { version, output } = this.versions.get(key)!;
+    const at = (part: string) => { const found: number[] = []; for (let index = output.indexOf(part); index >= 0; index = output.indexOf(part, index + 1)) found.push(index); return found; };
+    const spans = secrets.filter(Boolean).flatMap(secret => at(secret).map(from => [from, from + secret.length]));
+    return at(version).some(start => spans.some(([from, to]) => from < start + version.length && start < to)) ? { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false } : { version };
   }
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
@@ -1302,10 +1306,8 @@ class RunState {
     return `The CLI reported no model through ${this.profile.modelReport.split(":")[0]}, so the configured ${this.model} was not confirmed.`;
   }
 
-  /** Whether the stored transcript or events, as redacted, are already over the limit bounded() applies. */
-  public storedOver(): boolean {
-    return Buffer.byteLength(this.transcript.join("\n")) > this.maxOutputBytes || Buffer.byteLength(JSON.stringify(redactValue(this.events, this.secrets))) > this.maxOutputBytes;
-  }
+  /** Whether the stored transcript or events, as redacted, already exceed bounded()'s limit: no further run can complete. */
+  public storedOver(): boolean { return Buffer.byteLength(this.transcript.join("\n")) > this.maxOutputBytes || Buffer.byteLength(JSON.stringify(redactValue(this.events, this.secrets))) > this.maxOutputBytes; }
 
   /** The raw bytes the next attempt may produce; the redacted telemetry's limit is enforced only by bounded(). */
   public remainingOutputBytes(): number {
