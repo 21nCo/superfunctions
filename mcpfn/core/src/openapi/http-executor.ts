@@ -72,8 +72,10 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 // Operator values are ASCII, so an echo decodes to the same characters.
 const OPERATOR_VALUE = /^[\t\x20-\x7e]*$/;
 const PARAMETER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
-// `<scheme> <credential>`, such as `Bearer <token>`: the credential alone is a secret too.
-const SCHEME_CREDENTIAL = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+ +(\S.*)$/;
+// `<scheme> <credential>`, such as `Bearer <token>`: the credential alone is a
+// secret too. Any run of SP or HTAB separates them (both are allowed in an
+// operator value), and trailing SP or HTAB is not part of the credential.
+const SCHEME_CREDENTIAL = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+[\t ]+([^\t ](?:.*[^\t ])?)[\t ]*$/;
 // Reserved characters `allowReserved` sends as they are. `&`, `=`, `+` and `#`
 // stay encoded: sent raw they would add parameters or end the query.
 const RESERVED_ESCAPES = /%(3A|2F|3F|40|24|2C|3B|5B|5D)/gi;

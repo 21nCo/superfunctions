@@ -3930,3 +3930,93 @@ describe("httpExecutor request bodies under an operator Content-Type with parame
     expect(sent).toEqual([]);
   });
 });
+
+describe("httpExecutor scheme credentials separated by SP or HTAB", () => {
+  const token = ["test", "tabbed", "operator", "token"].join("-");
+  const run = (authorization: string, status: number) => {
+    const { fetch } = stubFetch(() => new Response(`seen ${token}`, { status, headers: { "content-type": "text/plain" } }));
+    return execute(httpExecutor<Context>({ baseUrl: api.origin, headers: { authorization }, fetch }), operationOf("echo"));
+  };
+
+  it.each([
+    ["a tab", `Bearer\t${token}`],
+    ["a space then a tab", `Bearer \t${token}`],
+    ["a tab then a space", `Bearer\t ${token}`],
+    ["a space and a trailing tab", `Bearer ${token}\t`],
+    ["a tab and a trailing space and tab", `Bearer\t${token} \t`],
+  ])("treats the bare credential after %s as a secret, success and error", async (_label, authorization) => {
+    const success = await run(authorization, 200);
+    expect(success.isError).toBe(true);
+    expect(text(success)).toContain("reveals an operator credential and was withheld");
+    expect(JSON.stringify(success)).not.toContain(token);
+    const failure = await run(authorization, 500);
+    expect(text(failure)).toBe("The API responded with HTTP 500.\n\nseen [REDACTED]");
+  });
+});
+
+describe("httpExecutor own __proto__ keys in the document", () => {
+  // Operator headers carry only authorization, so a caller value in X-Api-Key would reach the upstream.
+  const operatorHeaders = { authorization: `Bearer ${operatorToken}` };
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const trivial = { execute: () => ({ content: [] }) };
+  const documentWith = (fields: { documentSecurity?: unknown; operationSecurity?: unknown }): Record<string, unknown> => ({
+    openapi: "3.1.0",
+    info: { title: "proto", version: "1.0.0" },
+    ...(fields.documentSecurity === undefined ? {} : { security: fields.documentSecurity }),
+    components: { securitySchemes: { k: { type: "apiKey", in: "header", name: "X-Api-Key" } } },
+    paths: {
+      "/keyed": {
+        get: {
+          operationId: "keyed",
+          ...(fields.operationSecurity === undefined ? {} : { security: fields.operationSecurity }),
+          parameters: [keyParameter],
+          responses: ok,
+        },
+      },
+    },
+  });
+  const withOwn = <T extends object>(target: T, key: string, value: unknown): T =>
+    Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+  type Listed = ReturnType<typeof fromOpenAPI>;
+  /** What a listing exposes about the keyed operation: what was skipped, and each tool's inputs and unresolved security. */
+  const outcome = (listed: Listed) => ({
+    skipped: listed.skipped.map(({ code, reason }) => [code, reason]),
+    tools: listed.tools.map((tool) => [Object.keys((tool.inputSchema.properties ?? {}) as object), tool.operation.securityUnresolved]),
+  });
+  const placements: [string, (level: unknown) => Record<string, unknown>][] = [
+    ["the operation level", (level) => documentWith({ documentSecurity: [{ k: [] }], operationSecurity: level })],
+    ["the document level", (level) => documentWith({ documentSecurity: level })],
+  ];
+  const values: [string, () => unknown][] = [
+    ["1", () => 1],
+    ["[]", () => []],
+    ['"x"', () => "x"],
+    ["null", () => null],
+  ];
+
+  it.each(placements.flatMap(([where, place]) => values.map(([label, value]): [string, string, typeof place, () => unknown] => [where, label, place, value])))(
+    "keeps an own __proto__ key of a security array at %s (value %s) and fails closed like any other extra key",
+    async (_where, _label, place, value) => {
+      const upstream = stubFetch(() => new Response("{}", { status: 200 }));
+      const http = () => httpExecutor({ baseUrl: api.origin, headers: operatorHeaders, fetch: upstream.fetch });
+      for (const executor of [trivial, http()]) {
+        const control = outcome(fromOpenAPI(place(withOwn([], "extra", value())), { executor }));
+        const listed = outcome(fromOpenAPI(place(withOwn([], "__proto__", value())), { executor }));
+        expect(listed).toEqual(control);
+        // The level is not read as empty: X-Api-Key never becomes caller input.
+        expect(listed.tools.every(([keys]) => !(keys as string[]).includes("header"))).toBe(true);
+      }
+      expect(upstream.urls).toEqual([]);
+    },
+  );
+
+  it.each(values)("keeps an own __proto__ key (value %s) of a requirement, which names no scheme", (_label, value) => {
+    for (const executor of [trivial, httpExecutor({ baseUrl: api.origin, headers: operatorHeaders })]) {
+      const control = outcome(fromOpenAPI(documentWith({ operationSecurity: [{ k: [], extra: value() }] }), { executor }));
+      const listed = outcome(fromOpenAPI(documentWith({ operationSecurity: [withOwn({ k: [] }, "__proto__", value())] }), { executor }));
+      // The same outcome, naming the key it kept.
+      expect(JSON.parse(JSON.stringify(listed).replaceAll('\\"__proto__\\"', '\\"extra\\"'))).toEqual(JSON.parse(JSON.stringify(control)));
+      expect(listed.tools.every(([keys]) => !(keys as string[]).includes("header"))).toBe(true);
+    }
+  });
+});

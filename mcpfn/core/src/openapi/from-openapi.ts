@@ -2040,9 +2040,13 @@ function privateCopy(document: object): { copy: JsonObject; provenance: Provenan
       }
       const value = copyOf(descriptor.value, reached, key);
       // Assigned, so the copy keeps fast elements and properties, except a
-      // key its prototype holds (such as `__proto__`, a setter, or a frozen
-      // `toString`), which is defined.
-      if (hasOwn(array ? arrayPrototype : objectPrototype, key)) defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
+      // key its prototype chain holds (such as `__proto__`, a setter, or a
+      // frozen `toString`; an array inherits Object.prototype's too), which is
+      // defined, so every own key stays an own data property and no inherited
+      // setter runs.
+      if (hasOwn(objectPrototype, key) || (array && hasOwn(arrayPrototype, key))) {
+        defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
+      }
       else (copy as Record<string, unknown>)[key] = value;
     }
     // A branded object (recorded as not plain when it was reached) never
