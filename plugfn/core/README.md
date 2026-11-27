@@ -5,7 +5,7 @@ PlugFn for TypeScript is the reference runtime for the shared PlugFn product con
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db@0.3.2 @superfunctions/http@0.2.0
+npm install plugfn @superfunctions/db@0.3.4 @superfunctions/http@0.2.0
 ```
 
 ## Quick start
@@ -163,12 +163,13 @@ signature verification disabled, rejects with `WEBHOOK_WORKFLOW_BINDING_REQUIRED
 Use a credential for the same signing authority for a scoped delivery. The
 lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
-Apply PlugFn schema version 9 with `superfunctions generate` and your adapter's
-migration runner before starting the upgraded webhook workers. The migration
+Apply PlugFn schema version 9 with `superfunctions generate-migration plugfn` and your
+adapter's migration runner before starting the upgraded webhook workers. The migration
 preserves existing receipt keys and adds a separately indexed workflow receipt
 key and a scope marker on deliveries. Upgrade all retry workers before enabling
-workflow bindings. Scoped deliveries enter through provider redelivery or the SDK
-with the original body, signature headers, and verification credential.
+workflow bindings. Resubmit scoped deliveries through the provider or the SDK. For GitHub Apps,
+request redelivery manually or through the GitHub API. SDK resubmission needs the
+original body, signature headers, and verification credential.
 
 Previously stored definitions without both binding fields are skipped during
 webhook registration. To restore automatic dispatch, an administrator should
