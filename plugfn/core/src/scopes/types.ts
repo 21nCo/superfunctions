@@ -299,17 +299,20 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  */
 export type ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> =
   // `normalize` is optional only when `TInput` is exactly `ScopeShape<D>`:
-  // each assignable to the other, with no key (an optional one included)
-  // outside it. Each check is written directly on `TInput`, so for a generic
+  // each assignable to the other, with no key (an optional one, or one of
+  // any union member, included) outside it. Each check is written directly on `TInput`, so for a generic
   // `D` with `TInput` = `ScopeShape<D>` the compiler relates a definition
   // to the optional branch alone.
   [TInput] extends [ScopeShape<D>]
     ? [ScopeShape<D>] extends [TInput]
-      ? [keyof TInput] extends [keyof ScopeShape<D>]
+      ? [InputKeys<TInput>] extends [keyof ScopeShape<D>]
         ? ScopeCallbackGrammarFields<D, TInput>
         : ScopeNormalizingFields<D, TInput>
       : ScopeNormalizingFields<D, TInput>
     : ScopeNormalizingFields<D, TInput>;
+
+/** Every key of every member of `TInput` (`keyof` on a union sees only the common ones). */
+type InputKeys<TInput> = TInput extends unknown ? keyof TInput : never;
 
 /** {@link ScopeCallbackGrammarFields} with a required `normalize`. */
 type ScopeNormalizingFields<D extends ScopeDimensions, TInput> = ScopeCallbackGrammarFields<D, TInput> & {

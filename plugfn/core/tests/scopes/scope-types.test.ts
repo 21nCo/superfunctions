@@ -313,6 +313,12 @@ defineScopeGrammar<TtlDims, OptionalSeconds>({ provider: 'optional-extra', dimen
 // @ts-expect-error a stored definition with an optional extra field, without normalize
 const storedOptional: ScopeCallbackGrammarDefinition<TtlDims, OptionalSeconds> = { provider: 'optional-extra', dimensions: ttlDims, riskOf: () => 'read' };
 void storedOptional;
+type SecondsOrMinutes = { readonly ttl: number; readonly seconds?: number } | { readonly ttl: number; readonly minutes?: number };
+// @ts-expect-error a union input whose members add fields, without normalize
+defineScopeGrammar<TtlDims, SecondsOrMinutes>({ provider: 'union-extra', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error a stored union input whose members add fields, without normalize
+const storedUnion: ScopeCallbackGrammarDefinition<TtlDims, SecondsOrMinutes> = { provider: 'union-extra', dimensions: ttlDims, riskOf: () => 'read' };
+void storedUnion;
 // Generic factories build risk-only definitions with the canonical input.
 function riskOnlyFor<GD extends ScopeDimensions>(dimensions: GD): ScopeCallbackGrammar<GD> {
   return defineScopeGrammar({ provider: 'generic', dimensions, riskOf: () => 'read' });
