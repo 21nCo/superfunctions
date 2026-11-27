@@ -1,0 +1,33 @@
+plugfn/core/src/scopes/grammar.ts
+  s_452260ff66b74a::t_78bd70dc97c1f1 3,59,92,626,630-632,662,665-666,670-671,674-676,679,683-685,688-689,692-694,697-698,708
+plugfn/core/src/scopes/index.ts
+  s_452260ff66b74a::t_86845110bd4d46 2
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_452260ff66b74a::t_86845110bd4d46 62-65,125
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_452260ff66b74a::t_86845110bd4d46 1,4,32,36,48,66,70,74,82-97,111,114,120,136,140,151,187,191,193-194,199,239,266,288,290-291,311,318,323,354,373,593,603,653,655,660-661,667,683-686,813,819-823,918,924-925,940,972,989
+  s_452260ff66b74a::t_fe94f1870843f3 990-991,1024
+plugfn/core/tests/scopes/scope-performance.test.ts
+  s_452260ff66b74a::t_86845110bd4d46 2,9,70,297
+plugfn/core/README.md
+  s_452260ff66b74a::t_78bd70dc97c1f1 115,137-140
+plugfn/core/src/scopes/types.ts
+  s_452260ff66b74a::t_78bd70dc97c1f1 6-7,199,221-225
+  s_452260ff66b74a::t_25591fec18743e 226,228,240,246,250,252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf6300332feaf7276c6aeabb3e07d9badd239794",
+  "prompts": {},
+  "sessions": {
+    "s_452260ff66b74a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21da4-b9bb-7012-8ec5-405753827d30",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

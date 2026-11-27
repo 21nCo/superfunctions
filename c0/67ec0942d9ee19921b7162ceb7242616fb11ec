@@ -1,0 +1,30 @@
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  h_bdc5b81c173ee9 2,60-79,82-110,317-402,433,437,439-460,519-569
+plugfn/core/src/scopes/types.ts
+  h_bdc5b81c173ee9 10-11,127-130,136-139,141-144,148-149,152-155
+plugfn/core/src/scopes/grammar.ts
+  h_bdc5b81c173ee9 4,20-21,31-34,37-38,40-44,48-60,88-98,103-117,119,122-142,146-150,152-155,157-162,164-165,167-171,174,176-187,190-198,203-206,212,215-216,231-232,234-238,246,252,259,267,282-286,289-290,292-305,307,310-312,314-317,324-326,335,339,354-355,361-365,375-380,382-385,391-396,402,419,421,445-450,456,459
+plugfn/core/README.md
+  s_96609c8d8f79ac::t_eac75f748cf116 137-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c067ec0942d9ee19921b7162ceb7242616fb11ec",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_96609c8d8f79ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_96609c8d8f79ac",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
