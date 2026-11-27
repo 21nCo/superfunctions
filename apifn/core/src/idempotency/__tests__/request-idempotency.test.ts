@@ -2333,6 +2333,54 @@ describe("createRequestIdempotency PR round-6 receipt provenance", () => {
     expect(store.records.get(holder.storeKey)).toMatchObject({ state: "pending", version: newer!.version });
   });
 
+  it("R2: a rejected replacement whose fallback still holds the key decides from the receipt read now", async () => {
+    const store = new ScriptedStore();
+    const { idempotency, database } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    store.rules.push(
+      {
+        // A late commit A of another body lands during the fallback write.
+        match: (expectedVersion) => expectedVersion === holder.version,
+        before: () => database.receiptsByKey.set(holder.storeKey, { ...holder, fingerprint: "test-other-body-fingerprint", claimId: "test-claim-a", response: earlier }),
+      },
+      {
+        // Before the replacement is rejected unapplied, A is pruned and commit B of the same body lands.
+        match: (expectedVersion) => expectedVersion !== null && expectedVersion !== holder.version,
+        before: () => database.receiptsByKey.set(holder.storeKey, { ...holder, claimId: "test-claim-b", response: earlier }),
+        reject: "not applied",
+      },
+    );
+    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "committed", response: earlier });
+  });
+
+  it("R4: a rejected settle write whose version cannot be read still replaces an applied fallback over its exact version", async () => {
+    class FlakyReadStore extends ScriptedStore {
+      failReads = 0;
+      override async get(storeKey: string) {
+        if (this.failReads > 0) {
+          this.failReads -= 1;
+          throw new Error("store read failed");
+        }
+        return super.get(storeKey);
+      }
+    }
+    const store = new FlakyReadStore();
+    const { idempotency, database } = world(store);
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    let committed: IdempotentResponse | undefined;
+    store.rules.push({
+      match: (expectedVersion) => expectedVersion === holder.version,
+      before: async () => {
+        committed = await database.createOrder(holder, "book");
+        store.failReads = 1;
+      },
+      reject: "applied",
+    });
+    expect(await idempotency.settle(holder, { status: 503, body: "fallback" })).toEqual({ outcome: "settled", response: committed });
+    database.receiptsByKey.clear();
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "store" });
+  });
+
   it("R5: a completed record without the flag never replays during an outage, and a non-boolean flag fails closed", async () => {
     const { idempotency, database, source, store } = world(new FakeAtomicStore());
     const holder = acquired(await idempotency.claim(orderRequest()));

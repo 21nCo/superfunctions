@@ -1195,9 +1195,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * Returns the receipt that decides, or undefined (stale) when a newer
    * writer won and no receipt is left. A rejected write is resolved by
    * reading the store: while it holds the replacement or the fallback, no
-   * newer writer took the key and the receipt validated after the settle's
-   * write decides. Otherwise a newer writer won: the receipt read now
-   * decides, and a failing read throws.
+   * newer claim took the key, so a receipt read now decides, and an empty or
+   * unreachable source leaves the receipt validated after the settle's
+   * write. Otherwise a newer writer won: the receipt read now decides, and a
+   * failing read throws.
    */
   const replaceFallback = async (
     token: IdempotencyToken,
@@ -1208,7 +1209,15 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     try {
       if (await store.compareAndSet(token.storeKey, version, next)) return after;
     } catch {
-      if (await holdsVersion(token.storeKey, next.version, version)) return after;
+      if (await holdsVersion(token.storeKey, next.version, version)) {
+        let raw: unknown;
+        try {
+          raw = await lookupReceipt(token.storeKey);
+        } catch {
+          return after;
+        }
+        return parseReceipt(token.storeKey, raw) ?? after;
+      }
     }
     return receiptFor(token);
   };
@@ -1257,16 +1266,17 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     } catch (error) {
       // A lost acknowledgement: the store, read now, tells whether this exact version was written.
       written = await holdsVersion(token.storeKey, version);
-      // Without its own receipt the holder has no result: a commit read now decides, and with none the error stands.
-      if (!own) rejection = { error };
+      rejection = { error };
     }
-    let after = rejection ? await receiptOverRejection(token, rejection.error) : await receiptFor(token);
+    // Without its own receipt the holder has no result: a commit read now decides, and with none the error stands.
+    let after = rejection && !own ? await receiptOverRejection(token, rejection.error) : await receiptFor(token);
     if (!after) {
       if (!written) return { outcome: "stale" };
       // The caller sends its own full response, as validated before any await: never the object it may have changed since.
       return reported ?? { outcome: "settled", response: deliveryOf(snapshot as ResponseSnapshot) };
     }
-    if (written && after.claimId !== own?.claimId) {
+    // A rejected write may have applied even when its version could not be read: the replacement is fenced to it.
+    if ((written || rejection) && after.claimId !== own?.claimId) {
       const next: IdempotencyRecord = isOwn(token, after)
         ? completed(after.response, nextVersion(), true)
         : {
