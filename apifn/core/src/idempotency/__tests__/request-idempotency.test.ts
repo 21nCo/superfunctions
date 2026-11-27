@@ -2855,4 +2855,114 @@ describe("createRequestIdempotency PR round-4 regressions", () => {
     expect(await run(holder, action, token, response)).toEqual({ outcome: "conflict" });
     expect(w.store.receiptWrites).toBeGreaterThanOrEqual(8);
   });
+
+  it.each(["claim", "recover", "settle", "release"] as const)(
+    "%s reads the receipt again when its absence write lost and the key is absent again before it reports",
+    async (action) => {
+      let afterNext: (() => void) | undefined;
+      const w = world(new AbsenceHookStore(), (database) => ({
+        find: async (storeKey: string) => {
+          const found = await database.receipts.find(storeKey);
+          const hook = afterNext;
+          afterNext = undefined;
+          hook?.();
+          return found;
+        },
+      }));
+      const holder = w.make();
+      const token = acquired(await holder.claim(orderRequest()));
+      const response = await w.database.createOrder(token, "book");
+      const receipt = w.database.receiptsByKey.get(token.storeKey) as IdempotencyReceipt;
+      w.store.records.clear();
+      w.store.beforeAbsenceWrite = async () => {
+        // A concurrent recovery confirms A, so this write loses. The lookup after it captures A; before it returns, A's
+        // copy is evicted, A is pruned, and commit B of another body lands with its record evicted and its receipt kept.
+        expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+        afterNext = () => {
+          w.store.records.clear();
+          w.database.receiptsByKey.set(token.storeKey, { ...receipt, claimId: "test-b-claim", fingerprint: "test-b-fingerprint", generation: 2 });
+        };
+      };
+      expect(await run(action === "claim" || action === "recover" ? w.make() : holder, action, token, response)).toEqual({ outcome: "conflict" });
+      expect(w.database.receiptsByKey.get(token.storeKey)).toMatchObject({ claimId: "test-b-claim" });
+    },
+  );
+
+  it.each(["settle", "release"] as const)(
+    "%s reports a conflict when its last lost cache write went to another body's confirmed copy whose receipt was pruned",
+    async (action) => {
+      class SwappingStore extends BumpingStore {
+        receiptWrites = 0;
+        onLast?: () => void;
+        override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+          if (next?.state === "completed" && next.fromReceipt === true && (this.receiptWrites += 1) === 8) this.onLast?.();
+          return super.compareAndSet(storeKey, expectedVersion, next);
+        }
+      }
+      const w = world(new SwappingStore());
+      const holder = w.make();
+      const token = acquired(await holder.claim(orderRequest()));
+      const response = await w.database.createOrder(token, "book");
+      // Every cache write loses; during the last one, B of another body commits, its copy is confirmed and B is pruned.
+      w.store.onLast = () => {
+        w.store.records.set(token.storeKey, confirmedOther(w.clock.time));
+        w.database.receiptsByKey.clear();
+      };
+      w.store.bumping = true;
+      const result = await run(holder, action, token, response);
+      expect(result).toEqual({ outcome: "conflict" });
+      expect(w.store.records.get(token.storeKey)).toMatchObject({ receiptClaimId: "test-b-claim" });
+      expect(w.store.records.get(token.storeKey)).toMatchObject({ response: { body: "test-b-body" } });
+    },
+  );
+
+  it.each([
+    ["claim", "lost", "malformed"],
+    ["recover", "lost", "malformed"],
+    ["claim", "applied", "malformed"],
+    ["recover", "applied", "different key"],
+    ["claim", "lost", "different key"],
+    ["recover", "lost", "different key"],
+  ] as const)("%s rejects an invalid receipt after its cache write %s to a confirmed copy (%s)", async (action, write, invalid) => {
+    class VersionHookStore extends FakeAtomicStore {
+      beforeVersionWrite?: () => Promise<void>;
+      afterVersionWrite?: () => void;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+        const before = expectedVersion !== null && next?.state === "completed" ? this.beforeVersionWrite : undefined;
+        this.beforeVersionWrite = undefined;
+        if (before) await before();
+        const written = await super.compareAndSet(storeKey, expectedVersion, next);
+        const after = written && expectedVersion !== null ? this.afterVersionWrite : undefined;
+        this.afterVersionWrite = undefined;
+        if (after) {
+          after();
+          throw new Error("store write failed");
+        }
+        return written;
+      }
+    }
+    const w = world(new VersionHookStore());
+    const token = acquired(await w.make().claim(orderRequest()));
+    await w.database.createOrder(token, "book");
+    const receipt = w.database.receiptsByKey.get(token.storeKey) as IdempotencyReceipt;
+    const corrupt = () => {
+      const bad = invalid === "malformed" ? { ...receipt, fingerprint: "" } : { ...receipt, storeKey: "test-other-store-key" };
+      w.database.receiptsByKey.set(token.storeKey, bad);
+    };
+    w.clock.advance(1_001);
+    if (write === "lost") {
+      // Another reader confirms A over the same pending version first; then the source answers with an invalid receipt.
+      w.store.beforeVersionWrite = async () => {
+        expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+        corrupt();
+      };
+    } else {
+      // The write is applied but its acknowledgement is lost; then the source answers with an invalid receipt.
+      w.store.afterVersionWrite = corrupt;
+    }
+    await expect(run(w.make(), action, token, { status: 200, headers: {}, body: "" })).rejects.toThrow(
+      invalid === "malformed" ? "malformed receipt" : "receipt for a different key",
+    );
+    expect(w.store.records.get(token.storeKey)).toMatchObject({ state: "completed", receiptClaimId: token.claimId });
+  });
 });
