@@ -1003,17 +1003,18 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (receipt) {
         // No handler runs under this claim: free exactly it, and let the receipt decide. A "none" claim's tombstone
         // keeps the receipt contract, so a later "none" request without receipts still conflicts. A failed release
-        // leaves the lease to expire, and every receipt-mode read still finds the receipt first. A lost release means
-        // a newer writer replaced this claim after the lookup (a later retention epoch): the step runs again from
-        // fresh reads, so that receipt never decides.
-        let lost = false;
+        // leaves the lease to expire, and every receipt-mode read still finds the receipt first.
+        let freed = false;
         try {
-          lost = !(await releaseUnused(storeKey, version, generation, prepared, "receipt"));
+          freed = await releaseUnused(storeKey, version, generation, prepared, "receipt");
         } catch {
-          // The claim may still hold the key until its lease expires; the receipt read after it decides.
+          // Unknown whether the release applied: the receipt is read again below.
         }
-        if (lost) return undefined;
-        return prepared.recovery === "receipt" ? receiptOutcome(receipt, prepared.fingerprint) : { outcome: "conflict" };
+        // A release that did not cleanly win may have lost to a newer writer (a later retention epoch): the receipt
+        // read after it decides, and with none left the step runs again from fresh reads.
+        const decides = freed ? receipt : await findReceipt(storeKey);
+        if (!decides) return undefined;
+        return prepared.recovery === "receipt" ? receiptOutcome(decides, prepared.fingerprint) : { outcome: "conflict" };
       }
     }
     const token: IdempotencyToken = Object.freeze({
@@ -1148,15 +1149,24 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { outcome: "committed", response: fullReceiptResponse(reconciled.receipt) };
   };
 
+  /** Whether a receipt is the token's own commit: its claim and its body. */
+  const isOwn = (token: IdempotencyToken, receipt: ParsedReceipt): boolean =>
+    receipt.claimId === token.claimId && receipt.fingerprint === token.fingerprint;
+
   /**
    * Completes the token's own pending claim by a compare-and-set over the
    * claim's version, then reads the receipt again. The record keeps the
    * result this settle reports: the holder's own receipt's response when
    * `own` was read before the write, otherwise the holder's validated
-   * snapshot. A receipt read after the write decides; when it is another
-   * commit than `own`, the version this settle wrote is retired (a tombstone
-   * that keeps the receipt contract), so its result never replays over that
-   * commit. Without a receipt, a won write is settled and a lost one stale.
+   * snapshot. A receipt read after the write decides. When it is not the
+   * commit the record holds, the record this settle wrote is replaced over
+   * its exact version, keeping its deadline: by the receipt's response for
+   * the holder's own late commit, otherwise by a tombstone that keeps the
+   * receipt contract, so a fallback never replays over a commit. A
+   * replacement that loses reads the receipt again. Without a receipt, a won
+   * write is settled and a lost one stale; an unacknowledged write over the
+   * holder's own commit is resolved by reading the exact version it
+   * attempted.
    */
   const settleOwn = async (
     token: IdempotencyToken,
@@ -1164,42 +1174,54 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     own: ParsedReceipt | undefined,
   ): Promise<IdempotencySettleResult> => {
     const reported = own ? settleResult(decided(token, own), snapshot) : undefined;
-    const source = own ? own.response : (snapshot as ResponseSnapshot);
+    const expiresAt = now() + retentionMs;
+    const completed = (response: ResponseSnapshot, version: string): IdempotencyRecord => ({
+      state: "completed",
+      version,
+      generation: token.generation,
+      fingerprint: token.fingerprint,
+      recovery: token.recovery,
+      // Only the stored replay copy is bounded.
+      response: boundSnapshot(response, maxResponseBytes, extraCredentials),
+      expiresAt,
+    });
     const version = nextVersion();
     let written = false;
     try {
-      written = await store.compareAndSet(token.storeKey, token.version, {
-        state: "completed",
-        version,
-        generation: token.generation,
-        fingerprint: token.fingerprint,
-        recovery: token.recovery,
-        // Only the stored replay copy is bounded.
-        response: boundSnapshot(source, maxResponseBytes, extraCredentials),
-        expiresAt: now() + retentionMs,
-      });
+      written = await store.compareAndSet(token.storeKey, token.version, completed(own ? own.response : (snapshot as ResponseSnapshot), version));
     } catch (error) {
-      // Without its own receipt the holder has no result to report; with it, the receipt read next decides.
+      // Without its own receipt the holder has no result to report.
       if (!own) throw error;
+      // A lost acknowledgement: the store, read now, tells whether this exact version was written.
+      written = await readLive(token.storeKey, now()).then(
+        (live) => live.kind === "present" && live.record.version === version,
+        () => false,
+      );
     }
-    const after = await receiptFor(token);
-    if (after && after.claimId !== own?.claimId) {
-      if (written) {
-        await store.compareAndSet(token.storeKey, version, {
-          state: "released",
-          version: nextVersion(),
-          generation: token.generation,
-          fingerprint: token.fingerprint,
-          recovery: token.recovery,
-          expiresAt: now() + retentionMs,
-        });
+    let after = await receiptFor(token);
+    if (!after) {
+      if (!written) return { outcome: "stale" };
+      // The caller sends its own full response, as validated before any await: never the object it may have changed since.
+      return reported ?? { outcome: "settled", response: deliveryOf(snapshot as ResponseSnapshot) };
+    }
+    if (written && after.claimId !== own?.claimId) {
+      const next: IdempotencyRecord = isOwn(token, after)
+        ? completed(after.response, nextVersion())
+        : {
+            state: "released",
+            version: nextVersion(),
+            generation: token.generation,
+            fingerprint: token.fingerprint,
+            recovery: token.recovery,
+            expiresAt,
+          };
+      // A newer writer replaced this version: the receipt read after that decides.
+      if (!(await store.compareAndSet(token.storeKey, version, next))) {
+        after = await receiptFor(token);
+        if (!after) return { outcome: "stale" };
       }
-      return settleResult(decided(token, after), snapshot);
     }
-    if (after) return settleResult(decided(token, after), snapshot);
-    if (!written) return { outcome: "stale" };
-    // The caller sends its own full response, as validated before any await: never the object it may have changed since.
-    return reported ?? { outcome: "settled", response: deliveryOf(snapshot as ResponseSnapshot) };
+    return settleResult(decided(token, after), snapshot);
   };
 
   const settle = async (input: IdempotencyToken, response: IdempotentResponse): Promise<IdempotencySettleResult> => {
@@ -1219,7 +1241,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     let result: IdempotencySettleResult;
     // Another claim's commit decides with no write. The holder's own commit is settled with the receipt's response,
     // never the holder's in-memory one, which may differ from what its transaction committed.
-    if (before && before.claimId !== token.claimId) result = settleResult(decided(token, before), snapshot);
+    if (before && !isOwn(token, before)) result = settleResult(decided(token, before), snapshot);
     else if (!before && snapshot === undefined) throw invalid;
     else result = await settleOwn(token, snapshot, before);
     emit({
