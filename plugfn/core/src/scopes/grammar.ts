@@ -1,7 +1,7 @@
 import { SCOPE_LIMITS } from './types.js';
 import type { NormalizedScope, PublishedScopeDimensions, ScopeDimension, ScopeDimensionKind, ScopeDimensions, ScopeGrammar } from './types.js';
 import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSubsetResult, ScopeViolation } from './types.js';
-import type { ScopeCallbackGrammar, ScopeCallbackGrammarFields, ScopeItem, ScopeRisk } from './types.js';
+import type { ScopeCallbackGrammar, ScopeCallbackGrammarDefinition, ScopeCallbackGrammarFields, ScopeItem, ScopeRisk } from './types.js';
 
 /**
  * Thrown by `classifyRisk` and `classifyScope` for input they cannot classify.
@@ -1063,11 +1063,7 @@ function riskItem<D extends ScopeDimensions>(dimension: string, kind: ScopeDimen
  * needs `normalize`; without one the input is {@link ScopeShape}.
  */
 export function defineScopeGrammar<const D extends ScopeDimensions, TInput = ScopeShape<D>>(
-  definition: ScopeCallbackGrammarFields<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> },
-): ScopeCallbackGrammar<D, TInput>;
-// Without `normalize` the input is the identity-mapped scope shape, so `TInput` can only be `ScopeShape<D>`.
-export function defineScopeGrammar<const D extends ScopeDimensions, TInput extends ScopeShape<D> = ScopeShape<D>>(
-  definition: ScopeCallbackGrammarFields<D>,
+  definition: ScopeCallbackGrammarDefinition<D, TInput>,
 ): ScopeCallbackGrammar<D, TInput>;
 export function defineScopeGrammar<const D extends ScopeDimensions>(definition: ScopeGrammarDefinition<D>): ScopeGrammar<D>;
 export function defineScopeGrammar<const D extends ScopeDimensions, TInput>(

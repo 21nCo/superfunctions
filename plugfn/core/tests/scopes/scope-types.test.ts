@@ -299,6 +299,26 @@ defineScopeGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
 // @ts-expect-error a stored provider-shaped definition without normalize
 const storedNoNormalize: ScopeCallbackGrammarDefinition<TtlDims, SecondsInput> = { provider: 'stored', dimensions: ttlDims, riskOf: () => 'read' };
 void storedNoNormalize;
+// A subtype of the scope shape adds fields the grammar rejects, so it needs normalize too.
+type SecondsAndTtl = ScopeShape<TtlDims> & { readonly seconds: number };
+// @ts-expect-error a scope-shape subtype without normalize
+defineScopeGrammar<TtlDims, SecondsAndTtl>({ provider: 'subtype', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error an expected scope-shape subtype grammar without normalize
+const contextualSubtype: ScopeCallbackGrammar<TtlDims, SecondsAndTtl> = defineScopeGrammar({ provider: 'subtype', dimensions: ttlDims, riskOf: () => 'read' });
+void contextualSubtype;
+// A generic consumer forwards a definition and keeps its input type.
+function buildGrammar<GD extends ScopeDimensions, GInput>(definition: ScopeCallbackGrammarDefinition<GD, GInput>): ScopeCallbackGrammar<GD, GInput> {
+  return defineScopeGrammar(definition);
+}
+buildGrammar(storedShaped).classifyRisk({ seconds: 60 });
+buildGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
+// A generic definition type extends the definition by intersection and keeps the normalize requirement.
+type TaggedDefinition<GD extends ScopeDimensions, GInput> = ScopeCallbackGrammarDefinition<GD, GInput> & { readonly provider: 'tagged' };
+const tagged: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, normalize: input => ({ ttl: input.seconds }), riskOf: () => 'read' };
+buildGrammar(tagged).classifyRisk({ seconds: 60 });
+// @ts-expect-error a tagged provider-shaped definition without normalize
+const taggedNoNormalize: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, riskOf: () => 'read' };
+void taggedNoNormalize;
 // @ts-expect-error riskOf returns a closed risk level
 defineScopeGrammar({ provider: 'bad-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'admin' });
 const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;

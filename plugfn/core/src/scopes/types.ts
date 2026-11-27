@@ -308,8 +308,11 @@ type IsScopeShape<D extends ScopeDimensions, TInput> = [TInput] extends [ScopeSh
 /**
  * The fields of a {@link ScopeCallbackGrammarDefinition}, where `normalize`
  * is optional whatever the input type. Declare a definition with
- * `ScopeCallbackGrammarDefinition`, which requires `normalize` for a
- * provider-shaped input type.
+ * `ScopeCallbackGrammarDefinition`, which requires `normalize` for any
+ * input type other than exactly `ScopeShape` (a subtype with extra fields
+ * included); a generic definition type built on it is an intersection with
+ * `ScopeCallbackGrammarDefinition`, which keeps that requirement (an
+ * interface cannot extend a conditional type).
  */
 export interface ScopeCallbackGrammarFields<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
   /**
