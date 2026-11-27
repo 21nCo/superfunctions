@@ -2669,6 +2669,45 @@ describe("createRequestIdempotency PR round-3 delta regressions", () => {
     expect(result).toEqual({ outcome: "conflict" });
   });
 
+  it.each([
+    ["after its confirmation succeeded", "claim"],
+    ["after its confirmation succeeded", "settle"],
+    ["while resolving a lost acknowledgement", "recover"],
+    ["while resolving a lost acknowledgement", "release"],
+  ] as const)("decides with its validated receipt when a store read fails once %s (%s)", async (when, action) => {
+    const w = world(new AbsenceHookStore());
+    const { token, response } = await provisionalCopy(w);
+    const original = w.store.compareAndSet.bind(w.store);
+    const failNextRead = () => vi.spyOn(w.store, "get").mockRejectedValueOnce(new Error("store read failed"));
+    if (when === "after its confirmation succeeded") {
+      w.store.afterAbsenceWrite = async () => {
+        vi.spyOn(w.store, "compareAndSet").mockImplementationOnce(async (...args) => {
+          const confirmed = await original(...args);
+          failNextRead();
+          return confirmed;
+        });
+      };
+    } else {
+      vi.spyOn(w.store, "compareAndSet").mockImplementationOnce(async (...args) => {
+        await original(...args);
+        failNextRead();
+        throw new Error("store acknowledgement lost");
+      });
+    }
+    const idempotency = w.make();
+    const result =
+      action === "claim"
+        ? await idempotency.claim(orderRequest())
+        : action === "recover"
+          ? await idempotency.recover(orderRequest())
+          : action === "settle"
+            ? await idempotency.settle(token, response)
+            : await idempotency.release(token);
+    const outcome = { claim: "replay", recover: "replay", settle: "settled", release: "committed" }[action];
+    expect(result).toMatchObject({ outcome, response: { body: response.body } });
+    expect(w.store.records.get(token.storeKey)).not.toHaveProperty("provisional");
+  });
+
   it("frees its unused claim when the receipt it found is gone after a failed write", async () => {
     const producer = world(new FakeAtomicStore());
     const holder = acquired(await producer.make().claim(orderRequest()));

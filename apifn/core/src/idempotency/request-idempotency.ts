@@ -1045,34 +1045,39 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const version = nextVersion();
     // The copy's deadline is fixed here: confirming or replacing it later never extends it.
     const expiresAt = now() + retentionMs;
-    let written: boolean;
+    let written: boolean | undefined;
     try {
       written = await writeFromReceipt(storeKey, null, generation, receipt, version, expiresAt);
     } catch {
-      // A lost acknowledgement: the store, read now, tells whether this version was written.
-      written = liveVersion(await readLive(storeKey, now())) === version;
+      // A lost acknowledgement: the store, read now, tells whether this version was written; a failed read leaves
+      // it unknown, and the fenced writes below only ever touch this version.
+      written = await readLive(storeKey, now()).then(
+        (live) => liveVersion(live) === version,
+        () => undefined,
+      );
     }
+    const mayHold = written !== false;
     let latest: ParsedReceipt | undefined;
     try {
       latest = await findReceipt(storeKey);
     } catch (error) {
-      if (written) await retireQuietly(storeKey, version, receipt, generation);
+      if (mayHold) await retireQuietly(storeKey, version, receipt, generation);
       throw error;
     }
     if (!latest) {
       // No commit is left: the provisional copy is retired, and a failed retire leaves it provisional.
-      if (written) await retireQuietly(storeKey, version, receipt, generation);
+      if (mayHold) await retireQuietly(storeKey, version, receipt, generation);
       return { kind: "gone" };
     }
-    // Confirms only the version this step wrote: the same commit promotes it, a newer one replaces it. A lost
-    // confirmation means another step took that version, so the receipt is read again; another writer's
-    // provisional copy is confirmed too before the receipt is reported.
-    const confirmed = !written || (await confirmCopy(storeKey, version, generation, latest, expiresAt));
-    const reported = await reportable(storeKey, latest, !confirmed);
-    if (!reported) return { kind: "gone" };
-    // The receipt validated after the step's last write decides whatever the write did, also when it lost to a
-    // writer of the same commit or its acknowledgement was lost.
-    return { kind: written && confirmed && sameCommit(reported, receipt) ? "recorded" : "failed", receipt: reported };
+    // Confirms only the version this step wrote: the same commit promotes it, a newer one replaces it. Once it is
+    // confirmed, the receipt validated after the write decides with no further read.
+    if (mayHold && (await confirmCopy(storeKey, version, generation, latest, expiresAt))) {
+      return { kind: sameCommit(latest, receipt) ? "recorded" : "failed", receipt: latest };
+    }
+    // Another writer holds the key: when it took this step's copy, the receipt is read again, and a provisional copy
+    // it left is confirmed before the receipt is reported. A same-commit winner leaves the validated receipt deciding.
+    const reported = await reportable(storeKey, latest, mayHold);
+    return reported ? { kind: "failed", receipt: reported } : { kind: "gone" };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.
