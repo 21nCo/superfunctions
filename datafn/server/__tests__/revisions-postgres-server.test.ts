@@ -98,6 +98,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
   } as any;
   let admin: pg.Pool;
   const instances: Array<Kysely<any>> = [];
+  const servers: Array<Awaited<ReturnType<typeof createDatafnServer>>> = [];
 
   const connect = () => {
     const target = new URL(url!);
@@ -116,6 +117,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
       allowUnknownResources: true,
       revisions: { enabled: true },
     } as any);
+    servers.push(server);
     let seq = 0;
     const send = async (route: string, body: unknown) => {
       const res = await server.router.handle(
@@ -148,6 +150,8 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
   });
 
   afterAll(async () => {
+    // The servers close before the pools they read from.
+    for (const server of servers.splice(0)) await server.close();
     for (const instance of instances) await instance.destroy();
     await admin?.query(`DROP DATABASE IF EXISTS "${database}"`);
     await admin?.end();

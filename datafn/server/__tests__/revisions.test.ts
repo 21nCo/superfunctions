@@ -5,7 +5,7 @@
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDatafnServer } from "../src/server.js";
+import { createDatafnServer as createServer } from "../src/server.js";
 import { createDatafnPublicLinksPlugin } from "../src/index.js";
 import {
   READ_CHUNK,
@@ -124,9 +124,21 @@ async function serve(options: { enabled?: boolean; database?: Adapter; schema?: 
   return { database, server, send, push, rev };
 }
 
-afterEach(() => {
+/** Every server a test created, closed after it (signal listeners included). */
+const openServers: Array<Awaited<ReturnType<typeof createServer>>> = [];
+async function createDatafnServer(...args: Parameters<typeof createServer>): ReturnType<typeof createServer> {
+  const server = await createServer(...args);
+  openServers.push(server);
+  return server;
+}
+
+afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  // close() removes the signal listeners at once; a request a test left
+  // pending is not waited for past a short bound.
+  const closing = openServers.splice(0).map((server) => server.close().catch(() => undefined));
+  await Promise.race([Promise.all(closing), new Promise((resolve) => setTimeout(resolve, 100))]);
 });
 
 describe("DATA-41 revisions: every committed write bumps", () => {
@@ -4052,25 +4064,39 @@ describe("DATA-95: a versioned query's $rev after the afterQuery hooks", () => {
   }
   const trimTitle = (entry: Json) => ({ ...entry, data: entry.data.map(({ title: _title, ...row }: Json) => row) });
 
-  it("sends no server $rev on a trimmed row that a same-length reorder moved to another slot", async () => {
+  // A slot the client reads as a resource that issues no revisions holds its
+  // rows' own `$rev` field, which the client never pairs with a record, so
+  // nothing there is removed (local review round 2).
+  it("keeps every $rev in a slot read as a resource that issues no revisions, after a same-length reorder", async () => {
     const result = await mixedBatch((batch) => (Array.isArray(batch) ? [batch[1], trimTitle(batch[0])] : batch));
     expect(result).toHaveLength(2);
+    // The legacy row object is the plain query's own: its declared `$rev` is kept anywhere.
     expect(result[0].data).toEqual([{ id: "legacy:1", $rev: "99" }]);
-    expect(result[1].data).toEqual([{ id: "task:1" }]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
   });
 
-  it("sends no server $rev on an unchanged row moved to a slot of another resource", async () => {
-    const result = await mixedBatch((batch) => (Array.isArray(batch) ? [batch[1], batch[0]] : batch));
-    expect(result[0].data).toEqual([{ id: "legacy:1", $rev: "99" }]);
-    expect(result[1].data[0]).toMatchObject({ id: "task:1", title: "a" });
-    expect(result[1].data[0]).not.toHaveProperty("$rev");
+  it("removes the $rev of a certified row a hook put where no query answers", async () => {
+    const result = await mixedBatch((batch) => (Array.isArray(batch) ? [...batch, batch[0]] : batch));
+    expect(result).toHaveLength(3);
+    expect(result[0].data[0]).toMatchObject({ id: "task:1", $rev: 1 });
+    expect(result[2].data[0]).toMatchObject({ id: "task:1", title: "a" });
+    expect(result[2].data[0]).not.toHaveProperty("$rev");
   });
 
-  it("keeps a plain query's declared $rev that a hook changed in a shortened batch", async () => {
-    const result = await mixedBatch((batch) => (Array.isArray(batch)
+  // A hook that copies and edits a row leaves no provenance: in a slot the
+  // client reads as revision-bearing, its `$rev` is removed rather than risk
+  // a wrong pairing. The same edit made in place keeps the row's provenance.
+  it("removes a declared $rev a hook copied and edited into a versioned slot, and keeps one it edited in place", async () => {
+    const copied = await mixedBatch((batch) => (Array.isArray(batch)
       ? [{ ...batch[1], data: batch[1].data.map((row: Json) => ({ ...row, note: "x" })) }]
       : batch));
-    expect(result).toEqual([expect.objectContaining({ data: [{ id: "legacy:1", $rev: "99", note: "x" }] })]);
+    expect(copied).toEqual([expect.objectContaining({ data: [{ id: "legacy:1", note: "x" }] })]);
+    const inPlace = await mixedBatch((batch) => {
+      if (!Array.isArray(batch)) return batch;
+      for (const row of batch[1].data) row.note = "x";
+      return [batch[1]];
+    });
+    expect(inPlace).toEqual([expect.objectContaining({ data: [{ id: "legacy:1", $rev: "99", note: "x" }] })]);
   });
 
   it("keeps $rev on an unchanged mixed batch and under an identity hook", async () => {
@@ -4098,7 +4124,7 @@ describe("DATA-95: a $rev is tied to the query it came from (local review round 
   };
   type Rewrite = (batch: Json[]) => Json[];
   const editRows = (entry: Json, edit: (row: Json) => Json) => ({ ...entry, data: entry.data.map(edit) });
-  async function batch(queries: Json[], rewrite: Rewrite) {
+  async function batch(queries: Json[], rewrite: Rewrite, ledgerRows: Json[] = [{ id: "task:1", $rev: 1 }]) {
     const hooks = {
       name: "batch",
       runsOn: ["server"],
@@ -4106,7 +4132,7 @@ describe("DATA-95: a $rev is tied to the query it came from (local review round 
     };
     const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
-    await served.push({ resource: "ledger", operation: "insert", id: "task:1", record: { $rev: 1 } });
+    for (const { id, ...record } of ledgerRows) await served.push({ resource: "ledger", operation: "insert", id, record });
     expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
     const res = await served.send("query", queries.map((query) => ({ version: 1, ...query })));
     expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
@@ -4152,11 +4178,127 @@ describe("DATA-95: a $rev is tied to the query it came from (local review round 
     expect(result[1].data[0]).not.toHaveProperty("$rev");
   });
 
-  it("keeps the $rev of an unchanged certified row moved to another versioned query of its resource", async () => {
+  it("removes the $rev of an unchanged certified row moved to another versioned query of its resource", async () => {
     const queries = [{ resource: "task", withRevisions: true }, { resource: "task", withRevisions: true, filters: { title: "none" } }];
     const result = await batch(queries, ([first, second]) => [second, first]);
     expect(result[0].data).toEqual([]);
-    expect(result[1].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([expect.objectContaining({ id: "task:1", title: "a" })]);
+    expect(result[1].data[0]).not.toHaveProperty("$rev");
+  });
+});
+
+describe("DATA-95: a $rev is tied by provenance, not by colliding values (local review round 2)", () => {
+  const ledgerSchema = {
+    ...schema,
+    resources: [
+      ...schema.resources,
+      { name: "ledger", version: 1, fields: [{ name: "$rev", type: "number" as const, required: false }, { name: "note", type: "string" as const, required: false }] },
+    ],
+  };
+  type Rewrite = (batch: Json[]) => Json[];
+  async function batch(queries: Json[], rewrite: Rewrite, ledgerRows: Json[]) {
+    const hooks = {
+      name: "batch",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? rewrite(result) : result),
+    };
+    const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    for (const { id, ...record } of ledgerRows) await served.push({ resource: "ledger", operation: "insert", id, record });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const res = await served.send("query", queries.map((query) => ({ version: 1, ...query })));
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    return res.body.result as Json[];
+  }
+  const mixed = [{ resource: "task", withRevisions: true }, { resource: "ledger" }];
+
+  it("keeps a declared $rev a hook edited to the value of a server revision", async () => {
+    const result = await batch(mixed, ([task, ledger]) => [task, { ...ledger, data: ledger.data.map((row: Json) => ({ ...row, $rev: 1 })) }], [{ id: "task:1", $rev: 5 }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+  });
+
+  it("removes the $rev of a certified row a hook edited in place in its own slot", async () => {
+    const result = await batch(mixed, ([task, ledger]) => {
+      for (const row of task.data) row.title = "edited";
+      return [task, ledger];
+    }, [{ id: "task:1", $rev: 1 }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "edited" })]);
+    expect(result[0].data[0]).not.toHaveProperty("$rev");
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+  });
+
+  it("keeps every $rev under a hook that copies each row unchanged", async () => {
+    const result = await batch(mixed, (entries) => entries.map((entry) => ({ ...entry, data: entry.data.map((row: Json) => ({ ...row })) })), [{ id: "task:1", $rev: 1 }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+  });
+
+  it("removes the $rev of an id-rewritten certified row whose [id, $rev] equals a declared one, in every revision-bearing position", async () => {
+    const queries = [...mixed, { resource: "task" }];
+    const rewritten = (task: Json) => ({ ...task, data: task.data.map((row: Json) => ({ ...row, id: "task:2" })) });
+    const positions: Array<[Rewrite, number]> = [
+      [([task, ledger, plain]) => [rewritten(task), ledger, plain], 0],
+      [([task, ledger]) => [task, ledger, rewritten(task)], 2],
+      [([task, ledger, plain]) => [task, ledger, plain, rewritten(task)], 3],
+    ];
+    for (const [rewrite, position] of positions) {
+      const result = await batch(queries, rewrite, [{ id: "task:2", $rev: 1 }]);
+      expect(result[position].data).toEqual([expect.objectContaining({ id: "task:2", title: "a" })]);
+      expect(result[position].data[0]).not.toHaveProperty("$rev");
+      expect(result[1].data).toEqual([{ id: "task:2", $rev: 1 }]);
+    }
+  });
+
+  it("removes the $rev of a certified row a hook swapped into a shared-with-me or permission slot", async () => {
+    const shared = {
+      resources: [{
+        name: "notebook",
+        version: 1,
+        capabilities: ["timestamps", "audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        fields: [{ name: "title", type: "string" as const, required: false }],
+      }],
+      relations: [],
+    } as any;
+    const hooks = {
+      name: "swap",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (!Array.isArray(result) ? result
+        : [result[0], { data: result[0].data }, { ...result[2], data: result[0].data }]),
+    };
+    const database = memoryAdapter();
+    const server = await createDatafnServer({
+      schema: shared,
+      database,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      plugins: [hooks],
+      namespaceProvider: { getNamespace: () => "user:alice", getActorId: () => "alice" as any },
+    } as any);
+    const send = async (route: string, body: unknown) => {
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+      return { status: res.status, body: (await res.json()) as Json };
+    };
+    const pushed = await send("push", {
+      clientId: "client:a",
+      mutations: [{ version: 1, clientId: "client:a", mutationId: "m1", resource: "notebook", operation: "insert", id: "notebook:1", record: { title: "a" } }],
+    });
+    expect(pushed.body.ok, JSON.stringify(pushed.body)).toBe(true);
+    const res = await send("query", [
+      { version: 1, resource: "notebook", withRevisions: true },
+      { version: 1, resource: "notebook", operation: "getPermissions", id: "notebook:1", withRevisions: true },
+      { version: 1, resource: "notebook", withRevisions: true, metadata: { accessMode: "sharedWithMe", namespaceFilter: ["user:alice"] } },
+    ]);
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    expect(res.body.result[0].data).toEqual([expect.objectContaining({ id: "notebook:1", $rev: 1 })]);
+    for (const slot of [1, 2]) {
+      expect(res.body.result[slot].data).toEqual([expect.objectContaining({ id: "notebook:1", title: "a" })]);
+      expect(res.body.result[slot].data[0]).not.toHaveProperty("$rev");
+    }
   });
 });
 

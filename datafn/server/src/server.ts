@@ -683,11 +683,13 @@ function cancelOnAbort(
 }
 
 /**
- * A read-back body passed through as it is, chunk by chunk as it is pulled,
- * which still ends at the deadline: once the guard aborts, reads of it (and
- * of branches teed from it) are errored and the upstream is cancelled at
- * once, even while a teed branch middleware kept is left unread. Chunks a
- * branch already buffered cannot be revoked.
+ * A read-back body the DataFn route produced, passed through as it is, chunk
+ * by chunk as it is pulled, which still ends at the deadline: once the guard
+ * aborts, reads of it (and of branches teed from it) are errored and the
+ * upstream is cancelled at once, even while a teed branch middleware kept is
+ * left unread. Chunks a branch already buffered cannot be revoked. A body
+ * middleware substitutes after this wrapper is not covered: it is told only
+ * through the read-back request's aborted signal.
  */
 function guardedPassThrough(response: Response, guard: ReadBackGuard): Response {
   if (!response.body) return response;
@@ -961,9 +963,12 @@ class PostWriteReads {
    * middleware does with the response. Undefined for a non-2xx answer, an
    * unreadable body or a missed deadline. Its single exit aborts the
    * read-back request whatever the outcome: abort-aware middleware is told,
-   * and active reads of every body it produced (including clones or tee
-   * branches middleware kept) are errored and the upstream work cancelled.
-   * Bytes a completed clone already buffered cannot be revoked.
+   * and active reads of the body the DataFn route produced, route hooks
+   * included (and of clones or tee branches middleware kept of it), are
+   * errored and its upstream work cancelled. A replacement body that router
+   * middleware created itself is outside that stream: it is told only
+   * through the aborted request signal. Bytes a completed clone already buffered cannot be
+   * revoked.
    */
   private async readBack(request: Request, read: PostWriteRead): Promise<unknown> {
     this.reads.set(request, read);
