@@ -167,6 +167,16 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
     .replace(/\t/g, "&#9;")
     .replace(/^ +/, (spaces) => "&#32;".repeat(spaces.length))
     .replace(/ +$/, (spaces) => "&#32;".repeat(spaces.length));
+  const escapeQuotedLine = (line: string): string => {
+    let start = 0;
+    while (start < line.length && line[start] === " ") start += 1;
+    let end = line.length;
+    while (end > start && line[end - 1] === " ") end -= 1;
+    if (start === end) return start <= 1 ? "&#32;".repeat(start) : `&#32;${" ".repeat(start - 2)}&#32;`;
+    const leading = start > 0 ? `&#32;${" ".repeat(start - 1)}` : "";
+    const trailing = end < line.length ? `${" ".repeat(line.length - end - 1)}&#32;` : "";
+    return `${leading}${escapeText(line.slice(start, end))}${trailing}`;
+  };
   const codeFence = (text: string): string => {
     let longest = 0;
     let current = 0;
@@ -210,7 +220,10 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       // A line break between two non-empty lines becomes a quoted soft break, which
       // reparses as the same "\n". Blank lines and leading or trailing breaks would
       // change the quote's structure, so those stay escaped and the text survives.
-      return withOpaque(projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeText(line)}`).join("\n"));
+      // A parser strips leading spaces and drops or hard-breaks trailing spaces of
+      // each line, so only the outermost space on each side is written as "&#32;";
+      // inner spaces stay literal and the output does not grow with long runs.
+      return withOpaque(projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeQuotedLine(line)}`).join("\n"));
     }
     if (type === "code") {
       const fence = codeFence(projected.text);

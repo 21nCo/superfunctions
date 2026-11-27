@@ -127,6 +127,43 @@ describe("markdown content", () => {
     expect(nodeText(parsed.document.content[0]!)).toBe(text);
   });
 
+  it.each([
+    ["a lone space line", "a\n \nb"],
+    ["a space-only line", "a\n   \nb"],
+    ["a hard-break shaped line end", "a  \nb"],
+    ["indented continuation lines", "a\n    b\n\tc"],
+    ["spaces at both edges of the text", "  a\nb  "],
+  ])("keeps a quote with %s exact", (_case, text) => {
+    const result = migrateToMarkdownContent([{ type: "blockquote", children: [{ text }] }]);
+    expect(result.lossy).toBe(false);
+    const parsed = parseMarkdown(result.content.markdown);
+    expect(parsed.document.content).toHaveLength(1);
+    expect(parsed.document.content[0]?.type).toBe("blockquote");
+    expect(nodeText(parsed.document.content[0]!)).toBe(text);
+  });
+
+  it.each([
+    ["trailing", `head\nmiddle${" ".repeat(53_000)}\ntail`],
+    ["leading", `head\n${" ".repeat(53_000)}middle\ntail`],
+  ])("keeps long %s space runs in quoted lines within the parser token limit", (_case, text) => {
+    const result = migrateToMarkdownContent([{ type: "blockquote", children: [{ text }] }]);
+    expect(result.lossy).toBe(false);
+    // Only the outermost space of a run is escaped, so the output stays near the text size.
+    expect(result.content.markdown.length).toBeLessThan(text.length + 64);
+    const parsed = parseMarkdown(result.content.markdown);
+    expect(nodeText(parsed.document.content[0]!)).toBe(text);
+  });
+
+  it("keeps many quoted lines with trailing spaces within the default document size", () => {
+    const quote = Array.from({ length: 300 }, (_, line) => `line ${line}${" ".repeat(100)}`).join("\n");
+    const blocks = Array.from({ length: 15 }, () => ({ type: "blockquote", children: [{ text: quote }] }));
+    const result = migrateToMarkdownContent(blocks);
+    expect(result.lossy).toBe(false);
+    const parsed = parseMarkdown(result.content.markdown);
+    expect(parsed.document.content).toHaveLength(15);
+    for (const block of parsed.document.content) expect(nodeText(block)).toBe(quote);
+  });
+
   it("marks empty blocks and sanitized code metadata as lossy", () => {
     const empty = migrateToMarkdownContent([{ type: "paragraph", children: [] }]);
     const sanitized = migrateToMarkdownContent([

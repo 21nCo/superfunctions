@@ -12,6 +12,7 @@ import {
   type EditorProjector,
   type MdfnDocument,
   type MdfnExtension,
+  type MdfnSelection,
   createCommentThread,
   createSuggestion,
   decideSuggestion,
@@ -201,6 +202,27 @@ describe("@mdfn/core", () => {
     const editor = createEditor({ markdown: "abc\n", projector });
     editor.dispatch(new Transaction().setSelection(Object.create({ kind: "text", anchor: 1, head: 2 })));
     expect(editor.getState().selection).toEqual({ kind: "text", anchor: 1, head: 2 });
+  });
+
+  it("commits the selection values it validated when fields are getters", () => {
+    const editor = createEditor({ markdown: "abc\n", projector });
+    const reads = { anchor: 0, head: 0, nodeId: 0 };
+    const text = {
+      kind: "text",
+      get anchor() { reads.anchor += 1; return reads.anchor === 1 ? 1 : 999; },
+      get head() { reads.head += 1; return reads.head === 1 ? 2 : -1; },
+    } as unknown as MdfnSelection;
+    editor.dispatch(new Transaction().setSelection(text));
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: 1, head: 2 });
+    expect(reads).toMatchObject({ anchor: 1, head: 1 });
+
+    const node = {
+      kind: "node",
+      get nodeId() { reads.nodeId += 1; return reads.nodeId === 1 ? "paragraph-1" : 42; },
+    } as unknown as MdfnSelection;
+    editor.dispatch(new Transaction().setSelection(node));
+    expect(editor.getState().selection).toEqual({ kind: "node", nodeId: "paragraph-1" });
+    expect(reads.nodeId).toBe(1);
   });
 
   it("maps canonical selections through source replacement", () => {
