@@ -98,12 +98,12 @@ function versionAt(text: string, table: ReturnType<typeof suffixTable>, start: n
 }
 
 /** The first version token of `text`, whole, read by a linear scan rather than a backtracking pattern. */
-function firstVersion(text: string): string | undefined {
+function firstVersion(text: string): { version: string; start: number; end: number } | undefined {
   const table = suffixTable(text);
   for (let index = 0; index < text.length; index += 1) {
     if (index > 0 && joinsToken(text[index - 1])) continue;
     const version = versionAt(text, table, index);
-    if (version !== undefined) return version;
+    if (version !== undefined) return { version, start: index, end: index + (text[index] === "v" ? 1 : 0) + version.length };
   }
   return undefined;
 }
@@ -114,7 +114,13 @@ function firstVersion(text: string): string | undefined {
  * adjoins no word character or dot.
  */
 export function parseCliVersion(stdout: string, stderr = ""): string | undefined {
-  return firstVersion(stdout) ?? firstVersion(stderr);
+  return versionToken(stdout, stderr)?.version;
+}
+
+/** The reported version token and where it sits in the version output, stdout and stderr joined by a newline. */
+function versionToken(stdout: string, stderr: string): { version: string; start: number; end: number } | undefined {
+  const other = firstVersion(stdout) ? undefined : firstVersion(stderr);
+  return other ? { ...other, start: other.start + stdout.length + 1, end: other.end + stdout.length + 1 } : firstVersion(stdout);
 }
 
 /** Values of the closed placeholder set for one attempt. */
@@ -204,7 +210,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * the version arguments and the probe's environment. A pin is satisfied only by an observation of the invocation that
    * serves the slot, never by another profile's environment or by an executable since replaced at the same path.
    */
-  private readonly versions = new Map<string, { version: string; output: string }>();
+  private readonly versions = new Map<string, { version: string; start: number; end: number; output: string }>();
 
   public constructor(options: CliHarnessOptions = {}) {
     this.runner = options.runner ?? runProcessGroup;
@@ -247,7 +253,6 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     } catch (error) { return state.finish("failed", `The CLI executable is unavailable: ${message(error)}`); }
     const unconfirmed = await this.confirmVersion(prepared, executable, key);
     if (unconfirmed) return unconfirmed;
-    state.harnessVersion = this.versions.get(key)?.version;
     // The slot's pin is checked here, on a cold or a warm cache, so a CLI of another version never runs the review.
     const pinned = input.slot?.harness.version;
     if (pinned !== undefined && state.harnessVersion !== pinned) return state.finish("failed", `The CLI reported version ${String(state.harnessVersion)}, not the pinned ${pinned}, so the review was not run.`);
@@ -294,7 +299,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const warm = this.versions.has(key);
     const probed = warm ? this.checkedVersion(key, run.secrets) : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
     if (!warm && run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
-    if (!("error" in probed)) return undefined;
+    if (!("error" in probed)) { run.state.harnessVersion = probed.version; return undefined; }
     return run.state.finish(probed.timedOut ? "timed_out" : "failed", probed.error);
   }
 
@@ -468,18 +473,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     catch (error) { return { error: redact(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
     if (result.timedOut) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
-    const version = parseCliVersion(result.stdout, result.stderr);
+    const version = versionToken(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
-    this.versions.set(key, { version, output: `${result.stdout}\n${result.stderr}` });
+    this.versions.set(key, { ...version, output: `${result.stdout}\n${result.stderr}` });
     return this.checkedVersion(key, secrets);
   }
 
-  /** A cached version, refused when any occurrence in its joined version output overlaps a secret the caller registers. */
+  /** A cached version, refused when its token overlaps what redact() covers for the caller's secrets, escapes included. */
   private checkedVersion(key: string, secrets: readonly string[]): { version: string } | { error: string; timedOut: boolean } {
-    const { version, output } = this.versions.get(key)!;
-    const at = (part: string) => { const found: number[] = []; for (let index = output.indexOf(part); index >= 0; index = output.indexOf(part, index + 1)) found.push(index); return found; };
-    const spans = secrets.filter(Boolean).flatMap(secret => at(secret).map(from => [from, from + secret.length]));
-    return at(version).some(start => spans.some(([from, to]) => from < start + version.length && start < to)) ? { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false } : { version };
+    const { version, start, end, output } = this.versions.get(key)!;
+    return coverage(output, secrets)?.some((to, from) => from < end && to > start) ? { error: "The CLI reported a version that overlaps a registered secret, so it was refused.", timedOut: false } : { version };
   }
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
@@ -655,6 +658,22 @@ interface EscapeLevel { text: string; at: Uint32Array; to: Uint32Array }
  * past that depth is redacted whole. Each `withheld` span of `text` is redacted too.
  */
 function redact(text: string, secrets: readonly string[], withheld: ReadonlyArray<readonly [number, number]> = []): string {
+  const reach = coverage(text, secrets, withheld);
+  if (reach === undefined) return redactText(text, secrets);
+  const parts: string[] = [];
+  let kept = 0;
+  for (let index = 0, start = -1, end = 0; index <= text.length; index += 1) {
+    const to = index < text.length ? reach[index] : 0;
+    if (to !== 0 && start !== -1 && index <= end) { end = Math.max(end, to); continue; }
+    if (start !== -1 && (to !== 0 || index === text.length)) { parts.push(text.slice(kept, start), "[REDACTED]"); kept = end; start = -1; }
+    if (to !== 0) { start = index; end = to; }
+  }
+  parts.push(text.slice(kept));
+  return redactText(parts.join(""), secrets);
+}
+
+/** What redact() covers in `text`: reach[i] is the furthest end of a covered span that starts at i (0: none), if any is. */
+function coverage(text: string, secrets: readonly string[], withheld: ReadonlyArray<readonly [number, number]> = []): Uint32Array | undefined {
   const values = secrets.filter(secret => secret.length > 0);
   const periods = values.map(value => [value, smallestPeriod(value)] as const);
   // reach[i] is the furthest end of a redacted span that starts at i (0: none), allocated at the first one.
@@ -692,17 +711,7 @@ function redact(text: string, secrets: readonly string[], withheld: ReadonlyArra
     levels.push(next);
     current = next.text;
   }
-  if (reach === undefined) return redactText(text, secrets);
-  const parts: string[] = [];
-  let kept = 0;
-  for (let index = 0, start = -1, end = 0; index <= text.length; index += 1) {
-    const to = index < text.length ? reach[index] : 0;
-    if (to !== 0 && start !== -1 && index <= end) { end = Math.max(end, to); continue; }
-    if (start !== -1 && (to !== 0 || index === text.length)) { parts.push(text.slice(kept, start), "[REDACTED]"); kept = end; start = -1; }
-    if (to !== 0) { start = index; end = to; }
-  }
-  parts.push(text.slice(kept));
-  return redactText(parts.join(""), secrets);
+  return reach;
 }
 
 /** The smallest shift at which `value` overlaps itself (its length when it never does), by the KMP failure function. */

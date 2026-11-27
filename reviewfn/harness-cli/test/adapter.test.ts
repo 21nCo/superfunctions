@@ -833,6 +833,8 @@ describe("CliHarnessAdapter preflight and configuration", () => {
   it.each([
     ["a later token repeats its value", "1.2.3!test-suffix", "fixture 1.2.3!test-suffix\n", "fixture 1.2.3\n"],
     ["the secret spans both streams", ["fixture-cred", "split-part"].join("\n"), "fake-cli version 1.2.3+fixture-cred", "split-part\n"],
+    ["the output JSON-escapes the secret", ["test-fragment", "continued"].join("\n"), `${JSON.stringify({ version: `1.2.3+build.${["test-fragment", "continued"].join("\n")}` })}\n`, ""],
+    ["the output \\u-escapes the secret", "build-credential", "fake-cli version 1.2.3+build\\u002dcredential\n", ""],
   ])("refuses a version whose reported occurrence overlaps a secret when %s", async (_label, secret, stdout, stderr) => {
     const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout, stderr, timedOut: false, canceled: false });
     const result = await new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner }).preflight(configuration(profile()));
@@ -845,6 +847,43 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout: "test-banner9.8.7\nfixture version 1.2.3\n", stderr: "", timedOut: false, canceled: false });
     const result = await new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: "test-banner" }, runner }).preflight(configuration(profile()));
     expect(result.resolved?.harnessVersion).toBe("1.2.3");
+  });
+
+  it("accepts the reported token when its spelling also occurs inside an unrelated credential later in the output", async () => {
+    const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout: "tool 1.2.3\nconfigured testX1.2.3Yvalue\n", stderr: "", timedOut: false, canceled: false });
+    const result = await new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: "testX1.2.3Yvalue" }, runner }).preflight(configuration(profile()));
+    expect(result.resolved?.harnessVersion).toBe("1.2.3");
+  });
+
+  it("checks a large in-budget version output in linear time", async () => {
+    const stdout = `fake-cli version 1.2.3\n${"1.2.3 test ".repeat(5_740)}`;
+    const runner: CommandRunner = async () => ({ code: 0, signal: null, stdout, stderr: "", timedOut: false, canceled: false });
+    const started = performance.now();
+    const result = await new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: "test" }, runner }).preflight(configuration(profile()));
+    expect(result.resolved?.harnessVersion).toBe("1.2.3");
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("keeps each run's own approved version when a concurrent probe of the same invocation is refused", async () => {
+    const secret = ["racing", "fixture", "credential"].join("-");
+    const versions = ["1.2.3", `1.2.3+build.${secret}`];
+    let release!: () => void;
+    const both = new Promise<void>(resolve => { release = resolve; });
+    let probes = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+      const stdout = `fake-cli version ${versions[probes]}\n`;
+      if ((probes += 1) === 2) release();
+      await both;
+      return { code: 0, signal: null, stdout, stderr: "", timedOut: false, canceled: false };
+    };
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
+    const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
+    const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
+    const [first, second] = await Promise.all([harness.run(input(allowlisted)), harness.run(input(designated))]);
+    expect(second.error).toBe("The CLI reported a version that overlaps a registered secret, so it was refused.");
+    expect(first.observed?.harnessVersion).toBe("1.2.3");
+    expect(JSON.stringify(first)).not.toContain(secret);
   });
 
   it("refuses a cached version that overlaps a secret only the later run's configuration registers", async () => {
