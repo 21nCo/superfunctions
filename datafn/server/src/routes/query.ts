@@ -1325,13 +1325,14 @@ function keepsRevision(wire: WireRow, slot: SlotTie | undefined, ties: RevisionT
 /**
  * DATA-41: whether a hook's copy of a row (no provenance) keeps its `$rev`.
  *
- * - In a versioned slot a `$rev` stays only on a row that slot's query
- *   certified, or on an `application` row object itself (by identity, see
- *   keepsRevision). So a copy keeps it only if it equals a row the slot's own
- *   query returned. Values cannot tell a copied declared row from a certified
- *   row a hook rewrote to equal it, so a copy of an `application` row loses
- *   its `$rev` there, unchanged or edited, rather than risk pairing a record
- *   with a revision that slot's query never certified.
+ * - In a versioned slot a copy keeps it if it equals a row the slot's own
+ *   query certified, or if it equals an `application` row whose `[id, $rev]`
+ *   no versioned query certified (a declared `$rev` that cannot be a server
+ *   one). A copy equal to an `application` row whose pair collides with a
+ *   certified pair loses it, as does an edited copy: values cannot tell either
+ *   from a certified row a hook rewrote, and keeping it could pair a record
+ *   with a revision that slot's query never certified. An `application` row
+ *   object itself keeps it by identity (see keepsRevision).
  * - In an issuing slot, or where no query answers, it keeps it only if it
  *   equals a row an `application` slot returned with its declared `$rev` (an
  *   issuing query returns no `$rev` of its own).
@@ -1342,7 +1343,9 @@ function keepsRevision(wire: WireRow, slot: SlotTie | undefined, ties: RevisionT
  *   an unchanged copy of an `application` row.
  */
 function keepsCopiedRevision({ row, canonical }: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
-  if (slot?.kind === "versioned") return slot.own.has(canonical);
+  if (slot?.kind === "versioned") {
+    return slot.own.has(canonical) || (ties.application.has(canonical) && !ties.certified.has(revisionPair(row)));
+  }
   if (slot?.kind !== "application") return slot?.own.has(canonical) === true || ties.application.has(canonical);
   return ties.application.has(canonical)
     || !ties.certified.has(revisionPair(row))

@@ -4372,7 +4372,7 @@ describe("DATA-95: a hook's copy of a row keeps a $rev only where it can be tied
     ],
   };
   type Rewrite = (batch: Json[]) => Json[];
-  async function batch(queries: Json[], rewrite: Rewrite) {
+  async function batch(queries: Json[], rewrite: Rewrite, ledgerRecord: Json = { $rev: 1, note: "redacted" }) {
     const hooks = {
       name: "batch",
       runsOn: ["server"],
@@ -4380,7 +4380,7 @@ describe("DATA-95: a hook's copy of a row keeps a $rev only where it can be tied
     };
     const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
-    await served.push({ resource: "ledger", operation: "insert", id: "task:1", record: { $rev: 1, note: "redacted" } });
+    await served.push({ resource: "ledger", operation: "insert", id: "task:1", record: ledgerRecord });
     expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
     const res = await served.send("query", queries.map((query) => ({ version: 1, ...query })));
     expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
@@ -4400,13 +4400,26 @@ describe("DATA-95: a hook's copy of a row keeps a $rev only where it can be tied
   });
 
   it("removes the $rev of an unchanged copy of a ledger row that a shortened batch puts in the versioned slot", async () => {
-    // In a versioned slot a $rev stays only on a row that slot's query
-    // certified, or on an application row object itself (by identity): a
-    // spread copy of the ledger row has no provenance and the task query never
-    // certified it.
+    // In a versioned slot a copy (no provenance) keeps its $rev only if the
+    // slot's query certified it, or if it equals an application row whose
+    // [id, $rev] no versioned query certified. This ledger row's [task:1, 1]
+    // collides with the certified task:1 rev 1, so values cannot tell the copy
+    // from a certified row a hook rewrote: its $rev is removed.
     const result = await batch(mixed, ([, ledger]) => [{ ...ledger, data: ledger.data.map((row: Json) => ({ ...row })) }]);
     expect(result).toHaveLength(1);
     expect(result[0].data).toEqual([{ id: "task:1", note: "redacted" }]);
+  });
+
+  it("keeps the declared $rev of an unchanged ledger-row copy a shortened batch puts in the versioned slot when its [id, $rev] was never certified", async () => {
+    // task:1 is at rev 1, so [task:1, 7] is no pair a versioned query
+    // certified: the $rev can only be the ledger row's declared field.
+    const result = await batch(
+      mixed,
+      ([, ledger]) => [{ ...ledger, data: ledger.data.map((row: Json) => ({ ...row })) }],
+      { $rev: 7, note: "redacted" },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].data).toEqual([{ id: "task:1", $rev: 7, note: "redacted" }]);
   });
 
   it("keeps the declared $rev of an unchanged ledger row copy in another ledger slot whose query returned none", async () => {
