@@ -583,6 +583,21 @@ describe('snapshot reads', () => {
       expect(() => grammar.classifyScope(scope as never)).toThrow(ScopeError);
     }
   });
+
+  it('returns snapshots and dimensions with no inherited names', () => {
+    const result = grammar.isSubset({ ...base, permissions: ['contents:read'] }, envelope);
+    expect(result.ok).toBe(true);
+    const normalized = grammar.normalize(base);
+    for (const view of [result.scope, normalized.ok ? normalized.scope : undefined, grammar.dimensions]) {
+      expect(view).toBeDefined();
+      expect(Object.getPrototypeOf(view)).toBeNull();
+      expect(Object.isFrozen(view)).toBe(true);
+      const record = view as unknown as Record<string, unknown>;
+      for (const name of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', 'missing']) expect(record[name]).toBeUndefined();
+    }
+    expect(Object.keys(grammar.dimensions)).toEqual(['permissions', 'labels', 'resources', 'rate', 'ttl']);
+    expect(grammar.classifyScope(result.scope!)).toBe('read');
+  });
 });
 
 describe('asynchronous callbacks', () => {
@@ -758,6 +773,60 @@ describe('asynchronous callbacks', () => {
       const plain = defineScopeGrammar({ provider: 'hostile-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => result as never });
       expect(() => plain.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
     }
+  });
+
+  it('rejects a plain-prototype promise as a scope even without normalize', async () => {
+    const setOnly = defineScopeGrammar({ provider: 'set-only', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'destructive' });
+    const reparented = (proto: object | null, data?: Record<string, unknown>, rejected = false): Promise<unknown> => {
+      const promise = rejected ? Promise.reject(new Error('reparented rejection')) : Promise.resolve({ names: [] });
+      Object.setPrototypeOf(promise, proto);
+      if (data) Object.assign(promise, data);
+      return promise;
+    };
+    const benign = { names: ['a'] };
+    const seen = await unhandledRejectionsDuring(() => {
+      for (const proto of [null, Object.prototype]) {
+        for (const data of [undefined, { names: ['a'] }]) {
+          for (const rejected of [false, true]) {
+            const make = () => reparented(proto, data, rejected) as never;
+            expect(setOnly.isSubset(make(), benign).violations).toEqual([
+              expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
+            ]);
+            expect(setOnly.isSubset(benign, make()).violations).toEqual([
+              expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
+            ]);
+            expect(setOnly.normalize(make()).ok).toBe(false);
+            expect(() => setOnly.classifyRisk(make())).toThrow(ScopeError);
+          }
+        }
+      }
+    });
+    expect(seen).toEqual([]);
+  });
+
+  it('runs no caller code to recognise a promise and rejects one with an own constructor as an unknown dimension', () => {
+    const setOnly = defineScopeGrammar({ provider: 'set-only-ctor', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'read' });
+    let lookups = 0;
+    const species = Object.defineProperty(function Species() {}, Symbol.species, {
+      get() {
+        lookups++;
+        throw new Error('species lookup ran');
+      },
+    });
+    for (const ctor of [0, species, undefined]) {
+      const promise = Promise.resolve();
+      Object.setPrototypeOf(promise, null);
+      Object.defineProperty(promise, 'constructor', { value: ctor, enumerable: false });
+      Object.assign(promise, { names: ['a'] });
+      expect(setOnly.isSubset(promise as never, { names: ['a'] }).violations).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('"constructor"') }),
+      ]);
+      expect(() => setOnly.classifyRisk(promise as never)).toThrow(ScopeError);
+    }
+    expect(lookups).toBe(0);
+    expect(() =>
+      defineScopeGrammar({ provider: 'reserved', dimensions: { constructor: { kind: 'exactSet' } }, riskOf: () => 'read' }),
+    ).toThrow(TypeError);
   });
 });
 

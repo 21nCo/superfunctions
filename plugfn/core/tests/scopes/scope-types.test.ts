@@ -49,11 +49,26 @@ loose.isSubset({}, {});
 const looseScope = loose.normalize({});
 if (looseScope.ok) {
   const value = looseScope.scope['anything'];
-  // @ts-expect-error a widened member may be a set, so number methods are not available
-  value.toFixed();
-  const either: readonly string[] | number = value;
-  void either;
+  // @ts-expect-error a widened lookup may find no dimension (undefined at runtime)
+  const unchecked: readonly string[] | number = value;
+  void unchecked;
+  if (value !== undefined) {
+    // @ts-expect-error a widened member may be a set, so number methods are not available
+    value.toFixed();
+    const either: readonly string[] | number = value;
+    void either;
+  }
 }
+const looseDimension = loose.dimensions['anything'];
+// @ts-expect-error a widened dimension lookup may find nothing
+void looseDimension.kind;
+if (looseDimension !== undefined) {
+  const kind: 'exactSet' | 'prefixGlobSet' | 'numericMax' | 'ttlMax' = looseDimension.kind;
+  void kind;
+}
+// Declared keys of a concrete grammar stay required, with no undefined.
+const declaredDimension: { readonly kind: 'ttlMax' } = concrete.dimensions.ttl;
+void declaredDimension;
 
 type Mixed = { readonly d: { kind: 'exactSet' } | { kind: 'numericMax' } };
 const mixedSet: ScopeShape<Mixed> = { d: ['a'] };

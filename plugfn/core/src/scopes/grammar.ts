@@ -47,6 +47,11 @@ interface CompiledDimension {
 }
 
 const DIMENSION_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+/**
+ * Reserved: a promise recognised by {@link isPlainPromise} must have no own
+ * `constructor`, so one that has it is always an unknown dimension.
+ */
+const RESERVED_DIMENSION_NAMES: ReadonlySet<string> = new Set(['constructor']);
 const { maxSetItems: MAX_SET_ITEMS, maxMemberLength: MAX_MEMBER_LENGTH } = SCOPE_LIMITS;
 /** Longest thrown-error message copied into a violation. */
 const MAX_ERROR_MESSAGE_LENGTH = 200;
@@ -172,6 +177,22 @@ function isNativePromise(value: unknown): boolean {
   }
 }
 
+/**
+ * Whether a plain-data scope (prototype `Object.prototype` or `null`) is a
+ * native promise, attaching a rejection handler when it is. Runs no caller
+ * code: the brand check's species lookup reads `constructor`, which is
+ * inherited from `Object.prototype` (or absent) whenever the value has no own
+ * `constructor`, and that is checked first. A promise with an own
+ * `constructor` is not inspected, because recognising it would read that
+ * value; like any other input it is judged by its own data properties, and
+ * `constructor` is a reserved name that no grammar can declare, so it is an
+ * unknown dimension (`malformed`). Proxy traps may throw; callers catch.
+ */
+function isPlainPromise(value: object): boolean {
+  if (Object.getOwnPropertyDescriptor(value, 'constructor') !== undefined) return false;
+  return isNativePromise(value);
+}
+
 function malformed(side: Side, message: string, dimension?: string, item?: string | number): ScopeViolation {
   return { code: 'malformed', side, message, ...(dimension === undefined ? {} : { dimension }), ...(item === undefined ? {} : { item }) };
 }
@@ -222,7 +243,7 @@ function publish(fields: Record<string, unknown>): ScopeDimension {
 
 function compileDimension(provider: string, name: string, def: unknown): CompileResult {
   const where = `Scope grammar "${provider}": dimension "${name}"`;
-  if (!DIMENSION_NAME.test(name)) {
+  if (!DIMENSION_NAME.test(name) || RESERVED_DIMENSION_NAMES.has(name)) {
     throw new TypeError(`Scope grammar "${provider}": invalid dimension name "${name}"`);
   }
   if (!isPlainObject(def)) throw new TypeError(`${where} must be an object`);
@@ -504,14 +525,16 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
   const results = [...dimensionDefs].map(([name, def]) => compileDimension(provider, name, def));
   const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
   const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
+  // Null prototype: a name the grammar does not declare (`toString` included) is absent.
   const publishedDimensions = Object.freeze(
-    Object.fromEntries(results.map(result => [result.compiled.name, result.published])),
+    Object.assign(Object.create(null) as object, Object.fromEntries(results.map(result => [result.compiled.name, result.published]))),
   ) as PublishedScopeDimensions<D>;
 
   /** The frozen snapshots this grammar returned, with their parsed form, for `classifyScope`. */
   const snapshots = new WeakMap<object, ParsedScope>();
   const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
-    const result: Record<string, ScopeValue> = {};
+    // Null prototype: a name the grammar does not declare (`toString` included) is absent.
+    const result = Object.create(null) as Record<string, ScopeValue>;
     for (const [name, value] of scope) result[name] = value;
     const frozen = Object.freeze(result);
     snapshots.set(frozen, scope);
@@ -534,6 +557,11 @@ export function defineScopeGrammar<const D extends ScopeDimensions, TInput = Sco
       return [malformed(side, 'normalize returned a promise; it must return a scope synchronously')];
     }
     try {
+      // With or without normalize: a promise reparented to a plain prototype
+      // is still a promise, never a scope, whatever own data it carries.
+      if (isPlainObject(raw) && isPlainPromise(raw)) {
+        return [malformed(side, 'scope must be plain data, not a promise')];
+      }
       return parseScope(dims, byName, raw, side);
     } catch (error) {
       return [malformed(side, `scope could not be read: ${describeError(error)}`)];

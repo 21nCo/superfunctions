@@ -75,26 +75,49 @@ type SetDimension = ExactSetDimension | PrefixGlobSetDimension;
  */
 export type ScopeDimensionValue<T> = T extends SetDimension ? readonly string[] : number;
 
-/** Keys whose dimension may be a set kind; these may be omitted (an empty set). */
-type SetKeys<D extends ScopeDimensions> = {
-  [K in keyof D]: [Extract<D[K], SetDimension>] extends [never] ? never : K;
+/**
+ * Keys a grammar declares by name. A definition widened to an index signature
+ * (for example {@link ScopeDimensions}) has none: any string may be looked up,
+ * but only the dimensions the grammar was defined with are present.
+ */
+type DeclaredKeys<D> = {
+  [K in keyof D]-?: string extends K ? never : number extends K ? never : symbol extends K ? never : K;
 }[keyof D];
 
-type ScalarKeys<D extends ScopeDimensions> = Exclude<keyof D, SetKeys<D>>;
+/** Index-signature keys of a widened definition; a lookup may find nothing. */
+type IndexKeys<D> = Exclude<keyof D, DeclaredKeys<D>>;
+
+/** Declared keys whose dimension may be a set kind; these may be omitted (an empty set). */
+type SetKeys<D extends ScopeDimensions> = {
+  [K in DeclaredKeys<D>]: [Extract<D[K], SetDimension>] extends [never] ? never : K;
+}[DeclaredKeys<D>];
+
+type ScalarKeys<D extends ScopeDimensions> = Exclude<DeclaredKeys<D>, SetKeys<D>>;
 
 /**
  * Canonical scope input. Set dimensions may be omitted (an empty set); scalar
  * dimensions are required, because an absent limit would mean "unbounded".
+ * For a widened definition every key is optional: the type cannot tell which
+ * are scalars, and the engine still rejects a missing one as `malformed`.
  */
 export type ScopeShape<D extends ScopeDimensions> = {
   readonly [K in SetKeys<D>]?: ScopeDimensionValue<D[K]>;
 } & {
   readonly [K in ScalarKeys<D>]: ScopeDimensionValue<D[K]>;
+} & {
+  readonly [K in IndexKeys<D>]?: ScopeDimensionValue<D[K]>;
 };
 
-/** A scope after validation: every dimension present, sets de-duplicated. */
+/**
+ * A scope after validation: every declared dimension present, sets
+ * de-duplicated. A frozen object with a null prototype, so it holds no
+ * inherited names. Looking up a key of a widened definition yields
+ * `undefined` when the grammar has no such dimension.
+ */
 export type NormalizedScope<D extends ScopeDimensions> = {
-  readonly [K in keyof D]: ScopeDimensionValue<D[K]>;
+  readonly [K in DeclaredKeys<D>]: ScopeDimensionValue<D[K]>;
+} & {
+  readonly [K in IndexKeys<D>]: ScopeDimensionValue<D[K]> | undefined;
 };
 
 type ReadonlyArrays<T> = T extends readonly (infer U)[] ? readonly U[] : T;
@@ -102,9 +125,14 @@ type ReadonlyArrays<T> = T extends readonly (infer U)[] ? readonly U[] : T;
 /** A dimension definition as published on a grammar: frozen, arrays included. */
 export type PublishedScopeDimension<T> = { readonly [P in keyof T]: ReadonlyArrays<T[P]> };
 
-/** The frozen dimension definitions a grammar publishes. */
+/**
+ * The frozen dimension definitions a grammar publishes, in a null-prototype
+ * object. A key of a widened definition may be absent (`undefined`).
+ */
 export type PublishedScopeDimensions<D extends ScopeDimensions> = {
-  readonly [K in keyof D]: PublishedScopeDimension<D[K]>;
+  readonly [K in DeclaredKeys<D>]: PublishedScopeDimension<D[K]>;
+} & {
+  readonly [K in IndexKeys<D>]: PublishedScopeDimension<D[K]> | undefined;
 };
 
 /** One requested item, as passed to `riskOf`. */
@@ -183,6 +211,13 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
  * returns, and classify that same snapshot with `classifyScope`, never by
  * reading the raw input again: a getter or Proxy may answer differently on
  * the next read.
+ *
+ * A native promise is never a scope, with or without `normalize`: given as a
+ * request or envelope (including one reparented to a null or
+ * `Object.prototype` prototype, whatever own data it carries) it is
+ * `malformed`, and recognising it runs no caller code. A promise with an own
+ * `constructor` is judged by its own data properties like any other input;
+ * `constructor` is a reserved dimension name, so it is `malformed` too.
  */
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
