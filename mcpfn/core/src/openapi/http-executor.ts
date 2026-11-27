@@ -506,14 +506,25 @@ function nativePromise(value: unknown): Promise<unknown> | undefined {
     resolve = onResolve;
     reject = onReject;
   });
+  return thenAttached(value, resolve, reject) ? settled : undefined;
+}
+
+/**
+ * `Promise.prototype.then`, typed to return nothing usable: the derived promise
+ * it returns only settles with what `resolve` or `reject` return, so it never
+ * rejects and is deliberately left unobserved.
+ */
+const promiseThen: (this: unknown, onResolve: (value: unknown) => void, onReject: (reason: unknown) => void) => unknown =
+  Promise.prototype.then;
+
+/** Whether `then` attached to `value`: it throws synchronously for anything but a native promise. */
+function thenAttached(value: object, resolve: (value: unknown) => void, reject: (reason: unknown) => void): boolean {
   try {
-    // The derived promise `then` returns only settles with what `resolve` or `reject` return, so it never rejects
-    // and is deliberately left unobserved; only a synchronous throw (no native promise) matters here.
-    void Reflect.apply(Promise.prototype.then, value, [resolve, reject]);
+    Reflect.apply(promiseThen, value, [resolve, reject]);
+    return true;
   } catch {
-    return undefined;
+    return false;
   }
-  return settled;
 }
 
 /** The message for a header failure: ours names at most a header; anything else, which may hold a value, is replaced. */

@@ -146,13 +146,14 @@ for (const { operation, code, reason } of skipped) {
   properties are left out, is first compiled by mcpFn's validator as
   written. A `HEAD` tool never declares an output schema, since its response
   has no body. When the executor sets `outputSchemaRule: "every-success"`
-  (as `httpExecutor` does), neither does an operation whose documented 2xx
-  responses, and its `default` response (which covers the 2xx statuses not
-  listed), do not all offer only JSON content with that same schema (such
-  as a `200` with a body beside a `204`, a `2XX` range, which also covers
-  the bodyless `204` and `205`, `201` and `202` with different
-  bodies, or a JSON body beside `text/plain`), since a call could succeed
-  with a body the schema does not describe. Under that rule a schema
+  (as `httpExecutor` does), neither does an operation that documents a
+  `default` response (which covers the 2xx statuses not listed, the
+  bodyless `204` and `205` among them) or whose documented 2xx responses do
+  not all offer only JSON content with that same schema (such as a `200`
+  with a body beside a `204`, a `2XX` range, which also covers the bodyless
+  `204` and `205`, `201` and `202` with different bodies, or a JSON body
+  beside `text/plain`), since a call could succeed with a body the schema
+  does not describe, or with none. Under that rule a schema
   written on a `204` or `205` entry is neither converted nor compiled, and
   two responses count as having the same schema when it is the same object
   or written identically (compared once per pair of shared values, within a

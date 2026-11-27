@@ -1810,14 +1810,25 @@ describe("httpExecutor default responses", () => {
     });
   });
 
-  it("keeps the output schema when default offers the same JSON schema", async () => {
+  it.each([204, 205])(
+    "publishes no output schema when default offers the same JSON schema, so a bodyless %i it covers succeeds",
+    async (status) => {
+      const { registry, tools } = catalog({ description: "Same", content: { "application/json": { schema: item } } }, () =>
+        new Response(null, { status }),
+      );
+      expect(tools[0]!.outputSchema).toBeUndefined();
+      const result = await registry.callTool("create", {}, undefined, requestExtra());
+      expect(result).toEqual({ content: [{ type: "text", text: `The API responded with HTTP ${status} and no body.` }] });
+    },
+  );
+
+  it("returns a same-schema 201 that default covers as text, since no output schema is published", async () => {
+    const body = '{"id":"item-1"}';
     const { registry, tools } = catalog({ description: "Same", content: { "application/json": { schema: item } } }, () =>
-      new Response('{"id":"item-1"}', { status: 201, headers: { "content-type": "application/json" } }),
+      new Response(body, { status: 201, headers: { "content-type": "application/json" } }),
     );
-    expect(tools[0]!.outputSchema).toMatchObject({ required: ["id"] });
-    const result = await registry.callTool("create", {}, undefined, requestExtra());
-    expect(result.isError).toBeFalsy();
-    expect(result.structuredContent).toEqual({ id: "item-1" });
+    expect(tools[0]!.outputSchema).toBeUndefined();
+    await expect(registry.callTool("create", {}, undefined, requestExtra())).resolves.toEqual({ content: [{ type: "text", text: body }] });
   });
 });
 
