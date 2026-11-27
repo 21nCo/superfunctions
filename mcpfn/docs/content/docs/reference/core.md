@@ -99,14 +99,23 @@ const server = createMcpFnServer({
 });
 ```
 
-A host may decide the two requests differently, for example to keep a tool out
-of discovery while still accepting direct calls that the handler authorizes:
+A host may decide the two requests differently. Keep the authorization check
+for both request kinds and add any discovery-only condition separately, for
+example to keep a permitted tool out of listings while still accepting direct
+calls to it:
 
 ```ts
-toolVisibility: ({ tool, context, requestKind }) =>
-  requestKind === "tools/call" ||
-  context.permissions.includes(String(tool._meta?.permission)),
+toolVisibility: ({ tool, context, requestKind }) => {
+  if (!context.permissions.includes(String(tool._meta?.permission))) {
+    return false;
+  }
+  return requestKind === "tools/call" || tool._meta?.hideFromDiscovery !== true;
+},
 ```
+
+A hook that returns `true` for every `tools/call` lets any caller reach the
+tool by name, so do that only when the tool handler performs the same
+authorization check itself.
 
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 
