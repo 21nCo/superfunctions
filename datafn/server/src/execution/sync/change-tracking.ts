@@ -16,7 +16,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
 import { adapterIdentity, ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
-import { assignWriteRevisions, ensureRevisionsTable, hasUnresolvedRevision, issuesRevisions, revisionsEnabled } from "../revisions.js";
+import { assignWriteRevisions, ensureRevisionsTable, issuesRevisions, revisionsEnabled } from "../revisions.js";
 import type { DatafnSchema } from "../../core-types.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
@@ -58,17 +58,6 @@ async function withChangeRetry(
 }
 
 /**
- * DATA-41: once a write's changes are recorded, fails when the outcome of a
- * revision raise is unknown (see hasUnresolvedRevision), so the mutation stays
- * retryable instead of being acknowledged with a raise that may be missing.
- */
-function failIfRevisionUnresolved(entries: ReadonlyArray<ChangeEntryInput>): void {
-  if (hasUnresolvedRevision(entries)) {
-    throw new Error("INTERNAL: The outcome of a record revision raise is unknown");
-  }
-}
-
-/**
  * FIX-REL-002: Shared retry helper for change-tracking writes.
  * Used by both execute-mutation and push paths for parity.
  */
@@ -79,7 +68,6 @@ export async function recordChangeWithRetry(
   logger?: DatafnLogger,
 ): Promise<void> {
   await withChangeRetry(changeTracking, () => changeTracking.recordChange(params), maxRetries, logger, "Change tracking retry");
-  failIfRevisionUnresolved([params]);
 }
 
 /**
@@ -100,7 +88,6 @@ export async function recordChangesWithRetry(
     "Change tracking retry (bulk)",
     { entryCount: entries.length },
   );
-  failIfRevisionUnresolved(entries);
 }
 
 /**
@@ -126,10 +113,7 @@ export async function recordWriteChangesWithRetry(
     "Revision assignment retry",
     { entryCount: entries.length },
   );
-  for (const entry of entries) {
-    await withChangeRetry(changeTracking, () => changeTracking.recordChange(entry), maxRetries, logger, "Change tracking retry");
-  }
-  failIfRevisionUnresolved(entries);
+  for (const entry of entries) await recordChangeWithRetry(changeTracking, entry, maxRetries, logger);
 }
 
 /** DATA-41: change entries whose insert was sent (see unstoredChanges). */

@@ -200,22 +200,33 @@ async function withCreateLock<T>(key: string, task: () => Promise<T>): Promise<T
 
 /** Inserts the first revision row of a record unless another writer did. */
 /**
- * Writes the revision row, locking it and giving the transaction its own
- * version of the latest committed row. Under a snapshot-per-transaction
- * isolation (MySQL InnoDB REPEATABLE READ) a plain read after this sees the
- * latest committed revision. An update that leaves every value as it is
- * creates no such version, so the row's namespace is changed and then set
- * back, which no other transaction sees. The rest of the row, its raise marks
- * included, stays as the latest writer left it. Returns the rows the updates
- * affected (0 when the row does not exist).
+ * Changes the revision row's timestamp, locking it and giving the transaction
+ * its own version of the latest committed row. Under a snapshot-per-
+ * transaction isolation (MySQL InnoDB REPEATABLE READ) a plain read after
+ * this sees the latest committed revision. An update that leaves every value
+ * as it is creates no such version, so two different timestamps are written:
+ * at least one changes the row, and the second leaves the current time.
+ * Called only inside a transaction: the timestamp replaces the row's raise
+ * marks, which only writes outside one need (see PendingRaise).
+ * Returns the rows the updates affected (0 when the row does not exist).
  */
-async function writeLatest(db: Adapter, id: unknown, namespace: string): Promise<number> {
+async function writeLatest(db: Adapter, id: unknown, updatedAt: string): Promise<number> {
   const where = [{ field: "id", op: "eq" as const, value: id }];
-  return (await db.internal.update(REVISIONS_TABLE, where, { namespace: `${namespace}#locked` })) +
-    (await db.internal.update(REVISIONS_TABLE, where, { namespace }));
+  const later = new Date(Date.parse(updatedAt) + 1_000).toISOString();
+  return (await db.internal.update(REVISIONS_TABLE, where, { updated_at: later })) +
+    (await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt }));
 }
 
-async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promise<boolean> {
+/**
+ * Inserts the first revision row of a record unless another writer did:
+ * `created`, `exists`, or `unknown` when the insert failed and the stored
+ * row may be this insert's with its mark dropped (see pendingOutcome).
+ */
+async function createIfAbsent(
+  db: Adapter,
+  row: Record<string, unknown>,
+  inTransaction: boolean,
+): Promise<"created" | "exists" | "unknown"> {
   const rawSql = db.rawSql;
   if (rawSql?.dialect === "postgres") {
     // A unique violation would abort the enclosing PostgreSQL transaction;
@@ -226,26 +237,30 @@ async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promis
         `VALUES (${columns.map(() => "?").join(", ")}) ON CONFLICT ("id") DO NOTHING RETURNING "id"`,
       columns.map((c) => row[c] as string | number | null),
     );
-    return inserted.length > 0;
+    return inserted.length > 0 ? "created" : "exists";
   }
-  const create = async () => {
+  const create = async (): Promise<"created" | "exists" | "unknown"> => {
     if (await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }])) {
-      return false;
+      return "exists";
     }
     try {
       await db.internal.create(REVISIONS_TABLE, row);
-      return true;
+      return "created";
     } catch (error) {
       // The insert may have been stored before the adapter failed: a row
       // carrying this insert's raise mark is this insert.
       const stored = await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }]);
-      if (stored) return raiseMarks(stored).includes(raiseMarks(row)[0]);
+      if (stored) {
+        const ended = pendingOutcome(stored, { rev: 1, mark: raiseMarks(row)[0] });
+        if (ended === "raised") return "created";
+        return ended === "lost" ? "exists" : "unknown";
+      }
       // A concurrent writer created it first (MySQL and SQLite reject only
       // the statement); the caller reads it and retries the bump. A plain
-      // read may not see that row in this transaction's snapshot, so check by
-      // writing it. Any other failure is the write's failure.
-      if ((await writeLatest(db, row.id, String(row.namespace))) > 0) {
-        return false;
+      // read in a transaction may not see that row in its snapshot, so check
+      // by writing it. Any other failure is the write's failure.
+      if (inTransaction && (await writeLatest(db, row.id, String(row.updated_at).split("#")[0])) > 0) {
+        return "exists";
       }
       throw error;
     }
@@ -537,14 +552,6 @@ type RaiseDecision = (row: Record<string, unknown> | null) => Promise<Decided | 
 
 const isTombstone = (row: Record<string, unknown> | null) => row !== null && Number(row.deleted) === 1;
 
-/** Entries whose raise ended `unknown` (see pendingOutcome). */
-const unresolvedEntries = new WeakSet<object>();
-
-/** DATA-41: whether the raise of any of `entries` may be missing; see pendingOutcome. */
-export function hasUnresolvedRevision(entries: ReadonlyArray<object>): boolean {
-  return entries.some((entry) => unresolvedEntries.has(entry));
-}
-
 /** A raise mark's suffix: the raise was a delete's own tombstone, or any other state. */
 const BY_DELETE = ":d";
 const OTHER = ":o";
@@ -590,10 +597,12 @@ function raiseMarks(row: Record<string, unknown> | null): string[] {
  * raise prepends its mark to the ones it replaced), so another writer took
  * that revision or none committed; `unknown` when its mark may have been
  * dropped (more than RAISE_HISTORY raises since). An `unknown` raise is never
- * sent again, so the record is not raised twice for one write; its entry
- * carries no revision, and the write's changes are recorded before the
- * mutation reports a retryable failure (hasUnresolvedRevision), so it is never
- * acknowledged with a raise that may be missing.
+ * sent again, so the record is not raised twice for one write, and its entry
+ * carries no revision. The write is still acknowledged: every raise after
+ * the lost one (at least RAISE_HISTORY) came after the write's own data
+ * write, so the record's revision has moved past every value read before it.
+ * A write that is then acknowledged without its own raise may only leave the
+ * revision one lower than its count of writes, never shared by two states.
  */
 function pendingOutcome(row: Record<string, unknown> | null, pending: PendingRaise): "raised" | "lost" | "unknown" {
   const marks = raiseMarks(row);
@@ -615,11 +624,12 @@ async function raiseRevision(
   resource: string,
   recordId: string,
   decide: RaiseDecision,
-  options: { lockFirst?: boolean; outcome?: BumpOutcome; pending?: PendingRaise } = {},
+  options: { lockFirst?: boolean; outcome?: BumpOutcome; pending?: PendingRaise; inTransaction?: boolean } = {},
 ): Promise<Raised | undefined> {
   const id = revisionRowId(namespace, resource, recordId);
   const where = [{ field: "id", op: "eq" as const, value: id }];
   const snapshotReads = readsMayBeSnapshot(db);
+  const inTransaction = options.inTransaction ?? transactionsUsable(db);
   const pending = options.pending ?? {};
   if (pending.mark !== undefined) {
     const ended = pendingOutcome(await db.internal.findOne(REVISIONS_TABLE, where), pending);
@@ -631,7 +641,7 @@ async function raiseRevision(
     // A retry follows a write that committed after this transaction's read;
     // a plain read in a snapshot would return the same stale revision again.
     // A decision that depends on the latest row locks it before reading.
-    if ((attempt > 0 && transactionsUsable(db)) || options.lockFirst) await writeLatest(db, id, namespace);
+    if ((attempt > 0 && inTransaction) || options.lockFirst) await writeLatest(db, id, updatedAt);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
     const decided = await decide(row);
     if (decided === undefined) return undefined;
@@ -649,8 +659,8 @@ async function raiseRevision(
         rev: 1,
         deleted: deleted ? 1 : 0,
         updated_at: stamp,
-      });
-      if (created) return { rev: 1, deleted };
+      }, inTransaction);
+      if (created !== "exists") return { rev: 1, deleted, unknown: created === "unknown" };
       continue;
     }
     const affected = await db.internal.update(
@@ -948,8 +958,8 @@ function assignmentOf(db: Adapter, entries: ReadonlyArray<WriteEntry>): WriteAss
  *   locked;
  * - a delete without a count raises a tombstone when a read finds the row
  *   absent (a transaction sees its own delete), unless the latest raise is
- *   already a delete's own tombstone (`deleteEvidenced`): then this delete may
- *   have removed nothing. A tombstone another write raised from an absence it
+ *   already a delete's own tombstone (`deleteEvidenced`; inside a transaction
+ *   any tombstone): then this delete may have removed nothing. A tombstone another write raised from an absence it
  *   observed never stands in for it, so where the two cannot be told apart
  *   the revision may skip a value, but is never shared by two states. When
  *   the row is present the delete may have removed nothing (a suppressed
@@ -985,11 +995,16 @@ async function raiseFromEvidence(
   const rewritten = recordsDelete !== evidence.deleted;
   const ownState = transactional && !countless && !rewritten;
   const where = [{ field: "id", operator: "eq" as const, value: entry.id }];
+  // Inside a transaction the lock write (writeLatest) replaces the raise
+  // marks, and each write raises before its row lock is released, so any
+  // tombstone is a removal another delete raised; outside one, only a
+  // tombstone a delete statement raised is (deleteEvidenced).
+  const removedBefore = transactional ? isTombstone : deleteEvidenced;
   const absentNow = evidence.absentNow ??
     (async () => (await db.findOne({ model: entry.resource, where, namespace })) === null);
   const decide: RaiseDecision = async (row) => {
     if (countless) {
-      if (await absentNow()) return unproven && deleteEvidenced(row) ? undefined : { deleted: true, byDelete: true };
+      if (await absentNow()) return unproven && removedBefore(row) ? undefined : { deleted: true, byDelete: true };
       return evidence.before && !(unproven && isTombstone(row)) ? { deleted: false } : undefined;
     }
     if (unproven && isTombstone(row)) return undefined;
@@ -999,8 +1014,12 @@ async function raiseFromEvidence(
   };
   const outcome: BumpOutcome = {};
   const lockFirst = unproven && transactional;
-  const raised = await raiseRevision(db, namespace, entry.resource, entry.id, decide, { lockFirst, outcome, pending });
-  if (raised?.unknown) unresolvedEntries.add(entry);
+  const raised = await raiseRevision(db, namespace, entry.resource, entry.id, decide, {
+    lockFirst,
+    outcome,
+    pending,
+    inTransaction: transactional,
+  });
   entry.rev = !rewritten && !raised?.unknown && raised?.deleted === recordsDelete ? raised.rev : undefined;
   const unverified = evidence.state === "unverified" || evidence.before?.state === "unverified";
   if (raised && (entry.rev === undefined || outcome.staleView || unverified)) {

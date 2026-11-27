@@ -689,6 +689,40 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
+  it("never raises a first revision twice when many other raises follow its lost acknowledgement", async () => {
+    for (const route of ["push", "mutation"] as const) {
+      const base = memoryAdapter() as Adapter;
+      let loseAck = true;
+      const db = withoutTransactions(overriding(base, (target) => ({
+        internal: new Proxy(target.internal as any, {
+          get(internal, key, receiver) {
+            const value = Reflect.get(internal, key, receiver);
+            if (typeof value !== "function") return value;
+            if (key !== "create") return value.bind(internal);
+            return async (table: string, ...args: unknown[]) => {
+              const out = await value.apply(internal, [table, ...args]);
+              if (table === "__datafn_revisions" && loseAck) {
+                loseAck = false;
+                for (let i = 0; i < 12; i++) await bumpRevision(target, NS, "task", "task:1", false);
+                throw new Error("connection lost after commit");
+              }
+              return out;
+            };
+          },
+        }),
+      })));
+      const served = await serve(db);
+      const send = (mutation: Json) => (route === "push" ? served.push(mutation) : served.mutate(mutation));
+      const inserted = await send({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+
+      expect(loseAck, route).toBe(false);
+      expect(inserted.body.ok, route).toBe(true);
+      // The insert (1) and the 12 other raises, never a second raise of the insert.
+      expect(await rev(base, "task", "task:1"), route).toEqual({ rev: 13, deleted: false });
+      expect(await changeRows(base, "task:1"), route).toHaveLength(1);
+    }
+  });
+
   it("raises nothing for a delete that removed nothing after another delete's tombstone, in a transaction", async () => {
     const base = await insertedTask();
     // Deletes that report no count, in transactions: the second removes nothing.
@@ -723,7 +757,7 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
     }
   });
 
-  it("never raises a write twice, nor acknowledges it, when many other raises follow a lost acknowledgement", async () => {
+  it("never raises a write twice when many other raises follow a failure of unknown outcome", async () => {
     for (const [others, applies] of [[12, true], [30, true], [13, false]] as const) {
       for (const route of ["push", "mutation"] as const) {
         const base = memoryAdapter() as Adapter;
@@ -754,10 +788,10 @@ describe("DATA-41 PR review round 8: non-transactional writes are counted and re
         const merged = await send({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
         const label = `${route} others=${others} applies=${applies}`;
 
-        // Whether the merge's raise applied is unknown: it is not raised
-        // again, its change is recorded, and it is not acknowledged.
-        expect(merged.body.ok, label).toBe(false);
-        expect(JSON.stringify(merged.body), label).toContain("INTERNAL");
+        // Whether the merge's raise applied is unknown once its mark is
+        // dropped: it is not raised again, and the write is recorded and
+        // acknowledged; every later raise came after its data write.
+        expect(merged.body.ok, label).toBe(true);
         // insert (1), the merge's raise if it applied, the other raises.
         expect(await rev(base, "task", "task:1"), label).toEqual({ rev: 1 + (applies ? 1 : 0) + others, deleted: false });
         expect(await changeRows(base, "task:1"), label).toHaveLength(2);
