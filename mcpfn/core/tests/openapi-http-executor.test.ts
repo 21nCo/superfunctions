@@ -1071,7 +1071,10 @@ describe("httpExecutor edge cases", () => {
   });
 
   it("withholds an excerpt where an encoded credential overlaps a literal one", async () => {
-    const { fetch } = stubFetch(() => new Response(`echo ${operatorToken.replace("s", "%73")}`, { status: 500 }));
+    // Percent-encode only the first "s" of the token (index-based, so exactly one character is encoded).
+    const first = operatorToken.indexOf("s");
+    const partlyEncoded = `${operatorToken.slice(0, first)}%73${operatorToken.slice(first + 1)}`;
+    const { fetch } = stubFetch(() => new Response(`echo ${partlyEncoded}`, { status: 500 }));
     const executor = httpExecutor<Context>({
       baseUrl: api.origin,
       headers: { "x-long": operatorToken, "x-short": operatorToken.slice("test-".length) },
@@ -1764,6 +1767,57 @@ describe("httpExecutor header records with keys Object.entries skips", () => {
     expect((failure as Error).message).toBe(message);
     expect(() => httpExecutor({ baseUrl: api.origin, headers: make() as Record<string, string>, fetch })).toThrow(message);
     expect(urls).toEqual([]);
+  });
+});
+
+describe("httpExecutor default responses", () => {
+  const item = { type: "object", required: ["id"], properties: { id: { type: "string" } } };
+  const catalog = (defaultResponse: Record<string, unknown>, reply: () => Response) =>
+    fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "default-response", version: "1.0.0" },
+        paths: {
+          "/item": {
+            post: {
+              operationId: "create",
+              responses: {
+                "200": { description: "Done", content: { "application/json": { schema: item } } },
+                default: defaultResponse,
+              },
+            },
+          },
+        },
+      },
+      { executor: httpExecutor({ baseUrl: api.origin, fetch: (async () => reply()) as typeof globalThis.fetch }), allowMutations: true },
+    );
+
+  it("publishes no output schema when default allows another body, so a conforming 201 it covers succeeds", async () => {
+    const other = { type: "object", required: ["message"], properties: { message: { type: "string" } } };
+    const body = '{"message":"created"}';
+    const { registry, tools } = catalog({ description: "Other", content: { "application/json": { schema: other } } }, () =>
+      new Response(body, { status: 201, headers: { "content-type": "application/json" } }),
+    );
+    expect(tools[0]!.outputSchema).toBeUndefined();
+    await expect(registry.callTool("create", {}, undefined, requestExtra())).resolves.toEqual({ content: [{ type: "text", text: body }] });
+  });
+
+  it("publishes no output schema when default documents no body, so a bodyless 201 succeeds", async () => {
+    const { registry, tools } = catalog({ description: "Anything" }, () => new Response(null, { status: 201 }));
+    expect(tools[0]!.outputSchema).toBeUndefined();
+    await expect(registry.callTool("create", {}, undefined, requestExtra())).resolves.toEqual({
+      content: [{ type: "text", text: "The API responded with HTTP 201 and no body." }],
+    });
+  });
+
+  it("keeps the output schema when default offers the same JSON schema", async () => {
+    const { registry, tools } = catalog({ description: "Same", content: { "application/json": { schema: item } } }, () =>
+      new Response('{"id":"item-1"}', { status: 201, headers: { "content-type": "application/json" } }),
+    );
+    expect(tools[0]!.outputSchema).toMatchObject({ required: ["id"] });
+    const result = await registry.callTool("create", {}, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ id: "item-1" });
   });
 });
 
@@ -3667,16 +3721,51 @@ describe("httpExecutor request bodies under an operator Content-Type", () => {
     expect(sent).toEqual([{ contentType: "application/example+json", body: '{"second":"value"}' }]);
   });
 
-  it("keeps listing an operation whose only entry conflicts, and refuses its call before fetch", async () => {
-    // With no entry the Content-Type can label, every entry is kept (a call without a body may still be made), so the
-    // operation stays listed and a call with a body is refused, as before the entry was chosen this way.
+  it("skips an operation whose required body no entry the Content-Type can label carries", () => {
     const { fetch, urls } = stubFetch(() => new Response("ok"));
-    const { registry, tools, skipped } = fromOpenAPI(documentWith({ "application/json": entry("first") }), {
+    const { tools, skipped } = fromOpenAPI(documentWith({ "application/json": entry("first") }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers, fetch }),
+      allowMutations: true,
+    });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([
+      {
+        operation: { method: "POST", path: "/p", operationId: "p" },
+        code: "unsupported-by-executor",
+        reason: "the server's Content-Type header cannot label the required request body this operation documents",
+      },
+    ]);
+    expect(JSON.stringify(skipped)).not.toContain("application/example+json");
+    expect(urls).toEqual([]);
+  });
+
+  it("keeps listing an operation whose optional body conflicts, sends a call without it and refuses one with it", async () => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const document = documentWith({ "application/json": entry("first") });
+    (document.paths["/p"].post.requestBody as { required: boolean }).required = false;
+    const { registry, tools, skipped } = fromOpenAPI(document, {
       executor: httpExecutor({ baseUrl: api.origin, headers, fetch }),
       allowMutations: true,
     });
     expect(skipped).toEqual([]);
-    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json" });
+    expect(tools[0]!.operation.requestBody).toEqual({ required: false, contentType: "application/json" });
+    const refused = await registry.callTool("p", { body: { first: "value" } }, undefined, requestExtra());
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain("Content-Type header does not match");
+    expect(urls).toEqual([]);
+    const bodiless = await registry.callTool("p", {}, undefined, requestExtra());
+    expect(bodiless.isError).toBeFalsy();
+    expect(urls).toHaveLength(1);
+  });
+
+  it("checks a required body per call when the headers come from a function", async () => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const { registry, tools, skipped } = fromOpenAPI(documentWith({ "application/json": entry("first") }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: () => headers, fetch }),
+      allowMutations: true,
+    });
+    expect(skipped).toEqual([]);
+    expect(tools).toHaveLength(1);
     const result = await registry.callTool("p", { body: { first: "value" } }, undefined, requestExtra());
     expect(result.isError).toBe(true);
     expect(text(result)).toContain("Content-Type header does not match");
@@ -3870,19 +3959,16 @@ describe("httpExecutor request bodies under an operator Content-Type with parame
     expect(sent).toHaveLength(1);
   });
 
-  it("keeps listing an operation whose only entry has a parameter a Content-Type without parameters lacks, and refuses a body before fetch", async () => {
+  it("skips an operation whose only required entry has a parameter a Content-Type without parameters lacks", () => {
     const { sent, fetch } = recording();
-    const { registry, tools, skipped } = fromOpenAPI(documentWith({ "application/json; profile=a": entry("a") }), {
+    const { tools, skipped } = fromOpenAPI(documentWith({ "application/json; profile=a": entry("a") }), {
       executor: httpExecutor({ baseUrl: api.origin, headers: { "Content-Type": "application/json" }, fetch }),
       allowMutations: true,
     });
-    // No entry can be labeled, so every entry is kept and only a call with a body is refused.
-    expect(skipped).toEqual([]);
-    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; profile=a" });
-    const result = await registry.callTool("p", { body: { a: "value" } }, undefined, requestExtra());
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain("Content-Type header does not match");
-    expect(text(result)).not.toContain("profile");
+    // No entry can be labeled and the body is required, so every call would be refused before fetch.
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([{ code: "unsupported-by-executor" }]);
+    expect(JSON.stringify(skipped)).not.toContain("profile");
     expect(sent).toEqual([]);
   });
 

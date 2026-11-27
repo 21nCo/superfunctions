@@ -180,9 +180,15 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
     throw new McpFnValidationError(headerFailure(error));
   }
 
-  // A Content-Type the operator's record fixes: a documented media type it conflicts with is refused on every call, so it is not chosen.
+  // A Content-Type the operator's record fixes: a documented media type it conflicts with is refused on every call, so it is not chosen,
+  // and an operation whose required body it cannot label is never listed (every call would be refused before fetch).
   const fixedContentType = fixed?.headers.get("content-type");
-  const refusal = (operation: OpenApiOperation) => unsupportedReason(operation) ?? pathRefusal(base, operation);
+  const fixedMediaRefusal = (operation: OpenApiOperation) =>
+    fixedContentType !== undefined && operation.requestBody?.required && contentTypeConflicts(fixedContentType, operation.requestBody.contentType)
+      ? "the server's Content-Type header cannot label the required request body this operation documents"
+      : undefined;
+  const refusal = (operation: OpenApiOperation) =>
+    unsupportedReason(operation) ?? fixedMediaRefusal(operation) ?? pathRefusal(base, operation);
 
   return {
     unsupported: refusal,
@@ -501,7 +507,9 @@ function nativePromise(value: unknown): Promise<unknown> | undefined {
     reject = onReject;
   });
   try {
-    Promise.prototype.then.call(value, resolve, reject);
+    // The derived promise `then` returns only settles with what `resolve` or `reject` return, so it never rejects
+    // and is deliberately left unobserved; only a synchronous throw (no native promise) matters here.
+    void Reflect.apply(Promise.prototype.then, value, [resolve, reject]);
   } catch {
     return undefined;
   }

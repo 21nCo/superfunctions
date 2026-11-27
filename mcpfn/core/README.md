@@ -147,7 +147,8 @@ for (const { operation, code, reason } of skipped) {
   written. A `HEAD` tool never declares an output schema, since its response
   has no body. When the executor sets `outputSchemaRule: "every-success"`
   (as `httpExecutor` does), neither does an operation whose documented 2xx
-  responses do not all offer only JSON content with that same schema (such
+  responses, and its `default` response (which covers the 2xx statuses not
+  listed), do not all offer only JSON content with that same schema (such
   as a `200` with a body beside a `204`, a `2XX` range, which also covers
   the bodyless `204` and `205`, `201` and `202` with different
   bodies, or a JSON body beside `text/plain`), since a call could succeed
@@ -390,8 +391,11 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   another value (names compared without case, values exactly);
   otherwise the call is refused before it is sent. With such a `Content-Type`
   in a record, the request body is chosen among the documented JSON entries
-  it can label, by the same rule; when none can, the operation stays listed
-  (a call without a body can still be made) and a call with a body is refused. The tool input offers only what the executor sends: the
+  it can label, by the same rule; when none can, an operation whose body is
+  required is skipped as `unsupported-by-executor` (every call would be
+  refused), and one whose body is optional stays listed (a call without a
+  body can still be made) while a call with a body is refused. A function
+  source is checked per call. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, and the headers undici

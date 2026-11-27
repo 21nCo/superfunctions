@@ -917,6 +917,7 @@ class OperationConverter {
    * or method; it becomes the output schema only when it accepts objects and
    * nothing else, and never for `HEAD`, whose response has no body. Under the
    * `every-success` rule, also only when every documented 2xx response
+   * (and a `default` response, which covers the 2xx statuses not listed)
    * offers only JSON content with that same schema: a call that may succeed
    * with another body (or none) has no single output. Under that rule a
    * `204` or `205` entry is never the schema's source: those statuses carry
@@ -945,28 +946,35 @@ class OperationConverter {
   /**
    * Whether every documented 2xx response has content, all of it JSON
    * (`application/json` or `*+json`) declaring `schema`. A `2XX` range,
-   * `204` or `205` answers no: those statuses carry no body. A response that
-   * cannot be resolved describes no known body, so it answers no; it never
-   * skips the operation.
+   * `204` or `205` answers no: those statuses carry no body. A `default`
+   * response also covers every 2xx status not listed, so it must offer the
+   * same content. A response that cannot be resolved describes no known
+   * body, so it answers no; it never skips the operation.
    */
   private everySuccessHas(raw: JsonObject, schema: unknown): boolean {
     if (!isObject(raw.responses)) return false;
     for (const [status, value] of Object.entries(raw.responses)) {
-      if (!SUCCESS_STATUS.test(status)) continue;
+      if (status !== "default" && !SUCCESS_STATUS.test(status)) continue;
       // A 2XX range also documents 204 and 205, which carry no body.
       if (/^(?:2XX|20[45])$/i.test(status)) return false;
-      let content: unknown;
-      try {
-        content = this.resolve(value, "responses").content;
-      } catch (error) {
-        if (error instanceof OpenApiSkip) return false;
-        throw error;
-      }
-      const entries = Object.entries(isObject(content) ? content : {});
-      if (entries.length === 0) return false;
-      for (const [mediaType, media] of entries) {
-        if (!isJsonMediaType(mediaType) || !isObject(media) || !sameSchema(media.schema, schema)) return false;
-      }
+      if (!this.onlyJsonWith(value, schema)) return false;
+    }
+    return true;
+  }
+
+  /** Whether a response has content, all of it JSON declaring `schema`. */
+  private onlyJsonWith(response: unknown, schema: unknown): boolean {
+    let content: unknown;
+    try {
+      content = this.resolve(response, "responses").content;
+    } catch (error) {
+      if (error instanceof OpenApiSkip) return false;
+      throw error;
+    }
+    const entries = Object.entries(isObject(content) ? content : {});
+    if (entries.length === 0) return false;
+    for (const [mediaType, media] of entries) {
+      if (!isJsonMediaType(mediaType) || !isObject(media) || !sameSchema(media.schema, schema)) return false;
     }
     return true;
   }
