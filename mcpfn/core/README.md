@@ -341,10 +341,26 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   bytes, whatever their prototypes; any other object as a plain object of
   its own enumerable data properties (as `structuredClone` copies a class
   instance), marked as not plain where that matters. An object is plain
-  only when it is ordinary (it carries no internal slot such as a boxed
-  primitive's, an `ArrayBuffer`'s, a `DataView`'s, an `Error`'s or a
-  `RegExp`'s, told by its slots, never by its prototype) and its prototype
-  is `null` or `Object.prototype`. Shared objects and
+  only on positive proof, never because no known slot was found: it
+  carries no internal slot such as a boxed primitive's, an `ArrayBuffer`'s,
+  a `DataView`'s, an `Error`'s or a `RegExp`'s (told by its slots, never by
+  its prototype), its prototype is `null` or `Object.prototype` (a
+  prototype that is a `Proxy` is never read; where the runtime cannot tell
+  a `Proxy`, only `null` and this realm's `Object.prototype` count), it has
+  no own symbol key and every own string key is an enumerable data
+  property, and, when it has no own key at all (so it would read as an
+  anonymous requirement), `structuredClone` of that one empty object (which
+  runs no operator code) returns an ordinary object. So an iterator, an
+  `Intl` object, a `URL`, `Headers`, `URLSearchParams` or `DOMException`, or
+  a `Proxy`, given a `null` or `Object.prototype` prototype, is not plain
+  where it would read as `{}`; without `structuredClone` no empty object is
+  plain, so security fails closed. Known limits: an exotic or host object
+  given such a prototype and its own enumerable keys copies as those keys
+  (how JSON reads it; never as `{}`), and an object whose only state is in
+  private class fields or outside it (as Node implements `Event`,
+  `AbortSignal` or `TextEncoder` in JavaScript) is an ordinary object and,
+  with no own key, copies as `{}`, as JSON and `structuredClone` read it;
+  `DOMException` is told by its brand check. Shared objects and
   cycles stay shared. Whatever the executor, it throws
   `McpFnValidationError` ("fromOpenAPI expects a plain JSON document") when
   any object reachable from the document, `Map` and `Set` entries included,

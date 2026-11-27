@@ -2666,6 +2666,191 @@ describe("httpExecutor objects with internal slots, whatever their prototype", (
   });
 });
 
+describe("httpExecutor plain objects proven ordinary, never assumed", () => {
+  // Operator headers carry only authorization, so a caller value in X-Api-Key would reach the upstream.
+  const operatorHeaders = { authorization: `Bearer ${operatorToken}` };
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const trivial = { execute: () => ({ content: [] }) };
+  const notPlain = "the operation's security has a requirement that is not a plain object";
+  const scheme = { type: "apiKey", in: "header", name: "X-Api-Key" };
+  const documentWith = (fields: { documentSecurity?: unknown[]; operationSecurity?: unknown[]; scheme?: object }): Record<string, unknown> => ({
+    openapi: "3.1.0",
+    info: { title: "exotic", version: "1.0.0" },
+    ...(fields.documentSecurity ? { security: fields.documentSecurity } : {}),
+    components: { securitySchemes: { k: fields.scheme ?? { ...scheme } } },
+    paths: {
+      "/keyed": {
+        get: {
+          operationId: "keyed",
+          ...(fields.operationSecurity ? { security: fields.operationSecurity } : {}),
+          parameters: [keyParameter],
+          responses: ok,
+        },
+      },
+    },
+  });
+  const inputs = (tools: { inputSchema: { properties?: unknown } }[]) => tools.map((tool) => Object.keys((tool.inputSchema.properties ?? {}) as object));
+  /** `value` with prototype `prototype` and, for a DOMException, no own stack, so it has no own key at all. */
+  const withPrototype = (value: object, prototype: object | null): object => {
+    delete (value as { stack?: unknown }).stack;
+    return Object.setPrototypeOf(value, prototype) as object;
+  };
+  // Kinds no brand list names: engine iterators and Intl objects, and host objects.
+  const kinds: [string, () => object][] = [
+    ["an Array iterator", () => [][Symbol.iterator]()],
+    ["a String iterator", () => ""[Symbol.iterator]()],
+    ["a RegExp String iterator", () => "a".matchAll(/a/g)],
+    ["an iterator helper", () => [1].values().map((value) => value)],
+    ["an Intl.Locale", () => new Intl.Locale("en")],
+    ["an Intl.Collator", () => new Intl.Collator("en")],
+    ["an Intl.Segmenter", () => new Intl.Segmenter("en")],
+    ["a URL", () => new URL("http://example.test/")],
+    ["a Headers", () => new Headers()],
+    ["a URLSearchParams", () => new URLSearchParams("a=1")],
+    ["a DOMException", () => new DOMException("test-exception")],
+  ];
+  const prototypes: [string, () => object | null][] = [
+    ["a null prototype", () => null],
+    ["Object.prototype", () => Object.prototype],
+  ];
+  type Listed = ReturnType<typeof fromOpenAPI>;
+  const unresolvedSecurity = (listed: Listed) => expect(listed.tools.map((tool) => tool.operation.securityUnresolved)).toEqual([notPlain]);
+  const unresolvedDocumentSecurity = (listed: Listed) =>
+    expect(listed.tools.map((tool) => tool.operation.securityUnresolved)).toEqual(["the document's security has a requirement that is not a plain object"]);
+  const unresolvedScheme = (listed: Listed) =>
+    expect(listed.tools.map((tool) => [tool.operation.security, tool.operation.securitySchemes, tool.operation.securityUnresolved])).toEqual([[[{ k: [] }], undefined, undefined]]);
+  const placements: [string, (value: object) => Record<string, unknown>, (listed: Listed) => void][] = [
+    ["an operation-level requirement", (value) => documentWith({ operationSecurity: [value] }), unresolvedSecurity],
+    ["a document-level requirement", (value) => documentWith({ documentSecurity: [value] }), unresolvedDocumentSecurity],
+    ["a securitySchemes entry", (value) => documentWith({ operationSecurity: [{ k: [] }], scheme: value }), unresolvedScheme],
+  ];
+  const cases = kinds.flatMap(([kind, make]) =>
+    prototypes.flatMap(([prototype, prototypeOf]) =>
+      placements.map(([where, place, unresolved]): [string, string, string, () => Record<string, unknown>, (listed: Listed) => void] => [
+        kind,
+        prototype,
+        where,
+        () => place(withPrototype(make(), prototypeOf())),
+        unresolved,
+      ]),
+    ),
+  );
+
+  // Both results must fail closed: securityUnresolved (or the scheme left out) under a trivial executor,
+  // skipped under httpExecutor, never listed with X-Api-Key as caller input and never sending a request.
+  const expectFailsClosed = (
+    fromOpenApi: typeof fromOpenAPI,
+    executorOf: () => unknown,
+    build: () => Record<string, unknown>,
+    unresolved: (listed: Listed) => void,
+  ) => {
+    unresolved(fromOpenApi(build(), { executor: trivial }));
+    const before = api.received.length;
+    const sent = fromOpenApi(build(), { executor: executorOf() as OpenApiExecutor });
+    expect(sent.tools).toEqual([]);
+    expect(sent.skipped.map(({ code }) => code)).toEqual(["unsupported-by-executor"]);
+    expect(api.received.length).toBe(before);
+  };
+  const withoutUtilTypes = async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "getBuiltinModule");
+    Object.defineProperty(process, "getBuiltinModule", { value: undefined, configurable: true, writable: true });
+    try {
+      vi.resetModules();
+      return await import("../src/openapi/index.js");
+    } finally {
+      if (descriptor) Object.defineProperty(process, "getBuiltinModule", descriptor);
+      else delete (process as { getBuiltinModule?: unknown }).getBuiltinModule;
+      vi.resetModules();
+    }
+  };
+
+  it.each(cases)("never reads %s with %s as a plain object, as %s", (_kind, _prototype, _where, build, unresolved) => {
+    expectFailsClosed(fromOpenAPI, () => httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), build, unresolved);
+  });
+
+  it("fails closed on the same kinds where util.types is not available", async () => {
+    const reloaded = await withoutUtilTypes();
+    for (const [, , , build, unresolved] of cases) {
+      expectFailsClosed(reloaded.fromOpenAPI as typeof fromOpenAPI, () => reloaded.httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), build, unresolved);
+    }
+  });
+
+  /** A Proxy to use as a prototype, counting every trap it runs; its getPrototypeOf trap would make the operation anonymous. */
+  const trappingPrototype = (onTrap: () => void) => {
+    const traps = { count: 0 };
+    const handler = new Proxy({} as ProxyHandler<object>, {
+      get: (_handler, name) => (...args: unknown[]) => {
+        traps.count += 1;
+        onTrap();
+        return name === "getPrototypeOf" ? null : (Reflect as unknown as Record<string, (...rest: unknown[]) => unknown>)[name as string]!(...args);
+      },
+    });
+    return { prototype: new Proxy({}, handler), traps };
+  };
+
+  for (const [runtime, load] of [
+    ["with util.types", async () => ({ fromOpenAPI, httpExecutor })],
+    ["without util.types", withoutUtilTypes],
+  ] as const) {
+    it(`runs no trap of a Proxy prototype on an extension reached before the operation (${runtime})`, async () => {
+      const loaded = await load();
+      for (const executor of [trivial, loaded.httpExecutor({ baseUrl: api.origin, headers: operatorHeaders })]) {
+        const document = documentWith({ operationSecurity: [{ k: [] }] });
+        const operation = (document.paths as Record<string, Record<string, { security: unknown[] }>>)["/keyed"]!.get!;
+        const { prototype, traps } = trappingPrototype(() => {
+          operation.security = [{}];
+        });
+        // Last key, so the copier reaches it first.
+        document["x-ext"] = Object.setPrototypeOf({ a: 1 }, prototype) as object;
+        const { tools, skipped } = loaded.fromOpenAPI(document, { executor: executor as OpenApiExecutor });
+        expect(traps.count).toBe(0);
+        expect(skipped).toEqual([]);
+        expect(tools.map((tool) => [tool.operation.security, tool.operation.securityUnresolved])).toEqual([[[{ k: [] }], undefined]]);
+        // The apiKey requirement holds, so X-Api-Key is not caller input.
+        expect(inputs(tools)).toEqual([[]]);
+      }
+    });
+
+    it(`runs no trap of a Proxy prototype on a requirement, and fails closed (${runtime})`, async () => {
+      const loaded = await load();
+      for (const own of [{}, { k: [] }]) {
+        let traps = { count: 0 };
+        const build = () => {
+          const made = trappingPrototype(() => {});
+          traps = made.traps;
+          return documentWith({ operationSecurity: [Object.setPrototypeOf({ ...own }, made.prototype) as object] });
+        };
+        expectFailsClosed(loaded.fromOpenAPI as typeof fromOpenAPI, () => loaded.httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), build, unresolvedSecurity);
+        expect(traps.count).toBe(0);
+      }
+    });
+  }
+
+  it("still reads ordinary requirements of any realm, [{}] and [] as before", () => {
+    const http = () => httpExecutor({ baseUrl: api.origin, headers: operatorHeaders });
+    for (const requirement of [
+      Object.assign(Object.create(null) as object, { k: [] }),
+      runInNewContext("({ k: [] })") as object,
+      runInNewContext("Object.assign(Object.create(null), { k: [] })") as object,
+    ]) {
+      const { tools, skipped } = fromOpenAPI(documentWith({ operationSecurity: [requirement] }), { executor: http() });
+      expect(skipped).toEqual([]);
+      expect(inputs(tools)).toEqual([[]]);
+    }
+    // A genuine anonymous requirement of any realm, or no security at all, leaves X-Api-Key to the caller.
+    for (const security of [[{}], [Object.create(null) as object], [runInNewContext("({})") as object], []]) {
+      const open = fromOpenAPI(documentWith({ operationSecurity: security }), { executor: http() });
+      expect(open.skipped).toEqual([]);
+      expect(inputs(open.tools)).toEqual([["header"]]);
+    }
+  });
+
+  it("never reads a requirement holding a symbol key as anonymous", () => {
+    const { tools } = fromOpenAPI(documentWith({ operationSecurity: [{ [Symbol("k")]: [] }] }), { executor: trivial });
+    expect(tools.map((tool) => tool.operation.securityUnresolved)).toEqual([notPlain]);
+  });
+});
+
 describe("httpExecutor output judged by the registry's own validator", () => {
   const document = {
     openapi: "3.1.0",

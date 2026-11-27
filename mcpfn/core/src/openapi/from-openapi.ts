@@ -1627,9 +1627,20 @@ interface Filters<TContext> {
  *   is copied as below but is never a plain object, whatever its prototype;
  * - any other object is copied as a plain object of its own enumerable data
  *   properties, as structuredClone copies a class instance. It copies as read
- *   only when it is an ordinary object (no internal slot above) whose
- *   prototype is null or a realm's Object.prototype and every own string key
- *   is an enumerable data property.
+ *   only on positive proof, never because no known slot was found: its
+ *   prototype is null or a realm's Object.prototype (a prototype that is a
+ *   Proxy, or a foreign one where the runtime cannot tell a Proxy, is never
+ *   read and never plain), it has no own symbol key and every own string key
+ *   is an enumerable data property, and, when it has no own key at all (the
+ *   case that would read as an anonymous requirement), structuredClone of
+ *   that one empty object, which runs no caller code, returns an ordinary
+ *   object. structuredClone refuses a Proxy, every engine exotic it does not
+ *   know (iterators, Intl objects, ...) and every host object (URL, Headers,
+ *   ...), and returns a boxed primitive, an Error or a RegExp as one, so any
+ *   of these fails the proof. An object with an own enumerable key is not
+ *   cloned (that would read its values again), so an exotic object given a
+ *   plain prototype and own keys copies as those keys, which is how JSON
+ *   reads it; it never copies as `{}`.
  * Shared objects and cycles keep their sharing (each object is copied once),
  * so the work follows the distinct input, not the number of references.
  * Internal slots are read only through intrinsics captured at module load.
@@ -1652,13 +1663,14 @@ interface Reached {
  */
 interface Provenance {
   plain: boolean;
-  dropped: readonly string[];
+  /** Own keys the copy left out: non-enumerable string keys and every symbol key. */
+  dropped: readonly (string | symbol)[];
 }
 
 type Provenances = WeakMap<object, Provenance>;
 
-const { apply } = Reflect;
-const { getOwnPropertyNames, getOwnPropertyDescriptor, getPrototypeOf, defineProperty } = Object;
+const { apply, ownKeys } = Reflect;
+const { getOwnPropertyDescriptor, getPrototypeOf, defineProperty } = Object;
 const { isArray } = Array;
 const { isView } = ArrayBuffer;
 const { hasOwn } = Object;
@@ -1722,6 +1734,30 @@ function nodeCheck(name: string): ((value: object) => boolean) | undefined {
 }
 
 const isProxy = nodeCheck("isProxy");
+const cloneValue: unknown = (globalThis as { structuredClone?: unknown }).structuredClone;
+
+/**
+ * Run `check` with stack capture turned off: a probe or clone that fails
+ * throws, and capturing its stack costs far more than the check. No caller
+ * code runs inside, so the copy stays proportional to the document. A frozen
+ * Error is checked with stack capture on.
+ */
+function withoutStacks<T>(check: () => T): T {
+  const errors = Error as { stackTraceLimit?: unknown };
+  const limit = errors.stackTraceLimit;
+  let quiet = false;
+  try {
+    errors.stackTraceLimit = 0;
+    quiet = true;
+  } catch {
+    // A frozen Error.
+  }
+  try {
+    return check();
+  } finally {
+    if (quiet) errors.stackTraceLimit = limit;
+  }
+}
 
 /**
  * Whether `value` carries the internal slot `probe` reads, without running the
@@ -1822,32 +1858,49 @@ const slotTests = slotCandidates.flatMap(([kind, test]): [SlotKind, (value: obje
 
 /**
  * What `value`'s internal slots make it (of any realm, whatever its
- * prototype), without running the caller's code; undefined for an ordinary
- * object. A probe that fails throws a TypeError, and capturing its stack
- * costs far more than the probe; stack capture is turned off only around the
- * checks (no caller code runs there), so the copy stays proportional to the
- * document.
+ * prototype), without running the caller's code; undefined when no known
+ * slot was found (which proves nothing: see `ordinaryEmpty`).
  */
 function slotKind(value: object): SlotKind | undefined {
-  const errors = Error as { stackTraceLimit?: unknown };
-  const limit = errors.stackTraceLimit;
-  let quiet = false;
-  try {
-    errors.stackTraceLimit = 0;
-    quiet = true;
-  } catch {
-    // A frozen Error: probe with stack capture on.
-  }
-  try {
+  return withoutStacks(() => {
     // Indexed, not for-of: no array iterator runs per object.
     for (let index = 0; index < slotTests.length; index += 1) {
       const test = slotTests[index]!;
       if (test[1](value)) return test[0];
     }
     return undefined;
-  } finally {
-    if (quiet) errors.stackTraceLimit = limit;
-  }
+  });
+}
+
+/**
+ * A DOMException's brand check, captured now. Node implements DOMException in
+ * JavaScript, keeping its state outside the object, so structuredClone of one
+ * with a null prototype returns `{}`; the check (which throws without the
+ * brand) tells it.
+ */
+const isDomException = slotProbe(getterOf(globals.DOMException, "code"));
+
+/**
+ * Whether `value`, an object with no own key at all (string or symbol) whose
+ * prototype is null or a realm's Object.prototype, is an ordinary object:
+ * structuredClone of it returns an ordinary object of this realm. With no own
+ * key there is nothing to read, so no caller code runs; the clone throws for
+ * a Proxy (without running its traps), an engine exotic it does not know and
+ * a host object, and returns a boxed primitive, an Error, a RegExp, a buffer
+ * or a view as itself. Run only here, on an empty candidate, so a plain
+ * object does not pay for it. Without structuredClone nothing is proven.
+ */
+function ordinaryEmpty(value: object): boolean {
+  if (typeof cloneValue !== "function") return false;
+  return withoutStacks(() => {
+    try {
+      const copy: unknown = apply(cloneValue, globalThis, [value]);
+      if (typeof copy !== "object" || copy === null || isArray(copy) || getPrototypeOf(copy) !== objectPrototype) return false;
+    } catch {
+      return false;
+    }
+    return !isDomException?.(value);
+  });
 }
 
 function refuse(cause: string): never {
@@ -1866,15 +1919,20 @@ function pathOf(parent: Reached | undefined, key: string): string {
 
 /**
  * An object whose prototype is `null` or a realm's `Object.prototype` (a
- * document may be built in a vm context), read once.
+ * document may be built in a vm context), read once. No object is read
+ * reflectively before it is known not to be a Proxy, so no trap runs: a
+ * prototype or constructor that is a Proxy is not plain, and where the
+ * runtime cannot tell a Proxy, a prototype other than `null` or this realm's
+ * `Object.prototype` is not plain and is never read.
  */
 function plainPrototype(value: object): boolean {
   const prototype: unknown = getPrototypeOf(value);
   if (prototype === null || prototype === objectPrototype) return true;
-  if (typeof prototype !== "object" || getPrototypeOf(prototype) !== null) return false;
+  if (isProxy === undefined || typeof prototype !== "object" || isProxy(prototype) || getPrototypeOf(prototype) !== null) return false;
   const constructor = getOwnPropertyDescriptor(prototype, "constructor")?.value;
   return (
     typeof constructor === "function" &&
+    !isProxy(constructor) &&
     getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
     apply(functionText, constructor, []) === "function Object() { [native code] }"
   );
@@ -1964,8 +2022,14 @@ function privateCopy(document: object): { copy: JsonObject; provenance: Provenan
       continue;
     }
     const array = isArray(copy);
-    const dropped: string[] = [];
-    for (const key of getOwnPropertyNames(source)) {
+    const dropped: (string | symbol)[] = [];
+    const keys = ownKeys(source);
+    for (const key of keys) {
+      if (typeof key === "symbol") {
+        // Not copied (and its descriptor not read); recorded so an object that held one never copies as read.
+        dropped.push(key);
+        continue;
+      }
       if (array && key === "length") continue;
       const descriptor = getOwnPropertyDescriptor(source, key);
       if (descriptor === undefined) continue;
@@ -1981,8 +2045,10 @@ function privateCopy(document: object): { copy: JsonObject; provenance: Provenan
       if (hasOwn(array ? arrayPrototype : objectPrototype, key)) defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
       else (copy as Record<string, unknown>)[key] = value;
     }
-    // A branded object (recorded as not plain when it was reached) never copies as read.
-    const plain = array || (!provenance.has(copy) && plainPrototype(source));
+    // A branded object (recorded as not plain when it was reached) never
+    // copies as read; any other copies as read only on positive proof that it
+    // is ordinary (see the rules above).
+    const plain = array || (!provenance.has(copy) && plainPrototype(source) && (keys.length > 0 || ordinaryEmpty(source)));
     if (!plain || dropped.length > 0) provenance.set(copy, { plain, dropped });
   }
   return { copy: root, provenance };
