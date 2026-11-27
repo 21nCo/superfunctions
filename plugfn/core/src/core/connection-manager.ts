@@ -1,7 +1,8 @@
 import type { Adapter as DbAdapter } from '@superfunctions/db';
-import { randomBytes } from 'node:crypto';
+import { createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import type {
   Connection,
+  ConnectOptions,
   Credentials,
   DisconnectOptions,
   DisconnectResult,
@@ -70,6 +71,101 @@ export interface ConnectionManagerOAuthDependencies {
   encryptedTokenVault: EncryptedTokenVault;
   keyRef: string;
   actionLogAdapter: PlugFnDatabaseStorageAdapter;
+  /**
+   * Pins the state row a callback previewed in the store `oauthFlowService`
+   * reads and consumes. Without it, handleCallback can only compare the
+   * subject oauth-flow reports after the code exchange.
+   */
+  oauthStateGuard?: OAuthStateGuard;
+}
+
+/** A pinned OAuth state: `changed` is set once a read returned another row. */
+export interface OAuthStatePin {
+  readonly changed: boolean;
+  release(): void;
+}
+
+const CONFIGURED_VERSION_LABEL = 'plugfn/configured-credential-version/v1';
+const CONFIGURED_VERSION_ITERATIONS = 10_000;
+
+interface VersionedCredentials {
+  credentials: Credentials;
+  version: string;
+}
+
+export interface OAuthStateGuard {
+  pin(record: OAuthStateRecord): OAuthStatePin;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
+            compareCodeUnits(left, right)
+          )
+        )
+      : item
+  );
+}
+
+/** Every field of a state row except consumption bookkeeping. */
+function oauthStateFingerprint(record: OAuthStateRecord): string {
+  const authorization: Partial<OAuthStateRecord> = { ...record };
+  delete authorization.consumedAt;
+  delete authorization.expiresAt;
+  return sortedJson(authorization);
+}
+
+/**
+ * Wrap the state store PlugFn passes to oauth-flow so a callback can pin the
+ * row it previewed. While a state is pinned, every get() or consume() of it
+ * must return the same row (all fields but consumedAt and expiresAt), or it
+ * throws. oauth-core consumes the state before it exchanges the code, so a row
+ * replaced between preview and consume stops the callback before any token is
+ * requested, stored or bound to a connection.
+ */
+function guardOAuthStateStore(store: OAuthStateStore): OAuthStateStore & OAuthStateGuard {
+  const pins = new Map<string, Set<{ fingerprint: string; changed: boolean }>>();
+  const check = (stateId: string, record: OAuthStateRecord | null): OAuthStateRecord | null => {
+    const pinned = pins.get(stateId);
+    if (!record || !pinned) return record;
+    const fingerprint = oauthStateFingerprint(record);
+    let changed = false;
+    for (const pin of pinned) {
+      if (pin.fingerprint !== fingerprint) {
+        pin.changed = true;
+        changed = true;
+      }
+    }
+    if (changed) throw new Error('OAuth state changed during callback');
+    return record;
+  };
+  return {
+    put: (record) => store.put(record),
+    get: async (stateId) => check(stateId, await store.get(stateId)),
+    consume: async (stateId, consumedAt) => check(stateId, await store.consume(stateId, consumedAt)),
+    deleteExpired: (before) => store.deleteExpired(before),
+    pin(record) {
+      const pin = { fingerprint: oauthStateFingerprint(record), changed: false };
+      const pinned = pins.get(record.stateId) ?? new Set();
+      pins.set(record.stateId, pinned.add(pin));
+      return {
+        get changed() {
+          return pin.changed;
+        },
+        release() {
+          pinned.delete(pin);
+          if (!pinned.size && pins.get(record.stateId) === pinned) pins.delete(record.stateId);
+        },
+      };
+    },
+  };
 }
 
 interface CreateConnectionManagerOAuthDependenciesInput {
@@ -116,7 +212,7 @@ export function createConnectionManagerOAuthDependencies(
   const tokenHttpClient = input.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
   const actionLogAdapter = ensurePlugFnDatabaseAdapter(input.database);
   const runtimeStorage = actionLogAdapter;
-  const stateStore = createPlugFnOAuthStateStore(input.database);
+  const stateStore = guardOAuthStateStore(createPlugFnOAuthStateStore(input.database));
   const { encryptedTokenVault } = createPlugFnEncryptedTokenVault({
     database: input.database,
     encryptionKey: input.encryptionKey,
@@ -175,6 +271,7 @@ export function createConnectionManagerOAuthDependencies(
   return {
     oauthFlowService,
     oauthStateStore: stateStore,
+    oauthStateGuard: stateStore,
     encryptedTokenVault,
     keyRef: DEFAULT_TOKEN_KEY_REF,
     actionLogAdapter,
@@ -191,14 +288,41 @@ export class ConnectionNotFoundError extends Error {
   }
 }
 
+/**
+ * The subject oauth-flow derives from a stored OAuth state row (the same
+ * reading its callback applies to the consumed row).
+ */
+function oauthStateSubject(record: OAuthStateRecord): {
+  kind: 'connection' | 'browser-auth';
+  tenantId?: string;
+  userId?: string;
+} {
+  const stored = record.subject;
+  if (stored?.kind === 'browser-auth' || record.intentId) {
+    return {
+      kind: 'browser-auth',
+      tenantId: stored?.kind === 'browser-auth' ? stored.tenantId : record.tenantId,
+    };
+  }
+  return {
+    kind: 'connection',
+    tenantId: stored?.kind === 'connection' ? stored.tenantId : record.tenantId,
+    userId: stored?.kind === 'connection' ? stored.userId : record.userId,
+  };
+}
+
 export class ConnectionManager {
   private readonly tokenStorage: SecureTokenStorage;
   private readonly oauthFlowService: OAuthFlowService;
   private readonly oauthStateStore: OAuthStateStore;
+  private readonly oauthStateGuard: OAuthStateGuard | undefined;
   private readonly encryptedTokenVault: EncryptedTokenVault;
   private readonly keyRef: string;
   private readonly actionLogAdapter: PlugFnDatabaseStorageAdapter;
   private readonly refreshInFlight = new Map<string, Promise<Connection>>();
+  private readonly credentialVersions = new WeakMap<Credentials, string>();
+  private readonly configuredVersions = new Map<string, { values: unknown[]; version: string }>();
+  private readonly configuredVersionSalt: Buffer;
 
   constructor(
     private connectionStorage: ConnectionStorage,
@@ -211,8 +335,12 @@ export class ConnectionManager {
     private authorizeConnection?: PlugFnAuthorizationOptions['authorizeConnection']
   ) {
     this.tokenStorage = new SecureTokenStorage(encryptionKey);
+    this.configuredVersionSalt = createHmac('sha256', encryptionKey)
+      .update(CONFIGURED_VERSION_LABEL)
+      .digest();
     this.oauthFlowService = oauthDependencies.oauthFlowService;
     this.oauthStateStore = oauthDependencies.oauthStateStore;
+    this.oauthStateGuard = oauthDependencies.oauthStateGuard;
     this.encryptedTokenVault = oauthDependencies.encryptedTokenVault;
     this.keyRef = oauthDependencies.keyRef;
     this.actionLogAdapter = oauthDependencies.actionLogAdapter;
@@ -229,12 +357,27 @@ export class ConnectionManager {
     }
 
     const oauthConfig = provider.auth.config as OAuth2Config;
-    const owner = options.owner ?? { kind: 'user', userId: options.userId } satisfies PlugFnConnectionOwner;
+    // Like connect(): the default owner is the actor's own user in the actor's
+    // tenant, and a supplied actor must be able to install for the owner, so
+    // the callback with the same actor accepts the state this issues. The
+    // user is read once, so the checked and the issued identity are the same.
+    const userId = options.userId;
+    const actor = options.actor === undefined ? undefined : snapshotActor(options.actor);
+    const owner: PlugFnConnectionOwner = options.owner === undefined
+      ? {
+          kind: 'user',
+          userId,
+          ...(actor?.tenantId !== undefined ? { tenantId: actor.tenantId } : {}),
+        }
+      : snapshotConnectionOwner(options.owner, 'owner');
+    if (actor && (actor.userId !== userId || !actorCanInstallForOwner(actor, owner))) {
+      throw new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'connection owner mismatch', 403);
+    }
     const metadata = buildConnectionStateMetadata(owner, options.returnTo);
     const result = await this.oauthFlowService.start({
       providerId: options.provider,
-      tenantId: owner.tenantId ?? options.userId,
-      userId: options.userId,
+      tenantId: owner.tenantId ?? userId,
+      userId,
       redirectUri: options.redirectUri,
       scopes: options.scopes ?? oauthConfig.scopes,
       prompt: options.prompt,
@@ -249,31 +392,82 @@ export class ConnectionManager {
       );
     }
 
-    this.logger.info(`Generated auth URL for ${options.provider}`, { userId: options.userId });
+    this.logger.info(`Generated auth URL for ${options.provider}`, { userId });
     return result.authorizationUrl;
   }
 
   async handleCallback(options: HandleCallbackOptions): Promise<HandleCallbackResult> {
-    const statePreview = await this.oauthStateStore.get(options.state);
+    // Read every caller input once, before the first await, so later changes
+    // to the caller's objects cannot alter the authorization decision.
+    const { state, code, connectionName } = options;
+    const providerOverride = options.provider;
+    const redirectUriOverride = options.redirectUri;
+    const expectedOwnerInput = options.expectedOwner;
+    const actorInput = options.actor;
+    const expectedOwner = expectedOwnerInput === undefined
+      ? undefined
+      : snapshotConnectionOwner(expectedOwnerInput, 'expectedOwner');
+    const actor = actorInput === undefined ? undefined : snapshotActor(actorInput);
+    const statePreview = await this.oauthStateStore.get(state);
     if (!statePreview) {
       throw new Error('OAuth state is invalid or expired');
     }
+    const { previewSubject, previewUserId, pendingOwner } = authorizeCallbackPreview(
+      statePreview,
+      actor,
+      expectedOwner
+    );
 
     const returnTo = readReturnToFromMetadata(readPlugFnOAuthStateMetadata(statePreview));
-    const providerId = options.provider ?? statePreview.providerId;
-    const redirectUri = options.redirectUri ?? statePreview.redirectUri;
+    const providerId = providerOverride ?? statePreview.providerId;
+    const redirectUri = redirectUriOverride ?? statePreview.redirectUri;
     if (!providerId || !redirectUri) {
       throw new Error('OAuth state is invalid or expired');
     }
 
-    const callbackResult = await this.oauthFlowService.handleCallback({
-      providerId,
-      code: options.code,
-      state: options.state,
-      redirectUri,
-    });
-    const subjectUserId = callbackResult.subject.userId ?? statePreview.userId;
+    // The connection is created only for the exact state that passed the
+    // checks above. The pin makes oauth-flow's reads and its consume of this
+    // state fail on any other row, before the code exchange. The subject check
+    // below is the remaining defence for injected dependencies without a
+    // guard, and every owner, user and fallback-scope field comes from the
+    // preview, never from the consumed row.
+    const pin = this.oauthStateGuard?.pin(statePreview);
+    const stateChanged = () =>
+      new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'OAuth state changed during callback', 403);
+    let callbackResult: Awaited<ReturnType<OAuthFlowService['handleCallback']>>;
+    try {
+      callbackResult = await this.oauthFlowService.handleCallback({
+        providerId,
+        code,
+        state,
+        redirectUri,
+      });
+    } catch (error) {
+      if (pin?.changed) throw stateChanged();
+      throw error;
+    } finally {
+      pin?.release();
+    }
     const callbackConnectionId = callbackResult.connectionId;
+    const callbackSubject = callbackResult.subject;
+    if (
+      pin?.changed ||
+      callbackSubject?.kind !== 'connection' ||
+      previewSubject.kind !== 'connection' ||
+      (callbackSubject.userId !== undefined && callbackSubject.userId !== previewUserId) ||
+      callbackSubject.tenantId !== previewSubject.tenantId
+    ) {
+      if (callbackConnectionId) {
+        await this.encryptedTokenVault.deleteByConnection(callbackConnectionId).catch((error: unknown) => {
+          this.logger.warn('Failed to delete the token record of a rejected OAuth callback', {
+            connectionId: callbackConnectionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      throw stateChanged();
+    }
+    const subjectUserId = previewUserId;
     if (!subjectUserId || !callbackConnectionId) {
       throw new Error('OAuth callback did not resolve a stable connection subject');
     }
@@ -289,10 +483,8 @@ export class ConnectionManager {
     const connection = await this.connectionStorage.create({
       userId: subjectUserId,
       provider: providerId,
-      ...ownerFields(
-        readConnectionOwnerFromMetadata(readPlugFnOAuthStateMetadata(statePreview), subjectUserId)
-      ),
-      name: options.connectionName,
+      ...ownerFields(pendingOwner),
+      name: connectionName,
       status: ConnectionStatus.Active,
       credentials: toEncryptedCredentials(pendingTokenEntry.record),
       scopes: credentials.scope === undefined ? statePreview.requestedScopes : credentials.scope.split(/[ ,]+/).filter(Boolean),
@@ -320,6 +512,70 @@ export class ConnectionManager {
       connection: updatedConnection,
       returnTo,
     };
+  }
+
+  async connect(options: ConnectOptions): Promise<Connection> {
+    // Read every caller input once into fresh validated values; only those
+    // values are used for authorization and storage.
+    const { userId, provider: providerId, connectionName } = options;
+    const credentials: unknown = options.credentials;
+    const ownerInput = options.owner;
+    const actorInput = options.actor;
+    const provider = this.providers.get(providerId);
+    if (!provider) {
+      throw new Error(`Provider ${providerId} not found`);
+    }
+
+    const credentialTypes: Partial<Record<AuthType, Exclude<Credentials, OAuth2Credentials>['type']>> = {
+      [AuthType.ApiKey]: 'api-key',
+      [AuthType.JWT]: 'jwt',
+      [AuthType.Basic]: 'basic',
+    };
+    const expectedCredentialType = credentialTypes[provider.auth.type];
+    if (!isPlainMetadataRecord(credentials)) {
+      throw new ConnectionResolutionError('VALIDATION_ERROR', 'credentials are required', 400);
+    }
+    const credentialType = credentials.type;
+    if (!expectedCredentialType || credentialType !== expectedCredentialType) {
+      throw new ConnectionResolutionError(
+        'VALIDATION_ERROR',
+        provider.auth.type === AuthType.OAuth2
+          ? `Provider ${providerId} requires OAuth`
+          : `Credential type does not match provider ${providerId}`,
+        400
+      );
+    }
+    const directCredentials = normalizeDirectCredentials(credentials, expectedCredentialType);
+    const actor = actorInput === undefined ? { userId } : snapshotActor(actorInput);
+    const owner: PlugFnConnectionOwner = ownerInput === undefined
+      ? {
+          kind: 'user',
+          userId,
+          ...(actor.tenantId !== undefined ? { tenantId: actor.tenantId } : {}),
+        }
+      : snapshotConnectionOwner(ownerInput, 'owner');
+    if (actor.userId !== userId || !actorCanInstallForOwner(actor, owner)) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
+    }
+
+    const connection = await this.connectionStorage.create({
+      userId,
+      provider: providerId,
+      ...ownerFields(owner),
+      name: connectionName,
+      status: ConnectionStatus.Active,
+      credentials: this.tokenStorage.encryptCredentials(directCredentials),
+      connectedAt: new Date(),
+    });
+    this.logger.info(`Connection created: ${providerId}`, {
+      userId,
+      connectionId: connection.id,
+    });
+    return connection;
   }
 
   async list(options: ListConnectionsOptions): Promise<Connection[]> {
@@ -625,41 +881,52 @@ export class ConnectionManager {
   }
 
   async getCredentials(connectionId: string): Promise<Credentials> {
+    const { credentials, version } = await this.loadCredentials(connectionId);
+    this.credentialVersions.set(credentials, version);
+    return credentials;
+  }
+
+  /**
+   * A non-secret version of credentials that getCredentials returned: the
+   * stored ciphertext record (or, for configured credentials, a per-manager
+   * value that changes whenever the configured secret does). Replacing or
+   * refreshing the credential changes it, so the action cache can bind entries
+   * to it without ever hashing the secret itself.
+   */
+  credentialVersion(credentials: Credentials): string | undefined {
+    return this.credentialVersions.get(credentials);
+  }
+
+  private async loadCredentials(connectionId: string): Promise<VersionedCredentials> {
     const configuredProvider = parseConfiguredConnectionId(connectionId);
     if (configuredProvider) {
       const credentials = this.readConfiguredCredentials(configuredProvider);
       if (!credentials) {
         throw new Error(`Configured credentials missing for ${configuredProvider}`);
       }
-      return credentials;
+      return this.configuredVersion(configuredProvider, credentials);
     }
 
     const connection = await this.get(connectionId);
     const provider = this.providers.get(connection.provider);
-
-    if (provider?.auth.type === AuthType.OAuth2) {
-      if (
-        connection.status === ConnectionStatus.Active &&
-        connection.expiresAt &&
-        new Date() >= connection.expiresAt
-      ) {
-        const refreshedConnection = await this.refresh(connectionId);
-        const refreshedToken = await this.encryptedTokenVault.getTokenSetByConnection(refreshedConnection.id);
-        if (refreshedToken) {
-          return this.toOAuth2Credentials(refreshedToken.tokenSet);
-        }
-        return this.decryptLegacyCredentials(refreshedConnection);
-      }
-
-      const storedToken = await this.encryptedTokenVault.getTokenSetByConnection(connection.id);
-      if (storedToken) {
-        return this.toOAuth2Credentials(storedToken.tokenSet);
-      }
-
-      return this.decryptLegacyCredentials(connection);
+    if (provider?.auth.type !== AuthType.OAuth2) {
+      return this.decryptNonOAuthCredentials(connection);
     }
 
-    return this.decryptNonOAuthCredentials(connection);
+    const current =
+      connection.status === ConnectionStatus.Active &&
+      connection.expiresAt &&
+      new Date() >= connection.expiresAt
+        ? await this.refresh(connectionId)
+        : connection;
+    const storedToken = await this.encryptedTokenVault.getTokenSetByConnection(current.id);
+    if (storedToken) {
+      return {
+        credentials: this.toOAuth2Credentials(storedToken.tokenSet),
+        version: `vault:${storedToken.record.encryptedPayload}`,
+      };
+    }
+    return this.decryptLegacyCredentials(current);
   }
 
   async markUsed(connectionId: string): Promise<void> {
@@ -740,18 +1007,46 @@ export class ConnectionManager {
     return rewritten;
   }
 
-  private decryptLegacyCredentials(connection: Connection): Credentials {
-    return this.tokenStorage.decryptCredentials(connection.credentials);
+  private decryptLegacyCredentials(connection: Connection): VersionedCredentials {
+    return {
+      credentials: this.tokenStorage.decryptCredentials(connection.credentials),
+      version: `stored:${connection.credentials.encrypted}`,
+    };
   }
 
-  private decryptNonOAuthCredentials(connection: Connection): Credentials {
+  private decryptNonOAuthCredentials(connection: Connection): VersionedCredentials {
     try {
-      return this.tokenStorage.decryptCredentials(connection.credentials);
+      return this.decryptLegacyCredentials(connection);
     } catch (error) {
       const configuredCredentials = this.readConfiguredCredentials(connection.provider);
-      if (configuredCredentials) return configuredCredentials;
+      if (configuredCredentials) return this.configuredVersion(connection.provider, configuredCredentials);
       throw error;
     }
+  }
+
+  /**
+   * The version of a configured credential: a salted PBKDF2 derivation under a
+   * salt bound to the encryption key, so every instance sharing that key and
+   * configured secret agrees on it (and shares cache entries), a rotated
+   * secret gets a new one, and it says nothing about the secret to anyone
+   * without the key. Derived once per secret and provider, then reused.
+   */
+  private configuredVersion(provider: string, credentials: Credentials): VersionedCredentials {
+    const values = Object.values(credentials);
+    const known = this.configuredVersions.get(provider);
+    if (known?.values.length === values.length && known.values.every((value, index) => value === values[index])) {
+      return { credentials, version: known.version };
+    }
+    const derived = pbkdf2Sync(
+      JSON.stringify([provider, credentials]),
+      this.configuredVersionSalt,
+      CONFIGURED_VERSION_ITERATIONS,
+      32,
+      'sha256'
+    );
+    const version = `configured:${derived.toString('hex')}`;
+    this.configuredVersions.set(provider, { values, version });
+    return { credentials, version };
   }
 
   private readConfiguredCredentials(provider: string): Credentials | null {
@@ -834,6 +1129,182 @@ export class ConnectionManager {
     }
     return connectionMatchesActor(connection, actor, operation);
   }
+}
+
+/**
+ * Check a callback's state row before oauth-flow consumes it or exchanges the
+ * code: it must be a connection state with a user, carry a valid PlugFn owner,
+ * and match the actor and expected owner when given. The canonical subject
+ * (falling back to the flat fields of a legacy row), as oauth-flow reads it,
+ * decides the user.
+ */
+function authorizeCallbackPreview(
+  statePreview: OAuthStateRecord,
+  actor: PlugFnActor | undefined,
+  expectedOwner: PlugFnConnectionOwner | undefined
+): {
+  previewSubject: ReturnType<typeof oauthStateSubject>;
+  previewUserId: string;
+  pendingOwner: PlugFnConnectionOwner;
+} {
+  const previewSubject = oauthStateSubject(statePreview);
+  const previewUserId = previewSubject.userId;
+  if (previewSubject.kind !== 'connection' || typeof previewUserId !== 'string' || previewUserId === '') {
+    throw new Error('OAuth state is invalid or expired');
+  }
+  const pendingOwner = readConnectionOwnerFromMetadata(
+    readPlugFnOAuthStateMetadata(statePreview),
+    previewUserId
+  );
+  if (!pendingOwner) {
+    throw new Error('OAuth state is invalid or expired');
+  }
+  const actorDenied = actor !== undefined &&
+    (actor.userId !== previewUserId || !actorCanInstallForOwner(actor, pendingOwner));
+  if (actorDenied || (expectedOwner !== undefined && !ownersEqual(expectedOwner, pendingOwner))) {
+    throw new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'connection owner mismatch', 403);
+  }
+  return { previewSubject, previewUserId, pendingOwner };
+}
+
+function actorCanInstallForOwner(
+  actor: PlugFnActor,
+  owner: PlugFnConnectionOwner
+): boolean {
+  if (!tenantMatches(owner.tenantId, actor.tenantId)) return false;
+  if (owner.kind === 'user') return owner.userId === actor.userId;
+  if (owner.installedByUserId !== actor.userId) return false;
+  return actor.organizationId === owner.organizationId;
+}
+
+function ownersEqual(left: PlugFnConnectionOwner, right: PlugFnConnectionOwner): boolean {
+  const a = ownerFields(left);
+  const b = ownerFields(right);
+  return (
+    a.ownerKind === b.ownerKind &&
+    a.ownerId === b.ownerId &&
+    tenantMatches(a.tenantId, b.tenantId) &&
+    a.organizationId === b.organizationId &&
+    a.installedByUserId === b.installedByUserId &&
+    a.delegatedToUserId === b.delegatedToUserId &&
+    grantSetsEqual(a.grants, b.grants)
+  );
+}
+
+function grantSetsEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const a = new Set(left);
+  const b = new Set(right);
+  return a.size === b.size && [...a].every((grant) => b.has(grant));
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Reads each required credential field once, validates it, and returns a fresh
+ * plain record holding only those values, so storage never serializes the
+ * caller's object (prototype getters, toJSON overrides or extra fields).
+ */
+function normalizeDirectCredentials(
+  credentials: Record<string, unknown>,
+  type: Exclude<Credentials, OAuth2Credentials>['type']
+): Exclude<Credentials, OAuth2Credentials> {
+  if (type === 'api-key') {
+    const apiKey = credentials.apiKey;
+    if (isNonBlankString(apiKey)) return { type, apiKey };
+  } else if (type === 'jwt') {
+    const token = credentials.token;
+    if (isNonBlankString(token)) return { type, token };
+  } else if (type === 'basic') {
+    const username = credentials.username;
+    const password = credentials.password;
+    if (isNonBlankString(username) && typeof password === 'string' && password.length > 0) {
+      return { type, username, password };
+    }
+  }
+  throw new ConnectionResolutionError(
+    'VALIDATION_ERROR',
+    'credentials must not be empty',
+    400
+  );
+}
+
+function snapshotStrings(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const copy: unknown[] = Array.from(value);
+  return copy.every((item) => typeof item === 'string') ? (copy as string[]) : undefined;
+}
+
+/**
+ * Reads each owner field once, validates the values with isConnectionOwner,
+ * and returns a fresh record (grants copied), so a later change to the
+ * caller's object cannot change an authorization decision or the stored owner.
+ */
+function snapshotConnectionOwner(value: unknown, field: string): PlugFnConnectionOwner {
+  const invalid = () => new ConnectionResolutionError(
+    'VALIDATION_ERROR',
+    `${field} is not a valid connection owner`,
+    400
+  );
+  if (!value || typeof value !== 'object') throw invalid();
+  const record = value as Record<string, unknown>;
+  const kind = record.kind;
+  const tenantId = record.tenantId;
+  if (tenantId !== undefined && typeof tenantId !== 'string') throw invalid();
+  const tenant = tenantId === undefined ? {} : { tenantId };
+  let owner: unknown;
+  if (kind === 'user') {
+    owner = { kind, userId: record.userId, ...tenant };
+  } else if (kind === 'organization') {
+    owner = {
+      kind,
+      organizationId: record.organizationId,
+      installedByUserId: record.installedByUserId,
+      ...tenant,
+    };
+  } else if (kind === 'delegated') {
+    owner = {
+      kind,
+      organizationId: record.organizationId,
+      delegatedToUserId: record.delegatedToUserId,
+      installedByUserId: record.installedByUserId,
+      grants: snapshotStrings(record.grants),
+      ...tenant,
+    };
+  }
+  if (!isConnectionOwner(owner)) throw invalid();
+  return owner;
+}
+
+/** Reads each actor field once into a fresh validated record (arrays copied). */
+function snapshotActor(value: unknown): PlugFnActor {
+  const invalid = () => new ConnectionResolutionError(
+    'VALIDATION_ERROR',
+    'actor is not a valid actor',
+    400
+  );
+  if (!value || typeof value !== 'object') throw invalid();
+  const record = value as Record<string, unknown>;
+  const userId = record.userId;
+  const tenantId = record.tenantId;
+  const organizationId = record.organizationId;
+  const roles = record.roles;
+  const grants = record.grants;
+  if (typeof userId !== 'string' || userId.length === 0) throw invalid();
+  if (tenantId !== undefined && typeof tenantId !== 'string') throw invalid();
+  if (organizationId !== undefined && typeof organizationId !== 'string') throw invalid();
+  const rolesCopy = roles === undefined ? undefined : snapshotStrings(roles);
+  const grantsCopy = grants === undefined ? undefined : snapshotStrings(grants);
+  if ((roles !== undefined && !rolesCopy) || (grants !== undefined && !grantsCopy)) throw invalid();
+  return {
+    userId,
+    ...(tenantId !== undefined ? { tenantId } : {}),
+    ...(organizationId !== undefined ? { organizationId } : {}),
+    ...(rolesCopy ? { roles: rolesCopy } : {}),
+    ...(grantsCopy ? { grants: grantsCopy } : {}),
+  };
 }
 
 function parseConfiguredConnectionId(connectionId: string): string | null {

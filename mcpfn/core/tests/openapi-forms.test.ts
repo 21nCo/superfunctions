@@ -2240,27 +2240,35 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expect(registered(result)).toEqual([["valid", false]]);
   });
 
-  it("shares identical schemas only frozen and only in its own registry, and keeps the catalog detached", () => {
+  it("shares a registry snapshot only for the same schema object, frozen, and keeps the catalog detached", () => {
     const resource = { type: "object", properties: { name: { type: "string" } } };
     const document = {
       openapi: "3.1.0",
       paths: Object.fromEntries(["a", "b", "c"].map((name) => [`/${name}`, { get: { operationId: name, responses: json(resource) } }])),
     };
-    // A supplied registry gets a fresh object per tool, as from any caller.
+    // A supplied registry gets a fresh object per tool, as from any caller,
+    // so each tool advertises its own deep-frozen snapshot.
     const supplied = fromOpenAPI(document, { ...options(), registry: new McpFnRegistry() });
     const [a, b] = ["a", "b"].map((name) => supplied.registry.getListedTool(name)!);
     expect(a!.outputSchema).not.toBe(b!.outputSchema);
-    (a!.outputSchema!.properties!.name as { type: string }).type = "integer";
-    expect(b!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
-    // Its own registry shares one frozen object; the last registration gets a fresh one.
-    const own = fromOpenAPI(document, options());
-    const [first, second, third] = ["a", "b", "c"].map((name) => own.registry.getListedTool(name)!);
-    expect(first!.outputSchema).toBe(second!.outputSchema);
-    expect(third!.outputSchema).not.toBe(second!.outputSchema);
-    expect(third!.outputSchema).toEqual(second!.outputSchema);
     expect(() => {
-      (first!.outputSchema!.properties!.name as { type: string }).type = "integer";
+      (a!.outputSchema!.properties!.name as { type: string }).type = "integer";
     }).toThrow(TypeError);
+    expect(b!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
+    // Its own registry passes one object to several tools: they share one
+    // frozen snapshot; the last registration's fresh object gets its own.
+    {
+      const own = fromOpenAPI(document, options());
+      const [first, second, third] = ["a", "b", "c"].map((name) => own.registry.getListedTool(name)!);
+      expect(first!.outputSchema).toBe(second!.outputSchema);
+      expect(third!.outputSchema).not.toBe(second!.outputSchema);
+      expect(third!.outputSchema).toEqual(second!.outputSchema);
+      expect(() => {
+        (first!.outputSchema!.properties!.name as { type: string }).type = "integer";
+      }).toThrow(TypeError);
+    }
+    const own = fromOpenAPI(document, options());
+    const second = own.registry.getListedTool("b")!;
     // The catalog holds detached, writable copies either way.
     (tool(own.tools, "a").outputSchema!.properties!.name as { type: string }).type = "integer";
     expect(second!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
