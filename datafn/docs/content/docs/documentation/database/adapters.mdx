@@ -254,11 +254,12 @@ DataFn uses several internal tables managed via the `adapter.internal` API:
 | Table | Purpose |
 |-------|---------|
 | `__datafn_meta` | Stores `next_server_seq` per namespace |
-| `__datafn_changes` | Change log entries for incremental sync |
+| `__datafn_changes` | Change log entries for incremental sync; the `rev` and `rev_certified` columns hold each change's [revision](/docs/documentation/sync/revisions) |
 | `__datafn_idempotency` | Mutation deduplication records |
 | `__datafn_seed` | Seed tracking metadata |
+| `__datafn_revisions` | Per-record [revisions](/docs/documentation/sync/revisions) and delete tombstones; never pruned, keep it when copying or backing up a namespace |
 
-Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`.
+Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`. Every write path creates `__datafn_revisions`, with revisions on or off, and a server with revisions on adds the `rev` and `rev_certified` columns to an existing `__datafn_changes` table. If your database role cannot run DDL, or you deploy on MySQL, create them before upgrading: see [Upgrading an existing deployment](/docs/documentation/sync/revisions#upgrading-an-existing-deployment) for the statements for each database.
 
 ## Available Adapters
 

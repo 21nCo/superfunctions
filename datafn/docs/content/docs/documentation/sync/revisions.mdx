@@ -1,0 +1,226 @@
+---
+title: Record revisions
+description: A server-managed revision for every record, returned on clone, pull, push and versioned queries, and the steps to upgrade an existing deployment.
+audience: reference
+applies_to: server
+---
+
+Every record has a **revision**: an integer the server raises by one when a committed write changes the record's stored row. Use it to tell which server state a client holds. (Write preconditions such as `ifRev` build on it; they are not part of this page.)
+
+Before you upgrade a deployment that already has data, read [Upgrading an existing deployment](#upgrading-an-existing-deployment): this release writes to a new internal table on every write path, with revisions on or off.
+
+## How a revision is raised
+
+- **Raised by a write that changed the row, once per write.** Insert, merge, replace, delete, trash, restore, archive, unarchive, KV merges and relation writes that change a record (a forward many-to-one `relate` or `unrelate`; `modifyRelation` edits many-many join metadata only) each raise the record's revision by one, on push, `/mutation` and `/transact`, however many changes the write records for it (an insert under an archived parent that also sets its inherited-inactive state is one write). A delete also raises every record it changes through a relation policy (a `cascade` delete gets a tombstone revision, a `setNull` child a raise), and an inherited-inactive change raises each affected record. Inside a transaction, a committed write that changed the stored row raises its revision by exactly one; for writes outside a transaction, see [Writes outside a transaction](#writes-outside-a-transaction).
+- **Serialized per record.** The raise is a compare-and-swap inside the write's transaction, so two writes to one record never commit the same revision, also for overlapping PostgreSQL transactions at `READ COMMITTED`. Two writes in the same millisecond still get different revisions.
+- **Never reused.** A delete keeps the record's revision as a tombstone, so re-inserting the same id continues from it. Revisions live in the `__datafn_revisions` table: change-log pruning and sequence reservation never touch them, and only deleting the whole namespace removes them.
+- **Only on evidence from the write's own statement.** Each write runs as one statement, and a revision is raised only when that statement shows it changed the record row: a create that succeeded, or an update the database reports as having changed the row (the adapter's update returning it, or, where reads may be a snapshot, the affected-row count of the `UPDATE`, a current read on MySQL InnoDB). A read of the record or of its revision row is never evidence, since under MySQL's `REPEATABLE READ` it may show a snapshot older than the latest commit. On such a database an update that the adapter re-selects instead of returning it from the statement proves nothing either way: it raises a live record's revision, with a change row that certifies no row at that revision, and raises nothing over a tombstone. Where the count is of changed rows (MySQL without found rows), a write that left the row exactly as it was raises nothing, so its revision still names that state. A write that changed no row (a relation or `setNull` update of a record another writer deleted first, or a batched relation update that matched only some of its targets) raises nothing for the missing record, so its tombstone stays as it is and that change row and result carry no revision, while a merge that finds the record gone and creates it raises its revision live over the tombstone. This holds whether or not the server returns revisions (`revisions.enabled`), so a server with revisions off never turns a tombstone live for a write that changed nothing.
+- **Deletes.** DataFn deletes a record through the adapter's `delete`, which reports no affected-row count, so it reads the record after the delete: when the row is absent, the delete raises the record's revision to a tombstone. Inside a transaction a delete that finds the record already a tombstone raises nothing (deletes of one row are serialized by its lock, so the row was already removed), and two overlapping deletes, or a repeated one, give exactly one tombstone. When the row is still present (the database suppressed the delete, for example with a `BEFORE DELETE` trigger), the delete raises nothing, unless an earlier statement of the same write changed the row, which raises it once, live. Outside a transaction a delete that leaves the row absent always raises once; see [Writes outside a transaction](#writes-outside-a-transaction).
+- **Failures.** If raising a revision fails inside a transaction, the write fails and rolls back (the client retries it under the same mutation id); change tracking does not retry it within the transaction.
+- **One record per write.** A write's `record.id`, when present, must equal its mutation `id`; a write naming another record (which would store or rename a row other than the one whose revision it raises) is rejected with `DFQL_INVALID` at `record.id` before anything is written, on push, `/mutation` and `/transact`. For the same reason, with `revisions: { enabled: true }` `createDatafnServer` rejects a schema whose relation writes a record's `id` column (a foreign key `fkField` or `foreignKey`, its resource field, or a tree path field named `id`). Each relation's own columns are checked, also when several relations share one foreign key.
+- **Data resources, not join stores.** Every declared resource has revisions, including one whose name starts with `join_`. The many-to-many join stores derived from the schema's relations, and DataFn's internal `__datafn_` tables, have none. On pull, too, such a resource gets its own data bucket and the access checks of a private shareable resource, and only a join store goes to `joins`.
+- **Zero means unknown history.** A record written before this release, or never written, has revision 0, and clone and versioned queries return `$rev: 0` for an existing record that no revision-aware write has touched.
+
+### Writes outside a transaction
+
+On an adapter without transactions (D1, Drizzle SQLite), or a write that does not run in one, a write and its revision are separate statements. Revisions there are best effort, like other writes on such an adapter; making them atomic is tracked as DATA-11. Two rules can make a revision **skip a value** there. In both, a revision value is never reused and a committed write is never left uncounted: the record is counted again (an over-count) rather than not at all.
+
+- **The bounded mark window.** A revision write can commit while the adapter reports a failure (a lost acknowledgement). DataFn retries the write's revisions, and each raise stamps a unique mark on the record's revision row, which keeps the marks of the record's last 12 raises. A retry that finds its own mark adopts that revision instead of raising again. When 12 or more later raises of the same record have dropped its mark, the retry cannot tell that its raise committed and raises the record again, so its revision skips a value.
+- **Deletes without an affected count.** A delete whose adapter reports no affected count, and after which the row is absent, always raises the record's revision once, to a tombstone, even when it removed no row or repeats an earlier delete: without a count, it cannot tell a delete that removed nothing from one that removed a row another writer wrote since. A zero-row or repeated delete may therefore skip a revision value. A delete whose adapter reports a count, and every delete inside a transaction, are unaffected.
+
+Outside a transaction, a write other than a delete raises the record to its state as read at the raise: if another writer deleted the record first, the raise leaves a tombstone, and the write's own change row and result carry no revision. Inside a transaction neither rule applies: a failure rolls the write and its revision back together, and a committed write raises the revision by exactly one.
+
+## Upgrading an existing deployment
+
+This release adds one internal table and two columns:
+
+| Object | Used for | Created by DataFn |
+| --- | --- | --- |
+| `__datafn_revisions` table (`id`, `namespace`, `resource`, `record_id`, `rev`, `deleted`, `updated_at`) | Each record's revision and delete tombstone | On every write path (push, `/mutation`, `/transact`) before the write, **with revisions on or off**, with `CREATE TABLE IF NOT EXISTS`. Clone and versioned queries with revisions on also try to create it; if they cannot, they return rows without `$rev`. |
+| `rev` column of `__datafn_changes` | The record's revision after the change | When a worker with revisions on first writes, after a catalog check: `PRAGMA table_info` on SQLite and D1, `pg_attribute` on PostgreSQL, `information_schema` on MySQL. No `ALTER TABLE` runs when the column exists. |
+| `rev_certified` column of `__datafn_changes` | Whether the change was committed together with its revision | Same as `rev`. |
+
+**Create all three before the first upgraded worker writes, whether or not you turn revisions on.** An upgraded worker that cannot create `__datafn_revisions` fails every write, also with revisions off, until the table exists. A worker with revisions on that cannot add the columns fails its writes the same way. A deployment whose database role cannot run DDL, or that applies migrations in a separate step, therefore loses writes after the upgrade unless the objects already exist. Creating them first also means you can turn revisions on later without another migration.
+
+Run the statements for your database as a migration, with a role that may create tables in the schema DataFn uses and alter `__datafn_changes`. They change no existing row: the new columns are `NULL` on change rows written before them, which carry no revision. The `ALTER TABLE` statements are for a `__datafn_changes` table created before this release; a `__datafn_changes` table that DataFn creates from this release on has both columns.
+
+### PostgreSQL
+
+```sql
+CREATE TABLE IF NOT EXISTS "__datafn_revisions" (
+  "id" TEXT PRIMARY KEY,
+  "namespace" TEXT,
+  "resource" TEXT,
+  "record_id" TEXT,
+  "rev" INTEGER,
+  "deleted" INTEGER,
+  "updated_at" TEXT
+);
+ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer;
+ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev_certified" integer;
+```
+
+### SQLite and Cloudflare D1
+
+SQLite has no `ADD COLUMN IF NOT EXISTS`: run each `ALTER TABLE` only when `PRAGMA table_info("__datafn_changes")` does not list the column yet.
+
+```sql
+CREATE TABLE IF NOT EXISTS "__datafn_revisions" (
+  "id" TEXT PRIMARY KEY,
+  "namespace" TEXT,
+  "resource" TEXT,
+  "record_id" TEXT,
+  "rev" INTEGER,
+  "deleted" INTEGER,
+  "updated_at" TEXT
+);
+ALTER TABLE "__datafn_changes" ADD COLUMN "rev" INTEGER;
+ALTER TABLE "__datafn_changes" ADD COLUMN "rev_certified" INTEGER;
+```
+
+### MySQL
+
+MySQL rejects a `TEXT` primary key without a prefix length, which is the column type DataFn's own `CREATE TABLE` uses, so on MySQL `__datafn_revisions` **must** be created before the upgrade. Its `id` is a fixed-length ASCII key of 69 characters (`rev1:` and a SHA-256 hex digest); `VARCHAR(191)` holds it and stays within the index key limit of every InnoDB row format. Like SQLite, MySQL has no `ADD COLUMN IF NOT EXISTS`: run each `ALTER TABLE` only when `information_schema.columns` does not list the column for `__datafn_changes` yet.
+
+```sql
+CREATE TABLE IF NOT EXISTS `__datafn_revisions` (
+  `id` VARCHAR(191) NOT NULL PRIMARY KEY,
+  `namespace` TEXT,
+  `resource` TEXT,
+  `record_id` TEXT,
+  `rev` INTEGER,
+  `deleted` INTEGER,
+  `updated_at` TEXT
+);
+ALTER TABLE `__datafn_changes` ADD COLUMN `rev` INTEGER;
+ALTER TABLE `__datafn_changes` ADD COLUMN `rev_certified` INTEGER;
+```
+
+### Prisma and other SQL access without raw SQL
+
+On a SQL database DataFn reaches without raw SQL access (Prisma), DataFn cannot add the columns to an existing `__datafn_changes` table. Add them with the statements for your database. Until both exist, change rows record no revision: DataFn probes for them, a driver that accepts a filter on any column name counts as unverified, and a finding that they are missing is probed again after a minute, so columns added later are picked up without a restart.
+
+After the upgrade, keep `__datafn_revisions` with the namespace's other tables: back it up and copy it with them (it is the `revisions` role of the [namespace storage manifest](/docs/reference/core/namespace-storage)), and never prune it.
+
+## Turning it on
+
+Every write of this release raises revisions. The server **issues** them only with the `revisions` option:
+
+```ts
+const server = await createDatafnServer({
+  schema,
+  database,
+  revisions: { enabled: true },
+});
+```
+
+Turn it on only when every worker writing to the database runs a release that raises revisions: an older worker writes without raising them. This is an operator contract that DataFn cannot check across servers. While it is off, responses carry no revisions and change rows record none. With it on, every DataFn route's JSON response (success or error) carries `capabilities: { revisions: true }`, so a caller can tell a revision-aware server from an older one (merged into a `capabilities` object the body already has; a body with a `Content-Encoding`, or one that is not UTF-8, is passed through unchanged, without it). A response the capability is spliced into drops the headers that describe its original bytes (`Content-Length`, `Content-Digest`, `Repr-Digest` and `Digest`). The `@datafn/client` of this release does not understand `$rev` yet (see [Client](#client)) and stores it in its local rows as if it were a record field, where it can be sent back in a later write and rejected as an unknown field; keep revisions off for apps that sync through `@datafn/client` until it supports them.
+
+Revisions are keyed by namespace, so `revisions.enabled` requires each namespace's rows to be its own: row-level namespace isolation on (the default with a `namespaceProvider` or a SQL adapter), or a server without a `namespaceProvider`, where every request uses the one default namespace. `createDatafnServer` rejects `revisions: { enabled: true }` together with `rowLevelNamespace: false`, a disabled `rowLevelNamespace` config, or a `namespaceProvider` without row-level isolation (for example a schema with namespace isolation turned off): there a write from one namespace would change a row whose revision another namespace holds without raising it. The same holds across servers: a server whose rows are shared across namespaces (revisions off, for example an admin instance that reads across tenants) raises revisions under its own request namespace, not the namespace a revision-issuing server keys the row by, so it **must not write** to the tables a revision-issuing server serves. Keep such an instance read-only on those tables, or give it row-level namespace isolation. `createDatafnServer` logs a warning when rows are shared across namespaces, as a reminder of this contract; it cannot enforce it across servers.
+
+Do not restore a namespace in place, or roll back below this release, while revisions are on.
+
+## Wire format
+
+Revisions are row metadata, never part of a record's fields, so E2EE record encryption never touches them.
+
+| Response | Where the revision is |
+| --- | --- |
+| Clone | `$rev` on each returned row the caller may read in full, never newer than the row |
+| Pull (per-table cursors) | `$rev` on complete `records` rows; in `merged`, `$rev` on complete KV rows and `$rev: null` on every other patch; `deletedRevisions[resource][id]` for deletes that recorded one |
+| Pull (global cursor) | `rev` on each change that recorded one; `$rev` on its `record` only when that record is the complete row |
+| Push | `revisions[mutationId] = { resource, id, rev, record?, deleted? }`; `record` carries `rev` again as its `$rev` |
+| Query with `withRevisions: true` | `$rev` on each complete stored row the caller may read in full |
+| `/mutation`, `/transact` | `rev` on each committed mutation result (never on a rolled-back step, nor on a replay while revisions are off) |
+
+Rows and their revisions are read in one snapshot only where DataFn can verify one: a `REPEATABLE READ` transaction on PostgreSQL, or SQLite. On another database with transactions (MySQL, or a SQL database reached without raw SQL access such as Prisma), where a write and its revision commit together, the revisions are read before and after the returned rows, and a row gets `$rev` only when both reads agree, so no write to it committed in between. Without transactions (D1, Drizzle SQLite), a write and its revision are separate statements, so no read can establish the pair: clone and versioned queries return rows without `$rev` there, a push result carries `rev` alone (no row and no `deleted` tombstone), and pull carries `rev` on non-delete changes but no `$rev` on their rows, no `rev` on delete changes and no `deletedRevisions` (the deleted ids are returned as before). Pull decides this from each change row's write-time provenance (the `rev_certified` column: set only when the writer committed the change together with its revision in one transaction), not from the adapter reading it, so changes written without a transaction certify nothing even when a server with transactions pulls them from the same database. Such change rows keep the write's own payload instead of a row read back after the write. A push in non-atomic mode on an adapter that exposes transactions but rejects asynchronous callbacks (Drizzle with better-sqlite3) is treated the same way. Revision lookups bind at most 90 ids per statement (D1 allows 100).
+
+Revisions are optional metadata on reads. If DataFn cannot create `__datafn_revisions` (for example, a database role without `CREATE`), cannot open the snapshot, or a revision read or any read inside the snapshot fails, clone and versioned queries read the rows again outside the snapshot and return them without `$rev`, with their usual cursors. Only a failure of that plain row read is reported as it would be without revisions. (Writes are different: see [Upgrading an existing deployment](#upgrading-an-existing-deployment).) A clone row of a resource that issues revisions which the caller may not read in full (its read policy withholds a field, or the row has a column the policy does not list) is returned without `$rev` and without the fields the policy withholds, as pull returns it, in every clone mode (including the plain fallback). Resources that issue no revisions keep their clone rows as before. A field the resource declares counts as one of its fields whatever its name: a declared `__ns` field that the read policy hides is withheld like any other, and the row gets no `$rev`, on clone, pull, push results and versioned queries. Only the undeclared `__ns` storage partition column a namespaced adapter adds is exempt.
+
+On a resource that issues revisions, `$rev` is always the server's: a `$rev` value stored with a row or a change row (left from when the resource declared its own `$rev` field) is never returned as a revision. Pull drops it from changes that recorded no revision, a versioned query returns such a row as the plain query projects it, and clone replaces it with the row's server revision (or with none, for a row the caller may not read in full).
+
+### Pull
+
+Only a write's last change row for a record carries the revision, and when it writes a whole record (insert, replace, or any KV write) it records the stored row after the write, defaults and server fields included. A partial change (a merge, or a whole row followed by an inherited-inactive update in the same write) carries the revision on the change but never as `$rev` on a row, since no complete row at that revision is returned. On a resource whose read policy withholds fields (or a stored row with a column the policy does not list), revisioned pull rows have those fields removed and carry no `$rev`, also after revisions are turned off again. A pull returns the same changes, in the same buckets and order, as without revisions; revisions are only added to them. Sequence numbers are reserved before a write, so they do not give commit order, and a pull never reorders or drops changes on that basis.
+
+A per-table pull combines several rows (or KV writes) of one id as before; the combined entry keeps `$rev` only when every combined change carried one, the last has the highest, the combined row is that last row, and the record's stored id is the id the pull returns (a pull trims surrounding whitespace from ids, so a row stored as `"a "` is returned as `"a"` without `$rev`). `deletedRevisions` lists a tombstone revision only when every delete of the id in the response recorded one; a visibility delete (a revoked grant or a lost membership) records none, so an id it is listed under in `deleted` gets no entry.
+
+With revisions on, every merge patch in a per-table pull's `merged` bucket on a resource that issues revisions carries `$rev`: its revision when the patch is the record's complete certified row (a KV row), and `null` otherwise. `null` marks the revision as unknown. A client that merges the patch into the row it stored earlier replaces a numeric `$rev` that row held, as the current `@datafn/client` does, so it never keeps a revision for a state the patch changed. This `null` is server metadata: on a resource that declares its own field named `$rev` (which therefore issues no revisions), a patch carries that application field as written and is never given `$rev: null`.
+
+Change rows written before revisions were enabled, or while the resource declared its own `$rev` field, carry no revision, so a pull returns none for them, also after the field is dropped. On a SQL database reached without raw SQL access, change rows record a revision only once both `rev` and `rev_certified` columns exist (see [Prisma and other SQL access without raw SQL](#prisma-and-other-sql-access-without-raw-sql)).
+
+### Push
+
+A push result carries the record's complete row after the write (read in the write's transaction) only when all of these hold; otherwise it carries `rev` alone:
+
+- the database has transactions;
+- the caller's read policy covers every field of the resource;
+- the caller's own versioned query of that record returns it at the same revision (see [The post-write read](#the-post-write-read));
+- the caller can still access the record (checked again in the write's transaction for a shareable resource);
+- no later mutation of the same push changed the record again (directly, or through a cascade, `setNull` or inherited-inactive update).
+
+Only the `$rev` on the returned row belongs to that row. A deduplicated replay carries the stored `rev` without a row, and only when the retry names the same resource and id as the stored write; a mutation id reused for another record gets no `rev`, on push and on `/mutation`, and a mutation id one push uses for more than one record gets none. A push a gateway routing assertion admitted gets `rev` only, because the assertion is bound to the push request and cannot admit the query.
+
+#### The post-write read
+
+After every write of the push, the server sends a versioned `/query` for the written ids, with the push's request headers, through the DataFn router's current handler, exactly as an external request: every router middleware (including middleware added later with `router.use`), the configured `context` factory, route-ticket validation with the `query` scope where route tickets are configured, the server's `authorize` callback and every plugin `authorize` hook, the plugin `beforeQuery` and `afterQuery` hooks, and the route `afterResponse` hooks. Router middleware sees the read's body with the same envelope as an external `/query`. The row returned in the push result is the one read in the write's transaction, and only when the router's response to that query held exactly it, `$rev` included, and the query ran for the written resource in the push's namespace, so middleware or a hook that denies, redirects, rewrites or trims the read leaves `rev` alone. A denied read emits the query's authorization-denied event. The read is not rate limited again and is not held to `maxPayloadBytes`, since the server generated it; nothing a caller sends can claim either exemption. At most `limits.maxBatchQueryConcurrency` of these reads run at once.
+
+The reads of one push must answer within 2 seconds of the first. Otherwise (for example behind router middleware that serializes requests and so waits for the push itself) the push settles at that deadline and returns `rev` alone, whatever the router does with the read's response. When the push stops waiting, whether the read answered (a non-2xx answer included) or the deadline passed:
+
+- the read-back request's `signal` is aborted;
+- active reads of the body the DataFn route produced, and of clones and tee branches router middleware made of it, are errored, and its upstream work is cancelled;
+- bytes a branch or a completed clone already buffered cannot be revoked and remain readable to whoever holds them.
+
+A body that router middleware creates itself (a replacement stream), and any branch it keeps, are outside DataFn's stream: middleware owns them and must cancel or release them when the read-back request's `signal` aborts. See [Router middleware and the post-write read](#router-middleware-and-the-post-write-read).
+
+### Versioned queries
+
+A versioned query returns its rows with `$rev` only for rows of its own resource that the caller may read in full: not for a relation traversal, a projection (`select`, `omit`), grouping, aggregation or a temporal clause. A query that does not qualify, including any query of a resource whose read policy withholds fields and any `sharedWithMe` query (its rows belong to other namespaces), returns its rows with no `$rev` and without the declared fields the read policy withholds (other keys, such as aggregation aliases, are kept); a row with a column the caller may not read also gets no `$rev`. A qualifying query runs inside the revision snapshot described above and returns its own rows as stored (as clone returns them, foreign keys included, on every query strategy), so filters, sorting, pagination, trash and archive state and row-level access (owned rows, grants and principal memberships of a private shareable resource, resolved inside the snapshot) are decided on the same state as the revision. A row that gets no revision is returned as the plain query projects it. If any read of the query fails inside the snapshot, whether the query raises the error or recovers from it (a push-down or in-memory fallback, which on PostgreSQL would otherwise read an aborted transaction as empty), the query runs again outside the snapshot, with access resolved afresh as without revisions (never from principals an earlier query of the same batch resolved), and returns no revisions.
+
+The plugin `afterQuery` hooks may change, add, drop or reorder rows and results. DataFn records which query of the request returned each row with a `$rev` before the hooks run, and checks the response exactly as it is sent, after every serializer such as `toJSON` of the hook output. A server `$rev` stays only on a row the hooks left unchanged, in the result of a query that returned that exact row with it. A row a hook edits, or moves to another query's result or to a result no query answers, loses its `$rev`, and so does a row a hook adds unless it equals a row that result's own query returned with that `$rev`. A `$rev` that a resource declares as its own field is application data and is kept on its rows, edited or not. A hook's copy of such a row cannot be told from a server revision when its `id` and `$rev` equal a pair a versioned query of the same request returned: it then loses `$rev` in a versioned query's result and, when edited, in any other result whose own query returned no row of that `id` with a `$rev`.
+
+## Host hooks and middleware
+
+DataFn removes a server `$rev` that it cannot tie to the exact row it certified only from versioned query results ([above](#versioned-queries)). Code that your host runs on other DataFn responses must do the same for any certified row it changes.
+
+### `afterSync` and `afterResponse` hooks
+
+A plugin `afterSync` hook and a route `afterResponse` hook (`routeHooks.afterResponse`) see the response after DataFn has attached revisions. A hook that edits or trims a certified row (removes or changes a field, or replaces the row) must also remove the revision metadata that would certify the changed payload:
+
+- **Clone:** remove the row's `$rev`.
+- **Pull:** remove the row's `$rev`, and for a global-cursor change also the change's `rev`. For a per-table `merged` patch, set `$rev` to `null` rather than leaving a stale number. A hook that drops a delete should drop its `deletedRevisions` entry too.
+- **Push:** remove the post-write `record` from the mutation's `revisions` entry (or remove its `$rev`). A host filter can omit the edited post-write row and keep the mutation's revision by itself: `{ resource, id, rev }` without `record` is a valid result that certifies no row.
+- **Versioned query** (`afterResponse` only; `afterQuery` hooks are checked by DataFn): remove the row's `$rev`.
+
+A row you drop takes its revision with it. Leave `$rev` alone on resources that declare a field named `$rev` (they issue no revisions): there it is the application's own field.
+
+### Host response filters
+
+Middleware that your host runs outside the DataFn router (for example in an outer framework that calls `server.router.handle`) does not see the post-write read. If it denies or filters `/query` responses, gate push the same way, or apply the same filter to every row DataFn returns, including the post-write rows in push results: remove `$rev` from a row you trim, or replace the row with an acknowledgement without a row.
+
+### Router middleware and the post-write read
+
+Router middleware (`router.use`) does see the post-write read: it is a request like any other `/query`, and its request carries an abort `signal`. When the push stops waiting for the read (it answered, or the 2-second deadline passed), DataFn aborts that signal, errors active reads of the body the DataFn route produced, including clones and tee branches middleware made of it, and cancels its upstream. Bytes already buffered in a completed clone remain readable; they cannot be revoked. Middleware that replaces the response body, or tees it and keeps a branch, owns that replacement stream and that branch: it must listen for the request's `abort` and cancel or release them then, or they outlive the push.
+
+## Client
+
+This release adds revisions to the server's wire format only. `@datafn/client` does not store them yet: it does not keep `$rev` or `rev` from clone, pull or push as revisions, it treats a `withRevisions` query like any other query, and it has no paired-read API. Storing each record's server row together with its revision, and the paired-read APIs (`getWithRevision`, `getRevision`, `serverCapabilities().revisions`), are follow-up work (DATA-49). Until then, read revisions from the server responses described above, for example with a versioned query sent directly to the server:
+
+```ts
+const response = await fetch(`${serverUrl}/datafn/query`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    resource: "task",
+    version: 1,
+    withRevisions: true,
+    filters: { id: "task:1" },
+  }),
+});
+const body = await response.json();
+const row = body.result?.data?.[0]; // row.$rev is the revision of exactly this row, when present
+```
+
+A row without `$rev`, or with `$rev: null`, has no proven revision: read it again, or treat its revision as unknown.
+
+A resource with its own field named `$rev` keeps that field as application data and gets no revisions; pulls, including combined per-table entries, return that field unchanged whether revisions are on or off.
