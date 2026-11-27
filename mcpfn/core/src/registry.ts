@@ -84,9 +84,9 @@ interface SchemaEntry {
   snapshot: object;
   validator: CompiledSchema;
   source?: object;
-  // For a custom compiler's validator: the registration it was compiled for
-  // (its caller definition, its `kind:name` and the caller schema object).
-  owners?: readonly unknown[];
+  // For a custom compiler's validator: the `kind:name` of the registration
+  // it was compiled for.
+  retryKey?: string;
 }
 
 const snapshotTexts = new WeakMap<object, string>();
@@ -310,18 +310,15 @@ function collectionError(schemas: object[]): unknown {
 
 /**
  * Validators a custom compiler returned to registrations that did not stay
- * registered, shared by one registry's lineage (the registry and every
- * clone(), cloneEmpty() or declaration copy derived from it). Such a compiler
- * may hold state the registry cannot roll back (an Ajv instance keeps each
- * compiled `$id`). A registration that failed, or a server declaration whose
- * copy was discarded, parks its validators here. Its retry (a registration of
- * the same definition object, schema object or tool or prompt name) takes each
- * parked validator once for an equal schema. Every other registration reaches
- * the compiler. Independent registries sharing one compiler share nothing.
+ * registered, by `kind:name`. Such a compiler may hold state the registry
+ * cannot roll back (an Ajv instance keeps each compiled `$id`), so the retry
+ * of that registration takes each parked validator once for an equal schema.
+ * A registration that fails parks its compiles on its registry. A server
+ * declaration that fails parks its copy's compiles on the declared registry,
+ * for the next declaration over that registry only. Any other registration,
+ * a sibling copy and an independent registry reach the compiler.
  */
-interface CompileLineage {
-  parked: SchemaEntry[];
-}
+type ParkedCompiles = Map<string, SchemaEntry[]>;
 
 /** JSON value equality that tells 0 from -0, unlike comparing JSON text. */
 function sameJson(left: unknown, right: unknown): boolean {
@@ -484,9 +481,9 @@ export interface McpFnRegistryOptions {
    * copy a server declaration makes, keep using it. The compiler decides the
    * dialect, schema syntax, reference resolution and `$id` uniqueness: each
    * registration of a schema reaches it, except the retry of a registration
-   * that failed or of a server declaration that failed over this registry (the
-   * same definition object, schema object or name), which reuses that
-   * attempt's validators for equal schemas. The compiler's acceptance is the
+   * that failed on this registry, or of a server declaration that failed over
+   * it (the same tool or prompt name), which reuses that attempt's validators
+   * for equal schemas. The compiler's acceptance is the
    * only self-containment check: the registry, its clones and a server
    * declaration's copy list whatever it accepted.
    */
@@ -1050,14 +1047,20 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // The custom compiler's parked validators in this registry's lineage (see
-  // CompileLineage), how many entries this registry inherited, and the
-  // identity of the registration in progress.
-  private lineage: CompileLineage = { parked: [] };
+  // The custom compiler's parked validators for retries on this registry,
+  // and for declarations over it (see ParkedCompiles); how many entries this
+  // registry inherited; the `kind:name` of the registration in progress.
+  private parked: ParkedCompiles = new Map();
+  private declarationParked: ParkedCompiles | undefined;
   private inherited = 0;
-  private registrant: readonly unknown[] = [];
+  private retryKey: string | undefined;
 
   static {
+    registryInternals.declarationCopy = (registry) => {
+      const copy = registry.clone();
+      copy.parked = registry.declarationParked ??= new Map();
+      return copy;
+    };
     registryInternals.abandonCopy = (registry) => {
       if (registry instanceof McpFnRegistry) registry.abandon();
     };
@@ -1065,10 +1068,15 @@ export class McpFnRegistry<TContext = undefined> {
 
   /** Park the validators this copy compiled itself, for a retry to reuse. */
   private abandon(): void {
-    if (this.customCompile) {
-      this.lineage.parked.push(...this.entries.slice(this.inherited).filter((entry) => entry.owners));
-    }
+    for (const entry of this.entries.slice(this.inherited)) this.park(entry);
     this.inherited = this.entries.length;
+  }
+
+  private park({ snapshot, validator, retryKey }: SchemaEntry): void {
+    if (retryKey === undefined) return;
+    const parked = this.parked.get(retryKey);
+    if (parked) parked.push({ snapshot, validator, retryKey });
+    else this.parked.set(retryKey, [{ snapshot, validator, retryKey }]);
   }
 
   /**
@@ -1115,7 +1123,6 @@ export class McpFnRegistry<TContext = undefined> {
 
   private derive(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
-    target.lineage = this.lineage;
     target.requireClosed = this.requireClosed || this.closureError() === undefined;
     for (const entry of this.entries) {
       let validator = entry.validator;
@@ -1189,29 +1196,28 @@ export class McpFnRegistry<TContext = undefined> {
         pending.find(entry => entry.source === source);
       if (known && snapshotText(known.snapshot) === snapshotText(snapshot)) return known;
     }
-    const owners = this.customCompile
-      ? [...this.registrant, ...(isObject(source) && source !== snapshot ? [source] : [])]
-      : undefined;
+    const retryKey = this.customCompile ? this.retryKey : undefined;
     const entry: SchemaEntry = {
       snapshot,
-      validator: this.compile(snapshot, owners),
+      validator: this.compile(snapshot, retryKey),
       ...(isObject(source) && source !== snapshot ? { source } : {}),
-      ...(owners ? { owners } : {}),
+      ...(retryKey === undefined ? {} : { retryKey }),
     };
     pending.push(entry);
     return entry;
   }
 
-  private compile(schema: object, owners: readonly unknown[] | undefined): CompiledSchema {
+  private compile(schema: object, retryKey: string | undefined): CompiledSchema {
     this.compileAttempts += 1;
     if (!this.customCompile) return this.builtIn!.compile(schema);
     // Only the retry of a registration that did not stay registered reuses
     // its validator; any other registration meets the compiler's own rules.
-    const parked = this.lineage.parked;
-    const retried = parked.findIndex((entry) =>
-      entry.owners!.some((owner) => owners!.includes(owner)) && sameJson(entry.snapshot, schema));
-    if (retried >= 0) return parked.splice(retried, 1)[0].validator;
-    return this.customCompile(schema);
+    const parked = retryKey === undefined ? undefined : this.parked.get(retryKey);
+    const retried = parked?.findIndex((entry) => sameJson(entry.snapshot, schema)) ?? -1;
+    if (retried < 0) return this.customCompile(schema);
+    const [entry] = parked!.splice(retried, 1);
+    if (parked!.length === 0) this.parked.delete(retryKey!);
+    return entry.validator;
   }
 
   /** Run one registration body with nested registration on this registry refused. */
@@ -1243,11 +1249,11 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
-        if (this.customCompile) this.lineage.parked.push(...pending);
+        for (const entry of pending) this.park(entry);
         throw error;
       } finally {
         this.pending = undefined;
-        this.registrant = [];
+        this.retryKey = undefined;
       }
       for (const entry of pending) this.accept(entry);
       return this;
@@ -1321,7 +1327,7 @@ export class McpFnRegistry<TContext = undefined> {
     const { definition, fields, record } = this.readRegistration(given, "tool", TOOL_FIELDS);
     const tool = fields as unknown as McpFnToolDefinition<TContext>;
     assertName("tool", tool.name);
-    this.registrant = [definition, `tool:${tool.name}`];
+    this.retryKey = `tool:${tool.name}`;
     if (this.tools.has(tool.name)) {
       throw new McpFnValidationError(`Duplicate MCP tool: ${tool.name}`);
     }
@@ -1517,7 +1523,7 @@ export class McpFnRegistry<TContext = undefined> {
     const prompt = fields as unknown as McpFnPromptDefinition<TContext>;
     const accepted = record?.schemas as PromptSchemas | undefined;
     assertName("prompt", prompt.name);
-    this.registrant = [definition, `prompt:${prompt.name}`];
+    this.retryKey = `prompt:${prompt.name}`;
     if (this.prompts.has(prompt.name)) {
       throw new McpFnValidationError(
         `Duplicate MCP prompt: ${prompt.name}`,

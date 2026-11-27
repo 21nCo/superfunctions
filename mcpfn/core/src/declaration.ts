@@ -47,7 +47,9 @@ export class McpFnServerDeclaration<TContext = undefined> {
     // Always own a copy of a supplied registry: capabilities are resolved
     // here, so later registrations on the caller's registry must not change
     // this declaration's tools without changing its manifest.
-    this.registry = options.registry ? options.registry.clone() : new McpFnRegistry<TContext>();
+    this.registry = options.registry
+      ? registryInternals.declarationCopy(options.registry)
+      : new McpFnRegistry<TContext>();
     try {
       for (const tool of options.tools ?? []) this.registry.register(tool);
       for (const resource of options.resources ?? []) this.registry.registerResource(resource);
@@ -55,24 +57,24 @@ export class McpFnServerDeclaration<TContext = undefined> {
         this.registry.registerResourceTemplate(template);
       }
       for (const prompt of options.prompts ?? []) this.registry.registerPrompt(prompt);
+      const capabilities = resolveMcpFnServerCapabilities(
+        this.registry,
+        options.capabilities,
+        Boolean(this.registry.capabilities().tasks),
+      );
+      this.manifestOptions = {
+        protocolVersions: options.protocolVersions,
+        transports: options.transports,
+        extensions: options.extensions,
+        capabilities,
+        clientRequirements: options.clientRequirements,
+      };
     } catch (error) {
       // The copy is discarded: a corrected declaration over the same registry
       // reuses what its custom compiler compiled.
       registryInternals.abandonCopy(this.registry);
       throw error;
     }
-    const capabilities = resolveMcpFnServerCapabilities(
-      this.registry,
-      options.capabilities,
-      Boolean(this.registry.capabilities().tasks),
-    );
-    this.manifestOptions = {
-      protocolVersions: options.protocolVersions,
-      transports: options.transports,
-      extensions: options.extensions,
-      capabilities,
-      clientRequirements: options.clientRequirements,
-    };
   }
 
   manifest(): McpFnManifest {

@@ -565,6 +565,50 @@ describe("McpFnRegistry custom compiler authority", () => {
     expect(compileSchema).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps a declaration's retry for that declaration and a copy's retry for that copy", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    // Accepts two schemas with one $id and rejects the third.
+    let count = 0;
+    const compileSchema = vi.fn(() => {
+      count += 1;
+      if (count > 2) throw new Error(`schema with key or id "${sharedId}" already exists`);
+      return Object.assign(() => true, { errors: null });
+    });
+    const parent = new McpFnRegistry({ compileSchema }).register(tool("a"));
+    expect(() => defineMcpFnServer({ info, registry: parent, tools: [tool("b"), tool("b")] }))
+      .toThrow("Duplicate MCP tool: b");
+    expect(() => parent.register(tool("b"))).toThrow("Tool b contains an invalid JSON Schema");
+    expect(compileSchema).toHaveBeenCalledTimes(3);
+    expect(defineMcpFnServer({ info, registry: parent, tools: [tool("b")] }).registry.listTools()
+      .map((listed) => listed.name)).toEqual(["a", "b"]);
+
+    const strict = counting();
+    const source = new McpFnRegistry({ compileSchema: strict });
+    const [first, second] = [source.clone(), source.clone()];
+    expect(() => first.register(failing("t") as never)).toThrow("Tool t contains an invalid JSON Schema");
+    expect(() => second.register(tool("t"))).toThrow("Tool t contains an invalid JSON Schema");
+    first.register(tool("t"));
+    expect(first.listTools().map((listed) => listed.name)).toEqual(["t"]);
+  });
+
+  it("retries a declaration that failed after its definitions registered", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const registry = new McpFnRegistry({ compileSchema: counting() });
+    let fail = true;
+    const declare = () => defineMcpFnServer({
+      info,
+      registry,
+      tools: [tool("t")],
+      get capabilities() {
+        if (fail) throw new Error("capabilities unavailable");
+        return undefined;
+      },
+    });
+    expect(declare).toThrow("capabilities unavailable");
+    fail = false;
+    expect(declare().registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+  });
+
   it("reuses every compile of an interrupted multi-tool declaration on its retry", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const compileSchema = counting();
