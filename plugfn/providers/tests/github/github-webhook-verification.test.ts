@@ -225,16 +225,30 @@ describe('github webhook verification', () => {
       },
     };
     const rawBody = JSON.stringify(payload);
+    const deliveryId = 'test-github-delivery';
+    const headers = {
+      'x-github-event': 'pull_request',
+      'x-github-delivery': deliveryId,
+      'x-hub-signature-256': sign(rawBody, secret),
+    };
+    const standaloneIdentity = { deliveryId, idempotencyKey: `github:${deliveryId}` };
+    const expectedEvent = {
+      event,
+      verified: true,
+      ...(scoped && hasInstallation
+        ? { idempotencyKey: expect.stringContaining('["github","test-tenant","test-connection",') }
+        : standaloneIdentity),
+    };
     if (ingress === 'SDK') {
       await expect(runtime.webhooks.handle(
-        'github', 'pull_request', undefined, { 'x-hub-signature-256': sign(rawBody, secret) }, secret,
+        'github', 'pull_request', undefined, headers, secret,
         { rawBody: encoder.encode(rawBody) },
-      )).resolves.toMatchObject({ event, verified: true });
+      )).resolves.toMatchObject(expectedEvent);
     } else {
       const router = createPlugFnRouter(runtime, { webhookSecret: { github: secret } });
       const accepted = await router.handle(new Request('https://app.example.test/webhooks/github/pull-request', {
         method: 'POST',
-        headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sign(rawBody, secret) },
+        headers,
         body: rawBody,
       }));
       if (legacyVerifierFails || legacyVerifierMissing) {
@@ -277,7 +291,7 @@ describe('github webhook verification', () => {
       }
       expect(accepted.status).toBe(200);
       const result = await accepted.json();
-      expect(result).toMatchObject({ data: { event: { event, verified: true } } });
+      expect(result).toMatchObject({ data: { event: expectedEvent } });
       if (scoped && !hasInstallation) {
         const receipt = await runtime.runtime.webhooks.getReceipt(result.data.receiptId);
         expect(receipt).toMatchObject({ event: 'pull-request' });
@@ -290,7 +304,10 @@ describe('github webhook verification', () => {
     else expect(resolveBinding).not.toHaveBeenCalled();
     const legacyListenerRuns = legacyPayload && !callbackFailure;
     if (legacyListenerRuns) {
-      expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: 'pull_request' }));
+      expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        event: 'pull_request',
+        ...standaloneIdentity,
+      }));
     } else {
       expect(listener).not.toHaveBeenCalled();
     }

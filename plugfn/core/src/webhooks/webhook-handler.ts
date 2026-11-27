@@ -208,7 +208,7 @@ export class WebhookHandler {
       const standalone = scope.standalone;
       if (scope.revoked.aborted) throw webhookBindingRevoked();
       if (standalone.trigger.webhookConfig?.shouldDispatch?.(standalone.transformedPayload) !== false) {
-        const standaloneEvent = this.createWebhookEvent(provider, standalone, scope);
+        const standaloneEvent = this.createWebhookEvent(provider, standalone);
         const triggerEvent = await standalone.trigger.handler(standalone.transformedPayload);
         if (scope.revoked.aborted) throw webhookBindingRevoked();
         await this.emit(provider, standalone.triggerKey, { ...triggerEvent, ...standaloneEvent }, undefined, undefined);
