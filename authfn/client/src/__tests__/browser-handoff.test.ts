@@ -73,7 +73,11 @@ const refusedSessionData: ReadonlyArray<readonly [string, unknown]> = ([
     data.session.actorType = 'robot';
     data.session.subject = { actorId: 'user-1', actorType: 'robot' };
   }],
-  ['a handoff region that is not a string or null', (data) => { data.handoff.regionId = 7; }]
+  ['a handoff region that is not a string or null', (data) => { data.handoff.regionId = 7; }],
+  ['a resource id that is not a string', (data) => { data.session.resourceIds = [7]; }],
+  ['a method that is not a string', (data) => { data.session.methods = [{}]; }],
+  ['scopes that are not an array', (data) => { data.session.scopes = '*'; }],
+  ['a scope that is not a string', (data) => { data.session.scopes = [null]; }]
 ] as Array<[string, (data: { session: Record<string, unknown>; handoff: Record<string, unknown> }) => void]>)
   .map(([label, defect]) => {
     const data = issuedData('session-1', 'test-session-token') as unknown as {
@@ -511,6 +515,35 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
+  it.each([
+    // Built at runtime so no committed literal is a URL with credentials.
+    ['credentials', (url: string) => url.replace(`${APP}/`, `https://${['test-user', 'test-pass'].join(':')}@app.example.com/`)],
+    ['a user name alone', (url: string) => url.replace(`${APP}/`, 'https://test-user@app.example.com/')],
+    ['a blob: URL of the allowed origin', (url: string) => `blob:${url}`]
+  ] as const)('refuses a return with %s before touching the store', async (_label, mutate) => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const before = await dumpStore(store);
+    const spoofed = mutate(callback);
+    // The spoofed URL still names the allowed origin.
+    expect(new URL(spoofed).origin).toBe(APP);
+
+    const result = failed(await make().complete(spoofed));
+
+    expect(result.reason).toBe('origin-mismatch');
+    expect(JSON.stringify(result)).not.toContain('test-user');
+    expect(JSON.stringify(result)).not.toContain('test-pass');
+    if (result.cleanUrl !== undefined) {
+      expect(result.cleanUrl).toBe(RETURN_TO);
+    }
+    expect(await dumpStore(store)).toBe(before);
+    expect(server.exchange).not.toHaveBeenCalled();
+    // The genuine return still completes.
+    expect((await make().complete(callback)).status).toBe('completed');
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a handoff pending when its return arrives on another allowed origin', async () => {
     const { make, server, store } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
@@ -652,6 +685,24 @@ describe('createBrowserHandoff', () => {
     });
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('already-used');
     expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['is the stored verifier', (verifier: string) => verifier],
+    ['contains part of the stored verifier', (verifier: string) => `req-${verifier.slice(5, 20)}`]
+  ] as const)('drops a provider-error request id that %s', async (_label, requestIdFor) => {
+    const { make, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const url = new URL(begun.start.returnTo);
+    url.searchParams.set('auth_error', 'oauth_callback_failed');
+    url.searchParams.set('auth_request_id', requestIdFor(verifier));
+
+    const result = failed(await make().complete(url.href));
+
+    expect(result).toMatchObject({ reason: 'provider-error', handoffId: begun.handoffId, cleanUrl: RETURN_TO });
+    expect(result.requestId).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(verifier.slice(5, 20));
   });
 
   it('returns the two-factor challenge of the social callback and retires the handoff', async () => {
@@ -1312,6 +1363,28 @@ describe('createBrowserHandoff', () => {
     expect(await redirectFor(`/next?c=${percentEncoded(detailsInput.code)}`)).toEqual({ status: 302 });
     expect(await redirectFor(`https://${detailsInput.code.toUpperCase()}.example.test/`)).toEqual({ status: 302 });
     expect(await redirectFor('//elsewhere.example.test/next')).toEqual({ status: 302 });
+    // A path- or query-relative Location is kept as sent; the host resolves it.
+    expect(await redirectFor('next')).toEqual({ status: 302, redirectTo: 'next' });
+    expect(await redirectFor('../continue?step=2')).toEqual({ status: 302, redirectTo: '../continue?step=2' });
+    expect(await redirectFor('?step=2')).toEqual({ status: 302, redirectTo: '?step=2' });
+    expect(await redirectFor(`next?c=${detailsInput.code}`)).toEqual({ status: 302 });
+    expect(await redirectFor(`../${percentEncoded(detailsInput.verifier.slice(10, 18))}`)).toEqual({ status: 302 });
+    // A backslash spelling of '//host', or a scheme, leaves the request's origin.
+    expect(await redirectFor('\\\\elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('/\\elsewhere.example.test/next')).toEqual({ status: 302 });
+    expect(await redirectFor('mailto:someone@example.test')).toEqual({ status: 302 });
+  });
+
+  it('keeps only a root-relative redirect when the request URL is not absolute', async () => {
+    const redirectFor = async (location: string) => {
+      const client = createAuthFnClient({
+        baseUrl: '/auth',
+        fetch: async () => new Response(null, { status: 302, headers: { location } })
+      });
+      const envelope = await client.exchangeSocialHandoff(detailsInput) as { error: { details: Record<string, unknown> } };
+      return envelope.error.details;
+    };
+    expect(await redirectFor('/next')).toEqual({ status: 302, redirectTo: '/next' });
     expect(await redirectFor('next')).toEqual({ status: 302 });
   });
 
@@ -1441,6 +1514,19 @@ describe('createBrowserHandoff', () => {
       handoff: data.handoff,
       requestId: 'req-issued'
     });
+  });
+
+  it.each([
+    ['without scopes, as older servers send it', undefined],
+    ['with string scopes', ['read:profile']]
+  ] as const)('completes with a session %s', async (_label, scopes) => {
+    const data = issuedData('session-1', 'test-session-token');
+    const session = scopes === undefined ? data.session : { ...data.session, scopes: [...scopes] };
+    const exchange = vi.fn(async () => ({ ok: true, requestId: 'req-issued', data: { ...data, session } }) as never);
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+
+    expect(await make().complete(server.callbackFor(begun))).toMatchObject({ status: 'completed', session });
   });
 
   it('reports a code the server refuses as exchange-rejected', async () => {

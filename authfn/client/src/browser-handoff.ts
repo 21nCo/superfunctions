@@ -129,7 +129,10 @@ export interface AuthFnBrowserHandoffBeginResult {
 }
 
 export type AuthFnBrowserHandoffFailureReason =
-  /** The callback is not on an allowed origin, or not on the origin the handoff began on. */
+  /**
+   * The callback is not an http(s) URL on an allowed origin without
+   * credentials, or not on the origin the handoff began on.
+   */
   | 'origin-mismatch'
   /** The callback is not the code-and-verifier return of the handoff it names. */
   | 'flow-mismatch'
@@ -185,7 +188,7 @@ export type AuthFnBrowserHandoffResult =
       /** A fixed message; it never repeats free-form text from the exchange. */
       error?: { code: string; message: string };
       requestId?: string;
-      /** Present whenever the callback URL could be parsed. */
+      /** Present whenever the callback is an http(s) URL; it never carries credentials. */
       cleanUrl?: string;
     }
   /** The URL carries no handoff callback; there is nothing to do. */
@@ -531,8 +534,14 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (handoffIdValues.length === 0 && !looksLikeHandoff) {
         return { status: 'not-callback' };
       }
+      // Only an http(s) URL like the one begin() bound: a blob: URL shares
+      // the origin but is not that return target, and its cleanUrl could
+      // carry credentials in its path, so it gets none.
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+        return fail('origin-mismatch');
+      }
       const cleanUrl = stripCallbackParams(url);
-      if (!allowedOrigins.has(url.origin)) {
+      if (url.username || url.password || !allowedOrigins.has(url.origin)) {
         return fail('origin-mismatch', { cleanUrl });
       }
       // Only a page on the callback's origin may read, burn or exchange it.
@@ -630,7 +639,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         if (fragment.has(CODE_PARAM)) {
           return fail('malformed-callback', { handoffId, cleanUrl });
         }
-        const requestId = matching(url.searchParams.get('auth_request_id'), REQUEST_ID_PATTERN);
+        // The callback query is not trusted: a request id that repeats the
+        // verifier is dropped like any other text that does.
+        const requestId = safeText(url.searchParams.get('auth_request_id'), REQUEST_ID_PATTERN, [record.verifier]);
         return fail('provider-error', {
           handoffId,
           cleanUrl,
@@ -951,8 +962,10 @@ function acceptedHandoffSession(envelope: unknown, secrets: readonly string[]): 
     || !isRecord(session.subject)
     || session.subject.actorId !== session.actorId
     || session.subject.actorType !== 'user'
-    || !Array.isArray(session.resourceIds)
-    || !Array.isArray(session.methods)
+    || !isStringArray(session.resourceIds)
+    || !isStringArray(session.methods)
+    // Servers that predate scopes omit them.
+    || (session.scopes !== undefined && !isStringArray(session.scopes))
     || handoff.type !== 'session-token'
     // The bearer resolver trims the token, so whitespace alone is no token.
     || !isNonBlank(handoff.token)
@@ -974,6 +987,10 @@ function withoutRequestId(envelope: Record<string, unknown>): Record<string, unk
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 function isNonBlank(value: unknown): value is string {
@@ -1187,6 +1204,8 @@ function stripServerParams(search: string): string {
 
 function stripCallbackParams(url: URL): string {
   const clean = new URL(url.href);
+  clean.username = '';
+  clean.password = '';
   clean.search = stripServerParams(url.search);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   for (const name of FRAGMENT_PARAMS) {

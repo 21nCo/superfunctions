@@ -281,7 +281,13 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       transportFailed = true;
       result = { ok: false, error: { code: NETWORK_ERROR_CODE, retryable: true }, requestId };
     }
-    return redactSensitive.envelope(result, status, secrets, transportFailed) as T | AuthFnErrorEnvelope;
+    return redactSensitive.envelope(
+      result,
+      status,
+      secrets,
+      transportFailed,
+      absoluteUrl(`${baseUrl}${request.path}`)
+    ) as T | AuthFnErrorEnvelope;
   };
 
   return {
@@ -338,7 +344,8 @@ const redactSensitive = {
     result: unknown,
     status: number | undefined,
     secrets: readonly string[],
-    transportFailed = false
+    transportFailed = false,
+    requestUrl?: string
   ): unknown {
     const candidate = (typeof result === 'object' && result !== null ? result : {}) as {
       ok?: unknown;
@@ -366,7 +373,7 @@ const redactSensitive = {
         retryable: typeof error.retryable === 'boolean' ? error.retryable : status === undefined || status >= 500,
         details: {
           ...(status === undefined ? {} : { status }),
-          ...keptDetails(code, error.details, secrets)
+          ...keptDetails(code, error.details, secrets, requestUrl)
         }
       },
       requestId
@@ -374,18 +381,30 @@ const redactSensitive = {
   }
 };
 
-/** The details of `KEPT_ERROR_DETAILS[code]` that have their shape and share no text with `secrets`. */
-function keptDetails(code: string, details: unknown, secrets: readonly string[]): Record<string, unknown> {
+/**
+ * The details of `KEPT_ERROR_DETAILS[code]` that have their shape and share
+ * no text with `secrets`. A navigation target is judged against `requestUrl`,
+ * the URL the request was sent to.
+ */
+function keptDetails(
+  code: string,
+  details: unknown,
+  secrets: readonly string[],
+  requestUrl: string | undefined
+): Record<string, unknown> {
   const fields = Object.hasOwn(KEPT_ERROR_DETAILS, code) ? KEPT_ERROR_DETAILS[code]! : {};
   const kept: Record<string, unknown> = {};
-  for (const [field, check] of Object.entries(fields)) {
+  for (const [field, rule] of Object.entries(fields)) {
+    const check: TextCheck | 'boolean' = rule === isNavigationTarget
+      ? (value: string) => isNavigationTarget(value, requestUrl)
+      : rule;
     const value = details && typeof details === 'object' && Object.hasOwn(details, field)
       ? (details as Record<string, unknown>)[field]
       : undefined;
     const keep = check === 'boolean'
       ? typeof value === 'boolean'
       : safeLabel(value, check, secrets) !== undefined
-        && !((check === isAbsoluteHttpUrl || check === isNavigationTarget) && parsedUrlSharesText(value as string, secrets));
+        && !((rule === isAbsoluteHttpUrl || rule === isNavigationTarget) && parsedUrlSharesText(value as string, secrets));
     if (keep) {
       kept[field] = value;
     }
@@ -422,9 +441,41 @@ function isAbsoluteHttpUrl(value: string): boolean {
   }
 }
 
-/** An absolute http(s) URL as `isAbsoluteHttpUrl` accepts, or a root-relative path ('/' not followed by '/' or '\\'). */
-function isNavigationTarget(value: string): boolean {
-  return isAbsoluteHttpUrl(value) || (URL_TEXT_PATTERN.test(value) && /^\/(?![/\\])/.test(value));
+/**
+ * An absolute http(s) URL as `isAbsoluteHttpUrl` accepts, or a reference
+ * relative to the request (a path, '../', '?query' or '#fragment' with no
+ * scheme and no '//' authority) that resolves against `requestUrl` to such a
+ * URL. The value is kept as sent, so the host resolves it as the server meant.
+ * Without an absolute request URL only a root-relative path is kept.
+ */
+function isNavigationTarget(value: string, requestUrl?: string): boolean {
+  if (isAbsoluteHttpUrl(value)) {
+    return true;
+  }
+  // A scheme ('mailto:', 'javascript:', 'https:host') or an authority
+  // ('//host', or the same with backslashes) leaves the request's origin.
+  if (!URL_TEXT_PATTERN.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || /^[/\\][/\\]/.test(value)) {
+    return false;
+  }
+  if (requestUrl === undefined) {
+    return value.startsWith('/');
+  }
+  try {
+    const resolved = new URL(value, requestUrl);
+    return /^https?:$/.test(resolved.protocol) && !resolved.username && !resolved.password;
+  } catch {
+    return false;
+  }
+}
+
+/** `url` as an absolute URL, resolved against the page when it is relative, or `undefined`. */
+function absoluteUrl(url: string): string | undefined {
+  const page = (globalThis as { location?: { href?: unknown } }).location?.href;
+  try {
+    return new URL(url, typeof page === 'string' ? page : undefined).href;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
