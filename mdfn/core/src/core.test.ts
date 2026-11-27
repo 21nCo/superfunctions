@@ -36,6 +36,33 @@ const projector: EditorProjector = {
 };
 
 describe("@mdfn/core", () => {
+  it("preserves own JSON prototype-named metadata without changing the object prototype", () => {
+    const metadata = JSON.parse('{"__proto__":{"secret":"own-data"},"constructor":"literal"}');
+    const sidecar = validateMdfnSidecar({ assets: [{ id: "a", mediaType: "text/plain", metadata }] })!;
+    const cloned = sidecar.assets![0].metadata!;
+    expect(Object.hasOwn(cloned, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+    expect(JSON.stringify(cloned)).toBe(JSON.stringify(metadata));
+    expect(Object.isFrozen(cloned.__proto__)).toBe(true);
+  });
+
+  it("reuses unchanged immutable sidecar data and reports only actual anchor changes", () => {
+    const input = { assets: [{ id: "a", mediaType: "text/plain", metadata: { large: ["data"] } }], comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "m", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00Z" }] }] };
+    // A shallow-frozen input must still be detached from mutable descendants.
+    const editor = createEditor({ markdown: "abc", projector, sidecar: Object.freeze(input) });
+    const before = editor.getState().sidecar!;
+    input.assets[0].metadata.large[0] = "mutated";
+    expect(before.assets![0].metadata!.large).toEqual(["data"]);
+    expect(editor.dispatch(new Transaction().replaceSource(3, 3, "d")).sidecarChanged).toBe(false);
+    expect(editor.getState().sidecar).toBe(before);
+    expect(editor.dispatch(new Transaction().replaceSource(0, 0, "x")).sidecarChanged).toBe(true);
+    const after = editor.getState().sidecar!;
+    expect(after.assets).toBe(before.assets);
+    expect(after.comments![0].messages).toBe(before.comments![0].messages);
+    expect(after.comments![0].anchor).toEqual({ from: 2, to: 3 });
+    expect(before.comments![0].anchor).toEqual({ from: 1, to: 2 });
+  });
+
   it("detaches and deep-freezes projected documents before exposing editor state", () => {
     const projected: MdfnDocument = {
       type: "doc",
@@ -167,6 +194,12 @@ describe("@mdfn/core", () => {
     expect(editor.canUndo()).toBe(false);
     expect(editor.canRedo()).toBe(false);
     expect(editor.undo()).toBe(false);
+  });
+
+  it("keeps selection fields supplied through a prototype", () => {
+    const editor = createEditor({ markdown: "abc\n", projector });
+    editor.dispatch(new Transaction().setSelection(Object.create({ kind: "text", anchor: 1, head: 2 })));
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: 1, head: 2 });
   });
 
   it("maps canonical selections through source replacement", () => {
@@ -446,6 +479,12 @@ describe("@mdfn/core", () => {
     expect(Object.isFrozen(validated.assets)).toBe(true);
     expect(Object.isFrozen(validated.assets?.[0]?.metadata)).toBe(true);
     expect(Object.isFrozen(validated.assets?.[0]?.metadata?.nested)).toBe(true);
+  });
+
+  it("applies no aggregate text limit unless one is configured", () => {
+    const message = (index: number) => ({ id: `m${index}`, authorId: "a", body: "x".repeat(6), createdAt: "2026-01-01T00:00:00.000Z" });
+    const sidecar = { comments: [{ id: "c", anchor: { from: 0, to: 0 }, resolved: false, messages: [0, 1, 2, 3].map(message) }] };
+    expect(validateMdfnSidecar(sidecar, { maxTextLength: 8 })?.comments).toHaveLength(1);
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {

@@ -18,6 +18,9 @@ export function validateMdfnSelection(selection: MdfnSelection, markdownLength: 
     ) {
       throw new RangeError("MDFN_SELECTION_RANGE_INVALID");
     }
+    // Build the result from the validated values: fields inherited through a
+    // prototype would be dropped by copying only own properties.
+    return immutableValue({ kind: "text", anchor: selection.anchor, head: selection.head });
   } else if (selection.kind === "node") {
     if (
       Object.keys(selection).some((key) => !["kind", "nodeId"].includes(key))
@@ -26,8 +29,7 @@ export function validateMdfnSelection(selection: MdfnSelection, markdownLength: 
     ) {
       throw new TypeError("MDFN_SELECTION_INVALID");
     }
-  } else {
-    throw new TypeError("MDFN_SELECTION_INVALID");
+    return immutableValue({ kind: "node", nodeId: selection.nodeId });
   }
-  return immutableValue(selection);
+  throw new TypeError("MDFN_SELECTION_INVALID");
 }

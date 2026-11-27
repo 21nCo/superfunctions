@@ -5,6 +5,10 @@ export interface SidecarValidationOptions {
   readonly markdownLength?: number;
   readonly maxEntries?: number;
   readonly maxTextLength?: number;
+  /**
+   * Optional total length of all comment messages and suggestion replacements.
+   * Unlimited unless set; each individual text is still bounded by maxTextLength.
+   */
   readonly maxAggregateTextLength?: number;
 }
 
@@ -54,7 +58,7 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   knownFields(value, ["comments", "suggestions", "assets", "historyRef", "reviewState", "audit"], "MDFN_SIDECAR_INVALID");
   const maxEntries = options.maxEntries ?? 10_000;
   const maxText = options.maxTextLength ?? 256 * 1024;
-  const maxAggregateText = options.maxAggregateTextLength ?? maxText;
+  const maxAggregateText = options.maxAggregateTextLength ?? Number.POSITIVE_INFINITY;
   let entryCount = 0;
   let jsonTextLength = 0;
   let aggregateTextLength = 0;

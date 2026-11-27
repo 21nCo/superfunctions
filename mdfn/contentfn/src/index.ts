@@ -206,7 +206,7 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       return withOpaque(escapeText(projected.text));
     }
     if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${escapeText(projected.text)}`);
-    if (type === "blockquote") return withOpaque(escapeText(projected.text).split("\n").map((line) => `> ${line}`).join("\n"));
+    if (type === "blockquote") return withOpaque(projected.text.split(/\r?\n/).map((line) => `> ${escapeText(line)}`).join("\n"));
     if (type === "code") {
       const fence = codeFence(projected.text);
       const rawLanguage = typeof block.language === "string" ? block.language : "";

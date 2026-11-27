@@ -34,15 +34,23 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
     const affinity = current.affinity ?? "after";
     const from = mapPosition(current.from, range, affinity === "before" ? "before" : "after");
     const to = mapPosition(current.to, range, affinity === "after" ? "after" : "before");
-    return { ...current, from: Math.min(from, to), to: Math.max(from, to) };
+    const start = Math.min(from, to);
+    const end = Math.max(from, to);
+    return start === current.from && end === current.to ? current : { ...current, from: start, to: end };
   }, anchor);
 }
 
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
   if (!sidecar || ranges.length === 0) return sidecar;
-  return immutableValue({
-    ...sidecar,
-    comments: sidecar.comments?.map((thread) => ({ ...thread, anchor: mapAnchor(thread.anchor, ranges) })),
-    suggestions: sidecar.suggestions?.map((suggestion) => ({ ...suggestion, anchor: mapAnchor(suggestion.anchor, ranges) })),
-  });
+  let changed = false;
+  const mapEntry = <T extends { readonly anchor: SidecarAnchor }>(entry: T): T => {
+    const anchor = mapAnchor(entry.anchor, ranges);
+    if (anchor === entry.anchor) return entry;
+    changed = true;
+    return { ...entry, anchor };
+  };
+  const comments = sidecar.comments?.map(mapEntry);
+  const suggestions = sidecar.suggestions?.map(mapEntry);
+  if (!changed) return immutableValue(sidecar);
+  return immutableValue({ ...sidecar, ...(comments ? { comments } : {}), ...(suggestions ? { suggestions } : {}) });
 }

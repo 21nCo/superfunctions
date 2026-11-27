@@ -104,6 +104,15 @@ describe("markdown content", () => {
     }
   });
 
+  it("keeps every line of a multi-line blockquote inside the quote", () => {
+    const result = migrateToMarkdownContent([{ type: "blockquote", children: [{ text: "first *line*\nsecond line" }] }]);
+    expect(result.content.markdown.split("\n").filter((line) => line.length > 0).every((line) => line.startsWith("> "))).toBe(true);
+    expect(result.content.markdown).not.toContain("&#10;");
+    const parsed = parseMarkdown(result.content.markdown);
+    expect(parsed.document.content).toHaveLength(1);
+    expect(parsed.document.content[0]?.type).toBe("blockquote");
+  });
+
   it("marks empty blocks and sanitized code metadata as lossy", () => {
     const empty = migrateToMarkdownContent([{ type: "paragraph", children: [] }]);
     const sanitized = migrateToMarkdownContent([
