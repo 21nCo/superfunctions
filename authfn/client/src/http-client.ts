@@ -102,7 +102,8 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
     send: async <T>(
       request: RequestOptions,
       serializeBody: () => string | undefined,
-      report: (metric: AuthFnClientRequestMetric) => void
+      // Optional chaining on the call skips building the metric when no hook will receive it.
+      report: ((metric: AuthFnClientRequestMetric) => void) | undefined
     ): Promise<T | AuthFnErrorEnvelope> => {
       const headers = new Headers();
       const url = `${baseUrl}${request.path}`;
@@ -133,25 +134,18 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
           body: serializeBody()
         });
       } catch (error) {
-        report({
+        report?.({
           method: request.method,
           path: request.path,
           url,
           ok: false,
           durationMs: now() - startedAt,
-          error: error instanceof Error
-            ? {
-                name: error.name,
-                message: error.message
-              }
-            : {
-                message: String(error)
-              }
+          error: describeRejection(error)
         });
         return buildTransportError(error);
       }
 
-      report({
+      report?.({
         method: request.method,
         path: request.path,
         url,
@@ -297,7 +291,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         : transport.send<T>(
             request,
             () => (request.body !== undefined ? JSON.stringify(request.body) : undefined),
-            (metric) => options.onRequestMetric?.(metric)
+            options.onRequestMetric ? (metric) => options.onRequestMetric?.(metric) : undefined
           )
   };
 }
@@ -491,6 +485,22 @@ function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean
     return true;
   }
   return secrets.some((secret) => sharesText(url.href, secret) || sharesText(url.hostname, secret.toLowerCase()));
+}
+
+/**
+ * Describes a fetch rejection for the request metric without throwing: a
+ * value that cannot be turned into a string (such as a null-prototype object)
+ * gets the fixed transport message.
+ */
+function describeRejection(error: unknown): { name?: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  try {
+    return { message: String(error) };
+  } catch {
+    return { message: 'AuthFn request failed before a response was received' };
+  }
 }
 
 function now(): number {

@@ -1517,6 +1517,36 @@ describe('createBrowserHandoff', () => {
     expect(metrics[0]?.error).toEqual({ name: 'TypeError', message: 'network down' });
   });
 
+  it('resolves the network error envelope for a fetch rejection that cannot be turned into a string', async () => {
+    const unprintable = () => Object.create(null) as unknown;
+    const expected = {
+      ok: false,
+      error: { code: 'AUTHFN_NETWORK_ERROR', retryable: true },
+      requestId: 'authfn-transport-error'
+    };
+
+    const silent = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => {
+        throw unprintable();
+      }
+    });
+    await expect(silent.getSession()).resolves.toMatchObject(expected);
+
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const observed = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => {
+        throw unprintable();
+      },
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+    await expect(observed.getSession()).resolves.toMatchObject(expected);
+    expect(metrics).toHaveLength(1);
+    expect(metrics[0]).toMatchObject({ ok: false, path: '/session' });
+    expect(metrics[0]?.error).toEqual({ message: 'AuthFn request failed before a response was received' });
+  });
+
   it.each([
     ['throws (aborted)', async () => {
       throw new DOMException('The operation was aborted.', 'AbortError');
