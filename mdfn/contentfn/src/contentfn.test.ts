@@ -152,7 +152,7 @@ describe("markdown content", () => {
     expect(result.content.markdown.length).toBeLessThan(text.length + 64);
     const parsed = parseMarkdown(result.content.markdown);
     expect(nodeText(parsed.document.content[0]!)).toBe(text);
-  });
+  }, 30_000); // Parsing a 53,000-space line takes several seconds on a loaded runner.
 
   it("keeps many quoted lines with trailing spaces within the default document size", () => {
     const quote = Array.from({ length: 300 }, (_, line) => `line ${line}${" ".repeat(100)}`).join("\n");
@@ -162,6 +162,29 @@ describe("markdown content", () => {
     const parsed = parseMarkdown(result.content.markdown);
     expect(parsed.document.content).toHaveLength(15);
     for (const block of parsed.document.content) expect(nodeText(block)).toBe(quote);
+  });
+
+  it("keeps quotes of edge-spaced lines no larger than the single-line form at the document size limit", () => {
+    // Each quote is 25,000 lines of " a ". As one escaped line it is about 200 KB, so ten
+    // of them sit just under the default 2 MiB document limit; one quoted line per break,
+    // each with both edge spaces escaped, would be about 350 KB per quote.
+    const quote = Array.from({ length: 25_000 }, () => " a ").join("\n");
+    // "> ", the text, 4 more characters per "&#10;" and per escaped edge space.
+    const singleLineLength = 2 + quote.length + 4 * 24_999 + 4 + 4;
+    const blocks = Array.from({ length: 10 }, () => ({ type: "blockquote", children: [{ text: quote }] }));
+    const result = migrateToMarkdownContent(blocks);
+    expect(result.lossy).toBe(false);
+    const quotes = result.content.markdown.split("\n\n");
+    expect(quotes).toHaveLength(10);
+    for (const block of quotes) expect(block.length).toBeLessThanOrEqual(singleLineLength);
+    expect(new TextEncoder().encode(result.content.markdown).byteLength).toBeLessThan(2 * 1024 * 1024);
+    // Parsing the full 2 MB document is slow, so the exact round trip is checked on a shorter quote of the same shape.
+    const short = Array.from({ length: 500 }, () => " a ").join("\n");
+    const shortResult = migrateToMarkdownContent([{ type: "blockquote", children: [{ text: short }] }]);
+    expect(shortResult.content.markdown.length).toBeLessThanOrEqual(2 + short.length + 4 * 499 + 8);
+    const parsed = parseMarkdown(shortResult.content.markdown);
+    expect(parsed.document.content).toHaveLength(1);
+    expect(nodeText(parsed.document.content[0]!)).toBe(short);
   });
 
   it("marks empty blocks and sanitized code metadata as lossy", () => {

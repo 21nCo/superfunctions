@@ -223,7 +223,13 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       // A parser strips leading spaces and drops or hard-breaks trailing spaces of
       // each line, so only the outermost space on each side is written as "&#32;";
       // inner spaces stay literal and the output does not grow with long runs.
-      return withOpaque(projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeQuotedLine(line)}`).join("\n"));
+      // Escaped edge spaces on many short lines can still cost more than one
+      // "&#10;" per break, so the quoted lines are used only when they are no
+      // longer than the single-line form: a quote never exceeds that form's
+      // document size or line length, and so stays within the parser limits.
+      const singleLine = `> ${escapeText(projected.text)}`;
+      const quotedLines = projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeQuotedLine(line)}`).join("\n");
+      return withOpaque(quotedLines.length <= singleLine.length ? quotedLines : singleLine);
     }
     if (type === "code") {
       const fence = codeFence(projected.text);
