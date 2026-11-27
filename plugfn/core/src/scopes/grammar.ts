@@ -7,17 +7,18 @@ import type { ScopeGrammarDefinition, ScopeNormalizeResult, ScopeShape, ScopeSub
  * copied by index: no `concat`, spread or iterator, so a polluted
  * `Symbol.isConcatSpreadable` or `Symbol.iterator` cannot nest or drop entries.
  *
- * Every path that runs per `normalize` or `isSubset` call follows the same
- * rule: it never reads an input or one of the engine's own arrays through the
+ * `defineScopeGrammar` and every path that runs per `normalize` or `isSubset`
+ * call follow the same rule: they never read an input or one of the engine's own arrays through the
  * Array iteration protocol (no `for...of`, spread or destructuring, no
  * `new Set(iterable)` or `new Map(iterable)`) and never calls an
- * `Array.prototype` method looked up at call time (no `push`, `map`, `pop`
- * or `fill`). Arrays are walked with index loops and filled by own-property
- * definition ({@link defineAt}), never by index assignment, and
- * `Array.isArray` is captured at load. A data-valued pollution, a replaced
- * Array iterator or method, or an index property on `Array.prototype` or
- * `Object.prototype` (writable, non-writable or an accessor) cannot change a
- * decision or make `normalize` or `isSubset` throw. See the trust boundary on
+ * `Array.prototype` method looked up at call time (no `push`, `map`,
+ * `flatMap`, `pop` or `fill`, and no `Object.fromEntries`). Arrays are walked
+ * with index loops and filled by own-property definition ({@link defineAt}),
+ * never by index assignment, and `Array.isArray` is captured at load. A
+ * data-valued pollution, a replaced Array iterator or method, or an index
+ * property on `Array.prototype` or `Object.prototype` (writable, non-writable
+ * or an accessor) cannot change what a grammar compiles, publishes or
+ * enforces, or make `normalize` or `isSubset` throw. See the trust boundary on
  * `ScopeGrammar`.
  *
  * The result is an ordinary frozen array whose own indexes and `length` hold
@@ -62,7 +63,8 @@ const isArray: (value: unknown) => value is unknown[] = Array.isArray;
 const defineOwnProperty: typeof Object.defineProperty = Object.defineProperty;
 
 /**
- * The one element descriptor every per-call array write uses. It has a null
+ * The one element descriptor every array write of the engine uses, at define
+ * time and per call. It has a null
  * prototype and own `value`, `writable`, `enumerable` and `configurable`, so a
  * polluted `Object.prototype.get` or `.set` can never turn it into an accessor
  * descriptor. Only `value` changes, and only inside {@link defineAt}.
@@ -78,7 +80,8 @@ const ELEMENT: { value: unknown; writable: true; enumerable: true; configurable:
  * Defines `list[index]` as an own writable data element. Unlike index
  * assignment (`[[Set]]`), a definition never consults the prototype chain, so
  * an inherited accessor's setter cannot swallow the write and an inherited
- * non-writable index cannot make it throw.
+ * non-writable index cannot make it throw. Every array the engine builds,
+ * in `defineScopeGrammar` and per call, is filled through it.
  */
 function defineAt<T>(list: T[], index: number, item: T): void {
   ELEMENT.value = item;
@@ -112,13 +115,19 @@ const NOT_PLAIN_DATA = 'scope must be plain data (objects, arrays, strings, fini
 const DIMENSION_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
 const { maxSetItems: MAX_SET_ITEMS, maxMemberLength: MAX_MEMBER_LENGTH } = SCOPE_LIMITS;
 /** Private copy of the risk order, independent of the exported array. */
+/** A `Set` of the given strings, added by index: no `new Set(iterable)`. */
+function setOf(...items: string[]): ReadonlySet<string> {
+  const set = new Set<string>();
+  for (let i = 0; i < items.length; i++) set.add(items[i]!);
+  return set;
+}
 const DIMENSION_KEYS: Readonly<Record<ScopeDimensionKind, ReadonlySet<string>>> = Object.freeze({
-  exactSet: new Set(['kind', 'values']),
-  prefixGlobSet: new Set(['kind']),
-  numericMax: new Set(['kind', 'min', 'max', 'integer']),
-  ttlMax: new Set(['kind', 'minSeconds', 'maxSeconds']),
+  exactSet: setOf('kind', 'values'),
+  prefixGlobSet: setOf('kind'),
+  numericMax: setOf('kind', 'min', 'max', 'integer'),
+  ttlMax: setOf('kind', 'minSeconds', 'maxSeconds'),
 });
-const DEFINITION_KEYS: ReadonlySet<string> = new Set(['provider', 'dimensions']);
+const DEFINITION_KEYS: ReadonlySet<string> = setOf('provider', 'dimensions');
 
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
@@ -266,19 +275,33 @@ function isEnumerable(descriptor: PropertyDescriptor): boolean {
 }
 
 /**
+ * The own properties of one trusted definition object: `keys[i]` is described
+ * by `descriptors[i]`. Two parallel arrays filled by {@link append}, so no
+ * tuple is built or destructured.
+ */
+interface DefinitionProperties {
+  readonly keys: readonly string[];
+  readonly descriptors: readonly PropertyDescriptor[];
+}
+
+/**
  * Every own property descriptor of one trusted definition object, read once
  * (a Proxy's traps run at most once here). Throws unless every key is a
  * string and every property is data, never an accessor, so no getter runs.
  */
-function readDescriptors(where: string, value: object): [string, PropertyDescriptor][] {
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const entries: [string, PropertyDescriptor][] = [];
-  for (const key of Reflect.ownKeys(descriptors)) {
-    const descriptor = descriptors[key as keyof typeof descriptors] as PropertyDescriptor;
+function readDescriptors(where: string, value: object): DefinitionProperties {
+  const all = Object.getOwnPropertyDescriptors(value);
+  const ownKeys = Reflect.ownKeys(all);
+  const keys: string[] = [];
+  const descriptors: PropertyDescriptor[] = [];
+  for (let i = 0; i < ownKeys.length; i++) {
+    const key = ownKeys[i]!;
+    const descriptor = all[key as keyof typeof all] as PropertyDescriptor;
     if (typeof key !== 'string' || !isDataDescriptor(descriptor)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
-    entries.push([key, descriptor]);
+    append(keys, key);
+    append(descriptors, descriptor);
   }
-  return entries;
+  return ownRecord<DefinitionProperties>({ keys, descriptors });
 }
 
 /**
@@ -292,11 +315,13 @@ function readDescriptors(where: string, value: object): [string, PropertyDescrip
  */
 function readDefinitionData(where: string, value: object): Record<string, unknown> {
   const proto: unknown = Object.getPrototypeOf(value);
-  if (Array.isArray(value) || (proto !== Object.prototype && proto !== null)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
+  if (isArray(value) || (proto !== Object.prototype && proto !== null)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
   const data = Object.create(null) as Record<string, unknown>;
-  for (const [key, descriptor] of readDescriptors(where, value)) {
+  const properties = readDescriptors(where, value);
+  for (let i = 0; i < properties.keys.length; i++) {
+    const descriptor = properties.descriptors[i]!;
     if (!isEnumerable(descriptor)) throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
-    data[key] = descriptor.value;
+    data[properties.keys[i]!] = descriptor.value;
   }
   return data;
 }
@@ -314,11 +339,14 @@ function readDefinitionArray(where: string, value: readonly unknown[]): unknown[
   const members: unknown[] = [];
   let length = 0;
   let count = 0;
-  for (const [key, descriptor] of readDescriptors(where, value)) {
+  const properties = readDescriptors(where, value);
+  for (let i = 0; i < properties.keys.length; i++) {
+    const key = properties.keys[i]!;
+    const descriptor = properties.descriptors[i]!;
     if (key === 'length') {
       length = descriptor.value as number;
     } else if (ARRAY_INDEX.test(key) && isEnumerable(descriptor)) {
-      members[Number(key)] = descriptor.value;
+      defineAt(members, Number(key), descriptor.value);
       count++;
     } else {
       throw new TypeError(`${where} ${PLAIN_DEFINITION}`);
@@ -342,14 +370,18 @@ function readDimensionsDefinition(provider: string, dimensions: unknown): Record
   if (typeof dimensions !== 'object' || dimensions === null) throw new TypeError(`${where} must be an object`);
   const entries = readDefinitionData(where, dimensions);
   const copy = Object.create(null) as Record<string, Record<string, unknown>>;
-  for (const name of Object.keys(entries)) {
+  const names = Object.keys(entries);
+  for (let n = 0; n < names.length; n++) {
+    const name = names[n]!;
     const entryWhere = `Scope grammar "${provider}": dimension "${name}"`;
     const entry = entries[name];
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new TypeError(`${entryWhere} must be an object`);
+    if (typeof entry !== 'object' || entry === null || isArray(entry)) throw new TypeError(`${entryWhere} must be an object`);
     const options = readDefinitionData(entryWhere, entry);
-    for (const key of Object.keys(options)) {
+    const keys = Object.keys(options);
+    for (let k = 0; k < keys.length; k++) {
+      const key = keys[k]!;
       const option = options[key];
-      if (Array.isArray(option)) options[key] = readDefinitionArray(`${entryWhere} ${key}`, option);
+      if (isArray(option)) options[key] = readDefinitionArray(`${entryWhere} ${key}`, option);
     }
     copy[name] = options;
   }
@@ -424,8 +456,9 @@ function compileDimension(provider: string, name: string, def: Record<string, un
     throw new TypeError(`${where} has unsupported kind ${typeof kind === 'string' ? JSON.stringify(kind) : typeof kind}`);
   }
   const allowed = DIMENSION_KEYS[kind as ScopeDimensionKind];
-  for (const key of Object.keys(def)) {
-    if (!allowed.has(key)) throw new TypeError(`${where} has unsupported option ${JSON.stringify(key)}`);
+  const keys = Object.keys(def);
+  for (let k = 0; k < keys.length; k++) {
+    if (!allowed.has(keys[k]!)) throw new TypeError(`${where} has unsupported option ${JSON.stringify(keys[k])}`);
   }
   let compiled: CompiledDimension;
   switch (kind as ScopeDimensionKind) {
@@ -437,11 +470,14 @@ function compileDimension(provider: string, name: string, def: Record<string, un
       }
       const members = readArray(values);
       if (typeof members === 'string') throw new TypeError(`${where} values ${members}`);
-      for (const value of members) {
+      const vocabulary = new Set<string>();
+      for (let i = 0; i < members.length; i++) {
+        const value = members[i];
         const reason = invalidMember(value, false);
         if (reason) throw new TypeError(`${where} value ${reason}`);
+        vocabulary.add(memberKey(value as string));
       }
-      compiled = compiledDimension(name, 'exactSet', false, undefined, undefined, new Set((members as string[]).map(memberKey)));
+      compiled = compiledDimension(name, 'exactSet', false, undefined, undefined, vocabulary);
       break;
     }
     case 'prefixGlobSet':
@@ -464,12 +500,22 @@ function compileDimension(provider: string, name: string, def: Record<string, un
       break;
     }
   }
-  // The validated copy, minus options left undefined; arrays are copied and frozen.
-  const published = Object.keys(def).flatMap(key => {
+  // The validated copy, minus options left undefined; arrays are copied by
+  // index with defineAt and frozen.
+  const published = Object.create(null) as Record<string, unknown>;
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k]!;
     const value = def[key];
-    return value === undefined ? [] : [[key, Array.isArray(value) ? Object.freeze([...value]) : value]];
-  });
-  return ownRecord<CompileResult>({ compiled, published: ownRecord(Object.fromEntries(published)) as ScopeDimension });
+    if (value === undefined) continue;
+    if (isArray(value)) {
+      const copy: unknown[] = [];
+      for (let i = 0; i < value.length; i++) defineAt(copy, i, value[i]);
+      published[key] = Object.freeze(copy);
+    } else {
+      published[key] = value;
+    }
+  }
+  return ownRecord<CompileResult>({ compiled, published: Object.freeze(published) as unknown as ScopeDimension });
 }
 
 function isSetKind(dim: CompiledDimension): boolean {
@@ -716,13 +762,16 @@ export function defineScopeGrammar<const D extends ScopeDimensions>(
 ): ScopeGrammar<D> {
   const clone = hostClone;
   if (!clone) throw new TypeError('Scope grammars need structuredClone, which this runtime does not provide');
-  if (typeof definition !== 'object' || definition === null || Array.isArray(definition)) throw new TypeError('Scope grammar definition must be an object');
+  if (typeof definition !== 'object' || definition === null || isArray(definition)) throw new TypeError('Scope grammar definition must be an object');
   // One read of the definition's own data: nothing inherited, hidden or computed by a getter.
   const fields = readDefinitionData('Scope grammar definition', definition);
-  for (const key of Object.keys(fields)) {
-    if (!DEFINITION_KEYS.has(key)) throw new TypeError(`Scope grammar definition has unsupported option ${JSON.stringify(key)}`);
+  const fieldKeys = Object.keys(fields);
+  for (let k = 0; k < fieldKeys.length; k++) {
+    if (!DEFINITION_KEYS.has(fieldKeys[k]!)) throw new TypeError(`Scope grammar definition has unsupported option ${JSON.stringify(fieldKeys[k])}`);
   }
-  const { provider, dimensions } = fields;
+  // `fields` has a null prototype, so these read only its own data.
+  const provider = fields.provider;
+  const dimensions = fields.dimensions;
   if (typeof provider !== 'string' || provider.trim() === '' || hasControlChar(provider)) {
     throw new TypeError('Scope grammar provider must be a non-empty string');
   }
@@ -730,14 +779,22 @@ export function defineScopeGrammar<const D extends ScopeDimensions>(
   // that copy is compiled and published: the engine enforces exactly the data
   // it checked and never reads the author's objects again.
   const dimensionDefs = readDimensionsDefinition(provider, dimensions);
-  const results = Object.keys(dimensionDefs).map(name => compileDimension(provider, name, dimensionDefs[name]!));
-  if (results.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
-  const dims: readonly CompiledDimension[] = Object.freeze(results.map(result => result.compiled));
-  const byName: ReadonlyMap<string, CompiledDimension> = new Map(dims.map(dim => [dim.name, dim]));
+  const names = Object.keys(dimensionDefs);
+  if (names.length === 0) throw new TypeError(`Scope grammar "${provider}": dimensions must not be empty`);
+  const compiledDims: CompiledDimension[] = [];
+  const byNameMap = new Map<string, CompiledDimension>();
   // Null prototype: a name the grammar does not declare (`toString` included) is absent.
-  const publishedDimensions = Object.freeze(
-    Object.assign(Object.create(null) as object, Object.fromEntries(results.map(result => [result.compiled.name, result.published]))),
-  ) as PublishedScopeDimensions<D>;
+  const published = Object.create(null) as Record<string, ScopeDimension>;
+  for (let n = 0; n < names.length; n++) {
+    const name = names[n]!;
+    const result = compileDimension(provider, name, dimensionDefs[name]!);
+    append(compiledDims, result.compiled);
+    byNameMap.set(name, result.compiled);
+    published[name] = result.published;
+  }
+  const dims: readonly CompiledDimension[] = Object.freeze(compiledDims);
+  const byName: ReadonlyMap<string, CompiledDimension> = byNameMap;
+  const publishedDimensions = Object.freeze(published) as PublishedScopeDimensions<D>;
 
   const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
     const result = Object.create(null) as Record<string, ScopeValue>;

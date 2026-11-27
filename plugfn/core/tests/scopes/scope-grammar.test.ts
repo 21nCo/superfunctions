@@ -1293,3 +1293,115 @@ describe('engine-built arrays are filled by own-property definition', () => {
     expect(result.violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'ttl' })]);
   });
 });
+
+describe('defineScopeGrammar follows the same rule as per-call evaluation', () => {
+  const definition = () => ({
+    provider: 'define-time',
+    dimensions: { perms: { kind: 'exactSet', values: ['issues:read', 'contents:read'] }, ttl: { kind: 'ttlMax', maxSeconds: 30 } },
+  });
+
+  type Prototype = typeof Array.prototype | typeof Object.prototype;
+  // Every key a tamper may plant. The bookkeeping uses no array while a tamper
+  // is in place, because the tampers break index assignment, push and iteration.
+  const plantable: readonly (readonly [Prototype, PropertyKey])[] = [
+    [Array.prototype, 0],
+    [Array.prototype, 1],
+    [Object.prototype, 1],
+  ];
+  for (const [target, key] of plantable) expect(Object.hasOwn(target, key)).toBe(false);
+  const methods = {
+    iterator: Array.prototype[Symbol.iterator],
+    push: Array.prototype.push,
+    map: Array.prototype.map,
+    flatMap: Array.prototype.flatMap,
+  };
+  const restore = () => {
+    for (const [target, key] of plantable) delete (target as Record<PropertyKey, unknown>)[key];
+    Array.prototype[Symbol.iterator] = methods.iterator;
+    Array.prototype.push = methods.push;
+    Array.prototype.map = methods.map;
+    Array.prototype.flatMap = methods.flatMap;
+  };
+  const plant = (target: Prototype, key: PropertyKey, fields: PropertyDescriptor) => {
+    Object.defineProperty(target, key, Object.assign(Object.create(null) as PropertyDescriptor, fields, { configurable: true, enumerable: false }));
+  };
+  /** Swaps a vocabulary member for `admin`, and a `maxSeconds` entry for one without a value. */
+  const substitute = (value: unknown): unknown => {
+    if (value === 'issues:read' || value === 'contents:read') return 'admin';
+    if (Array.isArray(value) && value[0] === 'maxSeconds') return ['maxSeconds', { value: undefined, writable: true, enumerable: true, configurable: true }];
+    return value;
+  };
+  const substitutingAccessor = (index: number) => () =>
+    plant(Array.prototype, index, {
+      get: () => undefined,
+      set(this: unknown[], value: unknown) {
+        Object.defineProperty(this, index, { value: substitute(value), writable: true, enumerable: true, configurable: true });
+      },
+    });
+  const noOpAccessor = (index: number) => () => plant(Array.prototype, index, { get: () => undefined, set: () => {} });
+  const nonWritable = (target: Prototype, index: number) => () => plant(target, index, { value: 'polluted', writable: false });
+  const tampers: Record<string, () => void> = {
+    'a substituting accessor at Array.prototype[0]': substitutingAccessor(0),
+    'a substituting accessor at Array.prototype[1]': substitutingAccessor(1),
+    'a no-op accessor at Array.prototype[0]': noOpAccessor(0),
+    'a no-op accessor at Array.prototype[1]': noOpAccessor(1),
+    'a non-writable Array.prototype[0]': nonWritable(Array.prototype, 0),
+    'a non-writable Object.prototype[1]': nonWritable(Object.prototype, 1),
+    'an Array iterator that yields nothing': () => {
+      Array.prototype[Symbol.iterator] = function () {
+        return methods.iterator.call([]);
+      } as never;
+    },
+    'an Array iterator that drops the last item': () => {
+      Array.prototype[Symbol.iterator] = function (this: unknown[]) {
+        const it = methods.iterator.call(this);
+        let left = this.length - 1;
+        return { next: () => (left-- > 0 ? it.next() : { done: true, value: undefined }), [Symbol.iterator]() { return this; } } as never;
+      } as never;
+    },
+    'a push that adds nothing': () => {
+      Array.prototype.push = function (this: unknown[]) {
+        return this.length;
+      };
+    },
+    'map and flatMap that return nothing': () => {
+      Array.prototype.map = function () {
+        return [];
+      } as never;
+      Array.prototype.flatMap = function () {
+        return [];
+      } as never;
+    },
+  };
+
+  /** Defines the grammar with `tamper` in place, restoring every planted property before it returns. */
+  function defineUnder(tamper: () => void): { grammar?: AnyScopeGrammar; error?: unknown } {
+    const def = definition();
+    try {
+      tamper();
+      return { grammar: defineScopeGrammar(def) };
+    } catch (error) {
+      return { error };
+    } finally {
+      restore();
+    }
+  }
+
+  it.each(Object.keys(tampers))('compiles, publishes and enforces exactly the definition with %s', name => {
+    const { grammar: g, error } = defineUnder(tampers[name]!);
+    expect(error).toBeUndefined();
+    expect(g!.dimensions).toEqual(definition().dimensions);
+    const outside = g!.isSubset({ perms: ['admin'], ttl: 120 } as never, { perms: ['admin'], ttl: 120 } as never);
+    expect(outside.ok).toBe(false);
+    expect(outside.violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'perms', item: 'admin' }),
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'ttl', item: 120 }),
+      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'perms', item: 'admin' }),
+      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'ttl', item: 120 }),
+    ]);
+    const inside = g!.isSubset({ perms: ['contents:read'], ttl: 30 } as never, { perms: ['issues:read', 'contents:read'], ttl: 30 } as never);
+    expect(inside.ok).toBe(true);
+    expect(inside.violations).toEqual([]);
+    expect(inside.scope).toEqual({ perms: ['contents:read'], ttl: 30 });
+  });
+});

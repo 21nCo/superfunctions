@@ -231,7 +231,12 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> {
  * index assignment. So a data-valued pollution, a replaced Array iterator or
  * method, or an index property on `Array.prototype` or `Object.prototype`
  * (writable, non-writable or an accessor) cannot change a decision or make
- * `normalize` or `isSubset` throw. The set arrays in a returned scope are
+ * `normalize` or `isSubset` throw. The same rule covers `defineScopeGrammar`:
+ * the definition object is trusted data, read once through its own property
+ * descriptors, and ambient `Array.prototype` or `Object.prototype` index
+ * properties, or a replaced Array iterator or method, present while a
+ * grammar is defined cannot change what it compiles, publishes or enforces.
+ * The set arrays in a returned scope are
  * frozen ordinary arrays whose own indexes and `length` hold exactly the
  * approved members; reading them after the call through the realm's Array
  * iterator or methods belongs to the caller's realm. The realm's other built-in functions (`Set`, `Map`,
