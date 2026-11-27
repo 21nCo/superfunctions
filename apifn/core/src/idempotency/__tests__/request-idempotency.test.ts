@@ -2496,7 +2496,7 @@ describe("createRequestIdempotency PR round-7 live-version fence", () => {
 
   it("a commit landing in settle's empty lookup with an unapplied replacement fails closed, and a retained receipt keeps the fallback from replaying", async () => {
     const store = new ScriptedStore();
-    // The README requirement: the receipt outlives any fallback deadline (2 x retentionMs after its commit).
+    // The README requirement: the receipt outlives the actual deadline of any fallback it contradicts.
     const { idempotency, database, clock } = world(store, 120_000);
     const holder = acquired(await idempotency.claim(orderRequest()));
     clock.advance(30_000);
