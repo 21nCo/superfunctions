@@ -1,0 +1,41 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_c735bfb505d2b4::t_c6cb9e3f651a70 33,58
+datafn/docs/public/llms-full.txt
+  s_c735bfb505d2b4::t_d8444cccd3fa7e 19169,19194
+datafn/server/__tests__/revisions.test.ts
+  s_f9e0f6bf868565::t_b65736b9bb0b3e 11-12,3380-3562
+datafn/server/src/execution/revisions.ts
+  s_c735bfb505d2b4::t_ee3e3ab54ee332 42-55,269-278,300,302,327,329-334,351-352,356-357,360-361,366,622-623,684,686-688,691-694
+datafn/server/src/execution/sync/change-tracking.ts
+  s_c735bfb505d2b4::t_24c12ad4f02ab2 122-123,486
+datafn/server/src/execution/sync/push.ts
+  s_c735bfb505d2b4::t_0bb63a46a188d6 23
+datafn/server/src/routes/query.ts
+  s_c735bfb505d2b4::t_e2ef741e876a3e 33,1066-1079,1083-1095
+datafn/server/src/server.ts
+  s_c735bfb505d2b4::t_3cb35abcf38817 457-566,574-578,583,588-592,595-601,603,606-608,1384-1389,1391-1395,1412-1414,1419,1812-1815
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75a16ec3f0cc27eb3828da8bca9b3f7d0703b929",
+  "prompts": {},
+  "sessions": {
+    "s_c735bfb505d2b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88ff95aa-9eba-46c2-87a3-88e60bf37889",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f9e0f6bf868565": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21922-5a56-7ab3-9d6c-8f73c05eb1a5",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
