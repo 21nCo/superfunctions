@@ -75,50 +75,51 @@ type SetDimension = ExactSetDimension | PrefixGlobSetDimension;
  */
 export type ScopeDimensionValue<T> = T extends SetDimension ? readonly string[] : number;
 
+/** `true` for a key that stands for many names: `string`, `number` or a template-literal pattern. */
+type IsIndexKey<K extends PropertyKey> = Record<never, never> extends Record<K, 1> ? true : false;
+
+type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
+
 /**
- * Keys a grammar declares by name. A definition widened to an index signature
- * (for example {@link ScopeDimensions}) has none: any string may be looked up,
- * but only the dimensions the grammar was defined with are present.
+ * `true` only for an exact definition: not a union, and every key a single
+ * literal name. Exact definitions get precise types; every other definition
+ * (one widened to {@link ScopeDimensions}, a mixed declared-and-index one, a
+ * template-literal key or a union) gets the widened types as a whole, because
+ * the type cannot tell which names the grammar really has.
  */
-type DeclaredKeys<D> = {
-  [K in keyof D]-?: string extends K ? never : number extends K ? never : symbol extends K ? never : K;
-}[keyof D];
+export type IsExactDimensions<D> = [true] extends [IsUnion<D>]
+  ? false
+  : [true] extends [{ [K in keyof D]-?: IsIndexKey<K> }[keyof D]]
+    ? false
+    : true;
 
-/** Index-signature keys of a widened definition; a lookup may find nothing. */
-type IndexKeys<D> = Exclude<keyof D, DeclaredKeys<D>>;
+/** Keys of an exact definition whose dimension may be a set kind; these may be omitted (an empty set). */
+type SetKeys<D> = { [K in keyof D]-?: [Extract<D[K], SetDimension>] extends [never] ? never : K }[keyof D];
 
-/** Declared keys whose dimension may be a set kind; these may be omitted (an empty set). */
-type SetKeys<D extends ScopeDimensions> = {
-  [K in DeclaredKeys<D>]: [Extract<D[K], SetDimension>] extends [never] ? never : K;
-}[DeclaredKeys<D>];
-
-type ScalarKeys<D extends ScopeDimensions> = Exclude<DeclaredKeys<D>, SetKeys<D>>;
+/** A widened scope: any name may be looked up, and only the grammar's dimensions are present. */
+export type WidenedScope = { readonly [dimension: string]: readonly string[] | number | undefined };
 
 /**
  * Canonical scope input. Set dimensions may be omitted (an empty set); scalar
  * dimensions are required, because an absent limit would mean "unbounded".
- * For a widened definition every key is optional: the type cannot tell which
- * are scalars, and the engine still rejects a missing one as `malformed`.
+ * For a definition that is not exact every key is optional: the type cannot
+ * tell which are scalars, and the engine still rejects a missing one as
+ * `malformed`.
  */
-export type ScopeShape<D extends ScopeDimensions> = {
-  readonly [K in SetKeys<D>]?: ScopeDimensionValue<D[K]>;
-} & {
-  readonly [K in ScalarKeys<D>]: ScopeDimensionValue<D[K]>;
-} & {
-  readonly [K in IndexKeys<D>]?: ScopeDimensionValue<D[K]>;
-};
+export type ScopeShape<D extends ScopeDimensions> =
+  IsExactDimensions<D> extends true
+    ? { readonly [K in SetKeys<D>]?: ScopeDimensionValue<D[K]> } & {
+        readonly [K in Exclude<keyof D, SetKeys<D>>]: ScopeDimensionValue<D[K]>;
+      }
+    : WidenedScope;
 
 /**
- * A scope after validation: every declared dimension present, sets
- * de-duplicated. A frozen object with a null prototype, so it holds no
- * inherited names. Looking up a key of a widened definition yields
- * `undefined` when the grammar has no such dimension.
+ * A scope after validation: every dimension present, sets de-duplicated. A
+ * frozen object with a null prototype, so it holds no inherited names. For a
+ * definition that is not exact, a lookup may yield `undefined`.
  */
-export type NormalizedScope<D extends ScopeDimensions> = {
-  readonly [K in DeclaredKeys<D>]: ScopeDimensionValue<D[K]>;
-} & {
-  readonly [K in IndexKeys<D>]: ScopeDimensionValue<D[K]> | undefined;
-};
+export type NormalizedScope<D extends ScopeDimensions> =
+  IsExactDimensions<D> extends true ? { readonly [K in keyof D]-?: ScopeDimensionValue<D[K]> } : WidenedScope;
 
 type ReadonlyArrays<T> = T extends readonly (infer U)[] ? readonly U[] : T;
 
@@ -127,17 +128,16 @@ export type PublishedScopeDimension<T> = { readonly [P in keyof T]: ReadonlyArra
 
 /**
  * The frozen dimension definitions a grammar publishes, in a null-prototype
- * object. A key of a widened definition may be absent (`undefined`).
+ * object. For a definition that is not exact, a lookup may yield `undefined`.
  */
-export type PublishedScopeDimensions<D extends ScopeDimensions> = {
-  readonly [K in DeclaredKeys<D>]: PublishedScopeDimension<D[K]>;
-} & {
-  readonly [K in IndexKeys<D>]: PublishedScopeDimension<D[K]> | undefined;
-};
+export type PublishedScopeDimensions<D extends ScopeDimensions> =
+  IsExactDimensions<D> extends true
+    ? { readonly [K in keyof D]-?: PublishedScopeDimension<D[K]> }
+    : { readonly [dimension: string]: ScopeDimension | undefined };
 
 /** One requested item, as passed to `riskOf`. */
 export interface ScopeItem<D extends ScopeDimensions = ScopeDimensions> {
-  readonly dimension: keyof D & string;
+  readonly dimension: IsExactDimensions<D> extends true ? keyof D & string : string;
   readonly kind: ScopeDimensionKind;
   /** A set member (string) or a scalar value (number). */
   readonly value: string | number;
@@ -179,22 +179,31 @@ export type ScopeNormalizeResult<D extends ScopeDimensions> =
 export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
   /** Provider identifier, for example `github`. */
   readonly provider: string;
+  /**
+   * The dimension definitions, read once as their structured clone: own
+   * enumerable data only.
+   */
   readonly dimensions: D;
   /**
    * Maps provider-shaped input to {@link ScopeShape}. Applied to requests and
-   * envelopes alike. Its output is validated; a throw, a promise or an output
-   * that does not fit the grammar is rejected. Must be synchronous. Defaults
-   * to the identity. A returned native promise gets a rejection handler, but
-   * one whose `constructor` or `Symbol.species` lookup throws cannot be
-   * marked handled, so its rejection stays the grammar author's
-   * responsibility.
+   * envelopes alike. It receives the engine's structured clone of the input,
+   * never the caller's object, and its result is cloned again and validated:
+   * a throw, or a result that is not plain data or does not fit the grammar,
+   * is `malformed`. Defaults to the identity.
+   *
+   * Callback boundary (applies to `normalize` and `riskOf`): callbacks are
+   * trusted grammar-author code and must be synchronous. An `async` function
+   * (or async generator) is rejected with `TypeError` when the grammar is
+   * defined. The engine never waits for, subscribes to or creates a promise: a
+   * plain function that returns a promise fails closed at once (`normalize`:
+   * `malformed`; `riskOf`: `ScopeError`), and handling that promise's
+   * rejection is the grammar author's responsibility.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**
-   * Risk of one requested item. Must synchronously return one of
-   * {@link SCOPE_RISK_LEVELS}; any other result (a promise included), or a
-   * throw, makes `classifyRisk` throw `ScopeError`. A returned promise is
-   * handled as described for `normalize`.
+   * Risk of one requested item. Must return one of {@link SCOPE_RISK_LEVELS};
+   * any other result, or a throw, makes `classifyRisk` throw `ScopeError`.
+   * See the callback boundary on `normalize`.
    */
   readonly riskOf: (item: ScopeItem<D>) => ScopeRisk;
 }
@@ -202,22 +211,17 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions, TInput> {
 /**
  * A defined scope grammar.
  *
- * Trust boundary: every verdict covers only the snapshot the engine read.
- * Inputs are expected to be plain data. The engine reads each object only
- * through its own data properties, once each (a key listed without a data
- * property, a hole, an inherited or accessor element, or an inconsistent
- * array length is `malformed`), and never re-reads it. A caller that mints a
- * credential must mint from the frozen `scope` that `isSubset` or `normalize`
- * returns, and classify that same snapshot with `classifyScope`, never by
- * reading the raw input again: a getter or Proxy may answer differently on
- * the next read.
- *
- * A native promise is never a scope, with or without `normalize`: given as a
- * request or envelope (including one reparented to a null or
- * `Object.prototype` prototype, whatever own data it carries) it is
- * `malformed`, and recognising it runs no caller code. A promise with an own
- * `constructor` is judged by its own data properties like any other input;
- * `constructor` is a reserved dimension name, so it is `malformed` too.
+ * Trust boundary: the grammar definition and its callbacks are trusted; every
+ * request and envelope is untrusted data. The engine reads untrusted input
+ * exactly once, as `structuredClone(input)`, and decides only from that clone:
+ * own enumerable string-keyed data is what counts, getters run once during the
+ * clone, non-enumerable and symbol keys are dropped (so they can only narrow a
+ * request), and anything that cannot be cloned (a Proxy, a promise, a
+ * function) or clones to something other than plain objects, arrays, strings
+ * and numbers (a Map, Set, Date or boxed value) is `malformed`. The verdict
+ * covers only that clone. A caller that mints a credential must mint from the
+ * frozen `scope` that `isSubset` or `normalize` returns, and classify it with
+ * `classifyScope`, never by reading the raw input again.
  */
 export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInput = ScopeShape<D>> {
   readonly provider: string;
@@ -229,7 +233,7 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInpu
   readonly dimensions: PublishedScopeDimensions<D>;
   /**
    * Normalises and validates input without comparing it to anything. Never
-   * throws: unreadable input yields a `malformed` violation.
+   * throws: input that cannot be read yields a `malformed` violation.
    */
   normalize(input: TInput): ScopeNormalizeResult<D>;
   /**
@@ -240,7 +244,8 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInpu
   isSubset(request: TInput, envelope: TInput): ScopeSubsetResult<D>;
   /**
    * Maximum `riskOf` over all requested items; `read` for an empty request.
-   * Throws `ScopeError` for a malformed request or an invalid `riskOf` result.
+   * Throws `ScopeError` for a malformed request (with the clone or `normalize`
+   * error as `cause`, when there is one) or an invalid `riskOf` result.
    */
   classifyRisk(request: TInput): ScopeRisk;
   /**
@@ -249,4 +254,18 @@ export interface ScopeGrammar<D extends ScopeDimensions = ScopeDimensions, TInpu
    * `ScopeError` for any other value or an invalid `riskOf` result.
    */
   classifyScope(scope: NormalizedScope<D>): ScopeRisk;
+}
+
+/**
+ * Any scope grammar, whatever its dimensions and input type, with the widened
+ * types: for code that accepts every provider. Structural, so every
+ * `ScopeGrammar<D, TInput>` is assignable to it.
+ */
+export interface AnyScopeGrammar {
+  readonly provider: string;
+  readonly dimensions: PublishedScopeDimensions<ScopeDimensions>;
+  normalize(input: unknown): ScopeNormalizeResult<ScopeDimensions>;
+  isSubset(request: unknown, envelope: unknown): ScopeSubsetResult<ScopeDimensions>;
+  classifyRisk(request: unknown): ScopeRisk;
+  classifyScope(scope: WidenedScope): ScopeRisk;
 }

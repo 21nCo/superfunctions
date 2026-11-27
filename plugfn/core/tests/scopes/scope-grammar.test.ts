@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineScopeGrammar, SCOPE_LIMITS, SCOPE_RISK_LEVELS, ScopeError, type ScopeRisk } from '../../src/scopes/index.js';
 
 const grammar = defineScopeGrammar({
@@ -31,52 +33,56 @@ function violationsOf(request: Record<string, unknown>, env: Record<string, unkn
   return grammar.isSubset(request as never, env as never);
 }
 
-/** An array whose descriptor for `key` cannot be read. */
-function throwingArray(key: string, error: () => unknown = () => new Error(`${key} descriptor failed`)): string[] {
-  return new Proxy(['alpha'], {
-    getOwnPropertyDescriptor(target, property) {
-      if (property === key) throw error();
-      return Reflect.getOwnPropertyDescriptor(target, property);
-    },
-  });
+/** The error `run` throws; fails the test when it does not throw. Compares nothing, so a hostile cause is never read. */
+function thrownBy(run: () => unknown): ScopeError {
+  try {
+    run();
+  } catch (error) {
+    return error as ScopeError;
+  }
+  throw new Error('expected a throw');
 }
+
+const riskOf = () => 'read' as const;
 
 describe('defineScopeGrammar', () => {
   it('rejects any dimension kind outside the closed set', () => {
     for (const kind of ['regex', 'numericMin', 'suffixGlob', undefined]) {
       expect(() =>
-        defineScopeGrammar({ provider: 'p', dimensions: { d: { kind } as never }, riskOf: () => 'read' }),
+        defineScopeGrammar({ provider: 'p', dimensions: { d: { kind } as never }, riskOf }),
       ).toThrow(TypeError);
     }
   });
 
   it('rejects invalid definitions instead of building a permissive grammar', () => {
-    const riskOf = () => 'read' as const;
     const bad: unknown[] = [
+      null,
       { provider: '', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf },
       { provider: 'p', dimensions: {}, riskOf },
+      { provider: 'p', dimensions: [], riskOf },
       { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } } },
+      { provider: 'p', dimensions: { d: { kind: 'prefixGlobSet' } }, riskOf, normalize: 'identity' },
       { provider: 'p', dimensions: { 'bad name': { kind: 'prefixGlobSet' } }, riskOf },
+      { provider: 'p', dimensions: { __proto__x: { kind: 'prefixGlobSet' } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'exactSet', values: ['repo*'] } }, riskOf },
+      { provider: 'p', dimensions: { d: { kind: 'exactSet', values: 'repo' } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'numericMax', min: 5, max: 1 } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'numericMax', max: Number.NaN } }, riskOf },
+      { provider: 'p', dimensions: { d: { kind: 'numericMax', integer: 'yes' } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'ttlMax', maxSeconds: 1.5 } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'ttlMax', minSeconds: 0 } }, riskOf },
       { provider: 'p', dimensions: { d: { kind: 'ttlMax', minSeconds: 60, maxSeconds: 30 } }, riskOf },
     ];
-    for (const definition of bad) expect(() => defineScopeGrammar(definition as never)).toThrow(TypeError);
+    for (const definition of bad) expect(() => defineScopeGrammar(definition as never), JSON.stringify(definition)).toThrow(TypeError);
   });
 
   it('rejects options a dimension kind does not have instead of dropping them', () => {
-    const riskOf = () => 'read' as const;
     const bad: unknown[] = [
       // A mistyped cap must not leave the dimension unbounded.
       { kind: 'ttlMax', max: 60 },
       { kind: 'numericMax', maxSeconds: 60 },
       { kind: 'exactSet', value: ['a'] },
       { kind: 'prefixGlobSet', values: ['a'] },
-      { kind: 'ttlMax', [Symbol('maxSeconds')]: 60 },
-      Object.defineProperty({ kind: 'ttlMax' }, 'maxSeconds', { enumerable: true, get: () => 60 }),
     ];
     for (const d of bad) {
       expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d } as never, riskOf })).toThrow(TypeError);
@@ -87,7 +93,6 @@ describe('defineScopeGrammar', () => {
   });
 
   it('rejects an undefined dimension entry but allows undefined optional fields', () => {
-    const riskOf = () => 'read' as const;
     expect(() =>
       defineScopeGrammar({ provider: 'p', dimensions: { perms: { kind: 'exactSet' }, ttl: undefined } as never, riskOf }),
     ).toThrow(TypeError);
@@ -100,45 +105,63 @@ describe('defineScopeGrammar', () => {
       normalize: undefined,
       riskOf,
     });
-    expect(Object.keys(optional.dimensions)).toEqual(['size', 'names']);
+    expect(optional.dimensions).toEqual({ size: { kind: 'numericMax', max: 10 }, names: { kind: 'exactSet' } });
     expect(optional.normalize({ size: 11 }).ok).toBe(false);
     expect(optional.normalize({ size: 10 }).ok).toBe(true);
   });
 
-  it('rejects an exactSet vocabulary whose length is invalid or too large', () => {
-    const riskOf = () => 'read' as const;
-    for (const length of [Number.NaN, -1, 1.5, SCOPE_LIMITS.maxSetItems + 1]) {
-      const values = new Proxy(['a'], {
-        getOwnPropertyDescriptor: (target, key) =>
-          key === 'length' ? { value: length, writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(target, key),
-      });
-      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
+  it('reads the dimensions once as their structured clone', () => {
+    // Definitions are trusted, but they are still read once: a Proxy or a
+    // function cannot be cloned, and a getter runs exactly once.
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: new Proxy({ ttl: { kind: 'ttlMax' as const } }, {}), riskOf }),
+    ).toThrow(TypeError);
+    expect(() =>
+      defineScopeGrammar({ provider: 'p', dimensions: { ttl: { kind: 'ttlMax', maxSeconds: () => 60 } } as never, riskOf }),
+    ).toThrow(TypeError);
+    let reads = 0;
+    const ttl = {
+      kind: 'ttlMax' as const,
+      get maxSeconds() {
+        reads++;
+        return reads === 1 ? 60 : 3600;
+      },
+    };
+    const once = defineScopeGrammar({ provider: 'p', dimensions: { ttl }, riskOf });
+    expect(reads).toBe(1);
+    expect(once.dimensions.ttl).toEqual({ kind: 'ttlMax', maxSeconds: 60 });
+    expect(once.normalize({ ttl: 61 }).ok).toBe(false);
+  });
+
+  it('rejects an exactSet vocabulary that is too large, sparse or not made of strings', () => {
+    const sparse = ['contents:read'];
+    sparse.length = 2;
+    for (const values of [new Array(SCOPE_LIMITS.maxSetItems + 1), sparse, [1], [new String('a')]]) {
+      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } as never }, riskOf })).toThrow(TypeError);
     }
   });
 
-  it('rejects definition keys that have no own data property instead of dropping them', () => {
-    // A Proxy may list a key in ownKeys and report no descriptor for it.
-    const hiding = <T extends object>(target: T, hidden: string) =>
-      new Proxy(target, {
-        getOwnPropertyDescriptor: (t, key) => (key === hidden ? undefined : Reflect.getOwnPropertyDescriptor(t, key)),
-      });
-    const riskOf = () => 'read' as const;
-    expect(() =>
-      defineScopeGrammar({ provider: 'p', dimensions: { ttl: hiding({ kind: 'ttlMax', maxSeconds: 60 }, 'maxSeconds') as never }, riskOf }),
-    ).toThrow(TypeError);
-    expect(() =>
-      defineScopeGrammar({ provider: 'p', dimensions: hiding({ ttl: { kind: 'ttlMax' as const } }, 'ttl'), riskOf }),
-    ).toThrow(TypeError);
-    const sparse = ['contents:read'];
-    sparse.length = 2;
-    const inherited = ['contents:read'];
-    inherited.length = 2;
-    Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype) as object, { 1: 'admin' }));
-    const accessor = ['contents:read'];
-    Object.defineProperty(accessor, 0, { get: () => 'admin' });
-    for (const values of [sparse, inherited, accessor]) {
-      expect(() => defineScopeGrammar({ provider: 'p', dimensions: { d: { kind: 'exactSet', values } }, riskOf })).toThrow(TypeError);
+  it('rejects asynchronous callbacks when the grammar is defined', () => {
+    const dimensions = { names: { kind: 'exactSet' as const } };
+    const asyncRisk = async () => 'read' as const;
+    const asyncNormalize = async (input: unknown) => input;
+    async function* asyncGenerator() {
+      yield 'read' as const;
     }
+    for (const definition of [
+      { provider: 'p', dimensions, riskOf: asyncRisk },
+      { provider: 'p', dimensions, riskOf: asyncGenerator },
+      { provider: 'p', dimensions, riskOf, normalize: asyncNormalize },
+      { provider: 'p', dimensions, riskOf, normalize: asyncGenerator },
+    ]) {
+      expect(() => defineScopeGrammar(definition as never)).toThrow(/synchronous/);
+    }
+  });
+
+  it('accepts any well-formed dimension name, constructor included', () => {
+    const named = defineScopeGrammar({ provider: 'p', dimensions: { constructor: { kind: 'exactSet' }, toString: { kind: 'ttlMax' } }, riskOf });
+    expect(named.isSubset({ constructor: ['a'], toString: 60 }, { constructor: ['a'], toString: 60 }).ok).toBe(true);
+    expect(named.isSubset({ constructor: ['b'], toString: 60 }, { constructor: ['a'], toString: 60 }).ok).toBe(false);
   });
 
   it('exposes a frozen grammar whose dimensions mirror the definition', () => {
@@ -167,12 +190,35 @@ describe('defineScopeGrammar', () => {
     expect(wildcardLabels().ok).toBe(false);
 
     const dimensions = { names: { kind: 'exactSet', values: ['a'] as string[] }, ttl: { kind: 'ttlMax', maxSeconds: 60 } };
-    const owned = defineScopeGrammar({ provider: 'owned', dimensions: dimensions as never, riskOf: () => 'read' });
+    const owned = defineScopeGrammar({ provider: 'owned', dimensions: dimensions as never, riskOf });
     (dimensions.names as { kind: string }).kind = 'prefixGlobSet';
     dimensions.names.values.push('b*');
     dimensions.ttl.maxSeconds = 3600;
     expect(owned.isSubset({ names: ['b'], ttl: 60 } as never, { names: ['b*'], ttl: 60 } as never).ok).toBe(false);
     expect(owned.normalize({ names: [], ttl: 120 } as never).ok).toBe(false);
+  });
+});
+
+describe('structuredClone resolution', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('fails closed when the runtime has no structuredClone', async () => {
+    vi.stubGlobal('structuredClone', undefined);
+    vi.resetModules();
+    const fresh = await import('../../src/scopes/grammar.js');
+    expect(() => fresh.defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, riskOf })).toThrow(
+      /structuredClone/,
+    );
+  });
+
+  it('keeps the structuredClone it resolved at load when the global is replaced later', () => {
+    const forged = vi.fn(() => ({ ...base, permissions: ['admin'] }));
+    vi.stubGlobal('structuredClone', forged);
+    expect(violationsOf({ ...base, permissions: ['contents:read'] }).scope?.permissions).toEqual(['contents:read']);
+    expect(forged).not.toHaveBeenCalled();
   });
 });
 
@@ -337,41 +383,77 @@ describe('fail closed', () => {
     expect(violationsOf(JSON.parse('{"__proto__":{"rate":1},"rate":1,"ttl":900}')).ok).toBe(false);
   });
 
-  it('rejects non-object scopes and accessor properties', () => {
-    for (const request of [null, [], 'scope', 5, Promise.resolve(base), new (class Scope {})()]) {
-      expect(violationsOf(request as never).ok).toBe(false);
-    }
-    const accessor = { ...base };
-    Object.defineProperty(accessor, 'rate', { enumerable: true, get: () => 1 });
-    expect(violationsOf(accessor).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
-  });
-
-  it('rejects a set whose reported length is invalid instead of skipping it', () => {
-    // The length descriptor of an array target is writable, so a Proxy may report any value for it.
-    const lying = (length: unknown) =>
-      new Proxy(['admin'], {
-        getOwnPropertyDescriptor: (target, key) =>
-          key === 'length' ? { value: length, writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(target, key),
-      });
-    for (const length of [Number.NaN, -1, 0.5, '1', Number.POSITIVE_INFINITY, 5_000_000]) {
-      const malformedLength = expect.objectContaining({ code: 'malformed', dimension: 'permissions' });
-      expect(violationsOf({ ...base, permissions: lying(length) }).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions' }),
+  it('rejects scopes that are not plain objects, whatever they clone to', () => {
+    const scopes: [string, unknown][] = [
+      ['null', null],
+      ['undefined', undefined],
+      ['an array', []],
+      ['a string', 'scope'],
+      ['a number', 5],
+      ['a Map', new Map(Object.entries(base))],
+      ['a Set', new Set()],
+      ['a Date', new Date(0)],
+      ['an Error', Object.assign(new Error('scope'), base)],
+      ['a boxed string', new String('scope')],
+    ];
+    for (const [label, scope] of scopes) {
+      expect(violationsOf(scope as never).violations, label).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'request', message: 'scope must be a plain object' }),
       ]);
-      expect(violationsOf(base, { ...envelope, permissions: lying(length) }).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
+      expect(grammar.isSubset(base, scope as never).violations, label).toEqual([
+        expect.objectContaining({ code: 'malformed', side: 'envelope' }),
       ]);
-      expect(grammar.normalize({ ...base, permissions: lying(length) }).ok).toBe(false);
-      expect(() => grammar.classifyRisk({ ...base, permissions: lying(length) })).toThrow(
-        expect.objectContaining({ name: 'ScopeError', violations: [malformedLength] }),
-      );
     }
   });
 
-  it('rejects sets and members beyond the input limits', () => {
+  it('rejects members and scalars that clone to objects', () => {
+    expect(violationsOf({ ...base, labels: [new String('alpha')] }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', dimension: 'labels' }),
+    ]);
+    expect(violationsOf({ ...base, rate: new Number(1) }).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+    expect(violationsOf({ ...base, labels: new Set(['alpha']) }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', dimension: 'labels' }),
+    ]);
+  });
+
+  it('rejects sparse sets on either side instead of skipping holes', () => {
+    const sparse = ['contents:read'];
+    sparse.length = 2;
+    expect(violationsOf({ ...base, permissions: sparse }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions', message: 'dimension "permissions" item 1 is missing' }),
+    ]);
+    expect(violationsOf(base, { ...envelope, permissions: sparse }).violations).toEqual([
+      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
+    ]);
+  });
+
+  it('never fills a missing value from a polluted prototype', () => {
+    const objectProto = Object.prototype as Record<string, unknown>;
+    const arrayProto = Array.prototype as unknown as Record<number, unknown>;
+    objectProto.rate = 1;
+    arrayProto[1] = 'admin';
+    try {
+      const { rate: _rate, ...withoutRate } = base;
+      expect(violationsOf(withoutRate).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'rate' })]);
+      const holed = ['contents:read'];
+      holed.length = 2;
+      expect(violationsOf({ ...base, permissions: holed }).ok).toBe(false);
+    } finally {
+      delete objectProto.rate;
+      delete arrayProto[1];
+    }
+  });
+
+  it('rejects sets and members beyond the input limits, checking the length before any member', () => {
     const tooMany = Array.from({ length: SCOPE_LIMITS.maxSetItems + 1 }, (_, i) => `l-${i}`);
     expect(violationsOf({ ...base, labels: tooMany }).violations).toEqual([
       expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels' }),
+    ]);
+    // A huge sparse array is rejected for its length, not walked hole by hole.
+    const huge: string[] = [];
+    huge.length = 5_000_000;
+    expect(violationsOf(base, { ...envelope, labels: huge }).violations).toEqual([
+      expect.objectContaining({ side: 'envelope', message: `dimension "labels" must have at most ${SCOPE_LIMITS.maxSetItems} items` }),
     ]);
     const longest = 'a'.repeat(SCOPE_LIMITS.maxMemberLength);
     expect(violationsOf({ ...base, labels: [longest] }, { ...envelope, labels: [longest] }).ok).toBe(true);
@@ -411,7 +493,7 @@ describe('fail closed', () => {
       expect.objectContaining({ code: 'malformed', side: 'request', item: 'contents:admin' }),
     ]);
     expect(github.isSubset({ repositories: ['org/app'] } as never, env).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', message: 'normalize failed: permissions are required' }),
+      expect.objectContaining({ code: 'malformed', side: 'request', message: 'normalize threw' }),
     ]);
     expect(github.normalize({ repositories: ['org/a', 'org/a'], permissions: {} })).toEqual({
       ok: true,
@@ -420,471 +502,305 @@ describe('fail closed', () => {
   });
 });
 
-describe('unreadable input', () => {
+/** A Proxy that counts every trap call and answers benign first, `admin` afterwards. */
+function statefulProxy<T extends object>(target: T, admin: T) {
+  let calls = 0;
+  const handler: ProxyHandler<T> = {};
+  for (const trap of ['get', 'getOwnPropertyDescriptor', 'ownKeys', 'getPrototypeOf', 'has'] as const) {
+    (handler as Record<string, unknown>)[trap] = (_target: T, ...rest: unknown[]) => {
+      calls++;
+      return (Reflect[trap] as (...args: unknown[]) => unknown)(calls === 1 ? target : admin, ...rest);
+    };
+  }
+  return { proxy: new Proxy(target, handler), calls: () => calls };
+}
 
-  const hostileScopes: Array<[string, () => unknown]> = [
-    ['an array whose index descriptor trap throws', () => ({ ...base, labels: throwingArray('0') })],
-    [
-      'a Proxy whose ownKeys trap throws',
-      () =>
-        new Proxy(
-          { ...base },
-          {
-            ownKeys() {
-              throw new Error('ownKeys trap failed');
-            },
-          },
-        ),
-    ],
-    [
-      'a Proxy whose getPrototypeOf trap throws',
-      () =>
-        new Proxy(
-          { ...base },
-          {
-            getPrototypeOf() {
-              throw new Error('getPrototypeOf trap failed');
-            },
-          },
-        ),
-    ],
-    ['a set whose length descriptor trap throws', () => ({ ...base, labels: throwingArray('length') })],
-    [
-      'a Proxy whose property descriptor trap throws',
-      () =>
-        new Proxy(
-          { ...base },
-          {
-            getOwnPropertyDescriptor() {
-              throw new Error('getOwnPropertyDescriptor trap failed');
-            },
-          },
-        ),
-    ],
-  ];
+describe('untrusted input is read once, as a structured clone (I1)', () => {
+  const cloneFailure = (side: string) => expect.objectContaining({ code: 'malformed', side, message: 'scope must be plain data that structuredClone can copy' });
 
-  it.each(hostileScopes)('rejects %s as malformed on either side without throwing', (_label, make) => {
-    expect(violationsOf(make() as never).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('scope could not be read') }),
-    ]);
-    expect(violationsOf(base, make() as never).violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope' })]);
-    expect(grammar.normalize(make() as never).ok).toBe(false);
-    expect(() => grammar.classifyRisk(make() as never)).toThrow(ScopeError);
+  it('rejects a stateful Proxy scope or set on the right side without calling a trap', () => {
+    const scope = statefulProxy({ ...base }, { ...base, permissions: ['admin'] });
+    const set = statefulProxy(['contents:read'], ['admin']);
+    expect(violationsOf(scope.proxy).violations).toEqual([cloneFailure('request')]);
+    expect(violationsOf(base, scope.proxy).violations).toEqual([expect.objectContaining({ side: 'envelope', code: 'malformed' })]);
+    expect(violationsOf({ ...base, permissions: set.proxy }).violations).toEqual([expect.objectContaining({ side: 'request', code: 'malformed' })]);
+    expect(() => grammar.classifyRisk(scope.proxy)).toThrow(expect.objectContaining({ name: 'ScopeError', cause: expect.objectContaining({ name: 'DataCloneError' }) }));
+    expect(grammar.normalize(set.proxy as never).ok).toBe(false);
+    expect(scope.calls()).toBe(0);
+    expect(set.calls()).toBe(0);
   });
 
-  it('rejects a normalizer throw that cannot be formatted', () => {
-    const errorWithThrowingMessage = new Error('hidden');
-    Object.defineProperty(errorWithThrowingMessage, 'message', {
+  it('rejects a prototype-flipping or revoked Proxy and never answers ok', () => {
+    let flips = 0;
+    const flipping = new Proxy({ ...base }, { getPrototypeOf: () => (flips++ % 2 ? Array.prototype : Object.prototype) });
+    const { proxy: revoked, revoke } = Proxy.revocable({ ...base }, {});
+    revoke();
+    for (const scope of [flipping, revoked]) {
+      expect(violationsOf(scope).violations).toEqual([cloneFailure('request')]);
+      expect(() => grammar.classifyRisk(scope)).toThrow(ScopeError);
+    }
+    expect(flips).toBe(0);
+  });
+
+  it('runs a stateful getter exactly once and decides and returns from that one read', () => {
+    let reads = 0;
+    const request = {
+      ...base,
+      get permissions() {
+        reads++;
+        return reads === 1 ? ['contents:read'] : ['admin'];
+      },
+    };
+    const result = violationsOf(request);
+    expect(reads).toBe(1);
+    expect(result.ok).toBe(true);
+    expect(result.scope?.permissions).toEqual(['contents:read']);
+    expect(grammar.classifyScope(result.scope!)).toBe('read');
+    // The raw object now answers admin; the snapshot does not change.
+    expect(request.permissions).toEqual(['admin']);
+    expect(result.scope?.permissions).toEqual(['contents:read']);
+  });
+
+  it('turns a throwing getter into a fixed message without reading the thrown value', () => {
+    let messageReads = 0;
+    const hostile = new Error('hidden');
+    Object.defineProperty(hostile, 'message', {
       get() {
-        throw new Error('message getter failed');
+        messageReads++;
+        return Symbol('not a string');
       },
     });
-    for (const thrown of [Object.create(null), errorWithThrowingMessage, { toString: () => { throw new Error('toString failed'); } }]) {
-      const throwing = defineScopeGrammar({
-        provider: 'throwing-normalize',
-        dimensions: { names: { kind: 'exactSet' } },
-        normalize: (): { names: string[] } => {
+    for (const thrown of [hostile, Symbol('thrown'), new Proxy({}, { get: () => { messageReads++; return 'x'; } })]) {
+      const request = Object.defineProperty({ ...base }, 'labels', {
+        enumerable: true,
+        get() {
           throw thrown;
         },
-        riskOf: () => 'read',
       });
-      expect(throwing.isSubset({}, {}).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', message: 'normalize failed: an unreadable value was thrown' }),
-        expect.objectContaining({ code: 'malformed', side: 'envelope' }),
-      ]);
-      expect(throwing.normalize({}).ok).toBe(false);
-      expect(() => throwing.classifyRisk({})).toThrow(ScopeError);
+      expect(violationsOf(request).violations).toEqual([cloneFailure('request')]);
+      expect(grammar.normalize(request).ok).toBe(false);
+      const error = thrownBy(() => grammar.classifyRisk(request));
+      expect(error).toBeInstanceOf(ScopeError);
+      expect(error.cause).toBe(thrown);
     }
+    expect(messageReads).toBe(0);
+  });
+
+  it('rejects every kind of promise as a scope on either side, with or without normalize', () => {
+    const native = Promise.resolve(base);
+    const nullPrototype = Object.setPrototypeOf(Promise.resolve(base), null) as object;
+    const dataCarrying = Object.assign(Object.setPrototypeOf(Promise.resolve(base), Object.prototype) as object, { names: ['a'] });
+    const rejected = Promise.reject(new Error('caller rejection'));
+    rejected.catch(() => undefined);
+    const plain = defineScopeGrammar({ provider: 'set-only', dimensions: { names: { kind: 'exactSet' } }, riskOf });
+    const defaulting = vi.fn((input: { names?: string[] } | null) => ({ names: input?.names ?? [] }));
+    const normalized = defineScopeGrammar({ provider: 'defaulting', dimensions: { names: { kind: 'exactSet' } }, normalize: defaulting, riskOf });
+    for (const g of [plain, normalized]) {
+      for (const promise of [native, nullPrototype, dataCarrying, rejected]) {
+        defaulting.mockClear();
+        expect(g.normalize(promise as never).ok).toBe(false);
+        expect(() => g.classifyRisk(promise as never)).toThrow(ScopeError);
+        // normalize never sees a promise: it runs only for the other, plain side.
+        expect(defaulting).not.toHaveBeenCalled();
+        expect(g.isSubset(promise as never, { names: ['a'] }).violations).toEqual([cloneFailure('request')]);
+        expect(g.isSubset({ names: [] }, promise as never).violations).toEqual([cloneFailure('envelope')]);
+        expect(defaulting.mock.calls.length).toBe(g === normalized ? 2 : 0);
+      }
+    }
+  });
+
+  it('drops non-enumerable and symbol keys, which can only narrow a request', () => {
+    const request = { ...base, [Symbol('permissions')]: ['admin'] };
+    Object.defineProperty(request, 'labels', { value: ['gamma'], enumerable: false });
+    const result = violationsOf(request);
+    expect(result.ok).toBe(true);
+    expect(result.scope?.labels).toEqual([]);
+    // A hidden scalar is missing, so the request is malformed rather than unbounded.
+    const hiddenTtl = Object.defineProperty({ ...base }, 'ttl', { value: 900, enumerable: false });
+    expect(violationsOf(hiddenTtl).violations).toEqual([expect.objectContaining({ code: 'malformed', dimension: 'ttl' })]);
+  });
+
+  it('judges a class instance or null-prototype object by its own data', () => {
+    const nullPrototype = Object.assign(Object.create(null) as object, base);
+    const instance = Object.assign(new (class Scope {})(), base);
+    expect(violationsOf(nullPrototype).ok).toBe(true);
+    expect(violationsOf(instance as never).ok).toBe(true);
   });
 });
 
-describe('snapshot reads', () => {
-  /** A scope that lists `permissions` in ownKeys but has no descriptor for it. */
-  function listedWithoutDescriptor(permissions: readonly string[]) {
-    return new Proxy(
-      { ...base, permissions },
-      { getOwnPropertyDescriptor: (target, key) => (key === 'permissions' ? undefined : Reflect.getOwnPropertyDescriptor(target, key)) },
-    );
-  }
-
-  it('rejects a listed key without an own data property instead of treating it as absent', () => {
-    const request = listedWithoutDescriptor(['admin']);
-    expect(request.permissions).toEqual(['admin']);
-    expect(violationsOf(request).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'permissions' }),
-    ]);
-    expect(violationsOf(base, listedWithoutDescriptor(['contents:read'])).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'permissions' }),
-    ]);
-    expect(grammar.normalize(request).ok).toBe(false);
-    expect(() => grammar.classifyRisk(request)).toThrow(ScopeError);
-  });
-
-  it('decides from the own length and elements, not from a Proxy get trap', () => {
-    // `get` claims an empty array; the own data properties hold ['admin'].
-    const hidden = new Proxy(['admin'], {
-      get: (target, key, receiver) => (key === 'length' ? 0 : (Reflect.get(target, key, receiver) as unknown)),
-    });
-    expect(violationsOf({ ...base, permissions: hidden }).violations).toEqual([
-      expect.objectContaining({ code: 'not_in_envelope', dimension: 'permissions', item: 'admin' }),
-    ]);
-    expect(grammar.classifyRisk({ ...base, permissions: hidden })).toBe('destructive');
-  });
-
-  it('rejects holes, inherited elements and accessor elements on either side', () => {
-    const sparse = ['alpha'];
-    sparse.length = 2;
-    const inherited = ['alpha'];
-    inherited.length = 2;
-    Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype) as object, { 1: 'gamma' }));
-    const accessor = ['alpha'];
-    Object.defineProperty(accessor, 0, { enumerable: true, get: () => 'alpha' });
-    for (const labels of [sparse, inherited, accessor]) {
-      expect(violationsOf({ ...base, labels }).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', dimension: 'labels', message: expect.stringContaining('own data property') }),
-      ]);
-      expect(violationsOf(base, { ...envelope, labels }).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'envelope', dimension: 'labels' }),
-      ]);
-      expect(() => grammar.classifyRisk({ ...base, labels })).toThrow(ScopeError);
-    }
-  });
-
-  it('returns the frozen snapshot it judged, which later reads of the input cannot change', () => {
-    // Reads benign the first time and admin on every later read.
-    let reads = 0;
-    const stateful = new Proxy(
-      { ...base },
-      {
-        getOwnPropertyDescriptor: (target, key) =>
-          key === 'permissions'
-            ? { value: reads++ === 0 ? ['contents:read'] : ['admin'], writable: true, enumerable: true, configurable: true }
-            : Reflect.getOwnPropertyDescriptor(target, key),
-      },
-    );
-    const result = grammar.isSubset(stateful as never, envelope);
-    expect(result.ok).toBe(true);
-    expect(Object.getOwnPropertyDescriptor(stateful, 'permissions')?.value).toEqual(['admin']);
-    const scope = result.scope!;
-    expect(scope.permissions).toEqual(['contents:read']);
-    expect(Object.isFrozen(scope)).toBe(true);
-    expect(Object.isFrozen(scope.permissions)).toBe(true);
-    expect(grammar.classifyScope(scope)).toBe('read');
-    expect(grammar.classifyRisk(stateful as never)).toBe('destructive');
+describe('the returned snapshot (I4)', () => {
+  it('returns the frozen snapshot it judged, which later changes to the input cannot reach', () => {
+    const request = { ...base, permissions: ['contents:read'] };
+    const result = violationsOf(request);
+    request.permissions.push('admin');
+    expect(result.scope?.permissions).toEqual(['contents:read']);
+    expect(Object.isFrozen(result.scope)).toBe(true);
+    expect(Object.isFrozen(result.scope?.permissions)).toBe(true);
+    expect(grammar.classifyScope(result.scope!)).toBe('read');
   });
 
   it('classifies only snapshots this grammar returned', () => {
-    const normalized = grammar.normalize({ ...base, permissions: ['contents:write'] });
-    expect(normalized.ok && grammar.classifyScope(normalized.scope)).toBe('write');
-    const other = defineScopeGrammar({ provider: 'other', dimensions: grammar.dimensions, riskOf: () => 'read' });
-    const foreign = other.normalize({ ...base, permissions: ['admin'] });
-    expect(foreign.ok).toBe(true);
-    for (const scope of [{ ...base, permissions: ['admin'] }, foreign.ok ? foreign.scope : undefined, null, 'scope']) {
-      expect(() => grammar.classifyScope(scope as never)).toThrow(ScopeError);
-    }
+    const scope = violationsOf(base).scope!;
+    const other = defineScopeGrammar({ provider: 'other', dimensions: grammar.dimensions as never, riskOf });
+    expect(() => grammar.classifyScope({ ...scope })).toThrow(ScopeError);
+    expect(() => other.classifyScope(scope as never)).toThrow(ScopeError);
+    expect(() => grammar.classifyScope(null as never)).toThrow(ScopeError);
+    const normalized = grammar.normalize(base);
+    expect(normalized.ok && grammar.classifyScope(normalized.scope)).toBe('read');
   });
 
   it('returns snapshots and dimensions with no inherited names', () => {
-    const result = grammar.isSubset({ ...base, permissions: ['contents:read'] }, envelope);
-    expect(result.ok).toBe(true);
+    const scope = violationsOf(base).scope! as Record<string, unknown>;
     const normalized = grammar.normalize(base);
-    for (const view of [result.scope, normalized.ok ? normalized.scope : undefined, grammar.dimensions]) {
-      expect(view).toBeDefined();
-      expect(Object.getPrototypeOf(view)).toBeNull();
-      expect(Object.isFrozen(view)).toBe(true);
-      const record = view as unknown as Record<string, unknown>;
-      for (const name of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', 'missing']) expect(record[name]).toBeUndefined();
+    const dimensions = grammar.dimensions as Record<string, unknown>;
+    for (const target of [scope, normalized.ok ? (normalized.scope as Record<string, unknown>) : {}, dimensions]) {
+      expect(Object.getPrototypeOf(target)).toBeNull();
+      expect(Object.isFrozen(target)).toBe(true);
+      for (const name of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', 'missing']) expect(target[name]).toBeUndefined();
     }
-    expect(Object.keys(grammar.dimensions)).toEqual(['permissions', 'labels', 'resources', 'rate', 'ttl']);
-    expect(grammar.classifyScope(result.scope!)).toBe('read');
+  });
+
+  it('accepts its own snapshot back as input', () => {
+    const scope = violationsOf(base).scope!;
+    expect(grammar.isSubset(scope, envelope).ok).toBe(true);
   });
 });
 
-describe('asynchronous callbacks', () => {
-  /** Runs `body`, lets pending rejections surface, and returns every unhandled rejection Node reported. */
-  async function unhandledRejectionsDuring(body: () => void): Promise<unknown[]> {
-    const seen: unknown[] = [];
-    const listener = (reason: unknown) => seen.push(reason);
-    process.on('unhandledRejection', listener);
-    try {
-      body();
-      await new Promise(resolve => setTimeout(resolve, 20));
-    } finally {
-      process.off('unhandledRejection', listener);
-    }
-    return seen;
-  }
+describe('normalize works on engine-owned copies (I2)', () => {
+  const dimensions = { names: { kind: 'exactSet' as const } };
 
-  it('rejects a promise from normalize without leaving an unhandled rejection', async () => {
-    const failing = defineScopeGrammar({
-      provider: 'async-normalize',
-      dimensions: { names: { kind: 'exactSet' } },
-      normalize: (async () => {
-        throw new Error('async normalize failed');
-      }) as never,
-      riskOf: () => 'read',
+  it('receives a clone of the input, never the caller object', () => {
+    const input = { names: ['a'] };
+    let seen: unknown;
+    const g = defineScopeGrammar({
+      provider: 'clone-in',
+      dimensions,
+      normalize: (value: { names: string[] }) => {
+        seen = value;
+        value.names.push('b');
+        return value;
+      },
+      riskOf,
     });
-    const seen = await unhandledRejectionsDuring(() => {
-      expect(failing.isSubset({}, {}).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
-        expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
-      ]);
-      expect(failing.normalize({}).ok).toBe(false);
-      expect(() => failing.classifyRisk({})).toThrow(ScopeError);
-    });
-    expect(seen).toEqual([]);
-    const resolving = defineScopeGrammar({
-      provider: 'async-normalize-ok',
-      dimensions: { names: { kind: 'exactSet' } },
-      normalize: (async () => ({ names: [] })) as never,
-      riskOf: () => 'read',
-    });
-    expect(resolving.isSubset({}, {}).ok).toBe(false);
+    expect(g.normalize(input)).toEqual({ ok: true, scope: { names: ['a', 'b'] } });
+    expect(seen).not.toBe(input);
+    expect(input.names).toEqual(['a']);
   });
 
-  it('rejects a promise from riskOf with a ScopeError without leaving an unhandled rejection', async () => {
-    const failing = defineScopeGrammar({
-      provider: 'async-risk',
-      dimensions: { names: { kind: 'exactSet' } },
-      riskOf: (async () => {
-        throw new Error('async riskOf failed');
-      }) as never,
-    });
-    const seen = await unhandledRejectionsDuring(() => {
-      expect(() => failing.classifyRisk({ names: ['a', 'b'] })).toThrow(ScopeError);
-    });
-    expect(seen).toEqual([]);
-    const resolving = defineScopeGrammar({
-      provider: 'async-risk-ok',
-      dimensions: { names: { kind: 'exactSet' } },
-      riskOf: (async () => 'read') as never,
-    });
-    expect(() => resolving.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
-  });
-
-  it('attaches a rejection handler to a rejected null-prototype promise', async () => {
-    const nullPrototypeRejection = (): Promise<never> => {
-      const promise = Promise.reject(new Error('null-prototype rejection'));
-      Object.setPrototypeOf(promise, null);
-      return promise;
-    };
-    const seen = await unhandledRejectionsDuring(() => {
-      const viaNormalize = defineScopeGrammar({
-        provider: 'null-proto-normalize',
-        dimensions: { names: { kind: 'exactSet' } },
-        normalize: nullPrototypeRejection as never,
-        riskOf: () => 'read',
-      });
-      expect(viaNormalize.isSubset({}, {}).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
-        expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
-      ]);
-      const viaRisk = defineScopeGrammar({
-        provider: 'null-proto-risk',
-        dimensions: { names: { kind: 'exactSet' } },
-        riskOf: nullPrototypeRejection as never,
-      });
-      expect(() => viaRisk.classifyRisk({ names: ['a'] })).toThrow(/promise/);
-    });
-    expect(seen).toEqual([]);
-  });
-
-  it('still rejects a rejected promise whose species or constructor lookup throws, leaving its rejection to the author', async () => {
-    // Pins the documented boundary: `Promise.prototype.then` runs these lookups
-    // before attaching a handler, so the engine cannot mark such a promise
-    // handled. It still rejects the value synchronously; the test handles each
-    // rejection itself once the lookups are disarmed.
-    let armed = true;
-    const lookups: string[] = [];
-    class SpeciesThrowingPromise extends Promise<unknown> {
-      static override get [Symbol.species](): PromiseConstructor {
-        lookups.push('species');
-        if (armed) throw new Error('species getter failed');
-        return Promise;
-      }
-    }
-    const constructorThrowing = (promise: Promise<unknown>): Promise<unknown> =>
-      Object.defineProperty(promise, 'constructor', {
-        get() {
-          lookups.push('constructor');
-          if (armed) throw new Error('constructor getter failed');
-          return Promise;
+  it('clones its result before validation', () => {
+    let reads = 0;
+    const withGetter = defineScopeGrammar({
+      provider: 'getter-out',
+      dimensions,
+      normalize: () => ({
+        get names() {
+          reads++;
+          return reads === 1 ? ['a'] : ['admin'];
         },
-      });
-    const created: Promise<unknown>[] = [];
-    const factories: Array<() => Promise<unknown>> = [
-      () => SpeciesThrowingPromise.reject(new Error('species rejection')),
-      () => constructorThrowing(Promise.reject(new Error('constructor rejection'))),
-    ];
-    const seen = await unhandledRejectionsDuring(() => {
-      for (const make of factories) {
-        const produce = (): Promise<unknown> => {
-          const promise = make();
-          created.push(promise);
-          return promise;
-        };
-        const viaNormalize = defineScopeGrammar({
-          provider: 'throwing-lookup-normalize',
-          dimensions: { names: { kind: 'exactSet' } },
-          normalize: produce as never,
-          riskOf: () => 'read',
-        });
-        expect(viaNormalize.isSubset({}, {}).violations).toEqual([
-          expect.objectContaining({ code: 'malformed', side: 'request' }),
-          expect.objectContaining({ code: 'malformed', side: 'envelope' }),
-        ]);
-        const viaRisk = defineScopeGrammar({
-          provider: 'throwing-lookup-risk',
-          dimensions: { names: { kind: 'exactSet' } },
-          riskOf: produce as never,
-        });
-        expect(() => viaRisk.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
-      }
-      expect(lookups).toEqual(expect.arrayContaining(['species', 'constructor']));
-      armed = false;
-      for (const promise of created) promise.catch(() => undefined);
+      }),
+      riskOf,
     });
-    expect(created).toHaveLength(6);
-    expect(seen).toEqual([]);
-  });
+    const result = withGetter.normalize({ names: [] });
+    expect(result).toEqual({ ok: true, scope: { names: ['a'] } });
+    expect(reads).toBe(1);
 
-  it('rejects hostile thenables without throwing', () => {
-    class HostilePromise extends Promise<unknown> {
-      static override get [Symbol.species](): PromiseConstructor {
-        throw new Error('species getter failed');
-      }
-    }
-    const thenGetter = Object.defineProperty({}, 'then', {
-      get() {
-        throw new Error('then getter failed');
-      },
-    });
-    for (const result of [HostilePromise.resolve({ names: [] }), thenGetter, { then: () => undefined }]) {
-      const hostile = defineScopeGrammar({
-        provider: 'hostile-thenable',
-        dimensions: { names: { kind: 'exactSet' } },
-        normalize: () => result as never,
-        riskOf: () => result as never,
-      });
-      expect(hostile.isSubset({}, {}).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request' }),
-        expect.objectContaining({ code: 'malformed', side: 'envelope' }),
+    const outputFailure = (side: string) =>
+      expect.objectContaining({ code: 'malformed', side, message: 'normalize must return plain data that structuredClone can copy' });
+    for (const output of [new Proxy({ names: ['a'] }, {}), { names: ['a'], extra: () => 'x' }]) {
+      const g = defineScopeGrammar({ provider: 'bad-out', dimensions, normalize: () => output as never, riskOf });
+      expect(g.isSubset({ names: [] }, { names: [] }).violations).toEqual([
+        outputFailure('request'),
+        outputFailure('envelope'),
       ]);
-      const plain = defineScopeGrammar({ provider: 'hostile-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => result as never });
-      expect(() => plain.classifyRisk({ names: ['a'] })).toThrow(ScopeError);
     }
   });
 
-  it('rejects a plain-prototype promise as a scope even without normalize', async () => {
-    const setOnly = defineScopeGrammar({ provider: 'set-only', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'destructive' });
-    const reparented = (proto: object | null, data?: Record<string, unknown>, rejected = false): Promise<unknown> => {
-      const promise = rejected ? Promise.reject(new Error('reparented rejection')) : Promise.resolve({ names: [] });
-      Object.setPrototypeOf(promise, proto);
-      if (data) Object.assign(promise, data);
-      return promise;
-    };
-    const benign = { names: ['a'] };
-    const seen = await unhandledRejectionsDuring(() => {
-      for (const proto of [null, Object.prototype]) {
-        for (const data of [undefined, { names: ['a'] }]) {
-          for (const rejected of [false, true]) {
-            const make = () => reparented(proto, data, rejected) as never;
-            expect(setOnly.isSubset(make(), benign).violations).toEqual([
-              expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('promise') }),
-            ]);
-            expect(setOnly.isSubset(benign, make()).violations).toEqual([
-              expect.objectContaining({ code: 'malformed', side: 'envelope', message: expect.stringContaining('promise') }),
-            ]);
-            expect(setOnly.normalize(make()).ok).toBe(false);
-            expect(() => setOnly.classifyRisk(make())).toThrow(ScopeError);
-          }
-        }
-      }
-    });
-    expect(seen).toEqual([]);
-  });
-
-  it('runs no caller code to recognise a promise and rejects one with an own constructor as an unknown dimension', () => {
-    const setOnly = defineScopeGrammar({ provider: 'set-only-ctor', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'read' });
-    let lookups = 0;
-    const species = Object.defineProperty(function Species() {}, Symbol.species, {
-      get() {
-        lookups++;
-        throw new Error('species lookup ran');
+  it('reports a normalize throw with a fixed message and keeps it as the classifyRisk cause', () => {
+    const thrown = new Proxy({}, { get: () => { throw new Error('trap ran'); } });
+    const g = defineScopeGrammar({
+      provider: 'throws',
+      dimensions,
+      normalize: () => {
+        throw thrown;
       },
+      riskOf,
     });
-    for (const ctor of [0, species, undefined]) {
-      const promise = Promise.resolve();
-      Object.setPrototypeOf(promise, null);
-      Object.defineProperty(promise, 'constructor', { value: ctor, enumerable: false });
-      Object.assign(promise, { names: ['a'] });
-      expect(setOnly.isSubset(promise as never, { names: ['a'] }).violations).toEqual([
-        expect.objectContaining({ code: 'malformed', side: 'request', message: expect.stringContaining('"constructor"') }),
-      ]);
-      expect(() => setOnly.classifyRisk(promise as never)).toThrow(ScopeError);
-    }
-    expect(lookups).toBe(0);
-    expect(() =>
-      defineScopeGrammar({ provider: 'reserved', dimensions: { constructor: { kind: 'exactSet' } }, riskOf: () => 'read' }),
-    ).toThrow(TypeError);
+    expect(g.isSubset({ names: [] }, { names: [] }).violations.map(v => [v.side, v.message])).toEqual([
+      ['request', 'normalize threw'],
+      ['envelope', 'normalize threw'],
+    ]);
+    const error = thrownBy(() => g.classifyRisk({ names: [] }));
+    expect(error).toBeInstanceOf(ScopeError);
+    expect(error.cause).toBe(thrown);
   });
 });
 
-describe('unreadable error messages', () => {
-  /** An error whose `message` getter returns the given values in turn. */
-  function shiftingError(...reads: unknown[]): Error {
-    const error = new Error('placeholder');
-    let read = 0;
-    Object.defineProperty(error, 'message', { get: () => reads[Math.min(read++, reads.length - 1)] });
-    return error;
-  }
-
-  const symbolMessage = Symbol('unreadable');
-  const cases: Array<[string, () => Error, string]> = [
-    ['a string, then a Symbol', () => shiftingError('test-error', symbolMessage), 'test-error'],
-    ['a Symbol, then a string', () => shiftingError(symbolMessage, 'test-error'), 'an unreadable value was thrown'],
-    ['an object whose toString throws', () => shiftingError({ toString: () => { throw new Error('toString failed'); } }), 'an unreadable value was thrown'],
-  ];
-
-  it.each(cases)('formats a normalizer error whose message reads as %s without throwing', (_label, make, text) => {
-    const throwing = defineScopeGrammar({
-      provider: 'shifting-normalize',
-      dimensions: { names: { kind: 'exactSet' } },
-      normalize: (): { names: string[] } => {
-        throw make();
-      },
-      riskOf: () => 'read',
-    });
-    expect(throwing.isSubset({}, {}).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', message: `normalize failed: ${text}` }),
-      expect.objectContaining({ code: 'malformed', side: 'envelope', message: `normalize failed: ${text}` }),
-    ]);
-    expect(throwing.normalize({}).ok).toBe(false);
-    expect(() => throwing.classifyRisk({})).toThrow(ScopeError);
+describe('callbacks are synchronous and the engine never touches a promise (I5)', () => {
+  it('fails closed at once when a plain function returns a promise', async () => {
+    const pending: Promise<unknown>[] = [];
+    const keep = <T>(promise: Promise<T>): Promise<T> => {
+      // The rejection is the grammar author's to handle; this test handles it.
+      pending.push(promise.catch(() => undefined));
+      return promise;
+    };
+    const normalizeResults = [() => keep(Promise.resolve({ names: ['a'] })), () => keep(Promise.reject(new Error('normalize rejected')))];
+    for (const result of normalizeResults) {
+      const g = defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, normalize: result as never, riskOf });
+      expect(g.isSubset({ names: [] }, { names: [] }).violations).toEqual([
+        expect.objectContaining({ side: 'request', code: 'malformed' }),
+        expect.objectContaining({ side: 'envelope', code: 'malformed' }),
+      ]);
+      expect(g.normalize({ names: [] }).ok).toBe(false);
+    }
+    for (const result of [() => keep(Promise.resolve('read')), () => keep(Promise.reject(new Error('riskOf rejected')))]) {
+      const g = defineScopeGrammar({ provider: 'p', dimensions: { names: { kind: 'exactSet' } }, riskOf: result as never });
+      expect(() => g.classifyRisk({ names: ['a'] })).toThrow(/unknown risk/);
+    }
+    await Promise.all(pending);
   });
 
-  it.each(cases)('formats a scope-reading error whose message reads as %s without throwing', (_label, make, text) => {
-    const hostile = () => ({ ...base, labels: throwingArray('0', make) });
-    expect(violationsOf(hostile()).violations).toEqual([
-      expect.objectContaining({ code: 'malformed', side: 'request', message: `scope could not be read: ${text}` }),
-    ]);
-    expect(violationsOf(base, hostile()).violations).toEqual([expect.objectContaining({ code: 'malformed', side: 'envelope' })]);
-    expect(grammar.normalize(hostile()).ok).toBe(false);
-    expect(() => grammar.classifyRisk(hostile())).toThrow(ScopeError);
+  it('has no promise handling in the engine source', () => {
+    const dir = fileURLToPath(new URL('../../src/scopes/', import.meta.url));
+    for (const file of readdirSync(dir)) {
+      const source = readFileSync(`${dir}${file}`, 'utf8');
+      expect(source, file).not.toMatch(/\bawait\b|\.then\b|\bPromise\b/);
+    }
+  });
+});
+
+describe('radix trie insertion order', () => {
+  const globs = defineScopeGrammar({ provider: 'trie', dimensions: { paths: { kind: 'prefixGlobSet' } }, riskOf });
+  /** The definition of coverage, checked item by item against every envelope pattern. */
+  const naive = (item: string, env: readonly string[]) =>
+    env.some(pattern => {
+      if (!pattern.endsWith('*')) return pattern === item;
+      const prefix = pattern.slice(0, -1);
+      return item.startsWith(prefix) && (!item.endsWith('*') || item.length - 1 >= prefix.length);
+    });
+  const uncovered = (request: string[], env: string[]) => globs.isSubset({ paths: request }, { paths: env }).violations.map(v => v.item);
+
+  it('lets a shorter covering glob added after a longer one cover its whole subtree', () => {
+    expect(uncovered(['abz', 'abcd', 'ab*', 'a*', 'b'], ['abcd*', 'abc*', 'ab*'])).toEqual(['a*', 'b']);
+    expect(uncovered(['az', 'abz', 'a*'], ['abc*', 'abd*', 'a*'])).toEqual([]);
   });
 
-  it('shortens a very long error message', () => {
-    const throwing = defineScopeGrammar({
-      provider: 'long-error',
-      dimensions: { names: { kind: 'exactSet' } },
-      normalize: (): { names: string[] } => {
-        throw new Error('x'.repeat(100_000));
-      },
-      riskOf: () => 'read',
-    });
-    const result = throwing.normalize({});
-    expect(result.ok).toBe(false);
-    expect(result.ok ? '' : result.violations[0]!.message.length).toBeLessThan(300);
+  it('keeps a terminal when a duplicate or a longer glob is added after it', () => {
+    expect(uncovered(['ab', 'abx', 'abcdz', 'ab*'], ['ab*', 'ab*', 'abcd*', 'abcde*'])).toEqual([]);
+    expect(uncovered(['a', 'a*'], ['ab*', 'ab*'])).toEqual(['a', 'a*']);
+  });
+
+  it('agrees with the naive definition on random envelopes in any insertion order', () => {
+    let seed = 7;
+    const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff);
+    const word = () => Array.from({ length: next() % 4 }, () => 'ab'[next() % 2]).join('');
+    for (let round = 0; round < 300; round++) {
+      const env = Array.from({ length: 1 + (next() % 6) }, () => (next() % 3 ? `${word()}*` : word() || 'a'));
+      const request = [...new Set(Array.from({ length: 8 }, () => (next() % 2 ? `${word()}*` : word() || 'b')))];
+      const expected = request.filter(item => !naive(item, env));
+      for (const order of [env, [...env].reverse(), [...env].sort(), [...env].sort().reverse()]) {
+        expect(uncovered(request, order), JSON.stringify({ request, order })).toEqual(expected);
+      }
+    }
   });
 });
 
