@@ -1,0 +1,39 @@
+datafn/docs/content/docs/documentation/database/adapters.mdx
+  s_26eea3e345b097::t_fefdcfcdfdf64e 257
+datafn/docs/content/docs/reference/core/namespace-storage.mdx
+  s_26eea3e345b097::t_6ce1efb59154d8 23
+datafn/docs/public/llms-full.txt
+  s_26eea3e345b097::t_afd10f4f1c0c59 11018,15583,15589,18106,18118,18123-18127,18131,18136,22667,22669,22675,22680-22684,22688,22691,22699,25891
+datafn/server/src/execution/query/pushdown.ts
+  s_26eea3e345b097::t_f5df4eea50ebbb 544
+datafn/server/src/execution/query/search.ts
+  s_26eea3e345b097::t_18820f84a0855a 108,151
+datafn/server/src/execution/sync/clone.ts
+  s_26eea3e345b097::t_1fd809553e4290 214-220,290-296,330-335
+datafn/server/src/execution/sync/pull.ts
+  s_26eea3e345b097::t_857960aa384bd7 143-144,813,848,872,972,1004,1020,1046,1064,1077
+datafn/server/src/routes/query.ts
+  s_26eea3e345b097::t_c60547bf9fbaf3 100,150,234,627,851-864,879,886,888
+datafn/server/src/routes/query/execute.ts
+  s_26eea3e345b097::t_bb5802714f2307 239,317
+datafn/server/src/routes/sync.ts
+  s_26eea3e345b097::t_a3c168b11e583d 13,270
+datafn/server/src/server.ts
+  s_26eea3e345b097::t_14e2227896c486 29,1151,1184,1206-1207,1234,1238-1239,1436
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19fc3365a3cb8613277f6d3f800b63d5a22f02ff",
+  "prompts": {},
+  "sessions": {
+    "s_26eea3e345b097": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21b4f-929f-7211-98c9-9c730b79e850",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
