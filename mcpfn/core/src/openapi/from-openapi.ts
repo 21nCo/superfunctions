@@ -1541,6 +1541,7 @@ export function fromOpenAPI<TContext>(
   if (!isObject(document)) {
     throw new McpFnValidationError("fromOpenAPI expects a parsed OpenAPI document object");
   }
+  rejectAccessors(document);
   const version = documentVersion(document as JsonObject);
   validateOptions(options);
   const filters: Filters<TContext> = {
@@ -1593,6 +1594,95 @@ interface Filters<TContext> {
   options: FromOpenApiOptions<TContext>;
 }
 
+/** One object reached by the accessor walk, with the way it was reached (for the error's path). */
+interface Reached {
+  value: object;
+  parent: Reached | undefined;
+  key: string;
+}
+
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+
+/** Whether `value` is a Map (of any realm), by its brand, without running the caller's code. */
+function isMap(value: object): boolean {
+  try {
+    mapSize.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `value` is a Set (of any realm), by its brand, without running the caller's code. */
+function isSet(value: object): boolean {
+  try {
+    setSize.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Throws when any object reachable from the document has an own accessor
+ * property. structuredClone runs a getter, so without this check operator
+ * code could run while the document is copied and change it between the copy
+ * and the checks of its security (or give the copy one value and every later
+ * read another). The walk reads descriptors only, so it runs no getter
+ * itself; it is iterative (any depth), visits each object once (aliases and
+ * cycles cost nothing more) and also visits Map and Set entries. A typed
+ * array's elements are data and are not walked. The error names the path of
+ * the accessor, never a value.
+ */
+function rejectAccessors(document: object): void {
+  const visited = new WeakSet<object>();
+  const pending: Reached[] = [{ value: document, parent: undefined, key: "" }];
+  const reach = (value: unknown, parent: Reached, key: string): void => {
+    if (typeof value === "object" && value !== null && !visited.has(value)) pending.push({ value, parent, key });
+  };
+  while (pending.length > 0) {
+    const reached = pending.pop()!;
+    const { value } = reached;
+    if (visited.has(value)) continue;
+    visited.add(value);
+    if (ArrayBuffer.isView(value)) continue;
+    for (const key of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined) continue;
+      if (!("value" in descriptor)) {
+        throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
+          cause: `${reachedPath({ value, parent: reached, key })} is an accessor property`,
+        });
+      }
+      reach(descriptor.value, reached, key);
+    }
+    if (isMap(value)) {
+      let index = 0;
+      Map.prototype.forEach.call(value, (entry: unknown, key: unknown) => {
+        reach(key, reached, `<map key ${index}>`);
+        reach(entry, reached, `<map value ${index}>`);
+        index += 1;
+      });
+    } else if (isSet(value)) {
+      let index = 0;
+      Set.prototype.forEach.call(value, (entry: unknown) => {
+        reach(entry, reached, `<set entry ${index}>`);
+        index += 1;
+      });
+    }
+  }
+}
+
+/** The JSON path of a reached property, such as `$.paths["/a"].get.description`. */
+function reachedPath(reached: Reached): string {
+  const keys: string[] = [];
+  for (let at: Reached | undefined = reached; at?.parent !== undefined; at = at.parent) keys.push(at.key);
+  let path = "$";
+  for (const key of keys.reverse()) path += /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+  return path;
+}
+
 function privateCopy(document: object): JsonObject {
   try {
     // Work on a private copy: later changes to the caller's object cannot
@@ -1624,10 +1714,14 @@ function privateCopy(document: object): JsonObject {
  * prototype getter), leaves the cloned level unknown, so it is marked
  * unresolved; the document's level covers every operation that inherits it.
  * The same on the way to a scheme (`components`, `securitySchemes` or a
- * scheme) leaves the scheme, or the section, unresolved.
+ * scheme) leaves the scheme, or the section, unresolved, and so does a scheme
+ * with a key structuredClone would drop (such as a non-enumerable `$ref`).
+ * (rejectAccessors has already refused any accessor before the copy; the
+ * accessor cases here only keep this function safe on its own.)
  */
 function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
-  const markLevel = levelMarker();
+  const plainObjects = new WeakMap<object, boolean>();
+  const markLevel = levelMarker(plainObjects);
   try {
     markLevel(clonesUnchanged(document) ? ownData(document, "security") : UNKNOWN, copy, "security");
     const paths = ownData(document, "paths");
@@ -1659,7 +1753,7 @@ function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
     if (!isObject(copiedSchemes)) return;
     for (const name of Object.keys(copiedSchemes)) {
       const scheme = ownData(schemes, name);
-      if (scheme === UNKNOWN || (isObject(scheme) && !clonesUnchanged(scheme))) setOwn(copiedSchemes, name, null);
+      if (scheme === UNKNOWN || (isObject(scheme) && !copiesAsRead(scheme, plainObjects))) setOwn(copiedSchemes, name, null);
     }
   } catch (error) {
     throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
@@ -1716,10 +1810,9 @@ function clonesUnchanged(value: unknown): boolean {
  * keeps the sharing) is marked once, so the work follows the distinct input,
  * not the number of references.
  */
-function levelMarker(): (level: unknown, holder: JsonObject, key: string) => void {
+function levelMarker(requirements: WeakMap<object, boolean>): (level: unknown, holder: JsonObject, key: string) => void {
   const verdicts = new WeakMap<unknown[], number[]>();
   const marked = new WeakSet<unknown[]>();
-  const requirements = new WeakMap<object, boolean>();
   return (level, holder, key) => {
     if (level === UNKNOWN) {
       // The level as cloned is not known: it reads as a requirement that is not a plain object.
@@ -1750,26 +1843,30 @@ function unplainRequirements(level: unknown[], requirements: WeakMap<object, boo
     const descriptor = Object.getOwnPropertyDescriptor(level, key);
     if (descriptor === undefined) continue;
     const requirement: unknown = descriptor.value;
-    if (!("value" in descriptor) || (isObject(requirement) && !plainRequirement(requirement, requirements))) indexes.push(Number(key));
+    if (!("value" in descriptor) || (isObject(requirement) && !copiesAsRead(requirement, requirements))) indexes.push(Number(key));
   }
   return indexes;
 }
 
-/** A plain object whose every own string key is an enumerable data property, so its copy reads as it does. */
-function plainRequirement(requirement: JsonObject, requirements: WeakMap<object, boolean>): boolean {
-  let plain = requirements.get(requirement);
+/**
+ * A plain object whose every own string key is an enumerable data property,
+ * so its copy reads as it does (used for security requirements and schemes).
+ * Each object's verdict is kept by identity in `verdicts`.
+ */
+function copiesAsRead(value: JsonObject, verdicts: WeakMap<object, boolean>): boolean {
+  let plain = verdicts.get(value);
   if (plain === undefined) {
-    plain = clonesUnchanged(requirement);
+    plain = clonesUnchanged(value);
     if (plain) {
-      for (const key of Object.getOwnPropertyNames(requirement)) {
-        const descriptor = Object.getOwnPropertyDescriptor(requirement, key)!;
+      for (const key of Object.getOwnPropertyNames(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
         if (!descriptor.enumerable || !("value" in descriptor)) {
           plain = false;
           break;
         }
       }
     }
-    requirements.set(requirement, plain);
+    verdicts.set(value, plain);
   }
   return plain;
 }

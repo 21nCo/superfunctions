@@ -322,8 +322,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   fetch manages, which operator headers cannot carry, and one whose security
   is malformed (a level that is not a list, a requirement that is not a
   plain object, such as a `Map`, `Date` or class instance, or one with a
-  non-enumerable key or a getter, judged before the document is copied, a
-  level reached through a getter or a non-enumerable property (on
+  non-enumerable key, judged before the document is copied, a
+  level reached through a non-enumerable property (on
   `security`, `paths`, a path item or an operation), or held by a document
   or operation that is not a plain object (an inherited or prototype-getter
   `security`), whose value as copied is not known, so it never reads as
@@ -331,9 +331,14 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
   does not define such as `api-key`, a scheme object that is not a plain
-  object or is reached through a getter) or an `apiKey` scheme without a usable `name` and `in` (a header
+  object or has a non-enumerable key, such as a non-enumerable `$ref`) or an `apiKey` scheme without a usable `name` and `in` (a header
   or cookie name must be an HTTP token, a query name not empty), since the parameter that carries its credential is then
-  unknown. It sets `outputSchemaRule: "every-success"`
+  unknown. Whatever the executor, `fromOpenAPI` throws `McpFnValidationError`
+  ("fromOpenAPI expects a plain JSON document") when any object reachable
+  from the document, `Map` and `Set` entries included, has an accessor
+  (getter or setter) property: it reads property descriptors only, before
+  copying the document, so no getter runs, and the error names the
+  property's path, never a value. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
 - **Credentials (D9).** `headers` is a plain object (prototype
   `Object.prototype` or `null`) or a function of the server's trusted

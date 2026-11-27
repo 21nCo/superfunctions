@@ -1987,82 +1987,132 @@ describe("httpExecutor security levels reached through an accessor", () => {
   class EmptyRequirement {}
   const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
   const scheme = { type: "apiKey", in: "header", name: "X-Api-Key" };
-  // An enumerable getter that gives one value to the first read (structuredClone) and another to every later one.
+  let reads = 0;
+  // An enumerable getter that would give one value to the first read (structuredClone) and another to every later one.
   const flipping = <T extends object>(holder: T, key: string, first: () => unknown, later: () => unknown): T =>
-    Object.defineProperty(holder, key, { enumerable: true, configurable: true, get: (() => { let reads = 0; return () => (++reads === 1 ? first() : later()); })() });
+    Object.defineProperty(holder, key, { enumerable: true, configurable: true, get: (() => { let own = 0; return () => { reads += 1; return ++own === 1 ? first() : later(); }; })() });
   const operation = (security?: unknown) => ({
     operationId: "keyed",
     ...(security === undefined ? {} : { security }),
     parameters: [keyParameter],
     responses: ok,
   });
-  const documentWith = (fields: { security?: unknown; paths?: unknown; components?: unknown }) => ({
+  const documentWith = (fields: { security?: unknown; paths?: unknown; components?: unknown; [extension: `x-${string}`]: unknown }) => ({
     openapi: "3.1.0",
     info: { title: "accessors", version: "1.0.0" },
     components: { securitySchemes: { headerKey: scheme } },
     security: [{ headerKey: [] }],
     ...fields,
   });
-  const notPlain = (where: string) => `its security cannot be read: ${where} security has a requirement that is not a plain object`;
+  const getterValue = "test-getter-value";
+  // A getter that rewrites the operation's security to [{}] (no credential) when it runs.
+  const rewriting = (target: { security?: unknown }) => () => {
+    reads += 1;
+    target.security = [{}];
+    return getterValue;
+  };
+  const withGetter = <T extends object>(holder: T, key: string, get: () => unknown): T =>
+    Object.defineProperty(holder, key, { enumerable: true, configurable: true, get });
 
-  it.each([
+  const cases: [string, () => object, string][] = [
     [
       "the operation's security",
       () => documentWith({ paths: { "/keyed": { get: flipping(operation(), "security", () => [new EmptyRequirement()], () => [{}]) } } }),
-      notPlain("the operation's"),
+      '$.paths["/keyed"].get.security',
     ],
     [
       "the document's security, inherited",
       () => flipping(documentWith({ paths: { "/keyed": { get: operation() } } }), "security", () => [new EmptyRequirement()], () => [{}]),
-      notPlain("the document's"),
+      "$.security",
     ],
     [
       "the operation object",
       () => documentWith({ paths: { "/keyed": flipping({}, "get", () => operation([new EmptyRequirement()]), () => operation([{}])) } }),
-      notPlain("the operation's"),
+      '$.paths["/keyed"].get',
     ],
     [
       "the path item",
       () => documentWith({ paths: flipping({}, "/keyed", () => ({ get: operation([new EmptyRequirement()]) }), () => ({ get: operation([{}]) })) }),
-      notPlain("the operation's"),
+      '$.paths["/keyed"]',
     ],
     [
       "the paths object",
       () => flipping(documentWith({}), "paths", () => ({ "/keyed": { get: operation([new EmptyRequirement()]) } }), () => ({ "/keyed": { get: operation([{}]) } })),
-      notPlain("the operation's"),
+      "$.paths",
     ],
     [
       "a security scheme",
       () =>
         documentWith({
-          // Cloned, the instance reads as the plain scheme the later reads return.
           components: { securitySchemes: flipping({}, "headerKey", () => Object.assign(new (class Scheme {})(), scheme), () => scheme) },
           paths: { "/keyed": { get: operation() } },
         }),
-      'the security scheme "headerKey" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+      "$.components.securitySchemes.headerKey",
     ],
-  ])("skips the operation when %s is an accessor, never exposing the credential header as input", (_where, document, reason) => {
-    const { tools, skipped } = fromOpenAPI(document(), { executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }) });
-    expect(tools).toEqual([]);
-    expect(skipped.map(({ operation: skippedOperation, code, reason: why }) => [skippedOperation.operationId, code, why])).toEqual([
-      ["keyed", "unsupported-by-executor", reason],
-    ]);
+    [
+      "an operation description that rewrites the operation's security",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        return documentWith({ paths: { "/keyed": { get: withGetter(keyed, "description", rewriting(keyed)) } } });
+      },
+      '$.paths["/keyed"].get.description',
+    ],
+    [
+      "a document extension that rewrites an operation's security while the document is copied",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        return withGetter(documentWith({ paths: { "/keyed": { get: keyed } } }), "x-hook", rewriting(keyed));
+      },
+      '$["x-hook"]',
+    ],
+    [
+      "a getter inside a Map entry value",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        return documentWith({ paths: { "/keyed": { get: keyed } }, "x-map": new Map([["entry", withGetter({}, "hook", rewriting(keyed))]]) });
+      },
+      '$["x-map"]["<map value 0>"].hook',
+    ],
+    [
+      "a getter inside a Set entry",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        return documentWith({ paths: { "/keyed": { get: keyed } }, "x-set": new Set([withGetter({}, "hook", rewriting(keyed))]) });
+      },
+      '$["x-set"]["<set entry 0>"].hook',
+    ],
+  ];
+
+  it.each(cases)("refuses the document when %s is an accessor, running no getter and naming no value", (_where, document, path) => {
+    for (const executor of [httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }), { execute: () => ({ content: [] }) }]) {
+      const built = document();
+      reads = 0;
+      let thrown: unknown;
+      try {
+        fromOpenAPI(built, { executor });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpFnValidationError);
+      const error = thrown as McpFnValidationError;
+      expect(error.message).toBe("fromOpenAPI expects a plain JSON document");
+      expect(error.details).toEqual({ cause: `${path} is an accessor property` });
+      expect(reads).toBe(0);
+      const reported = JSON.stringify({ message: error.message, details: error.details });
+      expect(reported).not.toContain(getterValue);
+      expect(reported).not.toContain(operatorToken);
+    }
   });
 
-  it("refuses, before any request, a call of an operation listed by an executor that does not check security", async () => {
-    const getter = flipping(operation(), "security", () => [new EmptyRequirement()], () => [{}]);
-    const { tools } = fromOpenAPI(documentWith({ paths: { "/keyed": { get: getter } } }), { executor: { execute: () => ({ content: [] }) } });
-    expect(tools[0]!.operation.securityUnresolved).toBe("the operation's security has a requirement that is not a plain object");
-    const before = api.received.length;
-    const result = await httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }).execute({
-      operation: tools[0]!.operation,
-      args: { header: { "X-Api-Key": "test-caller-value" } },
-      context: undefined,
-      signal: new AbortController().signal,
-      hasOutputSchema: false,
-    });
-    expect(result.isError).toBe(true);
-    expect(api.received.length).toBe(before);
+  it("walks aliased and cyclic objects once and still finds an accessor behind them", () => {
+    const shared: Record<string, unknown> = { type: "object" };
+    shared.self = shared;
+    const document = documentWith({ paths: { "/keyed": { get: operation() } }, "x-a": shared, "x-b": [shared, shared] });
+    expect(fromOpenAPI(document, { executor: { execute: () => ({ content: [] }) } }).tools).toHaveLength(1);
+    reads = 0;
+    withGetter(shared, "late", () => (reads += 1));
+    expect(() => fromOpenAPI(document, { executor: { execute: () => ({ content: [] }) } })).toThrow("fromOpenAPI expects a plain JSON document");
+    expect(reads).toBe(0);
   });
 });
 
@@ -2132,6 +2182,27 @@ describe("httpExecutor security that structuredClone would drop", () => {
       expect(api.received.length).toBe(before);
     },
   );
+
+  it("leaves a scheme with a non-enumerable $ref unresolved, while an enumerable $ref still resolves to the apiKey scheme", async () => {
+    const withScheme = (k: object) => ({
+      ...documentWith({ ...operation(), security: [{ k: [] }] }),
+      components: { securitySchemes: { k, key: { type: "apiKey", in: "header", name: "X-Api-Key" } } },
+    });
+    const ref = "#/components/securitySchemes/key";
+    const before = api.received.length;
+    const hiddenRef = fromOpenAPI(withScheme(hidden({ type: "http", scheme: "bearer" }, "$ref", ref)), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }),
+    });
+    expect(hiddenRef.tools).toEqual([]);
+    expect(hiddenRef.skipped.map(({ operation: skippedOperation, code, reason }) => [skippedOperation.operationId, code, reason])).toEqual([
+      ["keyed", "unsupported-by-executor", 'the security scheme "k" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown'],
+    ]);
+    expect(api.received.length).toBe(before);
+    const shownRef = fromOpenAPI(withScheme({ type: "http", scheme: "bearer", $ref: ref }), {
+      executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }),
+    });
+    expect(shownRef.tools.map((tool) => Object.keys((tool.inputSchema.properties ?? {}) as object))).toEqual([[]]);
+  });
 
   it("keeps plain security as before: [{ k: [] }] strips the header input, [{}] and [] leave it", () => {
     const listed = (security: unknown) =>
