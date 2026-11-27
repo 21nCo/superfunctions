@@ -190,9 +190,18 @@ signature verification disabled, rejects with `WEBHOOK_WORKFLOW_BINDING_REQUIRED
 Use a credential for the same signing authority for a scoped delivery. The
 lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
-Apply PlugFn schema version 9 with `superfunctions generate-migration plugfn` and your
-adapter's migration runner before deploying upgraded HTTP or SDK ingress and retry
-workers, even if workflow bindings are disabled. The migration
+In the host application that contains your upgraded PlugFn dependency and
+migration config, install the Superfunctions CLI and TypeScript together.
+The published CLI 0.2.2 uses TypeScript to load the migration config.
+
+```sh
+npm install --save-dev @superfunctions/cli@0.2.2 typescript
+npx superfunctions generate-migration plugfn
+```
+
+Apply the generated schema version 9 migration with your adapter's migration
+runner before deploying upgraded HTTP or SDK ingress and retry workers, even if
+workflow bindings are disabled. The migration
 preserves existing receipt keys and adds a separately indexed workflow receipt
 key and a scope marker on deliveries. Upgrade all retry workers before enabling
 workflow bindings. Resubmit scoped deliveries through the provider or the SDK. For GitHub Apps,
