@@ -2081,6 +2081,25 @@ describe("httpExecutor security levels reached through an accessor", () => {
       },
       '$["x-set"]["<set entry 0>"].hook',
     ],
+    [
+      // structuredClone copies a Map by its brand, whatever its prototype.
+      "a getter inside a Map whose prototype is Object.prototype",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        const map = Object.setPrototypeOf(new Map([["entry", withGetter({}, "hook", rewriting(keyed))]]), Object.prototype) as object;
+        return documentWith({ paths: { "/keyed": { get: keyed } }, "x-map": map });
+      },
+      '$["x-map"]["<map value 0>"].hook',
+    ],
+    [
+      "a getter inside a Set with no prototype",
+      () => {
+        const keyed = operation([{ headerKey: [] }]);
+        const set = Object.setPrototypeOf(new Set([withGetter({}, "hook", rewriting(keyed))]), null) as object;
+        return documentWith({ paths: { "/keyed": { get: keyed } }, "x-set": set });
+      },
+      '$["x-set"]["<set entry 0>"].hook',
+    ],
   ];
 
   it.each(cases)("refuses the document when %s is an accessor, running no getter and naming no value", (_where, document, path) => {
@@ -2102,6 +2121,22 @@ describe("httpExecutor security levels reached through an accessor", () => {
       expect(reported).not.toContain(getterValue);
       expect(reported).not.toContain(operatorToken);
     }
+  });
+
+  it("leaves Error.stackTraceLimit as it was, and the refusal keeps its stack", () => {
+    const limit = Error.stackTraceLimit;
+    const executor = { execute: () => ({ content: [] }) };
+    expect(fromOpenAPI(documentWith({ paths: { "/keyed": { get: operation() } }, "x-map": new Map([["a", {}]]) }), { executor }).tools).toHaveLength(1);
+    expect(Error.stackTraceLimit).toBe(limit);
+    let thrown: unknown;
+    try {
+      fromOpenAPI(withGetter(documentWith({ paths: { "/keyed": { get: operation() } } }), "x-hook", () => 1), { executor });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(McpFnValidationError);
+    expect((thrown as Error).stack).toMatch(/\n\s+at /);
+    expect(Error.stackTraceLimit).toBe(limit);
   });
 
   it("walks aliased and cyclic objects once and still finds an accessor behind them", () => {

@@ -1604,23 +1604,40 @@ interface Reached {
 const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
 
-/** Whether `value` is a Map (of any realm), by its brand, without running the caller's code. */
-function isMap(value: object): boolean {
+/** Whether `value` carries the internal slot `size` reads (a Map's or a Set's), without running the caller's code. */
+function hasBrand(size: (this: object) => number, value: object): boolean {
   try {
-    mapSize.call(value);
+    size.call(value);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Whether `value` is a Set (of any realm), by its brand, without running the caller's code. */
-function isSet(value: object): boolean {
+/**
+ * Whether `value` is a Map or a Set (of any realm, whatever its prototype),
+ * by its brand, without running the caller's code. An array or a typed array
+ * cannot carry either brand, so it is not probed. A probe that fails throws a
+ * TypeError, and capturing its stack costs far more than the probe; stack
+ * capture is turned off only around the two probes (no caller code runs
+ * there), so the walk stays proportional to the document.
+ */
+function collectionBrand(value: object): "map" | "set" | undefined {
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) return undefined;
+  const errors = Error as { stackTraceLimit?: unknown };
+  const limit = errors.stackTraceLimit;
+  let quiet = false;
   try {
-    setSize.call(value);
-    return true;
+    errors.stackTraceLimit = 0;
+    quiet = true;
   } catch {
-    return false;
+    // A frozen Error: probe with stack capture on.
+  }
+  try {
+    if (hasBrand(mapSize, value)) return "map";
+    return hasBrand(setSize, value) ? "set" : undefined;
+  } finally {
+    if (quiet) errors.stackTraceLimit = limit;
   }
 }
 
@@ -1657,14 +1674,15 @@ function rejectAccessors(document: object): void {
       }
       reach(descriptor.value, reached, key);
     }
-    if (isMap(value)) {
+    const brand = collectionBrand(value);
+    if (brand === "map") {
       let index = 0;
       Map.prototype.forEach.call(value, (entry: unknown, key: unknown) => {
         reach(key, reached, `<map key ${index}>`);
         reach(entry, reached, `<map value ${index}>`);
         index += 1;
       });
-    } else if (isSet(value)) {
+    } else if (brand === "set") {
       let index = 0;
       Set.prototype.forEach.call(value, (entry: unknown) => {
         reach(entry, reached, `<set entry ${index}>`);
