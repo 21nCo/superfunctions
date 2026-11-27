@@ -26,6 +26,11 @@ function detachAndDeepFreeze<T>(value: T, seen: WeakMap<object, unknown>): T {
   return Object.freeze(detached) as T;
 }
 
+/** True for values this module detached and froze, which hold no inherited or caller-owned fields. */
+export function isImmutableValue(value: unknown): boolean {
+  return value !== null && typeof value === "object" && immutableValues.has(value);
+}
+
 export function immutableValue<T>(value: T): T {
   return detachAndDeepFreeze(value, new WeakMap<object, unknown>());
 }

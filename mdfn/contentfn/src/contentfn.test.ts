@@ -113,6 +113,20 @@ describe("markdown content", () => {
     expect(parsed.document.content[0]?.type).toBe("blockquote");
   });
 
+  it.each([
+    ["a blank line", "a\n\nb"],
+    ["leading and trailing breaks", "\na\n"],
+    ["CRLF line endings", "a\r\nb"],
+  ])("keeps a quote with %s as one lossless quoted paragraph", (_case, text) => {
+    const result = migrateToMarkdownContent([{ type: "blockquote", children: [{ text }] }]);
+    expect(result.lossy).toBe(false);
+    const parsed = parseMarkdown(result.content.markdown);
+    expect(parsed.document.content).toHaveLength(1);
+    expect(parsed.document.content[0]?.type).toBe("blockquote");
+    expect(parsed.document.content[0]?.content).toHaveLength(1);
+    expect(nodeText(parsed.document.content[0]!)).toBe(text);
+  });
+
   it("marks empty blocks and sanitized code metadata as lossy", () => {
     const empty = migrateToMarkdownContent([{ type: "paragraph", children: [] }]);
     const sanitized = migrateToMarkdownContent([

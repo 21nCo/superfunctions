@@ -5,6 +5,7 @@ import {
   createSnapshot,
   hashString,
   mapAnchor,
+  mapSidecar,
   resolveExtensions,
   restoreSnapshot,
   smallestSourceChange,
@@ -481,10 +482,32 @@ describe("@mdfn/core", () => {
     expect(Object.isFrozen(validated.assets?.[0]?.metadata?.nested)).toBe(true);
   });
 
-  it("applies no aggregate text limit unless one is configured", () => {
+  it("bounds aggregate editorial text by maxTextLength unless another limit is configured", () => {
     const message = (index: number) => ({ id: `m${index}`, authorId: "a", body: "x".repeat(6), createdAt: "2026-01-01T00:00:00.000Z" });
     const sidecar = { comments: [{ id: "c", anchor: { from: 0, to: 0 }, resolved: false, messages: [0, 1, 2, 3].map(message) }] };
-    expect(validateMdfnSidecar(sidecar, { maxTextLength: 8 })?.comments).toHaveLength(1);
+    expect(() => validateMdfnSidecar(sidecar, { maxTextLength: 8 })).toThrowError("MDFN_SIDECAR_TEXT_LIMIT_EXCEEDED");
+    expect(validateMdfnSidecar(sidecar, { maxTextLength: 8, maxAggregateTextLength: 24 })?.comments).toHaveLength(1);
+  });
+
+  it("keeps sidecar collections and anchors supplied through getters when mapping", () => {
+    // Each getter returns the same value on every read, as a typical accessor would.
+    const anchor = { from: 1, to: 2 };
+    class Thread {
+      readonly id = "c";
+      readonly resolved = false;
+      readonly messages = [];
+      get anchor() { return anchor; }
+    }
+    const comments = [new Thread()];
+    const suggestions = [{ id: "s", anchor: { from: 0, to: 1 }, replacement: "x", authorId: "a", status: "pending", createdAt: "2026-08-12T00:00:00.000Z" }];
+    class Sidecar {
+      get comments() { return comments; }
+      get suggestions() { return suggestions; }
+    }
+    const mapped = mapSidecar(new Sidecar() as unknown as Parameters<typeof mapSidecar>[0], [{ from: 5, to: 5, insertedLength: 1 }]);
+    expect(mapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 1, to: 2 } }]);
+    expect(mapped?.suggestions?.[0]?.anchor).toEqual({ from: 0, to: 1 });
+    expect(Object.isFrozen(mapped)).toBe(true);
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {

@@ -1,5 +1,5 @@
 import type { ChangedRange, MdfnSelection, MdfnSidecar, SidecarAnchor, TextSelection } from "./types";
-import { immutableValue } from "./immutable";
+import { immutableValue, isImmutableValue } from "./immutable";
 
 function mapPosition(position: number, range: ChangedRange, affinity: "before" | "after"): number {
   const removed = range.to - range.from;
@@ -42,15 +42,20 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
 
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
   if (!sidecar || ranges.length === 0) return sidecar;
+  // Unchanged parts are reused only from a sidecar this module already detached.
+  // Any other input is copied field by field, so values supplied through getters
+  // or a prototype are kept, as they were before reuse was added.
+  const reusable = isImmutableValue(sidecar);
   let changed = false;
   const mapEntry = <T extends { readonly anchor: SidecarAnchor }>(entry: T): T => {
-    const anchor = mapAnchor(entry.anchor, ranges);
-    if (anchor === entry.anchor) return entry;
-    changed = true;
-    return { ...entry, anchor };
+    const current = entry.anchor;
+    const anchor = mapAnchor(current, ranges);
+    if (anchor !== current) changed = true;
+    if (reusable && anchor === current) return entry;
+    return { ...entry, anchor: anchor === current ? { ...current, from: current.from, to: current.to } : anchor };
   };
   const comments = sidecar.comments?.map(mapEntry);
   const suggestions = sidecar.suggestions?.map(mapEntry);
-  if (!changed) return immutableValue(sidecar);
+  if (reusable && !changed) return sidecar;
   return immutableValue({ ...sidecar, ...(comments ? { comments } : {}), ...(suggestions ? { suggestions } : {}) });
 }

@@ -206,7 +206,12 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       return withOpaque(escapeText(projected.text));
     }
     if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${escapeText(projected.text)}`);
-    if (type === "blockquote") return withOpaque(projected.text.split(/\r?\n/).map((line) => `> ${escapeText(line)}`).join("\n"));
+    if (type === "blockquote") {
+      // A line break between two non-empty lines becomes a quoted soft break, which
+      // reparses as the same "\n". Blank lines and leading or trailing breaks would
+      // change the quote's structure, so those stay escaped and the text survives.
+      return withOpaque(projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeText(line)}`).join("\n"));
+    }
     if (type === "code") {
       const fence = codeFence(projected.text);
       const rawLanguage = typeof block.language === "string" ? block.language : "";
