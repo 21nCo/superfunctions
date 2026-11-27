@@ -166,8 +166,9 @@ export interface OpenApiExecuteRequest<TContext = unknown> {
   /** Whether the tool declares an output schema, so a success must carry `structuredContent`. */
   hasOutputSchema: boolean;
   /**
-   * With an output schema: whether a value satisfies it, so an executor can
-   * report a success the schema does not describe instead of returning
+   * With an output schema: whether the registry's output validator (its
+   * `compileSchema`'s, or the built-in one's) accepts a value, so an executor
+   * can report a success the schema does not describe instead of returning
    * structured content the registry would reject.
    */
   checkOutput?: (value: Record<string, unknown>) => boolean;

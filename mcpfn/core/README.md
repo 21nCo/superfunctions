@@ -265,7 +265,8 @@ for (const { operation, code, reason } of skipped) {
   hasOutputSchema, checkOutput }`: `context` is the trusted context the
   server's `context` factory built for the call, `hasOutputSchema` says
   whether a success must carry `structuredContent`, and `checkOutput(value)`
-  (with an output schema) says whether a value satisfies it. An executor may
+  (with an output schema) says whether the registry's output validator
+  (its `compileSchema`'s, or the built-in one's) accepts a value. An executor may
   set `outputSchemaRule` (see Outputs) and implement `unsupported(operation)`,
   returning why it cannot send an operation; such operations are skipped
   (`unsupported-by-executor`) before any tool name is chosen. It may also
@@ -322,23 +323,31 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   fetch manages, which operator headers cannot carry, and one whose security
   is malformed (a level that is not a list, a requirement that is not a
   plain object, such as a `Map`, `Date` or class instance, or one with a
-  non-enumerable key, judged before the document is copied, a
-  level reached through a non-enumerable property (on
-  `security`, `paths`, a path item or an operation), or held by a document
-  or operation that is not a plain object (an inherited or prototype-getter
-  `security`), whose value as copied is not known, so it never reads as
-  absent, scopes that are not a list of strings; `fromOpenAPI` reports it
+  non-enumerable key, a `security` that is not enumerable, or one held by
+  a document or operation that is not a plain object (an inherited or
+  prototype-getter `security`), so it never reads as absent, scopes that
+  are not a list of strings; `fromOpenAPI` reports it
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
   does not define such as `api-key`, a scheme object that is not a plain
   object or has a non-enumerable key, such as a non-enumerable `$ref`) or an `apiKey` scheme without a usable `name` and `in` (a header
   or cookie name must be an HTTP token, a query name not empty), since the parameter that carries its credential is then
-  unknown. Whatever the executor, `fromOpenAPI` throws `McpFnValidationError`
-  ("fromOpenAPI expects a plain JSON document") when any object reachable
-  from the document, `Map` and `Set` entries included, has an accessor
-  (getter or setter) property: it reads property descriptors only, before
-  copying the document, so no getter runs, and the error names the
-  property's path, never a value. It sets `outputSchemaRule: "every-success"`
+  unknown. `fromOpenAPI` reads the document once: it copies it, reading
+  each own property of each object once through its descriptor, and makes
+  every decision (security included) from that copy, so no operator code
+  (a getter, `toString`, `valueOf`, `Symbol.toPrimitive`, an iterator)
+  runs and what is checked is what was copied. A `Date` is copied by its
+  time value, a `Map` or `Set` entry by entry and a typed array by its
+  bytes, whatever their prototypes; any other object as a plain object of
+  its own enumerable data properties (as `structuredClone` copies a class
+  instance), marked as not plain where that matters. Shared objects and
+  cycles stay shared. Whatever the executor, it throws
+  `McpFnValidationError` ("fromOpenAPI expects a plain JSON document") when
+  any object reachable from the document, `Map` and `Set` entries included,
+  has an accessor (getter or setter) property, or holds a function, a
+  symbol or a `Proxy` (where the runtime can tell one, as Node can; elsewhere
+  a `Proxy` is read through its traps, still once per property); the error
+  names the path, never a value. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
 - **Credentials (D9).** `headers` is a plain object (prototype
   `Object.prototype` or `null`) or a function of the server's trusted

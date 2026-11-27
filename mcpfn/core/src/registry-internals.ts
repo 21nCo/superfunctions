@@ -15,3 +15,12 @@ export const registryInternals = {
    */
   settleCopy: <TContext>(_copy: McpFnRegistry<TContext>, _abandoned: boolean): void => {},
 };
+
+/**
+ * The key of a package-internal, non-enumerable McpFnRegistry method that
+ * returns the output validator the registry applies to a tool's results (the
+ * one its compileSchema, or the built-in compiler, returned), or undefined.
+ * A registered symbol, so the `@mcpfn/core/openapi` bundle reaches the root
+ * entry's registry without a public export.
+ */
+export const OUTPUT_VALIDATOR: unique symbol = Symbol.for("@mcpfn/core:registry-output-validator");

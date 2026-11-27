@@ -9,7 +9,6 @@ import {
   type McpFnJsonSchema,
   type McpFnObjectSchema,
   type SchemaCompiler,
-  type SchemaEngine,
 } from "@mcpfn/core";
 import {
   CONTEXT_FREE_FAILURES,
@@ -25,6 +24,7 @@ import {
   TOO_DEEP,
   type OpenApiVersion,
 } from "./schema.js";
+import { OUTPUT_VALIDATOR } from "../registry-internals.js";
 import { isForbiddenHeader, isHttpToken } from "./headers.js";
 import type {
   FromOpenApiOptions,
@@ -1541,16 +1541,18 @@ export function fromOpenAPI<TContext>(
   if (!isObject(document)) {
     throw new McpFnValidationError("fromOpenAPI expects a parsed OpenAPI document object");
   }
-  rejectAccessors(document);
-  const version = documentVersion(document as JsonObject);
+  // Work on a private copy, read once: later changes to the caller's object
+  // cannot alter registered schemas or the operations given to the executor,
+  // and every check below reads what was copied (see privateCopy).
+  const { copy: source, provenance } = privateCopy(document);
+  const version = documentVersion(source);
   validateOptions(options);
   const filters: Filters<TContext> = {
     include: compileSelectors("include", options.include),
     exclude: compileSelectors("exclude", options.exclude),
     options,
   };
-  const source = privateCopy(document);
-  keepSecurityShapes(document as JsonObject, source);
+  markSecurity(source, provenance);
   const converter = new OperationConverter(
     source,
     version,
@@ -1594,20 +1596,123 @@ interface Filters<TContext> {
   options: FromOpenApiOptions<TContext>;
 }
 
-/** One object reached by the accessor walk, with the way it was reached (for the error's path). */
+/*
+ * The private copy of the operator's document.
+ *
+ * fromOpenAPI reads the document once. One iterative copier reads each own
+ * property of each reachable object exactly once, through its descriptor, and
+ * every later decision (the security levels, requirements and schemes in
+ * particular) is made from that copy and from what the copier recorded about
+ * each object, never from the operator's object again. So what is checked is
+ * what was copied: no getter, toString, valueOf, Symbol.toPrimitive, iterator
+ * or structuredClone runs on the operator's objects, and nothing the copy
+ * leaves out can read as absent.
+ *
+ * Rules, by kind of value:
+ * - a primitive is kept (a symbol is refused);
+ * - a function is refused, and so is a Proxy where the runtime can tell one
+ *   (Node's util.types.isProxy, reached without an import); elsewhere a Proxy
+ *   is read through its traps like any object, still once per property;
+ * - an own accessor property (getter or setter, enumerable or not) anywhere is
+ *   refused, naming its JSON path and never a value;
+ * - an array is copied with its length, its present indices and any other own
+ *   enumerable keys (holes stay holes, which later readers refuse);
+ * - a Date (a YAML timestamp) is copied by its time value, a Map or Set (of
+ *   any realm, whatever its prototype) entry by entry, and a typed array by
+ *   its bytes; their own properties are not read. They are not plain objects;
+ * - any other object is copied as a plain object of its own enumerable data
+ *   properties, as structuredClone copies a class instance. It copies as read
+ *   only when its prototype is null or a realm's Object.prototype and every
+ *   own string key is an enumerable data property.
+ * Shared objects and cycles keep their sharing (each object is copied once),
+ * so the work follows the distinct input, not the number of references.
+ * Internal slots are read only through intrinsics captured at module load.
+ */
+
+/** One object queued for the copy, with the way it was first reached (for an error's path). */
 interface Reached {
-  value: object;
+  source: object;
+  copy: object;
   parent: Reached | undefined;
   key: string;
 }
 
-const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
-const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+/**
+ * What the copier recorded about a copied object that does not copy as read:
+ * one that is not a plain object or array (`plain: false`: a class instance,
+ * a Date, a Map, an Error, ...), or one with own string keys the copy leaves
+ * out because they are not enumerable (`dropped`). A copied object the record
+ * does not hold copied as read. Keyed by the copy.
+ */
+interface Provenance {
+  plain: boolean;
+  dropped: readonly string[];
+}
 
-/** Whether `value` carries the internal slot `size` reads (a Map's or a Set's), without running the caller's code. */
-function hasBrand(size: (this: object) => number, value: object): boolean {
+type Provenances = WeakMap<object, Provenance>;
+
+const { apply } = Reflect;
+const { getOwnPropertyNames, getOwnPropertyDescriptor, getPrototypeOf, defineProperty } = Object;
+const { isArray } = Array;
+const { isView } = ArrayBuffer;
+const { hasOwn } = Object;
+const objectPrototype = Object.prototype;
+const arrayPrototype = Array.prototype;
+const functionText = Function.prototype.toString;
+const mapSize = getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const mapForEach = Map.prototype.forEach;
+const mapSet = Map.prototype.set;
+const setSize = getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const setForEach = Set.prototype.forEach;
+const setAdd = Set.prototype.add;
+const dateTime = Date.prototype.getTime;
+const DateConstructor = Date;
+const typedArrayPrototype = getPrototypeOf(Uint8Array.prototype) as object;
+const typedArrayTag = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag)!.get!;
+const typedArrayBuffer = getOwnPropertyDescriptor(typedArrayPrototype, "buffer")!.get!;
+const typedArrayOffset = getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")!.get!;
+const typedArrayBytes = getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!.get!;
+const typedArraySet = (typedArrayPrototype as { set: (source: ArrayLike<number>) => void }).set;
+const Bytes = Uint8Array;
+type TypedArrayConstructor = new (buffer: ArrayBuffer) => object;
+const typedArrays = new Map<string, TypedArrayConstructor>(
+  [
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+  ].flatMap((name): [string, TypedArrayConstructor][] => {
+    const constructor = (globalThis as Record<string, unknown>)[name];
+    return typeof constructor === "function" ? [[name, constructor as TypedArrayConstructor]] : [];
+  }),
+);
+
+/** Node's util.types.isProxy, reached without an import (so other runtimes load this module too); undefined where there is none. */
+const isProxy: ((value: object) => boolean) | undefined = (() => {
   try {
-    size.call(value);
+    const host = (globalThis as { process?: { getBuiltinModule?: unknown } }).process;
+    const load = host?.getBuiltinModule;
+    if (typeof load !== "function") return undefined;
+    const util = apply(load, host, ["node:util"]) as { types?: { isProxy?: unknown } } | undefined;
+    const check = util?.types?.isProxy;
+    return typeof check === "function" ? (value) => apply(check, undefined, [value]) === true : undefined;
+  } catch {
+    return undefined;
+  }
+})();
+
+/** Whether `value` carries the internal slot `probe` reads, without running the caller's code. */
+function hasSlot(probe: (this: object) => unknown, value: object): boolean {
+  try {
+    apply(probe, value, []);
     return true;
   } catch {
     return false;
@@ -1615,15 +1720,13 @@ function hasBrand(size: (this: object) => number, value: object): boolean {
 }
 
 /**
- * Whether `value` is a Map or a Set (of any realm, whatever its prototype),
- * by its brand, without running the caller's code. An array or a typed array
- * cannot carry either brand, so it is not probed. A probe that fails throws a
- * TypeError, and capturing its stack costs far more than the probe; stack
- * capture is turned off only around the two probes (no caller code runs
- * there), so the walk stays proportional to the document.
+ * Whether `value` is a Map, a Set or a Date (of any realm, whatever its
+ * prototype), by its internal slots, without running the caller's code. A
+ * probe that fails throws a TypeError, and capturing its stack costs far more
+ * than the probe; stack capture is turned off only around the probes (no
+ * caller code runs there), so the copy stays proportional to the document.
  */
-function collectionBrand(value: object): "map" | "set" | undefined {
-  if (Array.isArray(value) || ArrayBuffer.isView(value)) return undefined;
+function slotKind(value: object): "map" | "set" | "date" | undefined {
   const errors = Error as { stackTraceLimit?: unknown };
   const limit = errors.stackTraceLimit;
   let quiet = false;
@@ -1634,259 +1737,214 @@ function collectionBrand(value: object): "map" | "set" | undefined {
     // A frozen Error: probe with stack capture on.
   }
   try {
-    if (hasBrand(mapSize, value)) return "map";
-    return hasBrand(setSize, value) ? "set" : undefined;
+    if (hasSlot(mapSize, value)) return "map";
+    if (hasSlot(setSize, value)) return "set";
+    return hasSlot(dateTime, value) ? "date" : undefined;
   } finally {
     if (quiet) errors.stackTraceLimit = limit;
   }
 }
 
-/**
- * Throws when any object reachable from the document has an own accessor
- * property. structuredClone runs a getter, so without this check operator
- * code could run while the document is copied and change it between the copy
- * and the checks of its security (or give the copy one value and every later
- * read another). The walk reads descriptors only, so it runs no getter
- * itself; it is iterative (any depth), visits each object once (aliases and
- * cycles cost nothing more) and also visits Map and Set entries. A typed
- * array's elements are data and are not walked. The error names the path of
- * the accessor, never a value.
- */
-function rejectAccessors(document: object): void {
-  const visited = new WeakSet<object>();
-  const pending: Reached[] = [{ value: document, parent: undefined, key: "" }];
-  const reach = (value: unknown, parent: Reached, key: string): void => {
-    if (typeof value === "object" && value !== null && !visited.has(value)) pending.push({ value, parent, key });
-  };
-  while (pending.length > 0) {
-    const reached = pending.pop()!;
-    const { value } = reached;
-    if (visited.has(value)) continue;
-    visited.add(value);
-    if (ArrayBuffer.isView(value)) continue;
-    for (const key of Object.getOwnPropertyNames(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor === undefined) continue;
-      if (!("value" in descriptor)) {
-        throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
-          cause: `${reachedPath({ value, parent: reached, key })} is an accessor property`,
-        });
-      }
-      reach(descriptor.value, reached, key);
-    }
-    const brand = collectionBrand(value);
-    if (brand === "map") {
-      let index = 0;
-      Map.prototype.forEach.call(value, (entry: unknown, key: unknown) => {
-        reach(key, reached, `<map key ${index}>`);
-        reach(entry, reached, `<map value ${index}>`);
-        index += 1;
-      });
-    } else if (brand === "set") {
-      let index = 0;
-      Set.prototype.forEach.call(value, (entry: unknown) => {
-        reach(entry, reached, `<set entry ${index}>`);
-        index += 1;
-      });
-    }
-  }
+function refuse(cause: string): never {
+  throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", { cause });
 }
 
-/** The JSON path of a reached property, such as `$.paths["/a"].get.description`. */
-function reachedPath(reached: Reached): string {
+/** The JSON path of `key` under `parent`, such as `$.paths["/a"].get.description`; keys only, never a value. */
+function pathOf(parent: Reached | undefined, key: string): string {
   const keys: string[] = [];
-  for (let at: Reached | undefined = reached; at?.parent !== undefined; at = at.parent) keys.push(at.key);
+  if (parent !== undefined) keys.push(key);
+  for (let at = parent; at?.parent !== undefined; at = at.parent) keys.push(at.key);
   let path = "$";
-  for (const key of keys.reverse()) path += /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+  for (const step of keys.reverse()) path += /^[A-Za-z_$][\w$]*$/.test(step) ? `.${step}` : `[${JSON.stringify(step)}]`;
   return path;
 }
 
-function privateCopy(document: object): JsonObject {
-  try {
-    // Work on a private copy: later changes to the caller's object cannot
-    // alter registered schemas or the operations given to the executor.
-    return structuredClone(document) as JsonObject;
-  } catch (error) {
-    throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 /**
- * structuredClone turns a class instance into a plain object, so a security
- * requirement or scheme that is not a plain object (such as an instance that
- * would read as `{}`, no credential) is marked in the private copy before it
- * is read: a requirement becomes `null` (the security is unresolved) and a
- * scheme does not resolve, so an executor that sends credentials refuses the
- * operation. Only these places are checked; a Date elsewhere (a YAML
- * timestamp) is left alone.
- *
- * The source is read only through own enumerable data properties, never by
- * running a getter again: the value checked must be the value cloned, and
- * security that structuredClone drops (a non-enumerable or inherited
- * property) must not read as absent. A property on the way to a security
- * level (the document's `security`, `paths`, a path item, an operation or its
- * `security`) that is an accessor or not enumerable, or a document or
- * operation that is not a plain object (its `security` may be inherited or a
- * prototype getter), leaves the cloned level unknown, so it is marked
- * unresolved; the document's level covers every operation that inherits it.
- * The same on the way to a scheme (`components`, `securitySchemes` or a
- * scheme) leaves the scheme, or the section, unresolved, and so does a scheme
- * with a key structuredClone would drop (such as a non-enumerable `$ref`).
- * (rejectAccessors has already refused any accessor before the copy; the
- * accessor cases here only keep this function safe on its own.)
+ * An object whose prototype is `null` or a realm's `Object.prototype` (a
+ * document may be built in a vm context), read once.
  */
-function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
-  const plainObjects = new WeakMap<object, boolean>();
-  const markLevel = levelMarker(plainObjects);
-  try {
-    markLevel(clonesUnchanged(document) ? ownData(document, "security") : UNKNOWN, copy, "security");
-    const paths = ownData(document, "paths");
-    const copiedPaths = ownValue(copy, "paths");
-    if (isObject(copiedPaths)) {
-      for (const path of Object.keys(copiedPaths)) {
-        const copiedItem = ownValue(copiedPaths, path);
-        if (!isObject(copiedItem)) continue;
-        const pathItem = paths === UNKNOWN ? UNKNOWN : ownData(paths, path);
-        for (const key of Object.keys(copiedItem)) {
-          const copiedOperation = ownValue(copiedItem, key);
-          if (!METHODS.has(key) || !isObject(copiedOperation)) continue;
-          const operation = pathItem === UNKNOWN ? UNKNOWN : ownData(pathItem, key);
-          markLevel(operation !== UNKNOWN && clonesUnchanged(operation) ? ownData(operation, "security") : UNKNOWN, copiedOperation, "security");
-        }
-      }
-    }
-    const components = ownData(document, "components");
-    if (components !== UNKNOWN && !isObject(components)) return;
-    const copiedComponents = ownValue(copy, "components");
-    const schemes = components !== UNKNOWN && clonesUnchanged(components) ? ownData(components, "securitySchemes") : UNKNOWN;
-    if (schemes === UNKNOWN || (isObject(schemes) && !clonesUnchanged(schemes))) {
-      // No scheme of a section that is not a plain object, or not known, resolves.
-      if (isObject(copiedComponents)) setOwn(copiedComponents, "securitySchemes", {});
-      return;
-    }
-    if (!isObject(schemes)) return;
-    const copiedSchemes = ownValue(copiedComponents, "securitySchemes");
-    if (!isObject(copiedSchemes)) return;
-    for (const name of Object.keys(copiedSchemes)) {
-      const scheme = ownData(schemes, name);
-      if (scheme === UNKNOWN || (isObject(scheme) && !copiesAsRead(scheme, plainObjects))) setOwn(copiedSchemes, name, null);
-    }
-  } catch (error) {
-    throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-/**
- * Stands for a property whose value, as cloned, is not known: an accessor, or
- * a property structuredClone skips (not enumerable) and so leaves absent.
- */
-const UNKNOWN: unique symbol = Symbol("unknown");
-
-/**
- * The value of an own enumerable data property (the properties structuredClone
- * copies), read from its descriptor without running code; `undefined` when
- * there is no own property; `UNKNOWN` for an accessor or a non-enumerable one.
- */
-function ownData(holder: unknown, key: string): unknown {
-  if (!isObject(holder) && !Array.isArray(holder)) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(holder, key);
-  if (descriptor === undefined) return undefined;
-  return descriptor.enumerable && "value" in descriptor ? descriptor.value : UNKNOWN;
-}
-
-/**
- * An object structuredClone copies without changing what it reads as: a
- * plain object of this or another realm (a document may be built in a vm
- * context), whose prototype is `null` or that realm's `Object.prototype`.
- */
-function clonesUnchanged(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  const prototype: unknown = Object.getPrototypeOf(value);
-  if (prototype === null || prototype === Object.prototype) return true;
-  if (typeof prototype !== "object" || Object.getPrototypeOf(prototype) !== null) return false;
-  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+function plainPrototype(value: object): boolean {
+  const prototype: unknown = getPrototypeOf(value);
+  if (prototype === null || prototype === objectPrototype) return true;
+  if (typeof prototype !== "object" || getPrototypeOf(prototype) !== null) return false;
+  const constructor = getOwnPropertyDescriptor(prototype, "constructor")?.value;
   return (
     typeof constructor === "function" &&
-    Object.getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
-    Function.prototype.toString.call(constructor) === "function Object() { [native code] }"
+    getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
+    apply(functionText, constructor, []) === "function Object() { [native code] }"
   );
 }
 
+/** A copy of a typed array's bytes, as the same kind of typed array of this realm. */
+function copyTypedArray(value: object, Kind: TypedArrayConstructor, at: () => string): object {
+  try {
+    const length = apply(typedArrayBytes, value, []) as number;
+    const bytes = new Bytes(length);
+    apply(typedArraySet, bytes, [new Bytes(apply(typedArrayBuffer, value, []) as ArrayBuffer, apply(typedArrayOffset, value, []) as number, length)]);
+    return new Kind(bytes.buffer);
+  } catch {
+    // Such as a detached buffer.
+    return refuse(`${at()} is a typed array that cannot be read`);
+  }
+}
+
 /**
- * Returns a function that marks the requirements of one security level. Only
- * the elements present are read (a sparse array's length costs nothing), by
- * their own keys, never by a method the caller's array could override; an
- * element defined by an accessor is marked too, as its value is not known,
- * and so is a requirement with a key structuredClone would drop or read
- * through a getter (not an own enumerable data property).
- * A security array many operations share is inspected once: its verdict is
- * kept by identity and applied to each copy, and a copy (structuredClone
- * keeps the sharing) is marked once, so the work follows the distinct input,
- * not the number of references.
+ * Copy the operator's document under the rules above. Returns the copy and
+ * the record of the copied objects that do not copy as read.
  */
-function levelMarker(requirements: WeakMap<object, boolean>): (level: unknown, holder: JsonObject, key: string) => void {
-  const verdicts = new WeakMap<unknown[], number[]>();
+function privateCopy(document: object): { copy: JsonObject; provenance: Provenances } {
+  const copies = new WeakMap<object, object>();
+  const provenance: Provenances = new WeakMap();
+  const pending: Reached[] = [];
+  // The copy of a value reached at `key` of `parent`: a primitive as is, or
+  // the object's copy (made empty and filled when it leaves `pending`).
+  const copyOf = (value: unknown, parent: Reached | undefined, key: string): unknown => {
+    if (typeof value === "function") refuse(`${pathOf(parent, key)} is a function`);
+    if (typeof value === "symbol") refuse(`${pathOf(parent, key)} is a symbol`);
+    if (typeof value !== "object" || value === null) return value;
+    const known = copies.get(value);
+    if (known !== undefined) return known;
+    if (isProxy?.(value)) refuse(`${pathOf(parent, key)} is a Proxy`);
+    let copy: object;
+    let fill = true;
+    if (isArray(value)) {
+      copy = new Array<unknown>(getOwnPropertyDescriptor(value, "length")!.value as number);
+    } else {
+      const tag: unknown = isView(value) ? apply(typedArrayTag, value, []) : undefined;
+      const Kind = typeof tag === "string" ? typedArrays.get(tag) : undefined;
+      const kind = Kind ? undefined : slotKind(value);
+      if (Kind) {
+        copy = copyTypedArray(value, Kind, () => pathOf(parent, key));
+        fill = false;
+      } else if (kind === "map") {
+        copy = new Map();
+      } else if (kind === "set") {
+        copy = new Set();
+      } else if (kind === "date") {
+        copy = new DateConstructor(apply(dateTime, value, []) as number);
+        fill = false;
+      } else {
+        copy = {};
+      }
+      if (Kind || kind) provenance.set(copy, { plain: false, dropped: [] });
+    }
+    copies.set(value, copy);
+    if (fill) pending.push({ source: value, copy, parent, key });
+    return copy;
+  };
+  const root = copyOf(document, undefined, "") as JsonObject;
+  while (pending.length > 0) {
+    const reached = pending.pop()!;
+    const { source, copy } = reached;
+    if (copy instanceof Map) {
+      let index = 0;
+      apply(mapForEach, source, [
+        (entry: unknown, key: unknown) => {
+          apply(mapSet, copy, [copyOf(key, reached, `<map key ${index}>`), copyOf(entry, reached, `<map value ${index}>`)]);
+          index += 1;
+        },
+      ]);
+      continue;
+    }
+    if (copy instanceof Set) {
+      let index = 0;
+      apply(setForEach, source, [
+        (entry: unknown) => {
+          apply(setAdd, copy, [copyOf(entry, reached, `<set entry ${index}>`)]);
+          index += 1;
+        },
+      ]);
+      continue;
+    }
+    const array = isArray(copy);
+    const dropped: string[] = [];
+    for (const key of getOwnPropertyNames(source)) {
+      if (array && key === "length") continue;
+      const descriptor = getOwnPropertyDescriptor(source, key);
+      if (descriptor === undefined) continue;
+      if (!("value" in descriptor)) refuse(`${pathOf(reached, key)} is an accessor property`);
+      if (!descriptor.enumerable) {
+        dropped.push(key);
+        continue;
+      }
+      const value = copyOf(descriptor.value, reached, key);
+      // Assigned, so the copy keeps fast elements and properties, except a
+      // key its prototype holds (such as `__proto__`, a setter, or a frozen
+      // `toString`), which is defined.
+      if (hasOwn(array ? arrayPrototype : objectPrototype, key)) defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
+      else (copy as Record<string, unknown>)[key] = value;
+    }
+    const plain = array || plainPrototype(source);
+    if (!plain || dropped.length > 0) provenance.set(copy, { plain, dropped });
+  }
+  return { copy: root, provenance };
+}
+
+/**
+ * Mark, in the copy, the security the copier could not copy as read, so an
+ * executor that sends credentials refuses the operation rather than reading
+ * it as anonymous. Decided only from the copy and its provenance:
+ * - a document or operation that is not a plain object (its `security` may be
+ *   inherited or a prototype getter), or whose `security` the copy left out
+ *   (not enumerable), gets `security: [null]`, a requirement that is not a
+ *   plain object; the document's level covers every operation that inherits it;
+ * - a requirement that is not a plain object, or has a key the copy left out,
+ *   becomes `null` in its level;
+ * - a `securitySchemes` section of a `components` object that is not plain (or
+ *   that the copy left out of it), or a section that is not plain itself,
+ *   resolves no scheme; a scheme that does not copy as read (such as one with
+ *   a non-enumerable `$ref`) becomes `null`, unresolved.
+ * Genuine `[{}]` and `[]` keep their meanings. A level many operations share
+ * is one copied array, marked once.
+ */
+function markSecurity(copy: JsonObject, provenance: Provenances): void {
   const marked = new WeakSet<unknown[]>();
-  return (level, holder, key) => {
-    if (level === UNKNOWN) {
-      // The level as cloned is not known: it reads as a requirement that is not a plain object.
+  const asRead = (value: unknown): boolean => {
+    if (typeof value !== "object" || value === null) return true;
+    const record = provenance.get(value);
+    return record === undefined || (record.plain && record.dropped.length === 0);
+  };
+  const keeps = (holder: object, key: string): boolean => {
+    const record = provenance.get(holder);
+    return record === undefined || (record.plain && !record.dropped.includes(key));
+  };
+  const markLevel = (holder: object, key: string): void => {
+    if (!keeps(holder, key)) {
       setOwn(holder, key, [null]);
       return;
     }
-    const copied = ownValue(holder, key);
-    if (!Array.isArray(level) || !Array.isArray(copied) || marked.has(copied)) return;
-    marked.add(copied);
-    let indexes = verdicts.get(level);
-    if (indexes === undefined) {
-      indexes = unplainRequirements(level, requirements);
-      verdicts.set(level, indexes);
+    const level = ownValue(holder, key);
+    if (!isArray(level) || marked.has(level)) return;
+    marked.add(level);
+    for (const index of Object.keys(level)) {
+      if (ARRAY_INDEX.test(index) && !asRead(level[Number(index)])) level[Number(index)] = null;
     }
-    for (const index of indexes) if (index < copied.length) copied[index] = null;
   };
-}
-
-/**
- * The indexes of a security level's elements that are not plain objects, or
- * not known. Each requirement object's verdict is kept by identity in
- * `requirements`, so one shared by many levels is inspected once.
- */
-function unplainRequirements(level: unknown[], requirements: WeakMap<object, boolean>): number[] {
-  const indexes: number[] = [];
-  for (const key of Object.keys(level)) {
-    if (!ARRAY_INDEX.test(key)) continue;
-    const descriptor = Object.getOwnPropertyDescriptor(level, key);
-    if (descriptor === undefined) continue;
-    const requirement: unknown = descriptor.value;
-    if (!("value" in descriptor) || (isObject(requirement) && !copiesAsRead(requirement, requirements))) indexes.push(Number(key));
-  }
-  return indexes;
-}
-
-/**
- * A plain object whose every own string key is an enumerable data property,
- * so its copy reads as it does (used for security requirements and schemes).
- * Each object's verdict is kept by identity in `verdicts`.
- */
-function copiesAsRead(value: JsonObject, verdicts: WeakMap<object, boolean>): boolean {
-  let plain = verdicts.get(value);
-  if (plain === undefined) {
-    plain = clonesUnchanged(value);
-    if (plain) {
-      for (const key of Object.getOwnPropertyNames(value)) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-        if (!descriptor.enumerable || !("value" in descriptor)) {
-          plain = false;
-          break;
-        }
+  markLevel(copy, "security");
+  const paths = ownValue(copy, "paths");
+  if (isObject(paths)) {
+    for (const path of Object.keys(paths)) {
+      const pathItem = ownValue(paths, path);
+      if (!isObject(pathItem)) continue;
+      for (const key of Object.keys(pathItem)) {
+        const operation = ownValue(pathItem, key);
+        if (METHODS.has(key) && isObject(operation)) markLevel(operation, "security");
       }
     }
-    verdicts.set(value, plain);
   }
-  return plain;
+  const components = ownValue(copy, "components");
+  if (!isObject(components)) return;
+  const schemes = ownValue(components, "securitySchemes");
+  if (!keeps(components, "securitySchemes") || (isObject(schemes) && provenance.get(schemes)?.plain === false)) {
+    // No scheme of a section that is not a plain object, or not known, resolves.
+    setOwn(components, "securitySchemes", {});
+    return;
+  }
+  if (!isObject(schemes)) return;
+  for (const name of Object.keys(schemes)) {
+    const scheme = ownValue(schemes, name);
+    if (isObject(scheme) && !asRead(scheme)) setOwn(schemes, name, null);
+  }
 }
 
 const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
@@ -2014,18 +2072,16 @@ function register<TContext>(
     const name = chosen ? chosen[index]! : names.next(operation);
     const description = toolDescription(operation);
     const annotations = toolAnnotations(operation.method);
-    // Lets an executor tell a success the schema does not describe from one it does, compiled at the first call.
-    let compiled: ((value: unknown) => boolean) | undefined;
+    // Lets an executor tell a success the registry would reject from one it
+    // accepts, with the validator the registry applies (its compileSchema's,
+    // or the built-in compiler's), taken once the tool is registered. A
+    // server's copy of the registry shares a custom compiler, so it agrees.
+    let validateOutput: ((value: unknown) => boolean) | undefined;
     const checkOutput = outputSchema
       ? (value: Record<string, unknown>) => {
+          if (validateOutput === undefined) return true;
           try {
-            compiled ??= createSchemaCompiler(engine as SchemaEngine).compile(outputSchema);
-          } catch {
-            // A schema this engine cannot compile is left to the registry's verdict.
-            return true;
-          }
-          try {
-            return compiled(value) === true;
+            return validateOutput(value) === true;
           } catch {
             // Such as a value nested too deeply to validate.
             return false;
@@ -2063,6 +2119,7 @@ function register<TContext>(
       }
       return;
     }
+    if (outputSchema) validateOutput = registeredOutputValidator(registry, name);
     names.claim(name);
     // The catalog gets its own copies: changing them cannot make the listed
     // schemas disagree with the ones the registry compiled.
@@ -2079,6 +2136,19 @@ function register<TContext>(
 }
 
 const NO_OUTPUT = Object.freeze({});
+
+/** The output validator `registry` applies to the tool `name` (see OUTPUT_VALIDATOR). */
+function registeredOutputValidator(registry: object, name: string): ((value: unknown) => boolean) | undefined {
+  const lookup = getOwnPropertyDescriptor(McpFnRegistry.prototype, OUTPUT_VALIDATOR)?.value as unknown;
+  if (typeof lookup !== "function") return undefined;
+  try {
+    const validator: unknown = apply(lookup, registry, [name]);
+    return typeof validator === "function" ? (validator as (value: unknown) => boolean) : undefined;
+  } catch {
+    // Not a registry of this package: its own verdict stands.
+    return undefined;
+  }
+}
 
 /** Pairs of schema values `sameSchema` compares at most before it answers no. */
 const SAME_SCHEMA_BUDGET = 10_000;

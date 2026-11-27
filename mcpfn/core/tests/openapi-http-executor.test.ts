@@ -1,8 +1,10 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { runInNewContext } from "node:vm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { McpFnError, McpFnValidationError, type McpFnRequestExtra } from "../src/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createMcpFnServer, McpFnError, McpFnRegistry, McpFnValidationError, type McpFnRequestExtra } from "../src/index.js";
 import { fromOpenAPI, httpExecutor, type HttpExecutorHeaderSource, type OpenApiOperation } from "../src/openapi/index.js";
 import { requestExtra } from "./openapi-helpers.js";
 
@@ -2270,6 +2272,346 @@ describe("httpExecutor security of a document built in another realm", () => {
     const { tools, skipped } = fromOpenAPI(realmDocument, { executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }) });
     expect(skipped).toEqual([]);
     expect(tools.map((tool) => [tool.name, Object.keys((tool.inputSchema.properties ?? {}) as object)])).toEqual([["realm", []]]);
+  });
+});
+
+describe("httpExecutor documents read once, each property by its descriptor", () => {
+  // Operator headers carry only authorization, so a caller value in X-Api-Key would reach the upstream.
+  const operatorHeaders = { authorization: `Bearer ${operatorToken}` };
+  const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+  const notPlain = "the operation's security has a requirement that is not a plain object";
+  const trivial = { execute: () => ({ content: [] }) };
+  class Unplain {}
+  let runs = 0;
+  // Operator code that, if it ran, would rewrite the operation's security to [{}] (no credential).
+  const rewrite = (operation: { security?: unknown }) => {
+    runs += 1;
+    operation.security = [{}];
+  };
+  const unplainOperation = () => ({ operationId: "keyed", security: [new Unplain()] as unknown[], parameters: [keyParameter], responses: ok });
+  const keyedOperation = () => ({ operationId: "keyed", security: [{ k: [] }] as unknown[], parameters: [keyParameter], responses: ok });
+  const documentWith = (operation: object, extensions: Record<`x-${string}`, unknown> = {}): Record<string, unknown> => ({
+    openapi: "3.1.0",
+    info: { title: "read once", version: "1.0.0" },
+    components: { securitySchemes: { k: { type: "apiKey", in: "header", name: "X-Api-Key" } } },
+    paths: { "/keyed": { get: operation } },
+    ...extensions,
+  });
+  const inputs = (tools: { inputSchema: { properties?: unknown } }[]) => tools.map((tool) => Object.keys((tool.inputSchema.properties ?? {}) as object));
+
+  it("never runs an Error's prototype name getter, so a requirement that is not a plain object stays unresolved", () => {
+    const build = () => {
+      const operation = unplainOperation();
+      const error = new Error("test-error");
+      delete (error as { stack?: unknown }).stack;
+      Object.setPrototypeOf(
+        error,
+        Object.create(Error.prototype, { name: { configurable: true, get: () => (rewrite(operation), "Error") } }) as object,
+      );
+      return documentWith(operation, { "x-z": error });
+    };
+    runs = 0;
+    const listed = fromOpenAPI(build(), { executor: trivial });
+    expect(listed.tools.map((tool) => tool.operation.securityUnresolved)).toEqual([notPlain]);
+    const before = api.received.length;
+    const sent = fromOpenAPI(build(), { executor: httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+    expect(sent.tools).toEqual([]);
+    expect(sent.skipped.map(({ code, reason }) => [code, reason])).toEqual([["unsupported-by-executor", `its security cannot be read: ${notPlain}`]]);
+    expect(api.received.length).toBe(before);
+    expect(runs).toBe(0);
+  });
+
+  it("refuses a Proxy before any of its traps runs", () => {
+    let traps = 0;
+    const build = () => {
+      const operation = keyedOperation();
+      const document = documentWith(operation);
+      // Its trap would plant a getter on the operation, then remove itself.
+      (document.info as Record<string, unknown>)["x-p"] = new Proxy(
+        {},
+        {
+          ownKeys: (target) => {
+            traps += 1;
+            Object.defineProperty(operation, "description", { enumerable: true, configurable: true, get: () => (rewrite(operation), "d") });
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      return document;
+    };
+    for (const executor of [httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), trivial]) {
+      runs = 0;
+      traps = 0;
+      let thrown: unknown;
+      try {
+        fromOpenAPI(build(), { executor });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpFnValidationError);
+      expect((thrown as McpFnValidationError).message).toBe("fromOpenAPI expects a plain JSON document");
+      expect((thrown as McpFnValidationError).details).toEqual({ cause: '$.info["x-p"] is a Proxy' });
+      expect([traps, runs]).toEqual([0, 0]);
+    }
+  });
+
+  it("reads a Proxy once through its traps where the runtime cannot detect one, so a trap cannot change what was checked", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "getBuiltinModule");
+    Object.defineProperty(process, "getBuiltinModule", { value: undefined, configurable: true, writable: true });
+    let reloaded: typeof import("../src/openapi/index.js");
+    try {
+      vi.resetModules();
+      reloaded = await import("../src/openapi/index.js");
+    } finally {
+      if (descriptor) Object.defineProperty(process, "getBuiltinModule", descriptor);
+      else delete (process as { getBuiltinModule?: unknown }).getBuiltinModule;
+      vi.resetModules();
+    }
+    let traps = 0;
+    const build = () => {
+      const operation = unplainOperation();
+      const document = documentWith(operation);
+      (document.info as Record<string, unknown>)["x-p"] = new Proxy(
+        {},
+        {
+          ownKeys: (target) => {
+            traps += 1;
+            // Planted on an operation already copied: the copy never reads it.
+            Object.defineProperty(operation, "description", { enumerable: true, configurable: true, get: () => (rewrite(operation), "d") });
+            operation.security = [{}];
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      return document;
+    };
+    runs = 0;
+    traps = 0;
+    const listed = reloaded.fromOpenAPI(build(), { executor: trivial });
+    expect(listed.tools.map((tool) => tool.operation.securityUnresolved)).toEqual([notPlain]);
+    const before = api.received.length;
+    const sent = reloaded.fromOpenAPI(build(), { executor: reloaded.httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }) });
+    expect(sent.tools).toEqual([]);
+    expect(api.received.length).toBe(before);
+    expect([traps, runs]).toEqual([2, 0]);
+  });
+
+  const mutating: [string, (operation: { security?: unknown }) => unknown][] = [
+    [
+      "a Date with its own toString, valueOf, toJSON and Symbol.toPrimitive",
+      (operation) =>
+        // Date.prototype's Symbol.toPrimitive is read-only, so it is defined, not assigned.
+        Object.defineProperty(
+          Object.assign(new Date(0), { toString: () => rewrite(operation), valueOf: () => rewrite(operation), toJSON: () => rewrite(operation) }),
+          Symbol.toPrimitive,
+          { value: () => rewrite(operation), enumerable: true },
+        ),
+    ],
+    [
+      "a Date subclass whose prototype overrides getTime",
+      (operation) =>
+        new (class extends Date {
+          override getTime() {
+            rewrite(operation);
+            return 0;
+          }
+        })(0),
+    ],
+    [
+      "a Map subclass whose prototype overrides size, forEach, entries and its iterator",
+      (operation) =>
+        new (class extends Map<string, object> {
+          override get size() {
+            rewrite(operation);
+            return 0;
+          }
+          override forEach() {
+            rewrite(operation);
+          }
+          override entries() {
+            rewrite(operation);
+            return super.entries();
+          }
+          override [Symbol.iterator]() {
+            rewrite(operation);
+            return super[Symbol.iterator]();
+          }
+        })([["entry", {}]]),
+    ],
+    [
+      "a Set subclass whose prototype overrides size, forEach, values and its iterator",
+      (operation) =>
+        new (class extends Set<object> {
+          override get size() {
+            rewrite(operation);
+            return 0;
+          }
+          override forEach() {
+            rewrite(operation);
+          }
+          override values() {
+            rewrite(operation);
+            return super.values();
+          }
+          override [Symbol.iterator]() {
+            rewrite(operation);
+            return super[Symbol.iterator]();
+          }
+        })([{}]),
+    ],
+    [
+      "a typed array whose prototype overrides buffer, byteOffset, byteLength and length",
+      (operation) => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const getter = { configurable: true, get: () => (rewrite(operation), 0) };
+        Object.setPrototypeOf(
+          bytes,
+          Object.create(Uint8Array.prototype, { buffer: getter, byteOffset: getter, byteLength: getter, length: getter }) as object,
+        );
+        return bytes;
+      },
+    ],
+    [
+      "an Error whose prototype has name and message getters",
+      (operation) => {
+        const error = new Error("test-error");
+        delete (error as { stack?: unknown }).stack;
+        delete (error as { message?: unknown }).message;
+        const getter = { configurable: true, get: () => (rewrite(operation), "Error") };
+        return Object.setPrototypeOf(error, Object.create(Error.prototype, { name: getter, message: getter })) as object;
+      },
+    ],
+  ];
+
+  it.each(mutating)("copies %s without running its code, keeping the operation's security", (_label, value) => {
+    for (const executor of [httpExecutor({ baseUrl: api.origin, headers: operatorHeaders }), trivial]) {
+      const operation = keyedOperation();
+      runs = 0;
+      const { tools, skipped } = fromOpenAPI(documentWith(operation, { "x-value": value(operation) }), { executor });
+      expect(skipped).toEqual([]);
+      // The apiKey requirement holds, so X-Api-Key is not caller input.
+      expect(inputs(tools)).toEqual([[]]);
+      expect(runs).toBe(0);
+    }
+  });
+
+  it("refuses a function or a symbol anywhere, naming the path and no value", () => {
+    for (const [value, cause] of [
+      [() => operatorToken, '$["x-value"].hook is a function'],
+      [Symbol(operatorToken), '$["x-value"].hook is a symbol'],
+    ] as const) {
+      let thrown: unknown;
+      try {
+        fromOpenAPI(documentWith(keyedOperation(), { "x-value": { hook: value } }), { executor: trivial });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpFnValidationError);
+      expect((thrown as McpFnValidationError).details).toEqual({ cause });
+      expect(JSON.stringify((thrown as McpFnValidationError).details)).not.toContain(operatorToken);
+    }
+  });
+
+  it("keeps sharing, cycles and holes as structuredClone would", () => {
+    const shared: Record<string, unknown> = { type: "object" };
+    shared.self = shared;
+    const sparse: unknown[] = [];
+    sparse[3] = { k: [] };
+    const operation = { ...keyedOperation(), security: sparse };
+    const document = documentWith(operation, { "x-a": shared, "x-b": [shared, shared] });
+    const { tools, skipped } = fromOpenAPI(document, { executor: trivial });
+    // A level with holes is not read as a list of requirements.
+    expect(tools).toEqual([]);
+    expect(skipped.map(({ code, reason }) => [code, reason])).toEqual([["invalid-operation", "an array has holes or own keys other than its indices"]]);
+    expect(fromOpenAPI(documentWith(keyedOperation(), { "x-a": shared, "x-b": [shared, shared] }), { executor: trivial }).tools).toHaveLength(1);
+  });
+});
+
+describe("httpExecutor output judged by the registry's own validator", () => {
+  const document = {
+    openapi: "3.1.0",
+    info: { title: "output", version: "1.0.0" },
+    paths: {
+      "/m": {
+        post: {
+          operationId: "m",
+          responses: {
+            "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { a: { type: "number" } } } } } },
+          },
+        },
+      },
+    },
+  };
+  const unrepeatable =
+    "The API responded with HTTP 200 and a body the output schema does not describe, so the call succeeded, but the tool has no structured result to return. Do not repeat the call.";
+  // A custom compiler with a fixed verdict on the output schema (the one with property `a`), accepting every input.
+  const judging = (verdict: boolean) =>
+    new McpFnRegistry({
+      compileSchema: (schema) => () => (isObjectSchema(schema) && "a" in (schema.properties as object) ? verdict : true),
+    });
+  const isObjectSchema = (schema: unknown): schema is { properties: object } =>
+    typeof schema === "object" && schema !== null && typeof (schema as { properties?: unknown }).properties === "object";
+  const convert = (registry: McpFnRegistry, body: string) => {
+    const upstream = stubFetch(() => new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    const { tools } = fromOpenAPI(document, { executor: httpExecutor({ baseUrl: api.origin, fetch: upstream.fetch }), registry, allowMutations: true });
+    expect(tools.map(({ name }) => name)).toEqual(["m"]);
+    return upstream;
+  };
+  const connect = async (registry: McpFnRegistry) => {
+    const server = createMcpFnServer({ info: { name: "output", version: "1.0.0" }, registry });
+    const client = new Client({ name: "client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return { client, close: async () => void (await Promise.all([client.close(), server.close()])) };
+  };
+
+  it("returns the do-not-repeat error, never a thrown output error, when a stricter custom compiler rejects a body the built-in one accepts", async () => {
+    const registry = judging(false);
+    const upstream = convert(registry, '{"a":1.5}');
+    const direct = await registry.callTool("m", {}, undefined, requestExtra());
+    expect(direct).toEqual({ isError: true, content: [{ type: "text", text: unrepeatable }, { type: "text", text: '{"a":1.5}' }] });
+    const { client, close } = await connect(registry);
+    try {
+      const served = await client.callTool({ name: "m", arguments: {} });
+      expect(served.isError).toBe(true);
+      expect((served.content as { text: string }[])[0]!.text).toBe(unrepeatable);
+      expect(served.structuredContent).toBeUndefined();
+    } finally {
+      await close();
+    }
+    expect(upstream.urls).toHaveLength(2);
+  });
+
+  it("returns structured content a lenient custom compiler accepts, though the built-in one would reject it", async () => {
+    const registry = judging(true);
+    convert(registry, '{"a":"x"}');
+    expect(await registry.callTool("m", {}, undefined, requestExtra())).toEqual({ content: [{ type: "text", text: '{"a":"x"}' }], structuredContent: { a: "x" } });
+    const { client, close } = await connect(registry);
+    try {
+      expect((await client.callTool({ name: "m", arguments: {} })).structuredContent).toEqual({ a: "x" });
+    } finally {
+      await close();
+    }
+  });
+
+  it("judges with the built-in compiler on a default registry, directly and through a server", async () => {
+    for (const [body, structured] of [
+      ['{"a":1.5}', { a: 1.5 }],
+      ['{"a":"x"}', undefined],
+    ] as const) {
+      const registry = new McpFnRegistry();
+      convert(registry, body);
+      const direct = await registry.callTool("m", {}, undefined, requestExtra());
+      expect(direct.structuredContent).toEqual(structured);
+      expect(direct.isError).toBe(structured === undefined ? true : undefined);
+      const { client, close } = await connect(registry);
+      try {
+        expect((await client.callTool({ name: "m", arguments: {} })).structuredContent).toEqual(structured);
+      } finally {
+        await close();
+      }
+    }
   });
 });
 
