@@ -586,6 +586,16 @@ describe("@mdfn/core", () => {
     }) as unknown as Parameters<typeof mapAnchor>[0];
     expect(mapAnchor(shifting, [{ from: 2, to: 2, insertedLength: 2 }])).toEqual({ from: 2, to: 2, affinity: "before" });
     expect(affinityReads).toBe(1);
+
+    class Ranges extends Array<{ from: number; to: number; insertedLength: number }> {
+      constructor(items: Iterable<{ from: number; to: number; insertedLength: number }>) {
+        super();
+        for (const item of items) this.push(item);
+      }
+    }
+    expect(mapAnchor({ from: 1, to: 2 }, new Ranges([{ from: 0, to: 0, insertedLength: 1 }]))).toEqual({ from: 2, to: 3 });
+    const untouched = Object.freeze({ from: 1, to: 2 });
+    expect(mapAnchor(untouched, new Ranges([]))).toBe(untouched);
   });
 
   it("builds a mapped sidecar from the comments and suggestions it read", () => {
@@ -611,6 +621,18 @@ describe("@mdfn/core", () => {
     expect(kept?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
     expect(kept?.suggestions?.[0]?.anchor).toEqual({ from: 2, to: 3 });
     expect(reads).toEqual({ comments: 2, suggestions: 2 });
+
+    let anchorReads = 0;
+    const entry = Object.defineProperty({ id: "c", resolved: false, messages: [] }, "anchor", {
+      enumerable: true,
+      get: () => {
+        if (++anchorReads > 1) throw new Error("anchor read twice");
+        return { from: 1, to: 2 };
+      },
+    });
+    const entryMapped = mapSidecar({ comments: [entry] } as unknown as Parameters<typeof mapSidecar>[0], insert);
+    expect(entryMapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 2, to: 3 } }]);
+    expect(anchorReads).toBe(1);
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {

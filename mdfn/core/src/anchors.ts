@@ -50,9 +50,11 @@ function copyWith(source: object, overrides: Readonly<Record<string, unknown>>):
 }
 
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  // filter skips holes in a sparse ranges array, as mapSelection's reduce does; with
-  // no populated range the anchor is returned before any of its fields is read.
-  const populated = ranges.filter(() => true);
+  // forEach skips holes in a sparse ranges array, as mapSelection's reduce does, and
+  // builds no array through the caller's species; with no populated range the
+  // anchor is returned before any of its fields is read.
+  const populated: ChangedRange[] = [];
+  ranges.forEach((range) => populated.push(range));
   if (populated.length === 0) return anchor;
   // Each field is read once, including one supplied through a prototype or getter,
   // and the result is built from those values only, so mapping edits together or
@@ -87,7 +89,7 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
     const anchor = mapAnchor(current, ranges);
     if (reusable && anchor === current) return entry;
     changed = true;
-    return { ...entry, anchor };
+    return copyWith(entry, { anchor }) as unknown as T;
   };
   const comments = sidecar.comments?.map(mapEntry);
   const suggestions = sidecar.suggestions?.map(mapEntry);
