@@ -1070,15 +1070,21 @@ export class McpFnRegistry<TContext = undefined> {
 
   /** Park the validators this copy compiled itself, for a retry to reuse. */
   private abandon(): void {
-    for (const entry of this.entries.slice(this.inherited)) this.park(entry);
+    this.park(this.entries.slice(this.inherited));
     this.inherited = this.entries.length;
   }
 
-  private park({ snapshot, validator, retryKey }: SchemaEntry): void {
-    if (retryKey === undefined) return;
-    const parked = this.parked.get(retryKey);
-    if (parked) parked.push({ snapshot, validator, retryKey });
-    else this.parked.set(retryKey, [{ snapshot, validator, retryKey }]);
+  /**
+   * Park one attempt's compiles, in compile order, ahead of what the attempt
+   * left parked, so equal schemas keep their validators on the next retry.
+   */
+  private park(entries: readonly SchemaEntry[]): void {
+    const byKey = new Map<string, SchemaEntry[]>();
+    for (const { snapshot, validator, retryKey } of entries) {
+      if (retryKey === undefined) continue;
+      byKey.set(retryKey, [...(byKey.get(retryKey) ?? []), { snapshot, validator, retryKey }]);
+    }
+    for (const [key, attempt] of byKey) this.parked.set(key, [...attempt, ...(this.parked.get(key) ?? [])]);
   }
 
   /**
@@ -1254,7 +1260,7 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
-        for (const entry of pending) this.park(entry);
+        this.park(pending);
         throw error;
       } finally {
         this.pending = undefined;

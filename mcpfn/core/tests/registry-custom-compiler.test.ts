@@ -602,6 +602,41 @@ describe("McpFnRegistry custom compiler authority", () => {
       .map((listed) => listed.name)).toEqual(["t"]);
   });
 
+  it("keeps each equal schema's validator across repeated interrupted retries", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    // The first compile accepts everything and every later one rejects
+    // everything, so a swapped input and output validator is observable.
+    let compiles = 0;
+    const compileSchema = (schema: object) => {
+      if ("properties" in schema) throw new Error("invalid output schema");
+      compiles += 1;
+      const accepts = compiles === 1;
+      return Object.assign(() => accepts, { errors: accepts ? null : [{ message: "rejected" }] });
+    };
+    const registry = new McpFnRegistry({ compileSchema });
+    const equal = () => ({ type: "object" as const });
+    let fail = true;
+    const declare = (outputSchema: object) => defineMcpFnServer({
+      info,
+      registry,
+      tools: [{ name: "t", description: "Equal input and output.", inputSchema: equal(), outputSchema, handler }],
+      get capabilities() {
+        if (fail) throw new Error("capabilities unavailable");
+        return undefined;
+      },
+    });
+    expect(() => declare(equal())).toThrow("capabilities unavailable");
+    expect(() => declare({ type: "object", properties: { ok: { type: "nonsense" } } }))
+      .toThrow("Tool t contains an invalid JSON Schema");
+    fail = false;
+    const declared = declare(equal());
+    expect(compiles).toBe(2);
+    const outcome = await declared.registry.callTool("t", {}, undefined, requestExtra())
+      .then(() => "accepted", (error: unknown) => String(error));
+    expect(outcome).not.toContain("Invalid arguments for t");
+    expect(outcome).not.toBe("accepted");
+  });
+
   it("retries a declaration that failed after its definitions registered", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const registry = new McpFnRegistry({ compileSchema: counting() });
