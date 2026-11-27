@@ -342,6 +342,15 @@ const storedOmitSet: ScopeCallbackGrammarDefinition<TtlNamesDims, TtlOnly | Scop
 defineScopeGrammar(storedOmitSet).classifyRisk({ ttl: 60 });
 const contextualOmitSet: ScopeCallbackGrammar<TtlNamesDims, TtlOnly> = defineScopeGrammar({ provider: 'omit-set', dimensions: ttlNamesDims, riskOf: () => 'read' });
 contextualOmitSet.classifyRisk({ ttl: 60 });
+// Each union member may name a different optional set dimension.
+type LeftRightDims = { readonly left: { kind: 'exactSet' }; readonly right: { kind: 'exactSet' } };
+const leftRightDims: LeftRightDims = { left: { kind: 'exactSet' }, right: { kind: 'exactSet' } };
+type LeftOrRight = { readonly left: readonly string[] } | { readonly right: readonly string[] };
+defineScopeGrammar<LeftRightDims, LeftOrRight>({ provider: 'left-or-right', dimensions: leftRightDims, riskOf: () => 'read' });
+const storedLeftOrRight: ScopeCallbackGrammarDefinition<LeftRightDims, LeftOrRight> = { provider: 'left-or-right', dimensions: leftRightDims, riskOf: () => 'read' };
+void storedLeftOrRight;
+// @ts-expect-error a union with a keyless member, without normalize
+defineScopeGrammar<LeftRightDims, { readonly left: readonly string[] } | {}>({ provider: 'keyless', dimensions: leftRightDims, riskOf: () => 'read' });
 // @ts-expect-error an input without the required ttl, without normalize
 defineScopeGrammar<TtlNamesDims, { readonly names?: readonly string[] }>({ provider: 'omit-ttl', dimensions: ttlNamesDims, riskOf: () => 'read' });
 // Generic factories build risk-only definitions with the canonical input.

@@ -305,23 +305,27 @@ export type ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = S
   // has none. So an extra field needs `normalize`, and so does a broad type
   // such as `{}` or `object`, which admits non-scope values when every
   // dimension is optional; omitting an optional set dimension does not.
-  // Each check is written directly on `TInput`, so for a generic `D` with
-  // `TInput` = `ScopeShape<D>` the compiler relates a definition to the
-  // optional branch alone.
+  // Each check is written directly on `TInput`, and the per-member key check
+  // is reached only when some shape key is not common to every member, so for
+  // a generic `D` with `TInput` = `ScopeShape<D>` the compiler relates a
+  // definition to the optional branch alone.
   [TInput] extends [ScopeShape<D>]
     ? [InputKeys<TInput>] extends [keyof ScopeShape<D>]
       ? [RequiredKeys<ScopeShape<D>>] extends [keyof TInput]
-        ? [keyof ScopeShape<D>] extends [never]
+        ? [keyof ScopeShape<D>] extends [keyof TInput]
           ? ScopeCallbackGrammarFields<D, TInput>
-          : [keyof TInput] extends [never]
-            ? ScopeNormalizingFields<D, TInput>
-            : ScopeCallbackGrammarFields<D, TInput>
+          : [KeylessMember<TInput>] extends [never]
+            ? ScopeCallbackGrammarFields<D, TInput>
+            : ScopeNormalizingFields<D, TInput>
         : ScopeNormalizingFields<D, TInput>
       : ScopeNormalizingFields<D, TInput>
     : ScopeNormalizingFields<D, TInput>;
 
 /** Every key of every member of `TInput` (`keyof` on a union sees only the common ones). */
 type InputKeys<TInput> = TInput extends unknown ? keyof TInput : never;
+
+/** The members of `TInput` with no key at all, such as `{}` or `object`. */
+type KeylessMember<TInput> = TInput extends unknown ? ([keyof TInput] extends [never] ? TInput : never) : never;
 
 /** The keys `T` requires. */
 type RequiredKeys<T> = { [K in keyof T]-?: Record<never, never> extends Pick<T, K> ? never : K }[keyof T];
