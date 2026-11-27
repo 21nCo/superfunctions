@@ -42,6 +42,8 @@ describe.skipIf(!url)("DATA-41 clone on a PostgreSQL server", { timeout: 60_000 
   });
 
   afterAll(async () => {
+    // The run's revision rows go with its table.
+    await adapter?.rawSql?.query(`DELETE FROM "__datafn_revisions" WHERE "namespace" = ?`, [namespace]);
     await adapter?.rawSql?.execute(`DROP TABLE IF EXISTS "${taskTable}"`);
     await kysely?.destroy();
   });

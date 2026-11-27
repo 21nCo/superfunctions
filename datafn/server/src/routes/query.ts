@@ -1156,11 +1156,12 @@ export function createQueryHandler(
  * permission listing). `application`: a read of rows that may declare `$rev`
  * as their own field (a resource that issues no revisions, an unknown
  * resource, or a relation reaching one). `own` holds the rows (canonical) the
- * query returned with a `$rev`.
+ * query returned with a `$rev`, and `ids` their ids (as JSON).
  */
 interface SlotTie {
   kind: "versioned" | "issuing" | "application";
   own: Set<string>;
+  ids: Set<string>;
 }
 
 /** Where a row object with a `$rev` came from: its query index, slot kind and canonical form then. */
@@ -1182,6 +1183,13 @@ interface RevisionTies {
   origins: WeakMap<object, RowOrigin>;
   /** The rows (canonical) the `application` slots returned with their own `$rev`. */
   application: Set<string>;
+  /** The `[id, $rev]` pairs (as JSON) the `versioned` slots certified. */
+  certified: Set<string>;
+}
+
+/** The `[id, $rev]` pair of a wire row, as JSON. */
+function revisionPair(row: Record<string, unknown>): string {
+  return JSON.stringify([row.id ?? null, row[REVISION_FIELD] ?? null]);
 }
 
 /** The top-level rows of a query result (its `data` entries that are objects). */
@@ -1223,15 +1231,19 @@ function captureRevisionTies(
   versioned: ReadonlySet<number>,
 ): RevisionTies | undefined {
   if (versioned.size === 0) return undefined;
-  const ties: RevisionTies = { slots: [], origins: new WeakMap(), application: new Set() };
+  const ties: RevisionTies = { slots: [], origins: new WeakMap(), application: new Set(), certified: new Set() };
   queries.forEach((q, index) => {
-    const slot: SlotTie = { kind: slotKind(q as Record<string, unknown>, versioned.has(index), schema), own: new Set() };
+    const kind = slotKind(q as Record<string, unknown>, versioned.has(index), schema);
+    const slot: SlotTie = { kind, own: new Set(), ids: new Set() };
     ties.slots.push(slot);
-    const application = slot.kind === "application";
+    const application = kind === "application";
     for (const row of rowsWithRevision(results[index])) {
       const canonical = canonicalRow(row);
+      const wire = JSON.parse(canonical) as Record<string, unknown>;
       slot.own.add(canonical);
+      slot.ids.add(JSON.stringify(wire.id ?? null));
       if (application) ties.application.add(canonical);
+      if (kind === "versioned") ties.certified.add(revisionPair(wire));
       if (!ties.origins.has(row)) ties.origins.set(row, { index, application, canonical });
     }
   });
@@ -1261,44 +1273,74 @@ function withTiedRevisionsOnly(result: unknown, isBatch: boolean, ties: Revision
     resultRows(entry).forEach((row, position) => {
       if (!row || !(REVISION_FIELD in row)) return;
       const canonical = canonicalRow(row);
-      if (!keepsRevision(canonical, originOf(live[position], canonical, ties), slot, ties)) delete row[REVISION_FIELD];
+      const origin = originOf(live[position], canonical, ties);
+      if (!keepsRevision({ row, canonical, origin }, slot, ties)) delete row[REVISION_FIELD];
     });
   });
   return wire.result;
 }
 
-/** The captured provenance of hook output row `live`, if it serializes to the wire row `canonical`. */
+/**
+ * The captured provenance of hook output row `live`, if it serializes to the
+ * wire row `canonical`. A row whose serializer throws when serialized on its
+ * own (its toJSON at the root key) has no provenance.
+ */
 function originOf(live: Record<string, unknown> | undefined, canonical: string, ties: RevisionTies): RowOrigin | undefined {
   const origin = live ? ties.origins.get(live) : undefined;
-  return origin && canonicalRow(live as Record<string, unknown>) === canonical ? origin : undefined;
+  if (!origin) return undefined;
+  try {
+    return canonicalRow(live as Record<string, unknown>) === canonical ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A wire row with a `$rev`: the row, its canonical form and its provenance. */
+interface WireRow {
+  row: Record<string, unknown>;
+  canonical: string;
+  origin: RowOrigin | undefined;
 }
 
 /**
- * DATA-41: whether a wire row (`canonical`) keeps its `$rev` in `slot`
- * (undefined for an entry no query answers), given its provenance `origin`.
+ * DATA-41: whether a wire row keeps its `$rev` in `slot` (undefined for an
+ * entry no query answers).
  *
- * - In an `application` slot every `$rev` is kept: the client reads it as the
- *   row's own field of a resource that issues no revisions, never pairs it
- *   with a record, so there is nothing to mispair, and a declared `$rev` is
- *   never stripped whatever a hook did to it or whichever server pair it
- *   equals.
- * - A row from an `application` slot (by identity) keeps it anywhere.
- * - Any other row with provenance keeps it only unchanged, in a slot whose own
- *   query returned that exact row: a certified row in the versioned slot that
- *   certified it (or another query that certified the same row). Moved to
- *   another query index, edited in place, or put where no query answers, it
- *   loses it.
- * - A row without provenance (a copy a hook made) keeps it only if it equals a
- *   row the slot's own query returned, or a row an application slot returned
- *   with its declared `$rev`. A changed copy (an edited or rewritten row) in
- *   a slot the client reads as revision-bearing loses it, whatever `[id,
- *   $rev]` it equals, rather than risk pairing a record with a revision it
- *   was not certified with. This includes a declared `$rev` row a hook copied
- *   and edited into another kind of slot.
+ * - A row from an `application` slot (by identity) keeps it anywhere, edited
+ *   or not: it is the row's declared field.
+ * - Any other row with provenance (a certified row) keeps it only unchanged,
+ *   in a revision-bearing slot whose own query returned that exact row: the
+ *   versioned slot that certified it, or another query that certified the
+ *   same row. Moved to another query index, into an `application` slot or
+ *   where no query answers, or edited in place, it loses it.
+ * - A row without provenance (a copy a hook made): see keepsCopiedRevision.
  */
-function keepsRevision(canonical: string, origin: RowOrigin | undefined, slot: SlotTie | undefined, ties: RevisionTies): boolean {
-  if (slot?.kind === "application" || origin?.application) return true;
-  const own = slot?.own.has(canonical) === true;
-  if (origin) return own && canonical === origin.canonical;
-  return own || ties.application.has(canonical);
+function keepsRevision(wire: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
+  const { canonical, origin } = wire;
+  if (origin?.application) return true;
+  if (origin) return slot !== undefined && slot.kind !== "application" && canonical === origin.canonical && slot.own.has(canonical);
+  return keepsCopiedRevision(wire, slot, ties);
+}
+
+/**
+ * DATA-41: whether a hook's copy of a row (no provenance) keeps its `$rev`.
+ *
+ * - In a revision-bearing slot it keeps it only if it equals a row the slot's
+ *   own query returned, or a row an `application` slot returned with its
+ *   declared `$rev`. A changed copy loses it, whatever `[id, $rev]` it
+ *   equals, rather than risk pairing a record with a revision it was not
+ *   certified with. This includes a declared `$rev` row a hook copied and
+ *   edited into a versioned slot: values cannot tell it from a certified
+ *   row whose id a hook rewrote.
+ * - Where no query answers, it keeps it only if it equals an `application` row.
+ * - In an `application` slot the `$rev` is the row's declared field and is
+ *   kept, edited or not, unless it is a server `$rev` moved into a foreign
+ *   slot: its `[id, $rev]` is a pair a versioned query certified and its id
+ *   is none of the ids the slot's own query returned with a `$rev`.
+ */
+function keepsCopiedRevision({ row, canonical }: WireRow, slot: SlotTie | undefined, ties: RevisionTies): boolean {
+  if (slot?.kind === "application") {
+    return !ties.certified.has(revisionPair(row)) || slot.ids.has(JSON.stringify(row.id ?? null));
+  }
+  return slot?.own.has(canonical) === true || ties.application.has(canonical);
 }

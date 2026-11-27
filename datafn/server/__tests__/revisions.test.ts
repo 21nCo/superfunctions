@@ -4064,15 +4064,15 @@ describe("DATA-95: a versioned query's $rev after the afterQuery hooks", () => {
   }
   const trimTitle = (entry: Json) => ({ ...entry, data: entry.data.map(({ title: _title, ...row }: Json) => row) });
 
-  // A slot the client reads as a resource that issues no revisions holds its
-  // rows' own `$rev` field, which the client never pairs with a record, so
-  // nothing there is removed (local review round 2).
-  it("keeps every $rev in a slot read as a resource that issues no revisions, after a same-length reorder", async () => {
+  // A same-length reorder plus trim of a mixed batch sends no server `$rev` on
+  // the trimmed row, which now sits in the slot the client reads as `legacy`
+  // (local review round 3). The legacy row object is the plain query's own,
+  // so its declared `$rev` is kept wherever it is moved.
+  it("sends no server $rev on a trimmed certified row after a same-length reorder, and keeps the declared one", async () => {
     const result = await mixedBatch((batch) => (Array.isArray(batch) ? [batch[1], trimTitle(batch[0])] : batch));
     expect(result).toHaveLength(2);
-    // The legacy row object is the plain query's own: its declared `$rev` is kept anywhere.
     expect(result[0].data).toEqual([{ id: "legacy:1", $rev: "99" }]);
-    expect(result[1].data).toEqual([{ id: "task:1", $rev: 1 }]);
+    expect(result[1].data).toEqual([{ id: "task:1" }]);
   });
 
   it("removes the $rev of a certified row a hook put where no query answers", async () => {
@@ -4086,6 +4086,10 @@ describe("DATA-95: a versioned query's $rev after the afterQuery hooks", () => {
   // A hook that copies and edits a row leaves no provenance: in a slot the
   // client reads as revision-bearing, its `$rev` is removed rather than risk
   // a wrong pairing. The same edit made in place keeps the row's provenance.
+  // The never-strip rule covers plain and non-issuing slots: values cannot
+  // tell this copy from a certified row whose id a hook rewrote (the
+  // id-rewritten test below), and a shortened batch of the hooks' own row
+  // objects keeps its declared `$rev` (the shortened-batch test above).
   it("removes a declared $rev a hook copied and edited into a versioned slot, and keeps one it edited in place", async () => {
     const copied = await mixedBatch((batch) => (Array.isArray(batch)
       ? [{ ...batch[1], data: batch[1].data.map((row: Json) => ({ ...row, note: "x" })) }]
@@ -4302,6 +4306,61 @@ describe("DATA-95: a $rev is tied by provenance, not by colliding values (local 
   });
 });
 
+describe("DATA-95: a server $rev moved into a slot read as a resource that issues none (local review round 3)", () => {
+  const ledgerSchema = {
+    ...schema,
+    resources: [
+      ...schema.resources,
+      { name: "ledger", version: 1, fields: [{ name: "$rev", type: "number" as const, required: false }, { name: "note", type: "string" as const, required: false }] },
+    ],
+  };
+  type Rewrite = (batch: Json[]) => Json[];
+  async function batch(rewrite: Rewrite, ledgerRows: Json[]) {
+    const hooks = {
+      name: "batch",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? rewrite(result) : result),
+    };
+    const served = await serve({ schema: ledgerSchema, config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    for (const { id, ...record } of ledgerRows) await served.push({ resource: "ledger", operation: "insert", id, record });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const res = await served.send("query", [{ version: 1, resource: "task", withRevisions: true }, { version: 1, resource: "ledger" }]);
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    return res.body.result as Json[];
+  }
+
+  it("removes the $rev of an unchanged certified row moved by identity into the ledger slot", async () => {
+    const result = await batch(([task, ledger]) => [task, { ...ledger, data: [...ledger.data, task.data[0]] }], [{ id: "ledger:1", $rev: 1 }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "ledger:1", $rev: 1 }, expect.objectContaining({ id: "task:1", title: "a" })]);
+    expect(result[1].data[1]).not.toHaveProperty("$rev");
+  });
+
+  it("removes the $rev of a trimmed certified copy in a ledger slot whose own query returned other ids", async () => {
+    const trimmed = (task: Json) => task.data.map(({ title: _title, ...row }: Json) => row);
+    const result = await batch(([task, ledger]) => [task, { ...ledger, data: [...ledger.data, ...trimmed(task)] }], [{ id: "ledger:1", $rev: 1 }]);
+    expect(result[1].data).toEqual([{ id: "ledger:1", $rev: 1 }, { id: "task:1" }]);
+  });
+
+  it("answers a row whose toJSON throws at the root key, keeping its $rev", async () => {
+    const result = await batch(([task, ledger]) => {
+      for (const row of task.data) {
+        Object.defineProperty(row, "toJSON", {
+          enumerable: false,
+          value(this: Json, key: string) {
+            if (key === "") throw new Error("serialized on its own");
+            return { ...this };
+          },
+        });
+      }
+      return [task, ledger];
+    }, [{ id: "ledger:1", $rev: 1 }]);
+    expect(result[0].data).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(result[1].data).toEqual([{ id: "ledger:1", $rev: 1 }]);
+  });
+});
+
 describe("DATA-95: a certified versioned row is the stored row (local review round 1)", () => {
   it("returns the row clone returns, unprojected, while a plain query projects it", async () => {
     const served = await serve();
@@ -4352,11 +4411,14 @@ describe("DATA-95: push read-back and the capability splice", () => {
       return response;
     });
     const big = "x".repeat(64 * 1024);
-    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: big } });
-    // The push returned while the middleware was still draining: it did not wait.
-    expect(state).toBe("draining");
-    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
-    release();
+    try {
+      const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: big } });
+      // The push returned while the middleware was still draining: it did not wait.
+      expect(state).toBe("draining");
+      expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    } finally {
+      release();
+    }
     await vi.waitFor(() => expect(state).not.toBe("draining"));
     // Its later reads were cancelled with the read-back.
     expect(state).toBe("errored");
