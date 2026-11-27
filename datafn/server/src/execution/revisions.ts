@@ -419,7 +419,7 @@ async function revisionBefore(db: Adapter, p: any, id: string): Promise<StoredRe
  *   rows present, and where reads may be a snapshot the ids are `unverified`.
  * A revision is raised only on this evidence (assignWriteRevisions).
  */
-export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter {
+export function withWriteEvidence(db: Adapter, log: WriteEvent[] = [], inTransaction = false): Adapter {
   const note = (
     model: string,
     ids: readonly string[],
@@ -492,10 +492,13 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
       // The adapter's delete reports no count. Reads just before it of the
       // revision row, then of the row, tell what it may have removed (see
       // raiseFromEvidence).
-      // Neither read fails the write: earlier statements of it (cascades)
-      // may have committed. Without them the delete is decided as unknown.
-      const ledgerBefore = ids?.length === 1 ? await revisionBefore(db, p, ids[0]) : undefined;
-      const presentBefore = ids
+      // Only outside a transaction, where they decide: inside one a failed
+      // read would abort it. Neither read fails the write: earlier statements
+      // of it (cascades) may have committed. Without them the delete is
+      // decided as unknown.
+      const outside = ids !== undefined && !inTransaction && !transactionsUsable(db);
+      const ledgerBefore = outside && ids.length === 1 ? await revisionBefore(db, p, ids[0]) : undefined;
+      const presentBefore = outside
         ? await db.findOne({ model: p.model, where: p.where, namespace: p.namespace })
           .then((row) => row !== null, () => undefined)
         : undefined;
@@ -523,7 +526,7 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
     async transaction(fn: (tx: Adapter) => Promise<unknown>, ...rest: unknown[]) {
       return (db.transaction as (...a: unknown[]) => Promise<unknown>).call(
         db,
-        (tx: Adapter) => fn(withWriteEvidence(tx, log)),
+        (tx: Adapter) => fn(withWriteEvidence(tx, log, true)),
         ...rest,
       );
     },
