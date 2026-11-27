@@ -12,9 +12,13 @@ export type {
   OpenApiOperationRef,
   OpenApiOperationRequestBody,
   OpenApiParameterLocation,
+  OpenApiParameterQuery,
+  OpenApiSecurityScheme,
   OpenApiSelector,
   OpenApiServer,
   OpenApiSkipCode,
   OpenApiSkippedOperation,
   OpenApiToolInfo,
 } from "./types.js";
+export { httpExecutor } from "./http-executor.js";
+export type { HttpExecutorHeaders, HttpExecutorHeaderSource, HttpExecutorOptions } from "./http-executor.js";

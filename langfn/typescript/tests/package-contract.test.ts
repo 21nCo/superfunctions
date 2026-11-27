@@ -16,7 +16,7 @@ describe("package contract", () => {
     const manifest = JSON.parse(read(resolve(langfnRoot, "typescript/package.json")));
 
     expect(manifest.name).toBe("langfn");
-    expect(manifest.version).toBe("0.2.1");
+    expect(manifest.version).toBe("0.2.2");
     expect(manifest.exports).toMatchObject({
       ".": expect.any(Object),
       "./models": expect.any(Object),
@@ -45,8 +45,8 @@ describe("package contract", () => {
   it("keeps version and health metadata synchronized", () => {
     const tsManifest = JSON.parse(read(resolve(langfnRoot, "typescript/package.json")));
     const tsRoutes = read(resolve(langfnRoot, "typescript/src/http/routes.ts"));
-    expect(tsRoutes).toContain('version: "0.2.1"');
-    expect(tsManifest.version).toBe("0.2.1");
+    expect(tsRoutes).toContain('version: "0.2.2"');
+    expect(tsManifest.version).toBe("0.2.2");
     // The MCP client and server advertise the TypeScript package version on the wire.
     const client = read(resolve(langfnRoot, "typescript/src/mcp/client.ts"));
     const server = read(resolve(langfnRoot, "typescript/src/mcp/server.ts"));
@@ -59,8 +59,8 @@ describe("package contract", () => {
     const tsReadme = read(resolve(langfnRoot, "typescript/README.md"));
 
     for (const content of [rootReadme, tsReadme]) {
-      expect(content).toContain("TypeScript `0.2.1`, Python `0.1.0`");
-      expect(content).toContain("npm install langfn@0.2.1");
+      expect(content).toContain("TypeScript `0.2.2`, Python `0.1.0`");
+      expect(content).toContain("npm install langfn@0.2.2");
       expect(content).toContain("pip install langfn==0.1.0");
     }
   });

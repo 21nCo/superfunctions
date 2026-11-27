@@ -57,13 +57,53 @@ export interface OpenApiOperation {
   readonly description?: string;
   readonly tags: readonly string[];
   readonly deprecated: boolean;
-  /** Parameters exposed as tool inputs. Forbidden headers (D9) are never listed. */
+  /**
+   * Parameters exposed as tool inputs. Forbidden headers and parameters
+   * named by an `apiKey` security scheme of the operation (D9), and those the
+   * executor owns (`OpenApiExecutor.ownsParameter`), are never listed.
+   */
   readonly parameters: readonly OpenApiOperationParameter[];
   readonly requestBody?: OpenApiOperationRequestBody;
   /** Effective servers: the first non-empty level of operation, path item and document, else `[{ url: "/" }]`. */
   readonly servers: readonly OpenApiServer[];
   /** Effective security requirements: operation level, else document level. */
   readonly security?: readonly Readonly<Record<string, readonly string[]>>[];
+  /**
+   * Present when the effective security requirements are malformed (a level
+   * that is not a list, a requirement that is not an object, scopes that are
+   * not a list of strings): why. `security` then lists only the well-formed
+   * requirements, so an executor that sends credentials should refuse the
+   * operation (`httpExecutor` does).
+   */
+  readonly securityUnresolved?: string;
+  /**
+   * The security schemes `security` names that `components.securitySchemes`
+   * defines, by name (`$ref` followed). Present when at least one resolves.
+   */
+  readonly securitySchemes?: Readonly<Record<string, OpenApiSecurityScheme>>;
+}
+
+/**
+ * A security scheme an operation accepts, as far as an executor needs it.
+ * Credentials are the executor's job (D9): a parameter named by an `apiKey`
+ * scheme of the operation is never a tool input.
+ */
+export interface OpenApiSecurityScheme {
+  /** As written, such as `apiKey`, `http`, `oauth2`, `openIdConnect` or `mutualTLS`. */
+  readonly type: string;
+  /** `apiKey` only: the parameter that carries the credential. */
+  readonly name?: string;
+  /** `apiKey` only: where that parameter is sent. */
+  readonly in?: "header" | "query" | "cookie";
+  /** `http` only: the authorization scheme, such as `bearer`. */
+  readonly scheme?: string;
+}
+
+/** A query or header parameter `fromOpenAPI` asks an executor about (`OpenApiExecutor.ownsParameter`). */
+export interface OpenApiParameterQuery {
+  readonly name: string;
+  readonly in: "query" | "header";
+  readonly required: boolean;
 }
 
 export interface OpenApiServer {
@@ -106,7 +146,8 @@ export type OpenApiSkipCode =
   | "unsupported-component-name"
   | "circular-object"
   | "invalid-operation"
-  | "invalid-schema";
+  | "invalid-schema"
+  | "unsupported-by-executor";
 
 export interface OpenApiSkippedOperation {
   operation: OpenApiOperationRef;
@@ -115,16 +156,57 @@ export interface OpenApiSkippedOperation {
   reason: string;
 }
 
-export interface OpenApiExecuteRequest {
+export interface OpenApiExecuteRequest<TContext = unknown> {
   operation: OpenApiOperation;
   /** Arguments exactly as validated by the registry against the tool's input schema. */
   args: Record<string, unknown>;
+  /** The trusted context the server's `context` factory built for this call. */
+  context: TContext;
   signal: AbortSignal;
+  /** Whether the tool declares an output schema, so a success must carry `structuredContent`. */
+  hasOutputSchema: boolean;
+  /**
+   * With an output schema: whether the registry's output validator (its
+   * `compileSchema`'s, or the built-in one's) accepts a value, so an executor
+   * can report a success the schema does not describe instead of returning
+   * structured content the registry would reject.
+   */
+  checkOutput?: (value: Record<string, unknown>) => boolean;
 }
 
-/** Sends a validated tool call to the API. The HTTP implementation is separate (MCP-6). */
-export interface OpenApiExecutor {
-  execute(request: OpenApiExecuteRequest): CallToolResult | Promise<CallToolResult>;
+/** Sends a validated tool call to the API, such as the one `httpExecutor` returns. */
+export interface OpenApiExecutor<TContext = unknown> {
+  execute(request: OpenApiExecuteRequest<TContext>): CallToolResult | Promise<CallToolResult>;
+  /**
+   * Why this executor cannot send an operation, or `undefined` when it can.
+   * `fromOpenAPI` skips such operations (`unsupported-by-executor`) instead
+   * of exposing tools whose every call would fail.
+   */
+  unsupported?(operation: OpenApiOperation): string | undefined;
+  /**
+   * Whether the executor supplies a query or header parameter itself, such
+   * as a header the operator sets. `fromOpenAPI` then leaves the parameter
+   * out of the tool input and `OpenApiOperation.parameters`, so no caller
+   * value for it is accepted. Path parameters are always inputs.
+   */
+  ownsParameter?(parameter: OpenApiParameterQuery): boolean;
+  /**
+   * Whether the executor can send a request body under this documented media
+   * type, as written in the request body's `content`. `fromOpenAPI` then
+   * chooses the request body only among the JSON entries the executor can
+   * send, so the tool uses that entry's schema and media type together. When
+   * it can send none of them, every entry is tried as without this hook, and
+   * `unsupported` decides.
+   */
+  sendsRequestMedia?(contentType: string): boolean;
+  /**
+   * Which response schema becomes a tool's output schema. `first-success`
+   * (the default): the first 2xx JSON schema. `every-success`: that schema
+   * only when every documented 2xx response offers only JSON content with
+   * the same schema, so no documented success falls outside it (a `2XX`
+   * range, which covers the bodyless `204` and `205`, gives none).
+   */
+  readonly outputSchemaRule?: "first-success" | "every-success";
 }
 
 /**
@@ -135,7 +217,7 @@ export interface OpenApiExecutor {
 export type OpenApiSelector = string | { readonly operationId: string };
 
 export interface FromOpenApiOptions<TContext = undefined> {
-  executor: OpenApiExecutor;
+  executor: OpenApiExecutor<NoInfer<TContext>>;
   /** When present, only matching operations are exposed. */
   include?: readonly OpenApiSelector[];
   /** Matching operations are never exposed; `exclude` wins over `include`. */
