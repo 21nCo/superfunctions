@@ -256,6 +256,7 @@ export class WebhookHandler {
       rawBody?: Uint8Array;
       standaloneEvent?: string;
       requireSignatureProof?: boolean;
+      optionalStandaloneListener?: boolean;
     } = {}
   ): Promise<PreparedWebhook & { authenticatedWithoutSubject: boolean; admit(): Promise<WebhookAdmission> }> {
     const providerObj = this.providerRegistry.get(provider);
@@ -323,7 +324,8 @@ export class WebhookHandler {
     const subject = requiresBinding && authenticated
       ? trigger.webhookConfig?.getWorkflowSubject?.(parsedPayload, verificationContext)
       : undefined;
-    if (requiresBinding && authenticated && subject === undefined && options.standaloneEvent !== undefined && options.standaloneEvent !== event) {
+    const authenticatedWithoutSubject = Boolean(requiresBinding && authenticated && subject === undefined);
+    if (authenticatedWithoutSubject && options.standaloneEvent !== undefined && options.standaloneEvent !== event) {
       const standalone = await this[prepareWebhookDelivery](
         provider, options.standaloneEvent, payload, headers, secret, { rawBody, requireSignatureProof: true },
       );
@@ -333,6 +335,8 @@ export class WebhookHandler {
       }
       return standalone;
     }
+    const isStandaloneDelivery = () => !requiresBinding ||
+      (!options.optionalStandaloneListener && authenticatedWithoutSubject && this.getHandlerCount(provider, triggerKey) > 0);
     const workflowEvent = isBindingId(subject)
       ? trigger.webhookConfig?.getWorkflowEvent?.(parsedPayload, verificationContext)
       : undefined;
@@ -347,7 +351,7 @@ export class WebhookHandler {
         transformedPayload = trigger.webhookConfig.transformPayload(parsedPayload);
       } catch (error) {
         // Preserve standalone transform errors and let operational failures request redelivery.
-        if (!requiresBinding || isRetryableTransformError(error)) throw error;
+        if (isStandaloneDelivery() || isRetryableTransformError(error)) throw error;
         throw new WebhookPayloadValidationError();
       }
     }
@@ -366,12 +370,11 @@ export class WebhookHandler {
       verified,
       signatureVerified,
     };
-    const authenticatedWithoutSubject = Boolean(requiresBinding && authenticated && subject === undefined);
     return {
       ...prepared,
       authenticatedWithoutSubject,
       admit: async () => {
-        if (!requiresBinding || (authenticatedWithoutSubject && this.getHandlerCount(provider, triggerKey) > 0)) {
+        if (isStandaloneDelivery()) {
           return {
             signatureVerified,
             dispatch: () => this.dispatchWebhook(provider, prepared),
@@ -448,7 +451,7 @@ export class WebhookHandler {
               try {
                 scope.standalone = await this[prepareWebhookDelivery](
                   provider, standaloneEvent, payload, headers, secret,
-                  { rawBody: options.rawBody, requireSignatureProof: true },
+                  { rawBody: options.rawBody, requireSignatureProof: true, optionalStandaloneListener: true },
                 );
               } catch (error) {
                 if (!(error instanceof WebhookPayloadValidationError)) throw error;
