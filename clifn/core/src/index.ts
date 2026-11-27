@@ -34,6 +34,7 @@ export {
   loadConfig,
   type ConfigLoaderOptions,
   type ConfigLoaderErrorCode,
+  type ConfigLoaderPolicy,
   type LoadedConfig,
 } from "./config-loader.js";
 export {
@@ -97,6 +98,15 @@ export {
   type AppPathsOptions,
 } from "./paths.js";
 export { InvalidStoreOptionsError } from "./store-options.js";
+export {
+  startUpdateCheck,
+  type UpdateCheck,
+  type UpdateCheckFetch,
+  type UpdateCheckOptions,
+  type UpdateCheckRequestInit,
+  type UpdateCheckResponse,
+  type UpdateCheckTerminal,
+} from "./update-check.js";
 export {
   createApiClient,
   HttpFailureError,

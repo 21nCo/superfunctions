@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/client",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Production MCP client, target, session, lifecycle, and diagnostic engine for McpFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -56,7 +56,7 @@
   },
   "devDependencies": {
     "@hono/node-server": "2.1.11",
-    "@mcpfn/core": "0.1.0",
+    "@mcpfn/core": "0.3.0",
     "@superfunctions/oauth-core": "0.1.1",
     "@types/node": "^20.0.0",
     "esbuild": "0.21.5",

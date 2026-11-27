@@ -109,7 +109,28 @@ const loaded = await loadConfig<{ target: string }>({
 });
 ```
 
-The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, or `CLIFN_CONFIG_UNSUPPORTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module exports may be direct values, functions, or promises. Remote URLs and unsupported extensions are rejected; failures use `CLIFN_CONFIG_NOT_FOUND`, `CLIFN_CONFIG_INVALID`, `CLIFN_CONFIG_UNSUPPORTED`, or (under the data-only policy below) `CLIFN_CONFIG_UNTRUSTED`. A custom candidate list is limited to 32 entries. `defineConfig()` is an identity helper for typed authoring.
+
+### Data-only config for untrusted workspaces
+
+TS, JS, MJS and CJS configs run code when they are loaded. A CLI that runs in workspaces it does not trust, such as a cloned repository, passes `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` keeps the behaviour above):
+
+- Discovery reads only `.json` candidates. `config.json` is loaded even when `config.ts` sits beside it, and no TS, JS, MJS or CJS candidate is imported. When no JSON candidate exists but an executable one does, the error is `CLIFN_CONFIG_UNTRUSTED` and names the file.
+- An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before the file is checked or imported, unless the host passes `trustExecutableConfig: true`. That is the explicit, non-interactive trust signal, typically set from a flag the user passed. Only the boolean `true` trusts; the loader never prompts, and discovery stays JSON-only even with trust.
+- An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read.
+
+```ts
+import { loadConfig } from "@clifn/core/config-loader";
+
+const loaded = await loadConfig({
+  cwd: process.cwd(),
+  configPath: flags.config,
+  policy: "data-only",
+  trustExecutableConfig: flags.trustConfig === true,
+});
+```
+
+Catch `CLIFN_CONFIG_UNTRUSTED` to name your CLI's trust flag in the message you show.
 
 ## Store project settings
 
@@ -569,6 +590,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - spinner surface
 - `@clifn/core/runner`
   - parser-agnostic action runner contract
+  - `updateCheck` (a `startUpdateCheck` handle): in text mode its notice is written to stderr after the action, on success or failure, without changing the exit code
   - normalized action context with output, diagnostics, exec, scaffold, cwd, env, and non-interactive state
   - `jsonStyle: 'document'` with `mode: 'json'` (D8) prints exactly one newline-terminated JSON document on stdout, on success or failure: `{"ok":true,"data":...}` or `{"ok":false,"error":{"code","message","details"?}}`, with `diagnostics` only when there are any. Every log level, and a spinner's `succeed`/`fail` message, is a JSON line on stderr (`quiet` and `verbose` apply as in JSON lines), and streamed child output (`exec.command(file, args, { streamOutput: true })`) goes to stderr unless that command passes its own `stdout`/`stderr` writer. `output.json()` and `output.table()` are collected: when the action returns no `data`, the last `json` value becomes `data`; absent data, or data JSON leaves out, prints `null`; a stderr warning names each call that was not used. Leaving `jsonStyle` out keeps JSON lines, and text mode is unchanged
   - document error codes and exit codes follow the CLI-12 classification: a string `code` matching `^[A-Z][A-Z0-9_]{1,63}$`, else a message that is exactly `CLIFN_...` (with a fixed description), else `CLIFN_RUNNER_FAILED`; the exit code is an integer `exitCode` from 1 to 125, else 1. Plain-object `details` (with a null prototype or the `Object.prototype` of any realm, such as a `vm` context) are kept when they serialize to a JSON object and left out otherwise; a diagnostic whose code or message is not a string, whose severity is not `error`, `warning` or `info`, or that cannot be serialized, is left out with a fixed stderr warning
@@ -577,6 +599,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
 - `@clifn/core/config-loader`
   - shared config discovery and typed loading contract for TS/JS/MJS/CJS/JSON configs
   - uses the same Jiti-informed `.ts` loading path already established in `packages/cli` and `apifn/cli`
+  - `policy: "data-only"` (type `ConfigLoaderPolicy`; the default `"executable"` is unchanged) for config from untrusted workspaces: discovery reads only `.json` candidates, so `config.json` is loaded even when `config.ts` sits beside it, and a TS, JS, MJS or CJS file is never imported (when no JSON candidate exists, a discovered executable file raises `CLIFN_CONFIG_UNTRUSTED`, naming it). An explicit TS, JS, MJS or CJS `configPath` raises `CLIFN_CONFIG_UNTRUSTED` before it is checked or imported unless the host passes `trustExecutableConfig: true`, its explicit non-interactive trust signal (such as a `--trust-config` flag); only the boolean `true` trusts, the loader never prompts, and discovery stays JSON-only with trust. An unknown `policy` value raises `CLIFN_CONFIG_INVALID` before any file is read
 - `@clifn/core/env`
   - generic environment readers for strings, integers, and booleans
   - explicit missing, invalid, and out-of-range error codes for shared CLI callers
@@ -595,6 +618,12 @@ These module entrypoints are the generic surface that repository CLIs can share:
 - `@clifn/core/terminal`
   - `resolveTerminal({ env?, stdin?, stdout?, stderr?, json? })` -> `{ color, interactive, ci }`: a non-empty `NO_COLOR` disables colour; `FORCE_COLOR` `0`/`false` disables and `1`/`2`/`3`/`true` enables it; `TERM=dumb` disables it; otherwise colour follows whether stderr is a TTY. `ci` is `CI` set to anything but empty, `0` or `false`; `interactive` needs TTY stdin and stderr, no CI and no JSON
   - `resolveRunnerOptions({ json?, quiet?, verbose?, color?, yes?, nonInteractive? }, { env?, streams? })` -> runner options (`mode`, `'json'` with `jsonStyle: 'document'` for `json`; `color`, `stderrColor`, `quiet`, `verbose`, `nonInteractive`) from the flags your parser produced; `color: true`/`false` overrides the rules and `'auto'` uses them; `stderrColor` (errors, spinner) follows the rules and, in text mode, `color` (`info`, `success` and `warn` on stdout) also needs a TTY stdout unless `FORCE_COLOR` enables it (commander and cac give a lone `--no-color` a default of `true`, so pass `color: opts.color === false ? false : 'auto'`)
+- `@clifn/core/update-check`
+  - `startUpdateCheck({ name, currentVersion, appName, intervalMs?, timeoutMs?, registryUrl?, fetch?, now?, env?, terminal? })` -> `{ notice(), discard() }`: starts at once, never throws, and `notice()` resolves `Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)` or `null` within the remaining `timeoutMs` (default 1,500 ms, counted from the start); pass the handle as `runAction(..., { updateCheck })` and text mode writes the notice as one stderr line after the action, keeping its exit code (JSON mode and `quiet` never ask for it)
+  - skipped without a request or cache access (D10) in JSON mode (`terminal: { json: true }`), when the terminal is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` (the app name upper-cased, `-` and `.` as `_`) is set to a non-empty value, and when `currentVersion` is outside the version grammar; a result cached less than `intervalMs` ago (default 24 hours) is used without a request, and a notice is given at most once per `intervalMs`: it is claimed when the check settles, inside the timeout, when the cache read that settles it (the first read on a cache hit, a read after the registry answered on a refresh) and the clock then show no delivery within `intervalMs` and no other handle of the app in this process holds a claim; the claim time is recorded as `notifiedAt` in the cache in one background write (added to whatever entry is there, an error entry too, and kept across refreshes; the later of two deliveries is always kept), and the first `notice()` call gets the claimed notice with no file access, however long the action ran (a synchronously blocking one too), while later calls resolve `null` (a claim `intervalMs` old or more by then is dropped, as the next interval's notice may be another run's); once the check settles no I/O outlives it but that write (and a refresh write queued when the registry answered); a claim counts as the delivery, so a run that claims and never shows the notice (the action crashes, the process exits, `notice()` is never called) uses up that interval's notice, and `quiet` and JSON runs of `runAction` call the handle's optional `discard()` at the start, so they claim nothing; two processes whose claim reads both come before either claim is written (the window from one run's claim read to its rename) may both give it, the last-rename-wins boundary of concurrent instances
+  - requests `GET <registry>/-/package/<name>/dist-tags` (a scoped name as `@scope%2Fname`) with `Accept: application/json`, from `registryUrl`, else an `https:` `npm_config_registry` / `NPM_CONFIG_REGISTRY`, else `https://registry.npmjs.org`; only `latest` is read, and a network error, timeout, status other than 200, body that is not JSON (or over 64 KiB) or missing `latest` caches `{ checkedAt, error: true }` and gives no notice
+  - versions follow a closed grammar (D13), `MAJOR.MINOR.PATCH` with an optional `-prerelease` and ignored `+build`, compared by SemVer 2.0.0 precedence; a notice needs a `latest` that is greater and not a prerelease
+  - the cache is `<state>/update-check.json` under `resolveAppPaths(appName).state`, written to a unique temporary file and renamed (mode `0o600` on POSIX), so concurrent runs leave one valid file; a missing, unreadable or malformed cache counts as never checked, and temporary files older than an hour are removed by the next write. A hostile registry or proxy beyond TLS, symlinks planted in the state directory and a hostile local user are not defended against yet
 
 ## Adoption boundary
 
@@ -703,6 +732,7 @@ If `extfn/cli` needs a generic capability that is not yet exported by `clifn`, t
 - `clifn` is designed for public imports only; no private/internal path imports are required.
 - The generic modules prefer repository-shared mechanisms, including the existing `packages/cli` loader pattern, before introducing new runtime dependencies.
 - `@clifn/core/config-loader` rejects remote config URLs and unsupported extensions with explicit error codes.
+- `@clifn/core/config-loader` with `policy: "data-only"` never runs a discovered config and runs an explicit TS/JS/MJS/CJS config only with `trustExecutableConfig: true` (`CLIFN_CONFIG_UNTRUSTED` otherwise).
 - `@clifn/core/env` uses explicit `CLIFN_ENV_*` error codes for missing, invalid, and out-of-range values.
 
 ## Conduct v0.3 compatibility note
@@ -743,7 +773,7 @@ Executable naming belongs to the consumer package.
 | `/runner` | `runAction`, `RunnerOptions`, `RunnerJsonStyle`, `RunnerContext`, `RunnerActionResult` | Normalized action execution and exit code; one redacted JSON result document with `jsonStyle: 'document'` |
 | `/output` | `createOutput`, `OutputOptions`, `OutputService`, `OutputTable`, `Spinner` | Text and JSON output, tables, spinners |
 | `/diagnostics` | `createDiagnostic`, `sortDiagnostics`, `redactDiagnostics`, `formatDiagnosticsText`, `formatDiagnosticsJson`, `Diagnostic` | Stable report formatting and redaction |
-| `/config-loader` | `defineConfig`, `loadConfig`, `ConfigLoaderOptions`, `LoadedConfig`, `ConfigLoaderError` | Discover and load TS/JS/MJS/CJS/JSON config |
+| `/config-loader` | `defineConfig`, `loadConfig`, `ConfigLoaderOptions`, `ConfigLoaderPolicy`, `LoadedConfig`, `ConfigLoaderError` | Discover and load TS/JS/MJS/CJS/JSON config, or JSON only with `policy: "data-only"` |
 | `/env` | `readRequiredStringEnv`, `readStringEnv`, `readIntEnv`, `readBooleanEnv`, option types | Typed environment values |
 | `/exec` | `createExec`, `ExecOptions`, `ExecResult`, `ExecTimeoutError` | Subprocesses, capture, streams, timeout |
 | `/scaffold` | `createScaffold`, `ScaffoldOperation`, `ScaffoldResult`, `ScaffoldError` | Bounded directory and file writes |
@@ -751,6 +781,7 @@ Executable naming belongs to the consumer package.
 | `/config` | `createProjectConfig`, `ProjectConfigStore`, `ProjectConfigOptions`, `InvalidConfigError`, `InvalidStoreOptionsError` | JSON project settings, by path, app name or project-local file |
 | `/paths` | `resolveAppPaths`, `ensureAppDir`, `AppPaths`, `AppPathsOptions`, `InvalidAppNameError`, `InvalidHomeDirectoryError` | Per-app config, state and cache directories |
 | `/terminal` | `resolveTerminal`, `resolveRunnerOptions`, `TerminalState`, `RunnerFlags`, `ResolvedRunnerOptions` | Colour, interactivity and CI rules; global flags to runner options |
+| `/update-check` | `startUpdateCheck`, `UpdateCheck`, `UpdateCheckOptions`, `UpdateCheckFetch` | Cached, non-blocking npm `latest` check with a stderr notice |
 | `/client` | `createApiClient`, `ApiClient`, `ApiClientConfig`, `ApiRequestOptions`, `ApiResponse`, HTTP errors | Authenticated HTTP requests |
 | `/ui` | `ui`, `Spinner` | Compatibility terminal helpers |
 | `/stdio` | `readJsonStdin`, `writeJsonStdout`, `InvalidJsonStdinError` | One-document JSON pipes |

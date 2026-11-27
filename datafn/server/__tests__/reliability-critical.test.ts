@@ -132,6 +132,8 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
       "table:__datafn_changes",
       "table:__datafn_meta",
       "create:__datafn_meta",
+      // DATA-41: writes raise revisions inside the transaction.
+      "table:__datafn_revisions",
       "transaction"
     ]);
   });

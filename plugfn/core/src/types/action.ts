@@ -75,8 +75,11 @@ export interface Action<TParams = any, TReturn = any> {
   /**
    * Opt in to caching when callers do not provide an explicit cache option.
    * Mutating actions should leave this unset or set it to false.
+   * `'never'` vetoes caching in every mode, even when a caller passes `cache`:
+   * use it for an action with no local authorization gate on its data, so a
+   * result is never served or stored without asking the provider again.
    */
-  cacheable?: boolean;
+  cacheable?: boolean | 'never';
   /**
    * Opt in to automatic retries when callers do not provide retry options.
    * Mutating actions should leave this unset or set it to false.

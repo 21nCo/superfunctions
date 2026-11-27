@@ -197,6 +197,7 @@ export function createMutationHandler(
 
         // Create change tracking service with user/tenant namespace and optional sequence store
         const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+        changeTracking.useRevisionsOf(validatedSchema);
 
         // Process each mutation
         timer?.startPhase("guard");

@@ -2,7 +2,15 @@ export * from './connection-storage.js';
 export * from './db-sink.js';
 export * from './oauth-state-store.js';
 export * from './oauth-token-vault.js';
-export * from './runtime-storage.js';
+export { AdapterRuntimeStorage, ownerFields } from './runtime-storage.js';
+export type {
+  CreateConnectionGrantInput,
+  CreateProviderInstallationInput,
+  CreateSyncJobInput,
+  CreateWebhookDeliveryInput,
+  CreateWebhookReceiptInput,
+  UpdateSyncJobProgressInput,
+} from './runtime-storage.js';
 export * from './token-storage.js';
 export * from './webhook-storage.js';
 export * from './workflow-storage.js';

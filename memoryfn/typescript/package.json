@@ -1,6 +1,6 @@
 {
   "name": "@memoryfn/core",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Self-hostable AI memory system for agents and applications",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json"
   },
   "dependencies": {
-    "@mcpfn/core": "0.1.0",
+    "@mcpfn/core": "0.3.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/db": "0.2.0",
     "drizzle-orm": "^0.45.1",

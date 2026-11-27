@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/inspector",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Headless McpFn inspector built on the production client and target engine",
   "type": "module",
   "main": "dist/index.cjs",
@@ -21,14 +21,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpfn/client": "0.1.2",
-    "@mcpfn/testing": "0.0.11",
+    "@mcpfn/client": "0.1.3",
+    "@mcpfn/testing": "0.1.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@superfunctions/oauth-core": "0.1.1"
   },
   "devDependencies": {
     "@hono/node-server": "2.1.11",
-    "@mcpfn/core": "0.1.0",
+    "@mcpfn/core": "0.3.0",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",

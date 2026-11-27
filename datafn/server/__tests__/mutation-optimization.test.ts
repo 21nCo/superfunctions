@@ -155,6 +155,8 @@ describe("Phase 05: Mutation Optimization", () => {
         Array.isArray(params?.where) &&
         params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-strict-update"),
       );
+      // DATA-41: revision assignment decides from the update's own outcome,
+      // and the merge itself makes no not-found fallback read.
       expect(mergeFallbackReads).toHaveLength(0);
 
       findOneSpy.mockRestore();
@@ -332,6 +334,8 @@ describe("Phase 05: Mutation Optimization", () => {
         Array.isArray(params?.where) &&
         params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-push-strict"),
       );
+      // DATA-41: revision assignment decides from the update's own outcome,
+      // and the merge itself makes no not-found fallback read.
       expect(mergeFallbackReads).toHaveLength(0);
 
       findOneSpy.mockRestore();

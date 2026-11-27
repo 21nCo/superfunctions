@@ -15,6 +15,41 @@ export interface MutationResult {
     retryable: boolean;
   }>;
   deduped: boolean;
+  /**
+   * DATA-41: the mutated record's revision after the write, when the server
+   * issues revisions. A deduplicated reply carries the stored value.
+   */
+  rev?: number;
+  /**
+   * DATA-41: the record `rev` belongs to, stored with it for deduplication
+   * and never returned. A replay reports `rev` only to a retry of the same
+   * resource and id.
+   */
+  revTarget?: { resource: string; id: string };
+}
+
+/** DATA-41: the result to store, with the record its revision belongs to. */
+export function withRevisionTarget(
+  result: MutationResult,
+  target: { resource?: unknown; id?: unknown },
+): MutationResult {
+  if (typeof result.rev !== "number" || typeof target.resource !== "string" || typeof target.id !== "string") {
+    return result;
+  }
+  return { ...result, revTarget: { resource: target.resource, id: target.id } };
+}
+
+/**
+ * DATA-41: the stored revision a replay may report: only when the retry
+ * targets the record the stored revision belongs to.
+ */
+export function replayedRevision(
+  cached: MutationResult,
+  target: { resource?: unknown; id?: unknown },
+): number | undefined {
+  const stored = cached.revTarget;
+  if (typeof cached.rev !== "number" || !stored) return undefined;
+  return stored.resource === target.resource && stored.id === target.id ? cached.rev : undefined;
 }
 
 export interface IdempotencyStore {

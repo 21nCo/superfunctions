@@ -364,7 +364,7 @@ function unescapePointerToken(token: string): string {
 /** Parse a local component reference, rejecting external and URL references. */
 export function parseComponentRef(
   ref: unknown,
-  kind: "schemas" | "parameters" | "requestBodies" | "responses",
+  kind: "schemas" | "parameters" | "requestBodies" | "responses" | "securitySchemes",
 ): string {
   if (typeof ref !== "string") {
     throw new OpenApiSkip("unsupported-ref", "a $ref value is not a string");

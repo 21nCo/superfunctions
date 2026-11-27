@@ -7,7 +7,9 @@ import type { Adapter } from "@superfunctions/db";
 import { randomUUID } from "crypto";
 import {
   isRetryableMutationResult,
+  replayedRevision,
   scopeIdempotencyStore,
+  withRevisionTarget,
   type IdempotencyStore,
   type MutationResult,
 } from "../idempotency.js";
@@ -42,7 +44,14 @@ import {
 } from "./share.js";
 import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
-import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
+import {
+  ChangeTrackingService,
+  recordChangeWithRetry,
+  recordChangesWithRetry,
+  recordWriteChangesWithRetry,
+  type ChangeEntryInput,
+} from "../sync/change-tracking.js";
+import { issuesRevisions, recordedRevision, recordIdMismatch, withWriteEvidence } from "../revisions.js";
 import {
   applyRelationInheritanceForRelate,
   applyRelationInheritanceForShare,
@@ -260,6 +269,20 @@ async function executeMutationCore(
           code: "DFQL_INVALID",
           message: `Field is read-only: ${systemField} on ${mutation.resource}`,
           path: `record.${systemField}`,
+          retryable: false,
+        }],
+        deduped: false,
+      };
+    }
+    if (recordIdMismatch(schema, mutation)) {
+      return {
+        ok: false,
+        mutationId: effectiveMutationId,
+        affectedIds: [],
+        errors: [{
+          code: "DFQL_INVALID",
+          message: `Invalid DFQL: record.id must equal the mutation id on ${mutation.resource}`,
+          path: "record.id",
           retryable: false,
         }],
         deduped: false,
@@ -997,6 +1020,9 @@ async function executeMutationCore(
 
   // REL-011: Record change tracking using the provided changeTracking instance
   // (which uses the same db adapter as the operation — ensures atomicity when in a transaction)
+  // DATA-41: the change entries recorded for this mutation, which carry the
+  // revisions they raised.
+  let recordedEntries: ChangeEntryInput[] = [];
   if (opResult.ok && !skipChangeTracking) {
     try {
       const isRelationMutation =
@@ -1013,7 +1039,8 @@ async function executeMutationCore(
         }
         const allDeltas = [...deltaByRecord.values()];
         if (allDeltas.length > 0) {
-          const seqs = await changeTracking.getNextServerSeqBatch(allDeltas.length);
+          const seqs = await sequencedOrRaised(changeTracking, allDeltas, () =>
+            changeTracking.getNextServerSeqBatch(allDeltas.length), logger);
           const entries = allDeltas.map((delta, i) => ({
             serverSeq: seqs[i],
             resource: delta.resource,
@@ -1022,6 +1049,7 @@ async function executeMutationCore(
             record: delta.record,
           }));
           await recordChangesWithRetry(changeTracking, entries, 2, logger);
+          recordedEntries = entries;
         }
       } else {
         const changeOp: ChangeEntryInput["op"] = changeOverride
@@ -1067,37 +1095,62 @@ async function executeMutationCore(
           primaryChange.record = snapshot.record;
         };
         if (allChanges.length > 1) {
-          const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
+          const seqs = await sequencedOrRaised(changeTracking, allChanges, () =>
+            changeTracking.getNextServerSeqBatch(allChanges.length), logger);
           await snapshotPrimaryKvChange();
-          await recordChangesWithRetry(
-            changeTracking,
-            allChanges.map((change, i) => ({
-              serverSeq: seqs[i],
-              resource: change.resource,
-              id: change.id,
-              op: change.op,
-              record: change.record,
-            })),
-            2,
-            logger,
-          );
+          recordedEntries = allChanges.map((change, i) => ({
+            serverSeq: seqs[i],
+            resource: change.resource,
+            id: change.id,
+            op: change.op,
+            record: change.record,
+          }));
+          await recordChangesWithRetry(changeTracking, recordedEntries, 2, logger);
         } else {
-          const serverSeq = await changeTracking.getNextServerSeq();
+          const serverSeq = await sequencedOrRaised(changeTracking, allChanges, () =>
+            changeTracking.getNextServerSeq(), logger);
           await snapshotPrimaryKvChange();
           // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
-          await recordChangeWithRetry(changeTracking, {
-            serverSeq,
-            ...primaryChange,
-          }, 2, logger);
+          const entry: ChangeEntryInput = { serverSeq, ...primaryChange };
+          await recordChangeWithRetry(changeTracking, entry, 2, logger);
+          recordedEntries = [entry];
         }
       }
     } catch (error) {
       logger?.error("Change tracking failed", { error: String(error), operation: "changeTracking", resource: mutation.resource });
       throw error;
     }
+    const rev = recordedRevision(recordedEntries, mutation.resource, mutation.id);
+    if (rev !== undefined && issuesRevisions(schema, mutation.resource)) {
+      result.rev = rev;
+    }
   }
 
   return result;
+}
+
+/**
+ * DATA-41: allocates the sequences of a write's changes. Outside a
+ * transaction the write has committed, so when allocation fails the records
+ * its changes name still raise their revisions (with their own retries)
+ * before the failure is reported; no change row is recorded for them.
+ */
+async function sequencedOrRaised<T>(
+  changeTracking: ChangeTrackingService,
+  changes: ReadonlyArray<Omit<ChangeEntryInput, "serverSeq">>,
+  allocate: () => Promise<T>,
+  logger: DatafnLogger | undefined,
+): Promise<T> {
+  try {
+    return await allocate();
+  } catch (error) {
+    if (!changeTracking.inTransaction) {
+      const entries = changes.map((change) => ({ ...change, serverSeq: 0 }));
+      await recordWriteChangesWithRetry(changeTracking, entries, undefined, 2, logger, { record: new Set() })
+        .catch((raiseError) => logger?.error("Revision assignment failed after a sequence failure", { error: String(raiseError) }));
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1259,7 +1312,16 @@ export async function executeMutation(
       mutation.mutationId,
     );
     if (cached && !isRetryableMutationResult(cached)) {
-      return { ...cached, deduped: true };
+      // DATA-41: a stored revision is issued only while the current server
+      // and resource issue revisions, and only to a retry of the record the
+      // stored revision belongs to.
+      const { rev: _stored, revTarget: _target, ...replayed } = cached as MutationResult;
+      const rev = replayedRevision(cached, mutation);
+      return {
+        ...replayed,
+        ...(rev !== undefined && issuesRevisions(schema, mutation.resource) ? { rev } : {}),
+        deduped: true,
+      };
     }
   }
 
@@ -1295,7 +1357,7 @@ export async function executeMutation(
       deduped: false,
     };
     if (mutation.clientId && mutation.mutationId) {
-      await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+      await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
     }
     return result;
   }
@@ -1329,7 +1391,7 @@ export async function executeMutation(
         deduped: false,
       };
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
       }
       return result;
     }
@@ -1376,7 +1438,10 @@ export async function executeMutation(
 
     try {
       await changeTracking.ensureReady();
-      await (db as any).transaction(async (txDb: Adapter) => {
+      await changeTracking.ensureRevisionsReady();
+      await (db as any).transaction(async (txAdapter: Adapter) => {
+        // DATA-41: the write's own statements decide which revisions it raises.
+        const txDb = withWriteEvidence(txAdapter, true);
         // DI-002: Re-read record inside transaction to prevent TOCTOU
         const guardResult = await evaluateGuard(
           txDb,
@@ -1400,7 +1465,7 @@ export async function executeMutation(
           schema,
           namespace,
           effectiveMutationId,
-          changeTracking.withDb(txDb),
+          changeTracking.withDb(txDb, true, true),
           actorId,
           logger,
           multiRegionRuntime,
@@ -1448,7 +1513,7 @@ export async function executeMutation(
         deduped: false,
       };
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
       }
       return result;
     }
@@ -1467,7 +1532,7 @@ export async function executeMutation(
         await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
       }
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(txMutationResult as MutationResult, mutation));
       }
       return txMutationResult as MutationResult;
     }
@@ -1519,14 +1584,16 @@ export async function executeMutation(
     let txMutationResult: MutationResult | null = null;
     try {
       await changeTracking.ensureReady();
-      await (db as any).transaction(async (txDb: Adapter) => {
+      await changeTracking.ensureRevisionsReady();
+      await (db as any).transaction(async (txAdapter: Adapter) => {
+        const txDb = withWriteEvidence(txAdapter, true);
         txMutationResult = await executeMutationCore(
           mutation,
           txDb,
           schema,
           namespace,
           effectiveMutationId,
-          changeTracking.withDb(txDb),
+          changeTracking.withDb(txDb, true, true),
           actorId,
           logger,
           multiRegionRuntime,
@@ -1567,7 +1634,7 @@ export async function executeMutation(
         await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
       }
       if (mutation.clientId && mutation.mutationId) {
-        await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(txMutationResult as MutationResult, mutation));
       }
       return txMutationResult as MutationResult;
     }
@@ -1585,13 +1652,20 @@ export async function executeMutation(
 
   let result: MutationResult;
   try {
+    // DATA-41: outside a caller's transaction, create the revisions table
+    // before the write (inside /transact the route creates it beforehand).
+    // A failure here releases a permission-directory task leased above.
+    if (!insideTransaction) {
+      await changeTracking.ensureRevisionsReady();
+    }
+    const writeDb = withWriteEvidence(db, insideTransaction);
     result = await executeMutationCore(
       mutation,
-      db,
+      writeDb,
       schema,
       namespace,
       effectiveMutationId,
-      changeTracking.withDb(db),
+      changeTracking.withDb(writeDb, true, insideTransaction),
       actorId,
       logger,
       multiRegionRuntime,
@@ -1673,7 +1747,7 @@ export async function executeMutation(
 
   // Store for idempotency only when IDs were provided
   if (mutation.clientId && mutation.mutationId) {
-    await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+    await idempotencyStore.set(mutation.clientId, mutation.mutationId, withRevisionTarget(result, mutation));
   }
 
   return result;

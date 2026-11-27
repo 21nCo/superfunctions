@@ -446,7 +446,13 @@ describe("fromOpenAPI executor delegation", () => {
     const result = await registry.callTool("replacePet", args, undefined, requestExtra(controller.signal));
     expect(result).toEqual({ content: [{ type: "text", text: "sent" }] });
     expect(executor.calls).toHaveLength(1);
-    expect(executor.calls[0]).toEqual({ operation: tool(tools, "replacePet").operation, args, signal: controller.signal });
+    expect(executor.calls[0]).toStrictEqual({
+      operation: tool(tools, "replacePet").operation,
+      args,
+      context: undefined,
+      signal: controller.signal,
+      hasOutputSchema: false,
+    });
     expect(executor.calls[0]!.operation).toBe(tool(tools, "replacePet").operation);
     expect(executor.calls[0]!.args).toBe(args);
 

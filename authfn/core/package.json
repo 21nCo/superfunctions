@@ -82,7 +82,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-flow": "0.1.1",
+    "@superfunctions/oauth-flow": "0.1.2",
     "@superfunctions/oauth-http": "0.1.0",
     "@superfunctions/oauth-providers": "0.1.1",
     "@types/better-sqlite3": "^7.6.13",
