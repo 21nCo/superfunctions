@@ -1,6 +1,6 @@
 {
   "name": "catchfn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Console, network, breadcrumb, error and WebSocket evidence collectors with redaction and a versioned event schema",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -47,7 +47,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "catchfn/typescript"
   },
   "publishConfig": {
