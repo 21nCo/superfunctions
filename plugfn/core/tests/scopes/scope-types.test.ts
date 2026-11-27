@@ -19,6 +19,7 @@ import {
   type NormalizedScope,
   type ScopeCallbackGrammar,
   type ScopeCallbackGrammarDefinition,
+  type ScopeCallbackGrammarFields,
   type ScopeDimension,
   type ScopeDimensions,
   type ScopeGrammar,
@@ -372,6 +373,14 @@ function buildGrammar<GD extends ScopeDimensions, GInput>(definition: ScopeCallb
 }
 buildGrammar(storedShaped).classifyRisk({ seconds: 60 });
 buildGrammar(storedRiskOnly).classifyRisk({ ttl: 60 });
+// A generic interface for the canonical input extends the fields with the default input.
+interface ConsumerDefinition<GD extends ScopeDimensions> extends ScopeCallbackGrammarFields<GD> {
+  readonly provider: 'consumer';
+}
+function buildConsumer<GD extends ScopeDimensions>(definition: ConsumerDefinition<GD>): ScopeCallbackGrammar<GD> {
+  return defineScopeGrammar(definition);
+}
+buildConsumer({ provider: 'consumer', dimensions: ttlDims, riskOf: () => 'read' }).classifyRisk({ ttl: 60 });
 // A generic definition type extends the definition by intersection and keeps the normalize requirement.
 type TaggedDefinition<GD extends ScopeDimensions, GInput> = ScopeCallbackGrammarDefinition<GD, GInput> & { readonly provider: 'tagged' };
 const tagged: TaggedDefinition<TtlDims, SecondsInput> = { provider: 'tagged', dimensions: ttlDims, normalize: input => ({ ttl: input.seconds }), riskOf: () => 'read' };

@@ -342,9 +342,10 @@ type ScopeNormalizingFields<D extends ScopeDimensions, TInput> = ScopeCallbackGr
  * input type that is not canonical: one that is not assignable to
  * `ScopeShape`, or with a union member that has a key outside it (an
  * optional one included), lacks a required key, or is a broad type such as
- * `{}`; a generic definition type built on it is an intersection with
- * `ScopeCallbackGrammarDefinition`, which keeps that requirement (an
- * interface cannot extend a conditional type).
+ * `{}`. An interface cannot extend that conditional type: a generic
+ * definition type for the canonical input extends this interface with the
+ * default input, and one for any input is an intersection with
+ * `ScopeCallbackGrammarDefinition`, which keeps the requirement.
  */
 export interface ScopeCallbackGrammarFields<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
   /**
