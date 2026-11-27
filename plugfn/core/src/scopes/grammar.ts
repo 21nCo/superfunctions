@@ -655,7 +655,6 @@ export function defineScopeGrammar<const D extends ScopeDimensions>(
     Object.assign(Object.create(null) as object, Object.fromEntries(results.map(result => [result.compiled.name, result.published]))),
   ) as PublishedScopeDimensions<D>;
 
-  const snapshots = new WeakMap<object, ParsedScope>();
   const snapshot = (scope: ParsedScope): NormalizedScope<D> => {
     const result = Object.create(null) as Record<string, ScopeValue>;
     for (const [name, value] of scope) result[name] = value;
