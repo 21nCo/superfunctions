@@ -5,18 +5,14 @@ PlugFn for TypeScript is the reference runtime for the shared PlugFn product con
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db@0.3.4 @superfunctions/http@0.2.0
+npm install plugfn @plugfn/providers @superfunctions/db@0.3.4 @superfunctions/http@0.2.0
 ```
 
 ## Quick start
 
 ```ts
-import {
-  createPlugFnRouter,
-  githubProvider,
-  linearProvider,
-  plugFn,
-} from 'plugfn';
+import { createPlugFnRouter, plugFn } from 'plugfn';
+import { githubProvider, linearProvider } from '@plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
@@ -164,7 +160,8 @@ Use a credential for the same signing authority for a scoped delivery. The
 lower-level `WebhookHandler.handleWebhook` supports standalone listeners.
 
 Apply PlugFn schema version 9 with `superfunctions generate-migration plugfn` and your
-adapter's migration runner before starting the upgraded webhook workers. The migration
+adapter's migration runner before deploying upgraded HTTP or SDK ingress and retry
+workers, even if workflow bindings are disabled. The migration
 preserves existing receipt keys and adds a separately indexed workflow receipt
 key and a scope marker on deliveries. Upgrade all retry workers before enabling
 workflow bindings. Resubmit scoped deliveries through the provider or the SDK. For GitHub Apps,
