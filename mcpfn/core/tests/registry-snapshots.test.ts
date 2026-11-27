@@ -148,39 +148,31 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry schema snap
 });
 
 // A custom compiler is shared and opaque: it may resolve a `$id` that the copy
-// never registered. A copy of a self-contained source refuses to expose that.
+// never registered. Its acceptance is the registry's only closure check, so the
+// copy lists and manifests what it accepted.
 describe.each(["ajv", "cfworker"] as const)("McpFnRegistry copies over a shared custom store (%s)", (engine) => {
-  it("refuses a cloneEmpty() copy that refers to a source-only $id", async () => {
-    const { registry, McpFnValidationError, createManifest, defineMcpFnServer, createMcpFnServer } = await load("custom", engine);
+  it("lists a cloneEmpty() copy that refers to a source-only $id the compiler resolved", async () => {
+    const { registry, createManifest, defineMcpFnServer } = await load("custom", engine);
     const ownerId = `https://test.invalid/${engine}/source-only`;
     const source = registry().register({ name: "owner", description: "Owns the id.", inputSchema: objectWithId(ownerId) as never, handler });
     const copy = source.cloneEmpty()
       .register({ name: "user", description: "Refers to the source.", inputSchema: refTo(ownerId) as never, handler });
-    for (const expose of [
-      () => copy.definitions(),
-      () => copy.promptDefinitions(),
-      () => copy.schemaDefinitions(),
-      () => copy.clone(),
-      () => createManifest(info, copy),
-      () => defineMcpFnServer({ info, registry: copy }),
-      () => createMcpFnServer({ info, registry: copy }),
-    ]) {
-      expect(expose).toThrow(McpFnValidationError);
-      expect(expose).toThrow("Registry schema collection is not self-contained");
-    }
+    expect(copy.listTools().map((tool) => tool.name)).toEqual(["user"]);
+    expect(copy.clone().listTools()).toEqual(copy.listTools());
+    expect(defineMcpFnServer({ info, registry: copy }).registry.listTools()).toEqual(copy.listTools());
+    expect(createManifest(info, copy).tools?.map((tool) => tool.name)).toEqual(["user"]);
   });
 
-  it("refuses a clone that refers to a $id the source registered after clone()", async () => {
-    const { registry, McpFnValidationError, createManifest } = await load("custom", engine);
+  it("lists a clone that refers to a $id the source registered after clone()", async () => {
+    const { registry, createManifest } = await load("custom", engine);
     const source = registry()
       .register({ name: "base", description: "Plain.", inputSchema: { type: "object" } as never, handler });
     const replayed = source.clone();
     const laterId = `https://test.invalid/${engine}/source-later`;
     source.register({ name: "later", description: "Registered after clone().", inputSchema: objectWithId(laterId) as never, handler });
     replayed.register({ name: "user", description: "Refers to the later id.", inputSchema: refTo(laterId) as never, handler });
-    expect(() => replayed.listTools()).toThrow(McpFnValidationError);
-    expect(() => createManifest(info, replayed)).toThrow("Registry schema collection is not self-contained");
-    // The source itself stays self-contained and usable.
+    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["base", "user"]);
+    expect(createManifest(info, replayed).tools?.map((tool) => tool.name)).toEqual(["base", "user"]);
     expect(source.listTools().map((tool) => tool.name)).toEqual(["base", "later"]);
   });
 });

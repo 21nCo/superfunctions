@@ -285,20 +285,19 @@ interface SchemaResourcePlan {
   attempt: number;
 }
 
-function addAbsoluteOrigin(value: unknown, origins: Set<string>): void {
-  if (typeof value !== "string") return;
-  try {
-    origins.add(new URL(value).origin);
-  } catch {
-    if (value.startsWith("//")) {
-      origins.add(new URL(value, "https://relative-schema.invalid").origin);
-    }
-  }
-}
-
 function collectAbsoluteSchemaOrigins(schema: Draft7Schema, origins: Set<string>): void {
   if (typeof schema === "boolean") return;
-  for (const keyword of ["$id", "$ref"] as const) addAbsoluteOrigin(schema[keyword], origins);
+  for (const keyword of ["$id", "$ref"] as const) {
+    const value = schema[keyword];
+    if (typeof value !== "string") continue;
+    try {
+      origins.add(new URL(value).origin);
+    } catch {
+      if (value.startsWith("//")) {
+        origins.add(new URL(value, "https://relative-schema.invalid").origin);
+      }
+    }
+  }
   forEachDraft7Subschema(schema, (subschema) => {
     collectAbsoluteSchemaOrigins(subschema, origins);
   });
@@ -576,227 +575,6 @@ function validateCfWorkerSchemaCollection(schemas: readonly object[]): void {
   const validateSchema = new CfWorkerValidator(draft7MetaSchema as never, "7", false);
   for (const schema of schemas) assertCfWorkerSchemaSyntax(schema, validateSchema);
   prepareCfWorkerResources(schemas);
-}
-
-// The schema locations of each dialect a caller compiler may use, chosen by
-// `$schema` (inherited by subschemas until an embedded resource sets its
-// own). A schema without a known `$schema` may be any of them, so every
-// location of every draft is checked.
-type ReferenceDialect = "draft7" | "2019-09" | "2020-12" | "any";
-
-interface DialectKeywords {
-  single: readonly string[];
-  arrays: readonly string[];
-  maps: readonly string[];
-  references: readonly string[];
-  anchors: readonly string[];
-  idAnchors: boolean;
-}
-
-const COMMON_SINGLE = ["additionalProperties", "contains", "propertyNames", "not", "if", "then", "else", "items"];
-const COMMON_MAPS = ["$defs", "definitions", "properties", "patternProperties"];
-const MODERN_SINGLE = [...COMMON_SINGLE, "unevaluatedItems", "unevaluatedProperties", "contentSchema"];
-// Ajv still evaluates schema-valued `dependencies` in 2019-09 and 2020-12.
-const MODERN_MAPS = [...COMMON_MAPS, "dependentSchemas", "dependencies"];
-const DIALECT_KEYWORDS: Record<ReferenceDialect, DialectKeywords> = {
-  draft7: {
-    single: [...COMMON_SINGLE, "additionalItems"],
-    arrays: ["allOf", "anyOf", "oneOf", "items"],
-    maps: [...COMMON_MAPS, "dependencies"],
-    references: ["$ref"],
-    anchors: [],
-    idAnchors: true,
-  },
-  "2019-09": {
-    single: [...MODERN_SINGLE, "additionalItems"],
-    arrays: ["allOf", "anyOf", "oneOf", "items"],
-    maps: MODERN_MAPS,
-    references: ["$ref", "$recursiveRef"],
-    anchors: ["$anchor"],
-    idAnchors: false,
-  },
-  "2020-12": {
-    single: MODERN_SINGLE,
-    arrays: ["allOf", "anyOf", "oneOf", "prefixItems"],
-    maps: MODERN_MAPS,
-    references: ["$ref", "$dynamicRef"],
-    anchors: ["$anchor", "$dynamicAnchor"],
-    idAnchors: false,
-  },
-  any: {
-    single: [...MODERN_SINGLE, "additionalItems"],
-    arrays: ["allOf", "anyOf", "oneOf", "items", "prefixItems"],
-    maps: MODERN_MAPS,
-    references: ["$ref", "$recursiveRef", "$dynamicRef"],
-    anchors: ["$anchor", "$dynamicAnchor"],
-    idAnchors: true,
-  },
-};
-
-function referenceDialect(schema: Record<string, unknown>, inherited: ReferenceDialect): ReferenceDialect {
-  const uri = schema.$schema;
-  if (typeof uri !== "string") return inherited;
-  if (/json-schema\.org\/draft-0[4-7]\/schema#?$/.test(uri)) return "draft7";
-  if (/json-schema\.org\/draft\/2019-09\/schema#?$/.test(uri)) return "2019-09";
-  if (/json-schema\.org\/draft\/2020-12\/schema#?$/.test(uri)) return "2020-12";
-  return "any";
-}
-
-function forEachDialectSubschema(
-  schema: Record<string, unknown>,
-  dialect: ReferenceDialect,
-  visit: (subschema: Record<string, unknown>) => void,
-): void {
-  const keywords = DIALECT_KEYWORDS[dialect];
-  const visitOne = (value: unknown) => {
-    if (value && typeof value === "object" && !Array.isArray(value)) visit(value as Record<string, unknown>);
-  };
-  for (const keyword of keywords.single) visitOne(schema[keyword]);
-  for (const keyword of keywords.arrays) {
-    const value = schema[keyword];
-    if (Array.isArray(value)) value.forEach(visitOne);
-  }
-  for (const keyword of keywords.maps) {
-    const value = schema[keyword];
-    if (value && typeof value === "object" && !Array.isArray(value)) Object.values(value).forEach(visitOne);
-  }
-}
-
-interface ReferenceResource {
-  document: Record<string, unknown>;
-  anchors: Set<string>;
-  // The scope at the resource root, for a JSON Pointer target inside it.
-  scope?: ReferenceScope;
-}
-
-interface ReferenceScope {
-  base: string;
-  dialect: ReferenceDialect;
-  resource: ReferenceResource;
-  // Set inside an anonymous root: only fragment-only references reach it.
-  anonymous: boolean;
-}
-
-interface ReferenceScan {
-  resources: Map<string, ReferenceResource>;
-  references: Array<{ reference: string; scope: ReferenceScope }>;
-  visited: Set<object>;
-}
-
-function isFragmentOnly(reference: string): boolean {
-  return schemaResourceUri(resolveSchemaUri(reference, "")) === "";
-}
-
-function scanReferences(schema: Record<string, unknown>, parent: ReferenceScope, scan: ReferenceScan): void {
-  if (scan.visited.has(schema)) return;
-  scan.visited.add(schema);
-  const dialect = referenceDialect(schema, parent.dialect);
-  const keywords = DIALECT_KEYWORDS[dialect];
-  let scope: ReferenceScope = { ...parent, dialect };
-  const identifier = explicitSchemaId(schema);
-  if (identifier) {
-    const resolved = resolveSchemaUri(identifier, parent.base);
-    const resource = schemaResourceUri(resolved);
-    const fragment = decodeURIComponent(resolved.slice(resource.length + 1));
-    if (isFragmentOnly(identifier)) {
-      if (keywords.idAnchors && fragment) scope.resource.anchors.add(fragment);
-    } else {
-      scope = { base: resource, dialect, resource: { document: schema, anchors: new Set() }, anonymous: false };
-      scope.resource.scope = scope;
-      if (!scan.resources.has(resource)) scan.resources.set(resource, scope.resource);
-      if (keywords.idAnchors && fragment && !fragment.startsWith("/")) scope.resource.anchors.add(fragment);
-    }
-  }
-  for (const keyword of keywords.anchors) {
-    const anchor = schema[keyword];
-    if (typeof anchor === "string") scope.resource.anchors.add(anchor);
-  }
-  for (const keyword of keywords.references) {
-    const reference = schema[keyword];
-    if (typeof reference === "string") scan.references.push({ reference, scope });
-  }
-  // Up to draft-07 (and in Ajv's draft-07 engine) keywords beside $ref are ignored.
-  if (dialect === "draft7" && typeof schema.$ref === "string") return;
-  forEachDialectSubschema(schema, dialect, (subschema) => scanReferences(subschema, scope, scan));
-}
-
-const UNRESOLVED = Symbol("unresolved");
-
-function pointerTarget(document: unknown, pointer: string): unknown {
-  let node = document;
-  for (const token of pointer.split("/").slice(1)) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!node || typeof node !== "object" || !Object.hasOwn(node, key)) return UNRESOLVED;
-    node = (node as Record<string, unknown>)[key];
-  }
-  return node;
-}
-
-/**
- * Whether a reference resolves. A JSON Pointer may name a location the
- * dialect walk does not read (inside `default`, for example), so its target
- * is then scanned as a schema of the resource it points into.
- */
-function resolvesReference(scan: ReferenceScan, reference: string, scope: ReferenceScope): boolean {
-  const resolved = resolveSchemaUri(reference, scope.base);
-  const resourceUri = schemaResourceUri(resolved);
-  const resource = scope.anonymous && isFragmentOnly(reference)
-    ? scope.resource
-    : scan.resources.get(resourceUri);
-  if (!resource) return false;
-  const fragment = decodeURIComponent(resolved.slice(resourceUri.length + 1));
-  if (fragment === "") return true;
-  if (!fragment.startsWith("/")) return resource.anchors.has(fragment);
-  const target = pointerTarget(resource.document, fragment);
-  if (target === UNRESOLVED) return false;
-  if (target && typeof target === "object" && !Array.isArray(target)) {
-    scanReferences(target as Record<string, unknown>, resource.scope ?? scope, scan);
-  }
-  return true;
-}
-
-/**
- * Check only that every reference in a related collection of JSON Schema
- * resources resolves inside the collection: to a resource `$id`, a JSON
- * Pointer within one, or an anchor. Unlike validateSchemaCollection it applies
- * no dialect's syntax rules, so it suits schemas a caller-supplied compiler
- * accepts. URIs resolve as RFC 3986 (as Ajv does), references and subschemas
- * are read in the locations of each schema's `$schema` dialect (every draft's
- * locations when it names none), and an anonymous root is reachable only from
- * its own fragment references, while relative identifiers share a base on an
- * origin no authored URI uses.
- */
-export function validateSchemaReferences(schemas: readonly object[]): void {
-  const origins = new Set<string>();
-  const collectOrigins = (schema: Record<string, unknown>, dialect: ReferenceDialect) => {
-    const active = referenceDialect(schema, dialect);
-    for (const keyword of ["$id", ...DIALECT_KEYWORDS[active].references]) addAbsoluteOrigin(schema[keyword], origins);
-    forEachDialectSubschema(schema, active, (subschema) => collectOrigins(subschema, active));
-  };
-  for (const schema of schemas) collectOrigins(schema as Record<string, unknown>, "any");
-  let index = 0;
-  while (origins.has(`https://${index}${relativeSchemaHostSuffix}`)) index += 1;
-  const relativeBase = `https://${index}${relativeSchemaHostSuffix}/`;
-
-  const scan: ReferenceScan = { resources: new Map(), references: [], visited: new Set() };
-  for (const schema of schemas) {
-    const document = schema as Record<string, unknown>;
-    const scope: ReferenceScope = {
-      base: relativeBase,
-      dialect: "any",
-      resource: { document, anchors: new Set() },
-      anonymous: true,
-    };
-    scope.resource.scope = scope;
-    scanReferences(document, scope, scan);
-  }
-  // Resolving a pointer can scan its target and add references.
-  for (let next = 0; next < scan.references.length; next += 1) {
-    const { reference, scope } = scan.references[next];
-    if (!resolvesReference(scan, reference, scope)) {
-      throw new Error(`Unresolved reference "${reference}". Absolute URI "${resolveSchemaUri(reference, scope.base)}".`);
-    }
-  }
 }
 
 /**

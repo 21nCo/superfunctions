@@ -121,6 +121,13 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry copy gates 
     middle.register(consumer);
     const grandchild = middle.cloneEmpty();
     grandchild.register(consumer);
+    if (mode === "custom") {
+      // The shared custom compiler resolved the reference: its acceptance is
+      // the registry's only closure check.
+      expect(grandchild.definitions().map((tool) => tool.name)).toEqual(["b"]);
+      expect(createManifest(info, grandchild).tools?.map((tool) => tool.name)).toEqual(["b"]);
+      return;
+    }
     for (const expose of [
       () => grandchild.definitions(),
       () => createManifest(info, grandchild),

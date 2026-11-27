@@ -2,7 +2,6 @@ import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import {
   createSchemaCompiler,
   validateSchemaCollection,
-  validateSchemaReferences,
   type CompiledSchema,
   type SchemaCompiler,
   type SchemaIssue,
@@ -291,16 +290,14 @@ function assertPromptArgumentsAgree(
 }
 
 /**
- * Why a schema collection does not resolve on its own, or undefined. The
- * built-in engine checks the whole collection in its own dialect. A custom
- * compiler owns the dialect, syntax and `$id` rules and has already accepted
- * each schema, so only reference resolution is checked, by one walk that
- * knows every draft's subschema keywords and is never the draft-07 engine.
+ * Why the built-in engine's schema collection does not resolve on its own, or
+ * undefined. A registry with a custom compileSchema has no such check: the
+ * compiler accepted every schema in the collection, and its acceptance is the
+ * proof that the schema's references resolve.
  */
-function collectionError(schemas: object[], custom: boolean): unknown {
+function collectionError(schemas: object[]): unknown {
   try {
-    if (custom) validateSchemaReferences(schemas);
-    else validateSchemaCollection(schemas);
+    validateSchemaCollection(schemas);
     return undefined;
   } catch (error) {
     return error ?? new Error("schema collection is invalid");
@@ -308,20 +305,17 @@ function collectionError(schemas: object[], custom: boolean): unknown {
 }
 
 /**
- * Validators a custom compiler returned to one registry or any copy derived
- * from it (clone(), cloneEmpty(), a server declaration's copy). Such a
- * compiler may hold state the registry cannot roll back (an Ajv instance keeps
- * each compiled `$id`). A validator compiled by a registration that failed is
- * parked and used once by the next equal schema (the retry). Otherwise a
- * registry that holds no equal schema reuses the lineage's validator for it
- * (a retry of a failed declaration, whose copy was discarded), and one that
- * already holds an equal schema compiles another, which meets the compiler's
- * own rules. Independent registries sharing one compiler share nothing.
+ * Validators a custom compiler returned in one registry's lineage (the
+ * registry and every clone(), cloneEmpty() or declaration copy derived from
+ * it), by the caller definition and the caller schema object each was compiled
+ * for. Such a compiler may hold state the registry cannot roll back (an Ajv
+ * instance keeps each compiled `$id`), so a registration that presents the
+ * same definition or schema object again (the retry of a failed registration,
+ * or a server declaration retried over the same registry) reuses those
+ * validators, in order, for equal schemas. Any other registration reaches the
+ * compiler. Independent registries sharing one compiler share nothing.
  */
-interface CompileLineage {
-  compiled: Map<string, SchemaEntry[]>;
-  parked: Map<string, SchemaEntry[]>;
-}
+type CompileLineage = WeakMap<object, SchemaEntry[]>;
 
 /** JSON value equality that tells 0 from -0, unlike comparing JSON text. */
 function sameJson(left: unknown, right: unknown): boolean {
@@ -482,11 +476,13 @@ export interface McpFnRegistryOptions {
    * Replace the built-in schema engine (Ajv, or @cfworker/json-schema where
    * code generation is unavailable). Clones of this registry, including the
    * copy a server declaration makes, keep using it. The compiler decides the
-   * dialect, schema syntax and `$id` uniqueness: each new registration of a
-   * schema reaches it, except an equal schema whose validator this registry
-   * or a copy of it already got and this registry does not hold (a retry
-   * after a failed registration or declaration). A copy's self-containment
-   * check only resolves references, in any draft's subschema keywords.
+   * dialect, schema syntax, reference resolution and `$id` uniqueness: each
+   * registration of a schema reaches it, except an equal schema of the same
+   * caller definition or schema object whose validator this registry or a
+   * copy of it already got and this registry does not hold (the retry of a
+   * failed registration or declaration). The compiler's acceptance is the
+   * only self-containment check: the registry, its clones and a server
+   * declaration's copy list whatever it accepted.
    */
   compileSchema?: McpFnSchemaCompiler;
 }
@@ -1048,10 +1044,12 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // The custom compiler's validators in this registry's lineage, and the
-  // accepted entries by snapshot text (see CompileLineage).
-  private lineage: CompileLineage = { compiled: new Map(), parked: new Map() };
-  private readonly held = new Map<string, SchemaEntry[]>();
+  // The custom compiler's validators in this registry's lineage (see
+  // CompileLineage), the validators this registry holds, and the caller
+  // definition of the registration in progress.
+  private lineage: CompileLineage = new WeakMap();
+  private readonly held = new Set<CompiledSchema>();
+  private registrant: object | undefined;
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -1117,26 +1115,21 @@ export class McpFnRegistry<TContext = undefined> {
 
   private accept(entry: SchemaEntry): void {
     this.entries.push(entry);
-    if (this.customCompile) {
-      const text = snapshotText(entry.snapshot);
-      const held = this.held.get(text);
-      if (held) held.push(entry);
-      else this.held.set(text, [entry]);
-    }
+    this.held.add(entry.validator);
     this.issued.set(entry.snapshot, entry);
     if (entry.source) this.sources.set(entry.source, entry);
   }
 
   /**
-   * Whether this registry's schema collection resolves on its own. With a
-   * custom compileSchema, which already accepted each schema in its own
-   * dialect, only reference resolution is checked.
+   * Whether this registry's schema collection resolves on its own. A custom
+   * compileSchema already accepted each schema, so its collection does.
    */
   private closureError(): unknown {
+    if (this.customCompile) return undefined;
     if (this.closure?.count !== this.registrations.length) {
       let error: unknown;
       try {
-        error = collectionError([...new Set(this.schemas)], this.customCompile !== undefined);
+        error = collectionError([...new Set(this.schemas)]);
       } catch (error_) {
         error = error_ ?? new Error("schema collection is invalid");
       }
@@ -1178,31 +1171,34 @@ export class McpFnRegistry<TContext = undefined> {
     }
     const entry: SchemaEntry = {
       snapshot,
-      validator: this.compile(snapshot),
+      validator: this.compile(snapshot, source),
       ...(isObject(source) && source !== snapshot ? { source } : {}),
     };
     pending.push(entry);
     return entry;
   }
 
-  private compile(schema: object): CompiledSchema {
+  private compile(schema: object, source: unknown): CompiledSchema {
     this.compileAttempts += 1;
     if (!this.customCompile) return this.builtIn!.compile(schema);
-    const text = snapshotText(schema);
-    const equal = (entry: SchemaEntry) => sameJson(entry.snapshot, schema);
-    const parked = this.lineage.parked.get(text);
-    const retried = parked?.findIndex(equal) ?? -1;
-    if (retried >= 0) return parked!.splice(retried, 1)[0].validator;
-    const compiled = this.lineage.compiled.get(text);
-    // A registry that holds an equal schema compiles another one, so the
-    // compiler's own rules (a duplicate `$id`) apply to it.
-    const held = this.held.get(text)?.some(equal) || this.pending?.some(equal);
-    const reusable = held ? undefined : compiled?.find(equal);
-    if (reusable) return reusable.validator;
+    const owners = [this.registrant, source].filter(
+      (owner): owner is object => isObject(owner) && owner !== schema,
+    );
+    // A validator this registry holds or this registration already uses is
+    // never reused, so the compiler's own rules (a duplicate `$id`) apply.
+    const free = (entry: SchemaEntry) => sameJson(entry.snapshot, schema) &&
+      !this.held.has(entry.validator) &&
+      !this.pending?.some((used) => used.validator === entry.validator);
+    for (const owner of owners) {
+      const reusable = this.lineage.get(owner)?.find(free);
+      if (reusable) return reusable.validator;
+    }
     const validator = this.customCompile(schema);
-    // One reusable validator per distinct schema is enough.
-    if (!compiled) this.lineage.compiled.set(text, [{ snapshot: schema, validator }]);
-    else if (!compiled.some(equal)) compiled.push({ snapshot: schema, validator });
+    for (const owner of owners) {
+      const compiled = this.lineage.get(owner);
+      if (compiled) compiled.push({ snapshot: schema, validator });
+      else this.lineage.set(owner, [{ snapshot: schema, validator }]);
+    }
     return validator;
   }
 
@@ -1235,13 +1231,10 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
-        for (const entry of this.customCompile ? pending : []) {
-          const text = snapshotText(entry.snapshot);
-          this.lineage.parked.set(text, [...(this.lineage.parked.get(text) ?? []), entry]);
-        }
         throw error;
       } finally {
         this.pending = undefined;
+        this.registrant = undefined;
       }
       for (const entry of pending) this.accept(entry);
       return this;
@@ -1313,6 +1306,7 @@ export class McpFnRegistry<TContext = undefined> {
 
   private addTool(given: McpFnToolDefinition<TContext>): void {
     const { definition, fields, record } = this.readRegistration(given, "tool", TOOL_FIELDS);
+    this.registrant = definition;
     const tool = fields as unknown as McpFnToolDefinition<TContext>;
     assertName("tool", tool.name);
     if (this.tools.has(tool.name)) {
@@ -1507,6 +1501,7 @@ export class McpFnRegistry<TContext = undefined> {
 
   private addPrompt(given: McpFnPromptDefinition<TContext>): void {
     const { definition, fields, record } = this.readRegistration(given, "prompt", PROMPT_FIELDS);
+    this.registrant = definition;
     const prompt = fields as unknown as McpFnPromptDefinition<TContext>;
     const accepted = record?.schemas as PromptSchemas | undefined;
     assertName("prompt", prompt.name);

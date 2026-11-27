@@ -1,7 +1,7 @@
 import Ajv from "ajv";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection, validateSchemaReferences } from "../src/validation.js";
+import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection } from "../src/validation.js";
 
 describe("schema validation engines", () => {
   it("compiles a wide allOf with Ajv and still stops at the first invalid member", () => {
@@ -640,89 +640,5 @@ describe("schema validation engines", () => {
       $schema: dialect,
       type: "string",
     })).not.toThrow();
-  });
-});
-
-// SFNS-107 PR round 2: the reference-only check a custom compileSchema
-// registry uses for self-containment resolves URIs as RFC 3986, keeps
-// anonymous roots private, and reads each `$schema` dialect's locations.
-describe("validateSchemaReferences", () => {
-  const draft07 = "http://json-schema.org/draft-07/schema#";
-  const draft2019 = "https://json-schema.org/draft/2019-09/schema";
-  const draft2020 = "https://json-schema.org/draft/2020-12/schema";
-
-  it.each([
-    ["a nested relative resource under an opaque URN", [{
-      $id: "urn:example:root",
-      $defs: { child: { $id: "child", type: "string" } },
-      properties: { value: { $ref: "child" } },
-    }]],
-    ["an empty self reference under an opaque URN", [{
-      $id: "urn:example:root",
-      properties: { child: { anyOf: [{ type: "null" }, { $ref: "" }] } },
-    }]],
-    ["a relative identifier shared between schemas", [
-      { $id: "shared", type: "string" },
-      { type: "object", properties: { value: { $ref: "shared" } } },
-    ]],
-    ["an anonymous root's own fragment references", [{
-      definitions: { leaf: { $id: "#leaf", type: "string" } },
-      properties: { a: { $ref: "#/definitions/leaf" }, b: { $ref: "#leaf" }, c: { $ref: "#" } },
-    }]],
-    ["a draft 2019-09 recursive reference", [{ $schema: draft2019, $recursiveAnchor: true, items: { $recursiveRef: "#" } }]],
-    ["draft 2020-12 prefixItems and dependentSchemas references", [{
-      $schema: draft2020,
-      $id: "https://test.invalid/modern",
-      $defs: { leaf: { $anchor: "leaf", type: "string" } },
-      prefixItems: [{ $ref: "#leaf" }],
-      dependentSchemas: { a: { $ref: "https://test.invalid/modern#/$defs/leaf" } },
-    }]],
-    ["a reference in a location draft-07 does not read", [{ $schema: draft07, prefixItems: [{ $ref: "#/missing" }] }]],
-    ["a draft-07 $ref whose ignored sibling refers outside", [{
-      $schema: draft07,
-      $ref: "#/definitions/a",
-      definitions: { a: { type: "string" } },
-      properties: { b: { $ref: "https://test.invalid/external" } },
-    }]],
-    ["a pointer into annotation data that resolves inside", [{
-      properties: { a: { $ref: "#/default/leaf" } },
-      default: { leaf: { $ref: "#/definitions/x" } },
-      definitions: { x: { type: "string" } },
-    }]],
-  ])("accepts %s", (_name, schemas) => {
-    expect(() => validateSchemaReferences(schemas)).not.toThrow();
-  });
-
-  it.each([
-    ["an unresolved reference under an opaque URN", [{ $id: "urn:example:root", $ref: "missing" }]],
-    ["a root-path reference from an anonymous schema", [{ properties: { child: { $ref: "/" } } }]],
-    ["a relative reference aliasing an absolute internal-looking identifier", [
-      { $id: "https://0.schema-resource.mcpfn.invalid/shared", type: "string" },
-      { $ref: "shared" },
-    ]],
-    ["a reference naming an anonymous root's private base", [
-      { type: "string" },
-      { properties: { a: { $ref: "https://0.schema-resource.mcpfn.invalid/" } } },
-    ]],
-    ["a reference naming another anonymous root", [
-      { type: "string" },
-      { properties: { a: { $ref: "https://mcpfn-schema-references.invalid/__mcpfn_schema_0.json" } } },
-    ]],
-    ["a relative reference aliasing an authored absolute identifier", [
-      { $id: "https://mcpfn-schema-references.invalid/shared", type: "string" },
-      { $ref: "shared" },
-    ]],
-    ["a reference naming a synthetic collection identifier", [{ $ref: "https://schema-collection.mcpfn.invalid/0-0" }]],
-    ["an outside reference reached through a pointer into annotation data", [{
-      properties: { a: { $ref: "#/default/leaf" } },
-      default: { leaf: { $ref: "https://test.invalid/external" } },
-    }]],
-    ["an outside reference in draft 2019-09 dependencies", [{ $schema: draft2019, dependencies: { a: { $ref: "https://test.invalid/external" } } }]],
-    ["an outside reference in draft 2020-12 dependencies", [{ $schema: draft2020, dependencies: { a: { $ref: "https://test.invalid/external" } } }]],
-    ["a missing pointer in draft 2020-12 prefixItems", [{ $schema: draft2020, prefixItems: [{ $ref: "#/missing" }] }]],
-    ["a missing pointer in prefixItems without $schema", [{ prefixItems: [{ $ref: "#/missing" }] }]],
-    ["a missing anchor in draft 2020-12 unevaluatedProperties", [{ $schema: draft2020, unevaluatedProperties: { $ref: "#nowhere" } }]],
-  ])("rejects %s", (_name, schemas) => {
-    expect(() => validateSchemaReferences(schemas)).toThrow("Unresolved reference");
   });
 });

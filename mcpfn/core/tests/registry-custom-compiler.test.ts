@@ -1,3 +1,4 @@
+import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,11 +11,11 @@ afterEach(() => {
 const info = { name: "test", version: "0.0.0" };
 const handler = async () => ({ content: [], structuredContent: { ok: true } });
 
-// SFNS-107 PR round 1: a registry with a custom compileSchema checks its
-// schema collection for closure by reference resolution only, so a schema in
-// the compiler's own dialect (draft 2020-12 here) that the built-in draft-07
-// engine does not know lists and manifests the same whether it was registered
-// first or supplied by a server declaration. Unresolved references still fail.
+// SFNS-107 PR round 1 (reset in round 3): a registry with a custom
+// compileSchema has no closure check of its own. The compiler's acceptance is
+// the proof, so a schema in its dialect lists and manifests the same whether
+// it was registered first or supplied by a server declaration, and a reference
+// the compiler cannot resolve is refused at registration on both paths.
 describe("McpFnRegistry closure with a custom draft 2020-12 compiler", () => {
   function compiler() {
     const ajv = new Ajv2020({ strict: false });
@@ -55,32 +56,63 @@ describe("McpFnRegistry closure with a custom draft 2020-12 compiler", () => {
     expect(declared.manifest()).toEqual(preRegistered.manifest());
   });
 
-  it("still refuses a derived copy whose collection has an unresolved $ref", async () => {
+  it("refuses an unresolved reference at registration, pre-registered or declared", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
-    const compileSchema = (schema: object) => {
-      // The compiler accepts the dangling reference; the closure check must not.
-      void schema;
-      return Object.assign(() => true, { errors: null });
-    };
-    const declared = defineMcpFnServer({
-      info,
-      registry: new McpFnRegistry({ compileSchema }),
-      tools: [{
+    for (const target of ["https://test.invalid/missing", "#/$defs/missing", "#missing"]) {
+      const tool = () => ({
         name: "t",
         description: "Dangling reference.",
-        inputSchema: { type: "object", properties: { a: { $ref: "https://test.invalid/missing" } } },
+        inputSchema: { type: "object", properties: { p: { prefixItems: [{ $ref: target }] } } } as never,
         handler,
-      }],
-    });
+      });
+      const registry = new McpFnRegistry({ compileSchema: compiler() });
+      expect(() => registry.register(tool())).toThrow("Tool t contains an invalid JSON Schema");
+      expect(() => defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: compiler() }),
+        tools: [tool()],
+      })).toThrow("Tool t contains an invalid JSON Schema");
+      expect(registry.listTools()).toEqual([]);
+    }
+  });
 
-    expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
+  // Ajv 8 resolves each of these under draft-07; the registry must not judge
+  // them by any walk of its own.
+  const d7 = "http://json-schema.org/draft-07/schema#";
+  it.each([
+    ["a $ref beside a sibling $id", { $schema: d7, type: "object", properties: { a: { $ref: "child", definitions: { child: { $id: "child", type: "string" } } } } }],
+    ["a $ref to a plain-name $id", { $schema: d7, type: "object", properties: { a: { $ref: "#leaf", definitions: { leaf: { $id: "#leaf", type: "string" } } } } }],
+    ["no $schema and a prefixItems the compiler ignores", { type: "object", properties: { a: { prefixItems: [{ $ref: "#/definitions/missing" }] } } }],
+  ])("lists and manifests a draft-07 compiler's schema with %s like a pre-registered one", (_label, schema) => {
+    return (async () => {
+      const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+      const draft7 = () => {
+        const ajv = new Ajv({ strict: false });
+        return (value: object) => ajv.compile(value);
+      };
+      const tool = () => ({ name: "t", description: "Draft 07.", inputSchema: structuredClone(schema) as never, handler });
+      const preRegistered = defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: draft7() }).register(tool()),
+      });
+      const declared = defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: draft7() }),
+        tools: [tool()],
+      });
+
+      expect(declared.registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+      expect(declared.registry.listTools()).toEqual(preRegistered.registry.listTools());
+      expect(declared.manifest()).toEqual(preRegistered.manifest());
+    })();
   });
 });
 
 // A stateful custom compiler keeps every $id it compiled, and the registry
 // cannot roll that back. When a registration fails after its input compiled,
-// a retry with the same input and a corrected output reuses that compile
-// instead of meeting a duplicate $id, and the failed attempt is never listed.
+// a retry of the same definition (or with the same input schema object) and a
+// corrected output reuses that compile instead of meeting a duplicate $id, and
+// the failed attempt is never listed.
 describe("McpFnRegistry retry after a failed registration with a stateful custom compiler", () => {
   function statefulCompiler() {
     const ajv = new Ajv2020({ strict: false });
@@ -102,24 +134,21 @@ describe("McpFnRegistry retry after a failed registration with a stateful custom
     const { McpFnRegistry } = await import("../src/index.js");
     const { compileSchema, compiled } = statefulCompiler();
     const registry = new McpFnRegistry({ compileSchema });
-
-    expect(() => registry.register({
+    const definition = {
       name: "t",
       description: "Broken output.",
       inputSchema: input(),
-      outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } } as never,
+      outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } } as object,
       handler,
-    })).toThrow("Tool t contains an invalid JSON Schema");
+    };
+
+    expect(() => registry.register(definition as never)).toThrow("Tool t contains an invalid JSON Schema");
     expect(registry.listTools()).toEqual([]);
     expect(registry.schemaDefinitions()).toEqual([]);
 
-    registry.register({
-      name: "t",
-      description: "Corrected output.",
-      inputSchema: input(),
-      outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
-      handler,
-    });
+    definition.description = "Corrected output.";
+    definition.outputSchema = { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] };
+    registry.register(definition as never);
     expect(compiled).toHaveLength(3);
     expect(registry.listTools().map((tool) => tool.description)).toEqual(["Corrected output."]);
     await expect(registry.callTool("t", { name: "x" }, undefined, requestExtra()))
@@ -224,10 +253,11 @@ describe("McpFnRegistry custom compiler edge cases", () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const ajv = new Ajv2020({ strict: false });
     const registry = new McpFnRegistry({ compileSchema: (schema: object) => ajv.compile(schema) });
+    const inputSchema = { $id: "https://test.invalid/declared", type: "object" as const };
     const tool = (ok: string) => ({
       name: "t",
       description: "Declared.",
-      inputSchema: { $id: "https://test.invalid/declared", type: "object" as const },
+      inputSchema,
       outputSchema: { type: "object", properties: { ok: { type: ok } } } as never,
       handler,
     });
@@ -276,8 +306,9 @@ describe("McpFnRegistry custom compiler declaration retries and dynamic referenc
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
     const ajv = new Ajv2020({ strict: false });
     const registry = new McpFnRegistry({ compileSchema: (schema: object) => ajv.compile(schema) });
+    const first = { name: "a", description: "First.", inputSchema: { $id: "https://test.invalid/first", type: "object" as const }, handler };
     const tools = (ok: string) => [
-      { name: "a", description: "First.", inputSchema: { $id: "https://test.invalid/first", type: "object" as const }, handler },
+      first,
       {
         name: "b",
         description: "Second.",
@@ -292,32 +323,32 @@ describe("McpFnRegistry custom compiler declaration retries and dynamic referenc
     expect(declared.registry.listTools().map((tool) => tool.name)).toEqual(["a", "b"]);
   });
 
-  it("does not treat an unresolved $dynamicRef as closed", async () => {
+  it("takes a permissive compiler's acceptance as final, pre-registered or declared", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
-    const declared = defineMcpFnServer({
-      info,
-      registry: new McpFnRegistry({ compileSchema: () => Object.assign(() => true, { errors: null }) }),
-      tools: [{
-        name: "t",
-        description: "Dynamic reference.",
-        inputSchema: {
-          $schema: "https://json-schema.org/draft/2020-12/schema",
-          type: "object",
-          properties: { a: { $dynamicRef: "#missing" } },
-        } as never,
-        handler,
-      }],
+    const permissive = () => Object.assign(() => true, { errors: null });
+    const tool = () => ({
+      name: "t",
+      description: "Dynamic reference.",
+      inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { a: { $dynamicRef: "#missing" } },
+      } as never,
+      handler,
     });
+    const preRegistered = new McpFnRegistry({ compileSchema: permissive }).register(tool());
+    const declared = defineMcpFnServer({ info, registry: new McpFnRegistry({ compileSchema: permissive }), tools: [tool()] });
 
-    expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
+    expect(declared.registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+    expect(declared.registry.listTools()).toEqual(preRegistered.listTools());
   });
 });
 
-// SFNS-107 PR round 2 (architecture reset): the custom compiler is the
-// authority for `$id` uniqueness and dialect. Every new registration of a
-// schema the registry does not already hold reaches it, nothing is shared
-// between independent registries, and the self-containment check resolves
-// references in any draft's subschema keywords.
+// SFNS-107 PR rounds 2 and 3 (architecture resets): the custom compiler is the
+// authority for `$id` uniqueness, dialect and reference resolution. Every
+// registration of a schema reaches it, except the retry of a failed
+// registration of the same definition or schema object, and nothing is shared
+// between independent registries.
 describe("McpFnRegistry custom compiler authority", () => {
   const sharedId = "https://test.invalid/shared";
   const tool = (name: string) => ({
@@ -376,10 +407,11 @@ describe("McpFnRegistry custom compiler authority", () => {
     });
     const registry = new McpFnRegistry({ compileSchema }).register(tool("a"));
     const output = (type: string) => ({ type: "object", properties: { ok: { type } } }) as never;
-    expect(() => registry.register({ ...tool("b"), outputSchema: output("nonsense") }))
-      .toThrow("Tool b contains an invalid JSON Schema");
+    const retried = { ...tool("b"), outputSchema: output("nonsense") };
+    expect(() => registry.register(retried)).toThrow("Tool b contains an invalid JSON Schema");
 
-    registry.register({ ...tool("b"), outputSchema: output("boolean") });
+    retried.outputSchema = output("boolean");
+    registry.register(retried);
     expect(() => registry.register(tool("c"))).toThrow("Tool c contains an invalid JSON Schema");
     expect(registry.listTools().map((listed) => listed.name)).toEqual(["a", "b"]);
   });
@@ -396,11 +428,13 @@ describe("McpFnRegistry custom compiler authority", () => {
   it("rejects a further registration of a retried schema's $id", async () => {
     const { McpFnRegistry } = await import("../src/index.js");
     const registry = new McpFnRegistry({ compileSchema: ajvCompiler() });
-    expect(() => registry.register({
+    const retried: Record<string, unknown> = {
       ...tool("t"),
-      outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } } as never,
-    })).toThrow("Tool t contains an invalid JSON Schema");
-    registry.register(tool("t"));
+      outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } },
+    };
+    expect(() => registry.register(retried as never)).toThrow("Tool t contains an invalid JSON Schema");
+    delete retried.outputSchema;
+    registry.register(retried as never);
 
     expect(() => registry.register(tool("u"))).toThrow("Tool u contains an invalid JSON Schema");
     expect(registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
@@ -451,21 +485,65 @@ describe("McpFnRegistry custom compiler authority", () => {
     },
   );
 
-  it("refuses a copy whose 2020-12 reference does not resolve in its collection", async () => {
-    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
-    const permissive = () => Object.assign(() => true, { errors: null });
-    for (const target of ["https://test.invalid/missing", "#/$defs/missing", "#missing"]) {
-      const declared = defineMcpFnServer({
-        info,
-        registry: new McpFnRegistry({ compileSchema: permissive }),
-        tools: [{
-          name: "t",
-          description: "Dangling 2020-12 reference.",
-          inputSchema: { type: "object", properties: { p: { prefixItems: [{ $ref: target }] } } } as never,
-          handler,
-        }],
-      });
-      expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
+  const counting = () => {
+    const ajv = new Ajv2020({ strict: false });
+    return vi.fn((schema: object) => ajv.compile(schema));
+  };
+  const failing = (name: string) => ({
+    ...tool(name),
+    outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } } as object,
+  });
+
+  it("compiles an unrelated tool's equal schema after a failed registration, and still retries it", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    const compileSchema = counting();
+    const registry = new McpFnRegistry({ compileSchema });
+    const a = failing("a");
+    expect(() => registry.register(a as never)).toThrow("Tool a contains an invalid JSON Schema");
+
+    const before = compileSchema.mock.calls.length;
+    expect(() => registry.register(tool("b"))).toThrow("Tool b contains an invalid JSON Schema");
+    expect(compileSchema.mock.calls.length).toBeGreaterThan(before);
+    expect(() => registry.register(failing("c") as never)).toThrow("Tool c contains an invalid JSON Schema");
+
+    delete (a as { outputSchema?: object }).outputSchema;
+    registry.register(a as never);
+    expect(registry.listTools().map((listed) => listed.name)).toEqual(["a"]);
+  });
+
+  it("compiles a sibling copy's equal schema after a failed registration in another copy", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    for (const derive of ["clone", "cloneEmpty"] as const) {
+      const compileSchema = counting();
+      const source = new McpFnRegistry({ compileSchema });
+      const first = source[derive]();
+      const sibling = source[derive]();
+      expect(() => first.register(failing("a") as never)).toThrow("Tool a contains an invalid JSON Schema");
+
+      const before = compileSchema.mock.calls.length;
+      expect(() => sibling.register(tool("b"))).toThrow("Tool b contains an invalid JSON Schema");
+      expect(compileSchema.mock.calls.length).toBe(before + 1);
     }
+  });
+
+  it("reuses every compile of an interrupted multi-tool declaration on its retry", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const compileSchema = counting();
+    const registry = new McpFnRegistry({ compileSchema });
+    const plain = () => ({ type: "object" as const, properties: { v: { type: "string" } } });
+    const a = { name: "a", description: "First.", inputSchema: plain(), outputSchema: plain(), handler };
+    const b = { name: "b", description: "Second.", inputSchema: plain(), handler };
+    const c = failing("c");
+
+    expect(() => defineMcpFnServer({ info, registry, tools: [a, b, c as never] }))
+      .toThrow("Tool c contains an invalid JSON Schema");
+    expect(compileSchema).toHaveBeenCalledTimes(5);
+
+    delete (c as { outputSchema?: object }).outputSchema;
+    const declared = defineMcpFnServer({ info, registry, tools: [a, b, c as never] });
+    expect(compileSchema).toHaveBeenCalledTimes(5);
+    expect(declared.registry.listTools().map((listed) => listed.name)).toEqual(["a", "b", "c"]);
+    await expect(declared.registry.callTool("b", { v: 1 }, undefined, requestExtra()))
+      .rejects.toThrow("Invalid arguments for b");
   });
 });
