@@ -23,11 +23,11 @@
   "dependencies": {
     "@datafn/core": "0.1.0",
     "@datafn/server": "0.1.1",
-    "@mcpfn/core": "0.2.0"
+    "@mcpfn/core": "0.3.0"
   },
   "devDependencies": {
     "@superfunctions/db": "0.2.0",
-    "@mcpfn/testing": "0.0.12",
+    "@mcpfn/testing": "0.1.0",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",

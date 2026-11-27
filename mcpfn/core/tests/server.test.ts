@@ -9,6 +9,7 @@ import {
   createMcpFnServer,
   structuredResult,
   type McpFnSchemaValidator,
+  type McpFnServer,
 } from "../src/index.js";
 
 describe("McpFnServer", () => {
@@ -575,6 +576,135 @@ describe("McpFnServer", () => {
     });
     expect(invoked).toEqual(["visible"]);
     expect(server.manifest().tools.map(({ name }) => name)).toEqual(["hidden", "visible"]);
+  });
+
+  describe("tool visibility request kind", () => {
+    function lookupRegistry(invoked: string[]) {
+      return new McpFnRegistry<{ tenant: string }>().register({
+        name: "lookup",
+        description: "Look up a record.",
+        inputSchema: { type: "object" },
+        handler: async () => { invoked.push("lookup"); return structuredResult({ ok: true }); },
+      });
+    }
+
+    async function connect<TContext>(server: McpFnServer<TContext>) {
+      const client = new Client({ name: "request-kind-client", version: "1.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      closeables.push(client, server);
+      return client;
+    }
+
+    it("passes tools/list on discovery and tools/call on invocation with the tool, context and extra", async () => {
+      const invoked: string[] = [];
+      const seen: Array<Record<string, unknown>> = [];
+      const server = createMcpFnServer({
+        info: { name: "request-kind", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        context: () => ({ tenant: "tenant-a" }),
+        toolVisibility: ({ tool, context, extra, requestKind }) => {
+          seen.push({
+            requestKind,
+            tool: { name: tool.name, description: tool.description },
+            context,
+            requestId: extra.requestId,
+            aborted: extra.signal.aborted,
+          });
+          return true;
+        },
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      const expected = (requestKind: string) => ({
+        requestKind,
+        tool: { name: "lookup", description: "Look up a record." },
+        context: { tenant: "tenant-a" },
+        requestId: expect.anything(),
+        aborted: false,
+      });
+      expect(seen).toEqual([expected("tools/list"), expected("tools/call")]);
+      expect(seen[0]!.requestId).not.toEqual(seen[1]!.requestId);
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("lets a tool hidden from discovery run when called directly", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "call-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/call",
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools).toEqual([]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("lets a profile-projected call reach a tool hidden from discovery", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "profile-call-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/call",
+        clientProfiles: {
+          profiles: [{ id: "noop", version: "1", matches: () => true }],
+          resolveVerifiedIdentity: () => ({ subject: "trusted" }),
+        },
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools).toEqual([]);
+      await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+        structuredContent: { ok: true },
+      });
+      expect(invoked).toEqual(["lookup"]);
+    });
+
+    it("answers a call the hook rejects with MethodNotFound without running the handler", async () => {
+      const invoked: string[] = [];
+      const server = createMcpFnServer({
+        info: { name: "list-only", version: "1.0.0" },
+        registry: lookupRegistry(invoked),
+        toolVisibility: ({ requestKind }) => requestKind === "tools/list",
+      });
+      const client = await connect(server);
+
+      expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+      await expect(client.callTool({ name: "lookup" })).rejects.toMatchObject({
+        code: ErrorCode.MethodNotFound,
+      });
+      expect(invoked).toEqual([]);
+    });
+
+    it("keeps discovery and invocation unchanged for hooks that ignore requestKind and for servers without one", async () => {
+      for (const toolVisibility of [undefined, ({ tool }: { tool: { name: string } }) => tool.name === "lookup"]) {
+        const invoked: string[] = [];
+        const server = createMcpFnServer({
+          info: { name: "request-kind-compatible", version: "1.0.0" },
+          registry: lookupRegistry(invoked),
+          ...(toolVisibility ? { toolVisibility } : {}),
+        });
+        const client = await connect(server);
+
+        expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["lookup"]);
+        await expect(client.callTool({ name: "lookup" })).resolves.toMatchObject({
+          structuredContent: { ok: true },
+        });
+        await expect(client.callTool({ name: "missing" })).rejects.toMatchObject({
+          code: ErrorCode.MethodNotFound,
+        });
+        expect(invoked).toEqual(["lookup"]);
+      }
+    });
   });
 
   it("checks only the requested tool on calls without client profiles", async () => {

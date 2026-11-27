@@ -67,10 +67,19 @@ import type {
   McpFnListedTool,
 } from "./types.js";
 
+/** The MCP request a tool visibility hook is evaluated for. */
+export type McpFnToolVisibilityRequestKind = "tools/list" | "tools/call";
+
 export interface McpFnToolVisibilityInput<TContext> {
   tool: McpFnListedTool;
   context: TContext;
   extra: McpFnRequestExtra;
+  /**
+   * `tools/list` while McpFn builds a discovery page, `tools/call` while it
+   * decides whether a call may reach a tool. Hooks may decide the two
+   * differently; hooks that ignore it apply one decision to both.
+   */
+  requestKind: McpFnToolVisibilityRequestKind;
 }
 
 export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
@@ -78,9 +87,11 @@ export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
   registry: McpFnRegistry<TContext>;
   context?: (extra: McpFnRequestExtra) => TContext | Promise<TContext>;
   /**
-   * Per-request discovery and invocation filter. Returning false hides the
-   * tool from tools/list and makes tools/call indistinguishable from an
-   * unknown tool. Static manifests remain the complete server contract.
+   * Per-request discovery and invocation filter, called with the request's
+   * `requestKind`. Returning false for `tools/list` omits the tool from that
+   * listing; returning false for `tools/call` answers the call with the same
+   * `MethodNotFound` error as an unknown tool, without running the handler.
+   * Static manifests remain the complete server contract.
    */
   toolVisibility?: (
     input: McpFnToolVisibilityInput<TContext>,
@@ -609,6 +620,7 @@ export class McpFnServer<TContext = undefined> {
             tools,
             context,
             extra,
+            "tools/list",
           );
           const effective = await this.buildEffectiveCatalog(
             visibleTools,
@@ -654,6 +666,7 @@ export class McpFnServer<TContext = undefined> {
               canonicalTools,
               context,
               extra,
+              "tools/call",
             );
             const effectiveTools = await this.buildEffectiveCatalog(
               visibleTools,
@@ -1103,10 +1116,13 @@ export class McpFnServer<TContext = undefined> {
     tools: McpFnListedTool[],
     context: TContext,
     extra: McpFnRequestExtra,
+    requestKind: McpFnToolVisibilityRequestKind,
   ): Promise<McpFnListedTool[]> {
     if (!this.toolVisibility) return tools;
     const decisions = await Promise.all(
-      tools.map((tool) => this.toolVisibility!({ tool, context, extra })),
+      tools.map((tool) =>
+        this.toolVisibility!({ tool, context, extra, requestKind }),
+      ),
     );
     return tools.filter((_, index) => decisions[index]);
   }

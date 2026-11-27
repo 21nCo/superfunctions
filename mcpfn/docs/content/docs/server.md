@@ -23,7 +23,7 @@ const server = declaration.createServer({
 });
 ```
 
-`toolVisibility` affects both listing and calls. A hidden call returns the same protocol `MethodNotFound` result as an unknown tool; the static manifest still describes the complete server contract. See the [core reference](/docs/reference/core) for error envelopes and context details.
+`toolVisibility` affects both listing and calls, and its `requestKind` input (`"tools/list"` or `"tools/call"`) lets a host decide them separately. A hidden call returns the same protocol `MethodNotFound` result as an unknown tool; the static manifest still describes the complete server contract. See the [core reference](/docs/reference/core) for error envelopes and context details.
 
 ## Match authenticated client profiles carefully
 
