@@ -64,10 +64,14 @@ const intrinsicThen: (value: unknown, onFulfilled: () => void, onRejected: () =>
 ) as never;
 /**
  * The handlers `markHandled` attaches. Both ignore their argument and return
- * `undefined`, so the derived promise `then` creates always fulfills with
- * `undefined`. An absent `onFulfilled` would instead resolve it with the
- * fulfillment value, and resolving with an object reads that object's `then`,
- * which may throw and leave the derived promise rejected and unhandled.
+ * `undefined`, so when `then` derives its promise from the intrinsic
+ * `Promise` (the default species, or a neutralized `constructor`; see
+ * {@link containPromise}) that promise always fulfills with `undefined`. An
+ * absent `onFulfilled` would instead resolve it with the fulfillment value,
+ * and resolving with an object reads that object's `then`, which may throw
+ * and leave the derived promise rejected and unhandled. A custom species
+ * builds the derived promise itself, so no handler can keep it from
+ * rejecting; containment never lets `then` reach one it can neutralize.
  */
 const ignoreFulfillment = (): void => undefined;
 const ignoreRejection = (): void => undefined;
@@ -144,16 +148,15 @@ function ambientSpeciesIsDefault(): boolean {
 }
 
 /**
- * Decided before the first `then`: whether a failure of that `then` on
- * `value` can only be its brand check (`value` is not a native promise), so
- * the retry may be skipped. True only when `value` has no own `constructor`
- * and its prototype is `null`, or `Object.prototype` while
- * {@link ambientSpeciesIsDefault} holds: then the species lookup of a native
- * promise reads only data and finds the default, so it neither runs code nor
- * throws, and nothing can change this state before `then` runs. Indeterminate
- * state (a throw, say) is `false`, so the retry runs.
+ * Decided before `then` runs: whether `then` on `value` can only use the
+ * default species, so it may be applied without neutralizing `constructor`.
+ * True only when `value` has no own `constructor` and its prototype is
+ * `null`, or `Object.prototype` while {@link ambientSpeciesIsDefault} holds:
+ * then the species lookup of a native promise reads only data and finds the
+ * default, so it neither runs code nor throws, and nothing can change this
+ * state before `then` runs. Indeterminate state (a throw, say) is `false`.
  */
-function failsOnlyOnBrand(value: object): boolean {
+function speciesIsDefault(value: object): boolean {
   try {
     if (getOwnDescriptor(value, 'constructor') !== undefined) return false;
     const proto: unknown = getPrototype(value);
@@ -173,37 +176,44 @@ function failsOnlyOnBrand(value: object): boolean {
  * closed on the value itself.
  *
  * `then` looks up the species constructor (`constructor`, then
- * `Symbol.species`) before it attaches the handler, and that lookup can run
- * code that changes state and then throws. So whether a failed `then` may be
- * left without a retry is decided before it runs ({@link failsOnlyOnBrand}):
- * a plain record keeps that fast path and never sees a `defineProperty`.
- * Otherwise a failed `then` is retried once with `constructor` reading as
- * `undefined`, which makes `then` use the intrinsic `Promise` without reading
- * the species, decided by the value's current own `constructor` descriptor
- * (read after the first `then`, whatever its realm):
+ * `Symbol.species`) before it attaches the handler. That lookup can run code
+ * that changes state and then throws, and a custom species builds the derived
+ * promise itself, so it can reject that promise even when `then` succeeds.
+ * So whether `then` may run as is is decided before it runs
+ * ({@link speciesIsDefault}): a plain record keeps that fast path and never
+ * sees a `defineProperty`. Anything else gets `then` exactly once, with
+ * `constructor` reading as `undefined`, which makes `then` use the
+ * intrinsic `Promise` without reading the species, decided by the value's
+ * own `constructor` descriptor read just before (whatever its realm):
  * - absent: on an extensible value, an own `constructor: undefined` is
- *   defined for the retry and deleted afterwards;
+ *   defined for `then` and deleted afterwards;
  * - configurable (data or accessor): it is redefined to that data property
- *   for the retry and the saved descriptor is restored afterwards;
- * - non-configurable writable data: its value is set to `undefined` for the
- *   retry and set back afterwards.
- * The restore runs in a `finally` around both the redefinition and the retry,
+ *   for `then` and the saved descriptor is restored afterwards;
+ * - non-configurable writable data: its value is set to `undefined` for
+ *   `then` and set back afterwards.
+ * The restore runs in a `finally` around both the redefinition and `then`,
  * so a `defineProperty` that applies the change and then throws is undone too.
- * Residual: a promise whose lookup throws and whose current own `constructor`
- * is a non-configurable accessor or non-configurable non-writable data, or a
- * non-extensible promise with no own `constructor`, cannot be marked handled;
- * the caller still fails closed.
+ * Residual: a promise whose own `constructor` is a non-configurable accessor
+ * or non-configurable non-writable data, or a non-extensible promise with no
+ * own `constructor`, gets `then` as is: a species lookup that throws leaves
+ * it unhandled, and a custom species can reject the derived promise; the
+ * caller still fails closed.
  */
 function containPromise(value: unknown): void {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return;
-  const brandOnly = failsOnlyOnBrand(value);
-  if (markHandled(value) || brandOnly) return;
+  if (speciesIsDefault(value)) {
+    markHandled(value);
+    return;
+  }
   try {
     const current = getOwnDescriptor(value, 'constructor');
     let neutral: PropertyDescriptor;
     let restore: () => void;
     if (current === undefined) {
-      if (!isExtensible(value)) return;
+      if (!isExtensible(value)) {
+        markHandled(value);
+        return;
+      }
       neutral = dataDescriptor(undefined, true);
       restore = () => {
         delete (value as { constructor?: unknown }).constructor;
@@ -221,6 +231,7 @@ function containPromise(value: unknown): void {
         defineOwnProperty(value, 'constructor', dataDescriptor(savedValue, false));
       };
     } else {
+      markHandled(value);
       return;
     }
     try {
@@ -230,7 +241,7 @@ function containPromise(value: unknown): void {
       restore();
     }
   } catch {
-    // A Proxy trap or a failed restore: nothing more can be done, and the caller fails closed.
+    // A Proxy trap (a Proxy is never a native promise) or a failed restore: the caller fails closed.
   }
 }
 
@@ -1044,11 +1055,14 @@ function riskItem<D extends ScopeDimensions>(dimension: string, kind: ScopeDimen
  * A data-only definition (no `normalize` or `riskOf`) gives a
  * {@link ScopeGrammar}. A definition with `riskOf`, and optionally
  * `normalize`, gives a {@link ScopeCallbackGrammar}, which also classifies
- * risk; see the callback boundary on `ScopeCallbackGrammarDefinition`.
+ * risk; see the callback boundary on `ScopeCallbackGrammarDefinition`. Its
+ * input type is `normalize`'s parameter, so a provider-shaped input type
+ * needs `normalize`; without one the input is {@link ScopeShape}.
  */
-export function defineScopeGrammar<const D extends ScopeDimensions, TInput = ScopeShape<D>>(
-  definition: ScopeCallbackGrammarDefinition<D, TInput>,
+export function defineScopeGrammar<const D extends ScopeDimensions, TInput>(
+  definition: ScopeCallbackGrammarDefinition<D, TInput> & { readonly normalize: (input: TInput) => ScopeShape<D> },
 ): ScopeCallbackGrammar<D, TInput>;
+export function defineScopeGrammar<const D extends ScopeDimensions>(definition: ScopeCallbackGrammarDefinition<D>): ScopeCallbackGrammar<D>;
 export function defineScopeGrammar<const D extends ScopeDimensions>(definition: ScopeGrammarDefinition<D>): ScopeGrammar<D>;
 export function defineScopeGrammar<const D extends ScopeDimensions, TInput>(
   definition: ScopeGrammarDefinition<D> | ScopeCallbackGrammarDefinition<D, TInput>,

@@ -238,6 +238,37 @@ void shapedGrammar;
 shaped.isSubset({ repos: ['org/a'] }, { repos: ['org/*'] });
 // @ts-expect-error input follows normalize's parameter, not the scope shape
 shaped.classifyRisk({ repositories: ['org/a'] });
+// A provider-shaped input type needs normalize; without one the input is the scope shape.
+interface SecondsInput {
+  readonly seconds: number;
+}
+type TtlDims = { readonly ttl: { kind: 'ttlMax' } };
+const ttlDims: TtlDims = { ttl: { kind: 'ttlMax' } };
+// @ts-expect-error an explicit provider-shaped input type without normalize
+defineScopeGrammar<TtlDims, SecondsInput>({ provider: 'no-normalize', dimensions: ttlDims, riskOf: () => 'read' });
+// @ts-expect-error an expected provider-shaped grammar without normalize
+const contextualNoNormalize: ScopeCallbackGrammar<TtlDims, SecondsInput> = defineScopeGrammar({
+  provider: 'no-normalize',
+  dimensions: ttlDims,
+  riskOf: () => 'read',
+});
+void contextualNoNormalize;
+const riskOnly: ScopeCallbackGrammar<TtlDims> = defineScopeGrammar({ provider: 'risk-only', dimensions: ttlDims, riskOf: () => 'read' });
+riskOnly.classifyRisk({ ttl: 60 });
+const explicitNormalize = defineScopeGrammar<TtlDims, SecondsInput>({
+  provider: 'explicit-normalize',
+  dimensions: ttlDims,
+  normalize: input => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+});
+explicitNormalize.classifyRisk({ seconds: 60 });
+const contextualNormalize: ScopeCallbackGrammar<TtlDims, SecondsInput> = defineScopeGrammar({
+  provider: 'contextual-normalize',
+  dimensions: ttlDims,
+  normalize: (input: SecondsInput) => ({ ttl: input.seconds }),
+  riskOf: () => 'read',
+});
+contextualNormalize.isSubset({ seconds: 60 }, { seconds: 300 });
 // @ts-expect-error riskOf returns a closed risk level
 defineScopeGrammar({ provider: 'bad-risk', dimensions: { names: { kind: 'exactSet' } }, riskOf: () => 'admin' });
 const optionalItem: Equal<ScopeItem<OptionalDims>['dimension'], string> = true;

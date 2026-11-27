@@ -941,7 +941,7 @@ describe('callbacks are synchronous and a returned promise is contained, never a
     });
     // Reading `hasOwn` from the live global arms a throwing
     // Object.prototype.constructor getter that removes itself on first use,
-    // so a check that read through it would wrongly skip the retry.
+    // so a check that read through it would wrongly skip the neutralization.
     const liveObject = new Proxy(RealObject, {
       get(target, key, receiver) {
         if (key === 'hasOwn' && armed) {
@@ -1132,17 +1132,19 @@ describe('callbacks are synchronous and a returned promise is contained, never a
     });
 
     /**
-     * Caller code that runs inside then's species lookup, changes the state a
-     * retry decision could read, and then throws. Each must still leave no
-     * unhandled rejection: the decision is made before the first `then`.
+     * Caller code that would run inside then's species lookup, change the
+     * state a containment decision could read, and then throw. Each must still
+     * leave no unhandled rejection: the decision is made before `then` runs,
+     * and an own `constructor` is neutralized first, so its lookup never runs
+     * and the descriptor is restored exactly.
      */
     interface StateChange {
       /** Applies ambient state for the call, returning its cleanup. */
       readonly ambient?: () => () => void;
       /** Makes one rejected promise. */
       readonly make: () => object;
-      /** The own `constructor` the promise holds after containment (the state the lookup left). */
-      readonly expectOwn: (value: object) => void;
+      /** The own `constructor` the promise holds after containment, given the one it held before. */
+      readonly expectOwn: (value: object, before: PropertyDescriptor | undefined) => void;
     }
     const reparented = () => Object.setPrototypeOf(Promise.reject(new Error('state-change rejected')), Object.prototype) as object;
     const objectConstructor = Object.getOwnPropertyDescriptor(Object.prototype, 'constructor')!;
@@ -1206,7 +1208,12 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           });
           return promise;
         },
-        expectOwn: value => expect(Object.getOwnPropertyDescriptor(value, 'constructor')).toBeUndefined(),
+        expectOwn: (value, before) => {
+          const after = Object.getOwnPropertyDescriptor(value, 'constructor');
+          expect(after).toEqual(before);
+          expect(after?.get).toBe(before?.get);
+          expect(after?.value).toBe(before?.value);
+        },
       },
       'an own configurable constructor getter that replaces itself with another accessor, then throws': {
         make: () => {
@@ -1220,10 +1227,11 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           });
           return promise;
         },
-        expectOwn: value => {
+        expectOwn: (value, before) => {
           const after = Object.getOwnPropertyDescriptor(value, 'constructor');
-          expect(after?.get).toBe(replacementGetter);
-          expect(after?.configurable).toBe(true);
+          expect(after).toEqual(before);
+          expect(after?.get).toBe(before?.get);
+          expect(after?.value).toBe(before?.value);
         },
       },
       'an own constructor whose species getter deletes that constructor, then throws': {
@@ -1238,12 +1246,17 @@ describe('callbacks are synchronous and a returned promise is contained, never a
           Object.defineProperty(promise, 'constructor', { configurable: true, writable: true, value: holder });
           return promise;
         },
-        expectOwn: value => expect(Object.getOwnPropertyDescriptor(value, 'constructor')).toBeUndefined(),
+        expectOwn: (value, before) => {
+          const after = Object.getOwnPropertyDescriptor(value, 'constructor');
+          expect(after).toEqual(before);
+          expect(after?.get).toBe(before?.get);
+          expect(after?.value).toBe(before?.value);
+        },
       },
     };
 
     it.each(Object.keys(stateChanges))(
-      'leaves no unhandled rejection when %s, keeps the value rejected and the descriptor the lookup left',
+      'leaves no unhandled rejection when %s, keeps the value rejected and the descriptor state',
       async name => {
         const change = stateChanges[name]!;
         const made: Made[] = [];
@@ -1259,9 +1272,73 @@ describe('callbacks are synchronous and a returned promise is contained, never a
         expect(seen).toEqual([]);
         expect(results).toEqual(FAILED_CLOSED);
         expect(made).toHaveLength(PATHS);
-        for (const [value] of made) {
-          change.expectOwn(value);
-          expect(await settlement(value)).toEqual(new Error('state-change rejected'));
+        for (const [value, before] of made) {
+          change.expectOwn(value, before);
+          expect(await settlementWithDefaultSpecies(value)).toEqual(new Error('state-change rejected'));
+        }
+      },
+    );
+
+    /**
+     * A species whose constructor completes but whose resolving functions
+     * reject: `then` succeeds, yet the promise it derives would reject with no
+     * handler. Containment neutralizes `constructor` before `then` runs, so
+     * the intrinsic `Promise` derives that promise instead.
+     */
+    type Executor = (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => void;
+    class RejectingResolve extends Promise<unknown> {
+      constructor(executor: Executor) {
+        super((_resolve, reject) => executor(() => reject(undefined), reject));
+      }
+    }
+    /** A species constructor that hands `then` its own rejected promise as the derived one. */
+    function RejectedCapability(executor: Executor) {
+      executor(
+        () => undefined,
+        () => undefined,
+      );
+      return Promise.reject(new Error('species promise rejected'));
+    }
+    const ownSpecies = (species: unknown) => () =>
+      Object.defineProperty(Promise.reject(new Error('species rejected')), 'constructor', {
+        configurable: true,
+        writable: true,
+        value: { [Symbol.species]: species },
+      });
+    const customSpecies: [string, () => object][] = [
+      ['an own constructor whose species resolves by rejecting', ownSpecies(RejectingResolve)],
+      ['an own constructor whose species returns a rejected promise', ownSpecies(RejectedCapability)],
+      ['a subclass instance (Evil.reject) whose species resolves by rejecting', () => RejectingResolve.reject(new Error('species rejected'))],
+    ];
+
+    /** `settlement` with `constructor` neutralized for the read, so the custom species never derives a promise. */
+    function settlementWithDefaultSpecies(value: object): Promise<unknown> {
+      const before = Object.getOwnPropertyDescriptor(value, 'constructor');
+      Object.defineProperty(value, 'constructor', { configurable: true, writable: true, value: undefined });
+      try {
+        return settlement(value);
+      } finally {
+        if (before) Object.defineProperty(value, 'constructor', before);
+        else delete (value as { constructor?: unknown }).constructor;
+      }
+    }
+
+    it.each(customSpecies)(
+      'leaves no unhandled rejection for %s, keeps the value rejected and restores the own constructor exactly',
+      async (_label, make) => {
+        const made: Made[] = [];
+        let results: unknown[] = [];
+        const seen = await unhandledRejectionsOf(() => {
+          results = runAll(make, made);
+        });
+        expect(seen).toEqual([]);
+        expect(results).toEqual(FAILED_CLOSED);
+        expect(made).toHaveLength(PATHS);
+        for (const [value, before] of made) {
+          const after = Object.getOwnPropertyDescriptor(value, 'constructor');
+          expect(after).toEqual(before);
+          expect(after?.value).toBe(before?.value);
+          expect(await settlementWithDefaultSpecies(value)).toEqual(new Error('species rejected'));
         }
       },
     );
@@ -1288,7 +1365,7 @@ describe('callbacks are synchronous and a returned promise is contained, never a
       }
     });
 
-    it('takes the retry for a plain record only when the ambient state is not the default, and leaves the record unchanged', () => {
+    it('neutralizes constructor on a plain record only when the ambient state is not the default, and leaves the record unchanged', () => {
       const counter = { writes: 0 };
       const targets: object[] = [];
       let results: unknown[];

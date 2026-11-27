@@ -256,42 +256,44 @@ export interface ScopeGrammarDefinition<D extends ScopeDimensions> extends Scope
  * function that returns a promise fails closed at once (`normalize`:
  * `malformed`; `riskOf`: `ScopeError`). The engine never awaits it and never
  * calls a returned object's own `then`: promise containment applies the
- * intrinsic `Promise.prototype.then` (captured at load) with no-op
- * fulfillment and rejection handlers, which marks a native promise's
- * rejection handled so it cannot surface as an unhandled rejection, and the
- * promise `then` derives always fulfills. Containment never reads an own
+ * intrinsic `Promise.prototype.then` (captured at load) once, with no-op
+ * fulfillment and rejection handlers and with the intrinsic `Promise` as the
+ * species (see below), which marks a native promise's rejection handled so it
+ * cannot surface as an unhandled rejection, and the promise `then` derives
+ * then always fulfills. Containment never reads an own
  * `then` either; a `normalize` result is then copied with `structuredClone`,
  * which, like any other own enumerable property, reads an own `then` getter
  * on a non-promise object (a native promise cannot be cloned and fails
  * before that).
  *
  * `then` looks up the species constructor (`constructor`, then
- * `Symbol.species`) before it attaches the handler, and that lookup can run
- * code that changes state and then throws. So, before that first `then`, the
- * engine decides whether a failed `then` may be retried, from state it can
- * read without running caller code: the value's own `constructor` descriptor
- * and prototype, and the ambient `Object` species state, read only from the
- * identity-pinned `Object`, `Function.prototype` and `Object.prototype`
- * captured at load. The retry is skipped only when that state proves `then`
- * could fail only on its brand check: no own `constructor` and a prototype of
- * `null`, or of `Object.prototype` while `Object.prototype.constructor` is
- * the intrinsic `Object` as data, `Object`'s prototype chain is exactly
+ * `Symbol.species`) before it attaches the handler. That lookup can run code
+ * that changes state and then throws, and a custom species builds the derived
+ * promise itself, so it can reject that promise even when `then` succeeds.
+ * So, before `then` runs, the engine decides whether `then` can only use the
+ * default species, from state it can read without running caller code: the
+ * value's own `constructor` descriptor and prototype, and the ambient
+ * `Object` species state, read only from the identity-pinned `Object`,
+ * `Function.prototype` and `Object.prototype` captured at load. That holds
+ * only for no own `constructor` and a prototype of `null`, or of
+ * `Object.prototype` while `Object.prototype.constructor` is the intrinsic
+ * `Object` as data, `Object`'s prototype chain is exactly
  * `Function.prototype` then `Object.prototype`, and none of the three defines
  * `Symbol.species`. So a plain record keeps the fast path and never sees a
- * `defineProperty`; anything else, or state that cannot be read, takes the
- * retry. The retry reads the value's current own `constructor` descriptor
- * (after the first `then`), makes `constructor` read as `undefined` (so
- * `then` uses the intrinsic `Promise` without a species lookup), applies
- * `then` once more and restores that descriptor, even when redefining it
+ * `defineProperty`. Anything else, or state that cannot be read, has its own
+ * `constructor` descriptor read and made to read as `undefined` (so `then`
+ * uses the intrinsic `Promise` without a species lookup) before `then` runs
+ * once, and that descriptor is restored afterwards, even when redefining it
  * throws after applying the change: an absent one is defined on an
  * extensible value and deleted afterwards, a configurable one (data or
  * accessor) is redefined and restored, and non-configurable writable data has
  * its value set to `undefined` and back.
- * Residual: a promise whose lookup throws and whose current own `constructor`
- * is a non-configurable accessor or non-configurable non-writable data, or a
- * non-extensible promise with no own `constructor`, cannot be marked handled;
- * only deliberately hostile callback code can build one, and the engine still
- * fails closed.
+ * Residual: a promise whose own `constructor` is a non-configurable accessor
+ * or non-configurable non-writable data, or a non-extensible promise with no
+ * own `constructor`, gets `then` as is: a species lookup that throws leaves
+ * its rejection unhandled, and a custom species can reject the promise `then`
+ * derives. Only deliberately hostile callback code can build one, and the
+ * engine still fails closed.
  */
 export interface ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInput = ScopeShape<D>> extends ScopeGrammarDefinitionBase<D> {
   /**
@@ -317,7 +319,10 @@ export interface ScopeCallbackGrammarDefinition<D extends ScopeDimensions, TInpu
    * computes from them. Its result is cloned again, checked to be plain
    * JSON-like data in the same way, and validated: a throw, a promise, or a
    * result that is not plain data or does not fit the grammar, is
-   * `malformed`. Defaults to the identity. See the callback boundary above.
+   * `malformed`. Defaults to the identity, so `defineScopeGrammar` requires
+   * it whenever the input type is not {@link ScopeShape} (an explicit
+   * `TInput` type argument, or one inferred from the expected grammar type).
+   * See the callback boundary above.
    */
   readonly normalize?: (input: TInput) => ScopeShape<D>;
   /**
