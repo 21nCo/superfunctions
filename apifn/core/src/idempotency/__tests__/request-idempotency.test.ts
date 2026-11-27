@@ -2638,6 +2638,14 @@ describe("createRequestIdempotency PR round-3 delta regressions", () => {
           provisional: true,
         } as IdempotencyRecord);
       };
+      // The same change may instead land before the reader's next store read, whichever of the two comes first.
+      const read = store.get.bind(store);
+      vi.spyOn(store, "get").mockImplementationOnce(async (storeKey) => {
+        const run = afterLookup;
+        afterLookup = undefined;
+        if (run) await run();
+        return read(storeKey);
+      });
     });
     expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", response: { body: newerResponse?.body } });
     expect(store.records.get(token.storeKey)).toMatchObject({ receiptClaimId: newer?.claimId });
@@ -2723,5 +2731,128 @@ describe("createRequestIdempotency PR round-3 delta regressions", () => {
       return original(storeKey, expectedVersion, next);
     });
     expect(await w.make().claim(orderRequest())).toMatchObject({ outcome: "acquired" });
+  });
+});
+
+describe("createRequestIdempotency PR round-4 regressions", () => {
+  function world<S extends FakeAtomicStore>(store: S, receipts?: (database: FakeOrderDatabase) => IdempotencyReceiptSource) {
+    const database = new FakeOrderDatabase();
+    const clock = new FakeClock();
+    const source = receipts ? receipts(database) : database.receipts;
+    const make = () => createRequestIdempotency({ store, receipts: source, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    return { store, database, clock, make };
+  }
+
+  /** A confirmed copy of another body's commit B, as a later epoch leaves it. */
+  const confirmedOther = (time: number): IdempotencyRecord => ({
+    state: "completed",
+    version: "test-b-version",
+    generation: 2,
+    fingerprint: "test-b-fingerprint",
+    recovery: "receipt",
+    response: { status: 201, headers: {}, body: "test-b-body" },
+    expiresAt: time + 60_000,
+    fromReceipt: true,
+    receiptClaimId: "test-b-claim",
+  });
+
+  async function run(idempotency: ReturnType<typeof createRequestIdempotency>, action: string, token: IdempotencyToken, response: IdempotentResponse) {
+    if (action === "claim") return idempotency.claim(orderRequest());
+    if (action === "recover") return idempotency.recover(orderRequest());
+    if (action === "settle") return idempotency.settle(token, response);
+    return idempotency.release(token);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(["claim", "recover"] as const)("%s reports a conflict when the receipt it read is pruned and another commit confirmed before the lookup returns", async (action) => {
+    let afterNext: (() => void) | undefined;
+    const w = world(new AbsenceHookStore(), (database) => ({
+      find: async (storeKey: string) => {
+        const found = await database.receipts.find(storeKey);
+        const hook = afterNext;
+        afterNext = undefined;
+        hook?.();
+        return found;
+      },
+    }));
+    const token = acquired(await w.make().claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    w.store.records.clear();
+    w.store.beforeAbsenceWrite = async () => {
+      // Another claim takes the absence first, so this write loses; the lookup after it captures A, and before that
+      // lookup returns, A is pruned and a confirmed copy of commit B takes the key.
+      w.store.records.set(token.storeKey, { ...confirmedOther(w.clock.time), state: "pending", leaseExpiresAt: w.clock.time + 1_000 } as IdempotencyRecord);
+      afterNext = () => {
+        w.database.receiptsByKey.clear();
+        w.store.records.set(token.storeKey, confirmedOther(w.clock.time));
+      };
+    };
+    expect(await run(w.make(), action, token, response)).toEqual({ outcome: "conflict" });
+    expect(w.store.records.get(token.storeKey)).toMatchObject({ receiptClaimId: "test-b-claim" });
+  });
+
+  it("keeps an expired provisional copy's deadline when another caller confirms it, so a pruned receipt frees the key", async () => {
+    const w = world(new AbsenceHookStore());
+    const token = acquired(await w.make().claim(orderRequest()));
+    await w.database.createOrder(token, "book");
+    expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    const copy = { ...w.store.records.get(token.storeKey), version: "test-provisional-version", provisional: true } as IdempotencyRecord;
+    w.store.records.set(token.storeKey, copy);
+    // The copy's writer crashed; the store still holds it after its deadline, and the receipt is still there.
+    w.clock.advance(60_001);
+    expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    const confirmed = w.store.records.get(token.storeKey);
+    expect(confirmed).toMatchObject({ state: "completed", fromReceipt: true, expiresAt: copy.expiresAt });
+    expect(confirmed).not.toHaveProperty("provisional");
+    w.database.receiptsByKey.clear();
+    expect(await w.make().claim(orderRequest({ body: { item: "pen", quantity: 2 } }))).toMatchObject({ outcome: "acquired" });
+  });
+
+  it.each([
+    ["claim", "replay"],
+    ["recover", "replay"],
+    ["settle", "settled"],
+    ["release", "committed"],
+  ] as const)("%s keeps its receipt when its absence write lost to a confirmed copy of that commit and the receipt was then pruned", async (action, outcome) => {
+    const w = world(new AbsenceHookStore());
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    w.store.records.clear();
+    w.store.beforeAbsenceWrite = async () => {
+      // Another instance confirms the same commit first, then the host prunes the receipt.
+      expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      expect(w.store.records.get(token.storeKey)).not.toHaveProperty("provisional");
+      w.database.receiptsByKey.clear();
+    };
+    const result = await run(action === "claim" || action === "recover" ? w.make() : holder, action, token, response);
+    expect(result).toMatchObject({ outcome, response: { body: response.body } });
+    if (outcome === "replay") expect(result).toMatchObject({ source: "receipt" });
+  });
+
+  it.each(["settle", "release"] as const)("%s reads the receipt again after its last lost cache write", async (action) => {
+    class SwappingStore extends BumpingStore {
+      receiptWrites = 0;
+      onLast?: () => void;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+        if (next?.state === "completed" && next.fromReceipt === true && (this.receiptWrites += 1) === 8) this.onLast?.();
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const w = world(new SwappingStore());
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    const receipt = w.database.receiptsByKey.get(token.storeKey) as IdempotencyReceipt;
+    // Every cache write loses to a newer record; during the last one, A is pruned and another body's commit lands.
+    w.store.onLast = () => {
+      w.database.receiptsByKey.set(token.storeKey, { ...receipt, claimId: "test-b-claim", fingerprint: "test-b-fingerprint" });
+    };
+    w.store.bumping = true;
+    expect(await run(holder, action, token, response)).toEqual({ outcome: "conflict" });
+    expect(w.store.receiptWrites).toBeGreaterThanOrEqual(8);
   });
 });

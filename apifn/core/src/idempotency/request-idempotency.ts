@@ -749,6 +749,8 @@ type Live =
       previousGeneration: number;
       /** Recovery mode of a released or expired record the store still holds. */
       previousRecovery?: IdempotencyRecovery;
+      /** The deadline of an expired provisional copy the store still holds: confirming or replacing it keeps it. */
+      provisionalExpiresAt?: number;
     }
   | { kind: "present"; record: ActiveIdempotencyRecord };
 
@@ -833,6 +835,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         expectedVersion: stored.version,
         previousGeneration: stored.generation,
         previousRecovery: stored.recovery,
+        ...(stored.state === "completed" && stored.provisional === true ? { provisionalExpiresAt: stored.expiresAt } : {}),
       };
     }
     return { kind: "present", record: stored };
@@ -951,9 +954,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     throw failure;
   };
 
-  /** A live provisional copy's deadline, which a write confirming or replacing it keeps. */
-  const provisionalDeadline = (live: Live): number | undefined =>
-    live.kind === "present" && live.record.state === "completed" && live.record.provisional === true ? live.record.expiresAt : undefined;
+  /** A provisional copy's deadline, also after it expired while the store still holds it; confirming or replacing it keeps it. */
+  const provisionalDeadline = (live: Live): number | undefined => {
+    if (live.kind !== "present") return live.provisionalExpiresAt;
+    return live.record.state === "completed" && live.record.provisional === true ? live.record.expiresAt : undefined;
+  };
 
   /**
    * The receipt that decides after a write that lost or failed: the source's
@@ -973,33 +978,46 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     }
     const latest = parseReceipt(storeKey, raw);
     if (latest) return latest;
-    return (await confirmedLive()) ? receipt : undefined;
+    // No receipt is left: a failed read leaves nothing to report, and the caller decides again from the store.
+    return (await confirmedLive().catch(() => false)) ? receipt : undefined;
   };
 
   /** The version a live read shows for the key, also for an expired or released record. */
   const liveVersion = (live: Live): string | null => (live.kind === "present" ? live.record.version : live.expectedVersion);
 
+  /** The generation a live read shows for the key, also for an expired or released record. */
+  const liveGeneration = (live: Live): number => (live.kind === "present" ? live.record.generation : live.previousGeneration);
+
   /**
    * The receipt a step may report after its writes, with no provisional copy
-   * left in charge of the key: read again first when `recheck` is set (a
-   * write lost or failed), then a live provisional copy, of this commit or
-   * another, is confirmed at that copy's deadline with a receipt read after
-   * that copy's version, so a receipt from an earlier retention epoch never
-   * promotes a newer copy. A lost confirmation reads both again. Undefined
-   * when no receipt is left or other writers keep changing the key: the step
-   * decides again.
+   * left in charge of the key. Each attempt reads the live record first. A
+   * confirmed copy of that exact commit (its claim and body) decides. Any
+   * other record lets the receipt decide only when it was read after the
+   * step's last write (`fresh`) and the record is neither a provisional copy
+   * nor a confirmed copy of another commit; otherwise the receipt is read
+   * again, after that live read. A provisional copy, of this commit or
+   * another, also after it expired, is confirmed at its own deadline with
+   * that receipt; a lost confirmation reads both again. Undefined when no
+   * receipt is left or other writers keep changing the key: the step decides
+   * again.
    */
-  const reportable = async (storeKey: string, receipt: ParsedReceipt, recheck: boolean): Promise<ParsedReceipt | undefined> => {
-    let current: ParsedReceipt | undefined = recheck ? await recheckReceipt(storeKey, receipt) : receipt;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS && current; attempt += 1) {
+  const reportable = async (storeKey: string, receipt: ParsedReceipt, fresh: boolean): Promise<ParsedReceipt | undefined> => {
+    let current = receipt;
+    let validated = fresh;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const live = await readLive(storeKey, now());
+      if (holdsReceipt(live, current)) return current;
       const deadline = provisionalDeadline(live);
-      if (deadline === undefined || live.kind !== "present") return current;
-      current = await recheckReceipt(storeKey, current);
-      if (!current) return undefined;
-      if (await confirmCopy(storeKey, live.record.version, live.record.generation, current, deadline)) return current;
-      // Another writer took that version: only a receipt read after the lost write decides.
-      current = await recheckReceipt(storeKey, current);
+      const otherCommit = live.kind === "present" && isConfirmedCopy(live.record);
+      if (validated && deadline === undefined && !otherCommit) return current;
+      const latest = await recheckReceipt(storeKey, current);
+      if (!latest) return undefined;
+      // Read after this live read: it decides unless a provisional copy must be confirmed first.
+      if (deadline === undefined) return latest;
+      if (await confirmCopy(storeKey, liveVersion(live) as string, liveGeneration(live), latest, deadline)) return latest;
+      // Another writer took that version: read the key and the receipt again.
+      current = latest;
+      validated = false;
     }
     return undefined;
   };
@@ -1039,7 +1057,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       } catch {
         // Only a receipt read after the failed write, or a live confirmed copy of it, decides.
       }
-      const latest = await reportable(storeKey, receipt, true);
+      const latest = await reportable(storeKey, receipt, false);
       return latest ? { kind: "failed", receipt: latest } : { kind: "gone" };
     }
     const version = nextVersion();
@@ -1059,7 +1077,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const mayHold = written !== false;
     let latest: ParsedReceipt | undefined;
     try {
-      latest = await findReceipt(storeKey);
+      // The source's answer now, or, when it has no receipt or rejects, the receipt in hand while the live record is a
+      // confirmed copy of that exact commit (a same-commit writer won the absence and the host then pruned the receipt).
+      latest = await recheckReceipt(storeKey, receipt);
     } catch (error) {
       if (mayHold) await retireQuietly(storeKey, version, receipt, generation);
       throw error;
@@ -1076,7 +1096,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     }
     // Another writer holds the key: when it took this step's copy, the receipt is read again, and a provisional copy
     // it left is confirmed before the receipt is reported. A same-commit winner leaves the validated receipt deciding.
-    const reported = await reportable(storeKey, latest, mayHold);
+    const reported = await reportable(storeKey, latest, !mayHold);
     return reported ? { kind: "failed", receipt: reported } : { kind: "gone" };
   };
 
@@ -1154,7 +1174,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const recorded = await completeFromReceipt(storeKey, expectedVersion, generation, receipt, deadline);
     // No receipt is left for the key: the caller's step decides again.
     if (recorded.kind === "gone") return undefined;
-    const decides = recorded.kind === "lost" ? await reportable(storeKey, recorded.receipt, true) : recorded.receipt;
+    const decides = recorded.kind === "lost" ? await reportable(storeKey, recorded.receipt, false) : recorded.receipt;
     if (!decides) return undefined;
     return decides.fingerprint === fingerprint
       ? { outcome: "replay", response: fullReceiptResponse(decides), source: "receipt" }
@@ -1420,7 +1440,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     let receipt: ParsedReceipt | undefined;
     // Whether a cache write was attempted: its winner may since be a confirmed copy of another body's commit.
     let wrote = false;
+    // Whether the receipt in hand was read before the last lost write: a newer commit may have replaced it since.
+    let unverified = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      unverified = false;
       // A receipt in hand here lost its cache write to a newer record, so it is unverified: a failed read throws.
       const live = await readLive(token.storeKey, now());
       let raw: unknown;
@@ -1459,8 +1482,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       receipt = recorded.receipt;
       // A failed cache write never hides the validated receipt; a later step records it.
       if (recorded.kind !== "lost") break;
+      unverified = true;
     }
-    // Persistent contention leaves the cache write to the next step; the durable receipt still decides.
+    // Persistent contention leaves the cache write to the next step. The receipt read before the last lost write
+    // decides only once it is read again after that write, or the live record confirms that exact commit.
+    if (receipt !== undefined && unverified) receipt = await reportable(token.storeKey, receipt, false);
     return receipt === undefined ? undefined : decided(token, receipt);
   };
 
