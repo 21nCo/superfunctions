@@ -1,0 +1,19 @@
+apifn/sdk/scripts/embed-runtime.mjs
+  s_c53d7d40b21eab::t_54bfa56868ad41 4-6,20-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d546eabafbb21ac909b8c32ac9cb6d0e0f2c021",
+  "prompts": {},
+  "sessions": {
+    "s_c53d7d40b21eab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "688dfd1d-378d-4718-a494-371600d6fd7e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
