@@ -86,16 +86,21 @@ function npmCommand() {
 }
 
 // Runs the command with this terminal and exits as it did: with its exit code, or by the signal that ended it (with
-// 128 + its number should this process survive it). SIGINT, SIGTERM and SIGHUP sent to this process alone are passed
-// on; through npm, which relays only SIGINT and SIGTERM to the command it runs, a SIGHUP is passed on as SIGTERM.
-function runAndExit(command, args, startFailure, { viaNpm = false, env = process.env } = {}) {
+// 128 + its number should this process survive it). The terminal sends Ctrl+C (SIGINT) and Ctrl+\ (SIGQUIT) to the
+// whole foreground process group, the command included, so they are not passed on again (a second Ctrl+C means
+// "force quit" to many CLIs); this process only waits for the command to finish. SIGTERM and SIGHUP, which a
+// supervisor may send to this process alone, reach the command as SIGTERM (npm relays only SIGINT and SIGTERM).
+function runAndExit(command, args, startFailure, { env = process.env } = {}) {
   const child = spawn(command, args, { stdio: 'inherit', env });
-  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-  const forward = (signal) => child.kill(viaNpm && signal === 'SIGHUP' ? 'SIGTERM' : signal);
-  for (const signal of signals) process.on(signal, forward);
+  const wait = () => {};
+  const terminate = () => child.kill('SIGTERM');
+  const handlers = [['SIGINT', wait], ['SIGTERM', terminate], ['SIGHUP', terminate]];
+  // Windows has no SIGQUIT to listen for.
+  if (process.platform !== 'win32') handlers.push(['SIGQUIT', wait]);
+  for (const [signal, handler] of handlers) process.on(signal, handler);
   child.on('error', (error) => fail(`${startFailure}: ${error.message}`));
   child.on('exit', (code, signal) => {
-    for (const name of signals) process.off(name, forward);
+    for (const [name, handler] of handlers) process.off(name, handler);
     if (signal === null) {
       process.exitCode = code ?? 1;
       return;
@@ -125,5 +130,5 @@ if (installed !== undefined) {
   fail(`${spec} is not installed here, and BARE_CLI_NO_NPM=1 forbids fetching it with npm.`);
 } else {
   const [command, prefix] = npmCommand();
-  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', { viaNpm: true, env });
+  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', { env });
 }

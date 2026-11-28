@@ -490,6 +490,44 @@ test('shim: stops instead of looping when npm runs the bare command again', t =>
   assert.match(run.stderr, /npm ran this command again instead of @fixture\/cli@1\.2\.3's fixture bin/);
 });
 
+test('shim: one Ctrl+C to the process group reaches the CLI once, and the shim exits as the CLI did', { skip: process.platform === 'win32' }, async t => {
+  const { root, shim } = installedProduct(t);
+  const record = path.join(root, 'sigint.log');
+  writeFileSync(
+    path.join(root, 'node_modules/@fixture/cli/cli.mjs'),
+    `import { appendFileSync } from 'node:fs';\n` +
+      `process.on('SIGINT', () => { appendFileSync(${JSON.stringify(record)}, 'SIGINT\\n'); setTimeout(() => process.exit(5), 300); });\n` +
+      `console.log('ready');\n` +
+      `setInterval(() => {}, 1000);\n`,
+  );
+  // Its own process group, as a terminal's foreground job.
+  const child = spawn(process.execPath, [shim], { detached: true, env: { ...process.env, npm_execpath: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise(resolve => child.stdout.once('data', resolve));
+  process.kill(-child.pid, 'SIGINT');
+  const [code] = await new Promise(resolve => child.once('exit', (...result) => resolve(result)));
+  assert.equal(readFileSync(record, 'utf8'), 'SIGINT\n');
+  assert.equal(code, 5);
+});
+
+test('shim: a SIGTERM or SIGHUP sent to the shim alone reaches the CLI as SIGTERM', { skip: process.platform === 'win32' }, async t => {
+  for (const signal of ['SIGTERM', 'SIGHUP']) {
+    const { root, shim } = installedProduct(t);
+    const record = path.join(root, 'signal.log');
+    writeFileSync(
+      path.join(root, 'node_modules/@fixture/cli/cli.mjs'),
+      `import { writeFileSync } from 'node:fs';\n` +
+        `for (const name of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(name, () => { writeFileSync(${JSON.stringify(record)}, name); process.exit(0); });\n` +
+        `console.log('ready');\n` +
+        `setInterval(() => {}, 1000);\n`,
+    );
+    const child = spawn(process.execPath, [shim], { env: { ...process.env, npm_execpath: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise(resolve => child.stdout.once('data', resolve));
+    child.kill(signal);
+    await new Promise(resolve => child.once('exit', resolve));
+    assert.equal(readFileSync(record, 'utf8'), 'SIGTERM', signal);
+  }
+});
+
 test('shim: a SIGHUP sent to the shim reaches npm as SIGTERM, which npm relays to the CLI', { skip: process.platform === 'win32' }, async t => {
   const { shim } = installedProduct(t, { installedCli: null });
   const dir = tempDir(t, 'bare-shim-hup-');
@@ -559,13 +597,20 @@ test('pack: a bare release runs the committed front-door test and checks the tar
   writeCore({ '.': { require: './index.cjs' } });
   assert.notEqual(pack().status, 0);
   writeCore({ '.': './index.js' });
-  // So does a front-door test file that is not the committed template.
+  // A working-tree front-door test or manifest changed after the commit (as a hook could) does not replace the
+  // committed ones for the run, and is restored afterwards.
   const testFile = path.join(root, 'bare', TEMPLATE.testFile);
-  writeFileSync(testFile, "import test from 'node:test';\ntest('nothing', () => {});\n");
-  const replaced = pack();
-  assert.notEqual(replaced.status, 0);
-  assert.match(replaced.stderr, /is not the front-door test template committed at the tag/);
+  const hollowTest = "import test from 'node:test';\ntest('nothing', () => {});\n";
+  writeFileSync(testFile, hollowTest);
+  const manifestPath = path.join(root, 'bare/package.json');
+  const committedManifest = readFileSync(manifestPath, 'utf8');
+  writeJson(manifestPath, { ...JSON.parse(committedManifest), exports: undefined });
+  writeCore({ '.': { require: './index.cjs' } });
+  assert.notEqual(pack().status, 0);
+  assert.equal(readFileSync(testFile, 'utf8'), hollowTest);
+  writeFileSync(manifestPath, committedManifest);
   cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
+  writeCore({ '.': './index.js' });
 
   // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
   const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));
