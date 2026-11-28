@@ -1,0 +1,23 @@
+reviewfn/core/src/context/symbols.ts
+  s_39a868e1585a27::t_4d308d6ddf1d2e 104-109,153,155-158,765,789-791,796
+reviewfn/core/src/panel/git.ts
+  s_39a868e1585a27::t_56f681dca4cc2b 37-39,53-55,61,66,74-75,78,81-99,109-113
+reviewfn/core/test/code-references.test.ts
+  s_39a868e1585a27::t_db792b62fad757 16,273-279,684-685,690-701,706,708-728
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8cac0de09a54f4dadf8b6b6647aa3692f5fb353",
+  "prompts": {},
+  "sessions": {
+    "s_39a868e1585a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01fb3e9-ff65-4e23-90f8-246f613a7879",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
