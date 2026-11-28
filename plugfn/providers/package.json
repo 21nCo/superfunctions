@@ -14,6 +14,10 @@
       "types": "./dist/github/index.d.ts",
       "default": "./dist/github/index.js"
     },
+    "./github-app": {
+      "types": "./dist/github-app/index.d.ts",
+      "default": "./dist/github-app/index.js"
+    },
     "./linear": {
       "types": "./dist/linear/index.d.ts",
       "default": "./dist/linear/index.js"
@@ -60,9 +64,11 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test:node": "vitest run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts"
   },
   "author": "21n",
   "license": "MIT",
@@ -82,6 +88,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@types/node": "^20.10.0",
     "typescript": "^5.3.2",
     "vitest": "^3.2.4",

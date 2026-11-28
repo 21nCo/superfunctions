@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.ts'],
-    exclude: ['dist/**', 'node_modules/**'],
+    // tests/workerd runs under workerd through vitest.workerd.config.ts.
+    exclude: ['dist/**', 'node_modules/**', 'tests/workerd/**'],
   },
 });
