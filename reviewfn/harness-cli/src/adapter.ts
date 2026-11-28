@@ -474,11 +474,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
     const timeoutMs = until - Date.now();
-    try { result = timeoutMs > 0 ? await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }) : { code: null, signal: null, stdout: "", stderr: "", timedOut: true, canceled: false }; }
+    if (timeoutMs <= 0) return { error: "The CLI version command was not started: its time bound had passed.", timedOut: true };
+    try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
     catch (error) { return { error: redact(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
-    // A result that arrives, or is checked, after the probe's bound (never past a run's deadline) is a timeout and not cached.
+    // A late result (the bound never passes a run's deadline) is a timeout, and an interrupted one observes nothing: neither is cached.
     if (result.timedOut || Date.now() > until) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
-    // An interrupted probe observes nothing, so what it printed is neither published nor cached.
     if (result.canceled || signal?.aborted) return { error: "The CLI version command was canceled.", timedOut: false };
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = versionToken(result.stdout, result.stderr);
