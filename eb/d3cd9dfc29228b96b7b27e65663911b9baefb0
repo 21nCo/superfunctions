@@ -1,0 +1,27 @@
+packages/cli/CHANGELOG.md
+  s_ec7d9b992ee2d8::t_e8e3b8c424ce3d 5-6
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_ec7d9b992ee2d8::t_ccba157312a89b 4,87-157,167-204,222-232,234-242
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_ec7d9b992ee2d8::t_851411ebb90ec2 1039-1090
+packages/cli/src/utils/introspection.ts
+  s_ec7d9b992ee2d8::t_0b4078f68aeed3 165-182,187,191,284-285
+packages/cli/src/utils/schema-diff.ts
+  s_ec7d9b992ee2d8::t_742da0ff804ab6 383-384,386-388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebd3cd9dfc29228b96b7b27e65663911b9baefb0",
+  "prompts": {},
+  "sessions": {
+    "s_ec7d9b992ee2d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e9246ab-73e5-4d83-a798-41e792bd55c7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

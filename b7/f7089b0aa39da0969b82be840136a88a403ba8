@@ -1,0 +1,19 @@
+recfn/server/__tests__/participant-tracking.test.ts
+  s_f7420a7306bdfa::t_a16540494083f6 20-24,45-46,206,284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7f7089b0aa39da0969b82be840136a88a403ba8",
+  "prompts": {},
+  "sessions": {
+    "s_f7420a7306bdfa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f7420a7306bdfa",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

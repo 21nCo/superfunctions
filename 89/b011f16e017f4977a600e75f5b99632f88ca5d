@@ -1,0 +1,33 @@
+cachefn/typescript/README.md
+  s_bcc45ed14d0d4a::t_1eb86134b6746d 476-488,491-492,521
+cachefn/typescript/__tests__/cache-fill.test.ts
+  s_bcc45ed14d0d4a::t_c3925afc1d9951 160-219
+cachefn/typescript/__tests__/llm-stream.test.ts
+  s_bcc45ed14d0d4a::t_7b7e528bdf97ae 5,87-89,319-332,334-406,408-473
+cachefn/typescript/src/core/cache.ts
+  s_bcc45ed14d0d4a::t_e6f33c93b9de7e 8,89-94,210,349-383,421,430-431,594,596-597,609-611
+cachefn/typescript/src/core/types.ts
+  s_bcc45ed14d0d4a::t_8020b617952743 90-102,241,260
+cachefn/typescript/src/index.ts
+  s_bcc45ed14d0d4a::t_d56c80e5b52226 13
+cachefn/typescript/src/llm/cached-model.ts
+  s_bcc45ed14d0d4a::t_a4f7f3806bbcc4 19,55-60
+cachefn/typescript/src/llm/stream.ts
+  s_bcc45ed14d0d4a::t_699fb113514e5a 9-10,14-16,129-135,139,175-176,178,180-181,185-200,202-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89b011f16e017f4977a600e75f5b99632f88ca5d",
+  "prompts": {},
+  "sessions": {
+    "s_bcc45ed14d0d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c5db045-f161-4fc0-9c9e-aaadd748cba9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

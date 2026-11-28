@@ -1,0 +1,45 @@
+testfn/admin/README.md
+  s_7ba2b3dd5e0fa7::t_fd31f7e71b9350 9
+testfn/admin/src/__tests__/admin.test.ts
+  s_7ba2b3dd5e0fa7::t_0c051494e45887 446-543
+testfn/admin/src/domain-service.ts
+  s_7ba2b3dd5e0fa7::t_fd3bd854afc336 239-242,362
+testfn/admin/src/types.ts
+  s_7ba2b3dd5e0fa7::t_8406e69426f24a 58
+testfn/python/README.md
+  s_7ba2b3dd5e0fa7::t_85d5f4b0cb0380 125-130
+testfn/python/testfn/adapters/pytest.py
+  s_7ba2b3dd5e0fa7::t_1c77f78f081caf 2,10,13-14,19-84,127-128,130-155,157-170
+testfn/python/tests/test_execution_contract.py
+  s_7ba2b3dd5e0fa7::t_3769089a75d675 2-6,198-284
+testfn/typescript/README.md
+  s_7ba2b3dd5e0fa7::t_a837e00c10b708 113-114,267
+testfn/typescript/src/analytics/analytics-engine.ts
+  s_7ba2b3dd5e0fa7::t_4fbf969143892e 59-60,62-64,67-68
+testfn/typescript/src/storage/test-storage.ts
+  s_7ba2b3dd5e0fa7::t_6a0122f806a4ca 21,23-28,52-56,100-105,107-115
+testfn/typescript/src/types.ts
+  s_7ba2b3dd5e0fa7::t_3dbafb01bf08fe 28-31,33-34
+testfn/typescript/src/visual/visual-tester.ts
+  s_7ba2b3dd5e0fa7::t_0c8138a4c0affb 96-100,102,124-125,217
+testfn/typescript/tests/analytics-history.test.ts
+  s_7ba2b3dd5e0fa7::t_2ba567f2df6aab 146-171
+testfn/typescript/tests/storage-auto-retention.test.ts
+  s_7ba2b3dd5e0fa7::t_0ef5dd968f03d7 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24ddf24e9d8d1dd33264eb5418631f544919a7be",
+  "prompts": {},
+  "sessions": {
+    "s_7ba2b3dd5e0fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7ba2b3dd5e0fa7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

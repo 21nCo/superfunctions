@@ -1,0 +1,19 @@
+watchfn/python/tests/test_log_integration.py
+  s_e2bd2c87504b16::t_978d029faaa07d 49-50,52-60,62,66-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad069b47c4fd1fe3ba66d707a5860296bdc1beb8",
+  "prompts": {},
+  "sessions": {
+    "s_e2bd2c87504b16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d7f18af-08d5-4dc2-b561-2f3312d8fbf3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

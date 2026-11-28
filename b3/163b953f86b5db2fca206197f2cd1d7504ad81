@@ -1,0 +1,64 @@
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_83fa589146e8c6::t_d2c08626c4865b 112-129
+apifn/react/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 22
+apifn/admin/src/__tests__/admin.test.ts
+  s_83fa589146e8c6::t_ee247e30513b35 108-126
+apifn/svelte/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 50
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_21d97cc740e685 4-29,55-56,58-66,68-88,90
+apifn/core/README.md
+  s_83fa589146e8c6::t_f6c7610d332b5e 234-235
+  s_83fa589146e8c6::t_ee247e30513b35 87-89
+apifn/admin/src/operator-service.ts
+  s_83fa589146e8c6::t_21d97cc740e685 4,228-229,253-254
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_ee247e30513b35 1-10,45-80
+apifn/cli/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 28
+apifn/mock/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 23
+apifn/snippets/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 23
+apifn/core/src/integrations/testfn.ts
+  s_83fa589146e8c6::t_d2c08626c4865b 21-27,31-34,157-158
+apifn/core/src/index.ts
+  s_83fa589146e8c6::t_21d97cc740e685 89-90
+apifn/cli/__tests__/test-command.test.ts
+  s_83fa589146e8c6::t_920ad55b9b32dd 218-219,231,233-234,242,245
+apifn/admin/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 3,41
+apifn/collections/src/runner/runner.ts
+  s_83fa589146e8c6::t_52bc42edd84843 51-52,249,263,515-522,524,527,555-556,574,594-595,612
+apifn/collections/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 23
+apifn/contracts/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 43
+apifn/core/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 3
+apifn/cli/src/index.ts
+  s_83fa589146e8c6::t_dadd27e1e48885 2,42-71,279,549,570
+apifn/collections/__tests__/runner.test.ts
+  s_83fa589146e8c6::t_920ad55b9b32dd 289-327
+apifn/docsfn/package.json
+  s_83fa589146e8c6::t_9acd9e1d4d42b7 32
+package-lock.json
+  s_83fa589146e8c6::t_229144e635e882 93,96,115,140,266,305,395,432,446,849,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3163b953f86b5db2fca206197f2cd1d7504ad81",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

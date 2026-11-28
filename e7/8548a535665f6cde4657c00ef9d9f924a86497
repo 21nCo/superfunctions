@@ -1,0 +1,30 @@
+.github/workflows/ci.yml
+  s_c7ec784961d5e7::t_13f471f86fedca 14
+package-lock.json
+  h_bdc5b81c173ee9 63208
+secfn/keys/package.json
+  h_bdc5b81c173ee9 3
+secfn/keys/src/index.ts
+  h_bdc5b81c173ee9 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e78548a535665f6cde4657c00ef9d9f924a86497",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_c7ec784961d5e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "725aba51-cd3f-454e-b48e-f55aeead54ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

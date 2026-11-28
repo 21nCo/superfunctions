@@ -1,0 +1,29 @@
+memoryfn/typescript/tests/documents.test.ts
+  s_f8159fba25df73::t_a0a677c0ece1bb 358-367,445-446,468-469,471
+memoryfn/typescript/tests/openai-provider.test.ts
+  s_f8159fba25df73::t_606350c4fc05df 106-107
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_f8159fba25df73::t_771895e4447b3c 32,50
+memoryfn/docs/static/llms-full.txt
+  s_f8159fba25df73::t_d118c75eac17a0 42,60
+memoryfn/typescript/README.md
+  s_f8159fba25df73::t_4ffa092e59ae29 36
+memoryfn/typescript/src/core/pipeline.ts
+  s_f8159fba25df73::t_9266309f75de42 152-153,165-167,232-240,242,245,251-253,255-257,259-265,267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3421bab49b43129bdd4f5c2c289ba61b4618ffdb",
+  "prompts": {},
+  "sessions": {
+    "s_f8159fba25df73": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80ff88ca-ab1f-4abf-b811-05941a991131",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

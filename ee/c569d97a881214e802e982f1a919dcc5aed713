@@ -1,0 +1,23 @@
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_1eb217f2cbe12c::t_94fe0d8a112866 45-46
+datafn/server/__tests__/revisions.test.ts
+  s_1eb217f2cbe12c::t_0a7ce429b70a4d 4067-4071,4075,4089-4092,4309-4363,4414-4421
+datafn/server/src/routes/query.ts
+  s_1eb217f2cbe12c::t_28b4165cf4612f 1159,1164,1186-1192,1234,1236-1237,1239,1242,1244,1246,1276-1277,1283-1287,1290-1322,1326,1328-1339,1341-1345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eec569d97a881214e802e982f1a919dcc5aed713",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

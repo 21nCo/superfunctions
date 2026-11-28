@@ -1,0 +1,23 @@
+cmsfn/.conduct/widget-registration-readiness.md
+  s_bd02fbc40b3bb6::t_c72c0d98786e11 15-19
+cmsfn/studio/src/__tests__/plugins.test.tsx
+  s_bd02fbc40b3bb6::t_c4332a527d5a29 112-113,136-140
+cmsfn/studio/src/plugins/registerWidget.tsx
+  s_bd02fbc40b3bb6::t_0b424ec65e35eb 20-21,23-33,35-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40e3e78b578b9240dd365c08d4acd4bf511b9a35",
+  "prompts": {},
+  "sessions": {
+    "s_bd02fbc40b3bb6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7dde1dce-8296-4528-aad6-05aa78877f53",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

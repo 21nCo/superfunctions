@@ -1,0 +1,21 @@
+watchfn/typescript/src/storage/json-snapshot.ts
+  s_f058f999ab46b7::t_cdfeb1648d74cf 4-7,16-24,28,33-36,39-40,42-43
+watchfn/typescript/tests/storage/database.test.ts
+  s_f058f999ab46b7::t_3a9e47c370180a 73-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4a755cb4277022d0dce098d5fd0e6c46e600481",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

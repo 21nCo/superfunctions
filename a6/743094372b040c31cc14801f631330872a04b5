@@ -1,0 +1,19 @@
+filefn/docs/content/api/filefn.json
+  s_b841cebdcfad95::t_9b88b5fd660409 1161-1259,1907,1909-1910,1967-1981,2404-2405,2408-2410,2413-2415,2418-2421,2430-2431,2640-2649,2662-2672,2963-2965
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6743094372b040c31cc14801f631330872a04b5",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

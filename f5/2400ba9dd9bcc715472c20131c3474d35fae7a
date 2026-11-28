@@ -1,0 +1,75 @@
+logfn/typescript/src/http/framework-contracts.test.ts
+  s_0d85e5b70dc887::t_cf12d053aa1a85 49-64
+logfn/typescript/src/core/error-hook.test.ts
+  s_e65d3bbf3d4905::t_820d54f385b45e 71-75,80-81,85-88,90-92,95-97,99-143
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_4e6bbda8f185f8::t_2f0a5089c4aacd 54-61,67-68
+logfn/typescript/src/types.ts
+  s_e65d3bbf3d4905::t_4eca2c26857255 180-182,186
+logfn/.conduct/diagnostic-privacy-readiness.md
+  s_e65d3bbf3d4905::t_5fe22cf2fe33f0 5
+logfn/.conduct/response-correlation-readiness.md
+  s_e65d3bbf3d4905::t_dbb9e733ed12e8 5
+logfn/python/README.md
+  s_e65d3bbf3d4905::t_5038c0d43f6ad1 69-73,103,146-149
+logfn/python/src/logfn/core.py
+  s_e65d3bbf3d4905::t_3d96de6c162e96 54-62,258-262,264,310
+logfn/python/src/logfn/default_redaction.py
+  s_e65d3bbf3d4905::t_71d875171e035f 82-92,99-100
+logfn/python/src/logfn/serialization.py
+  s_e65d3bbf3d4905::t_d4a6dae056b880 9,12,95,146-208,210,215-219,225,230-245
+logfn/python/src/logfn/sinks.py
+  s_e65d3bbf3d4905::t_ab85b66cae56fc 139-142
+logfn/python/tests/test_default_redaction.py
+  s_e65d3bbf3d4905::t_9eea40be239732 174-190,194
+logfn/python/tests/test_serialization.py
+  s_e65d3bbf3d4905::t_2e4941b7fb9105 4,202-248
+logfn/typescript/README.md
+  s_e65d3bbf3d4905::t_ab1711fcfdb83a 449-452,469-480,539-542,545,600-604
+logfn/typescript/src/core/default-redaction.test.ts
+  s_e65d3bbf3d4905::t_c2ad0334ca1deb 100-119,123
+logfn/typescript/src/core/logger.ts
+  s_e65d3bbf3d4905::t_c0908340f294f8 52-91,104,110,150-175,178,182,184-201,204-210,249,251-253,256,258,282,291,293,303-305,315,322
+logfn/typescript/src/http/fastify.ts
+  s_e65d3bbf3d4905::t_917c657d5628ea 44,73-80,107-109,115
+logfn/typescript/src/http/watch-delivery.test.ts
+  s_e65d3bbf3d4905::t_2d83fc7146882f 104-115
+logfn/typescript/src/serialization-bounds.test.ts
+  s_e65d3bbf3d4905::t_439232cefc05b9 44-53
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_e65d3bbf3d4905::t_585b2e6736229b 142-165
+logfn/typescript/src/validation.ts
+  s_e65d3bbf3d4905::t_2ba76c15e565b7 6,69-129,131,134-135,138-141,143-151,178,181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f52400ba9dd9bcc715472c20131c3474d35fae7a",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_4e6bbda8f185f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20084079-8e85-42fa-bceb-4836aa74cef8",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e65d3bbf3d4905": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d1ad9a9e-153e-40d8-82ed-a0f7b454361a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

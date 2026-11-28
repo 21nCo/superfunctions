@@ -1,0 +1,63 @@
+datafn/admin/package.json
+  s_db19f67c172d5e::t_f22422efc2eafc 41
+datafn/cli/package.json
+  s_db19f67c172d5e::t_65199ffb3cc7ae 30-31
+datafn/client/package.json
+  s_db19f67c172d5e::t_20a605dd45c1a3 3,23
+datafn/core/package.json
+  s_db19f67c172d5e::t_0cdcb100f91dcb 3
+datafn/docs/content/docs/documentation/database/adapters.mdx
+  s_31cb5ccabc3022::t_906d9c87ae2326 257,260,262
+datafn/docs/content/docs/documentation/sync/meta.json
+  s_31cb5ccabc3022::t_d06d281d9c7cbd 13
+datafn/docs/content/docs/reference/core/namespace-storage.mdx
+  s_31cb5ccabc3022::t_1a2e0141696c20 23
+datafn/docs/public/llms-full.txt
+  s_e7d58a3289754b::t_f0613a22ccdb42 11018,11021,11023,15584,15590,18107,18119,18124-18134,18138,19135-19363,22902,22904,22910,22915-22925,22927,22930-22935,22945,24056-24062,26144
+datafn/docs/public/llms.txt
+  s_e7d58a3289754b::t_954aad85318df2 141
+datafn/extfn/package.json
+  s_db19f67c172d5e::t_7b6d95133c2917 34-35
+datafn/server/package.json
+  s_db19f67c172d5e::t_f5eda679d1a897 3,57,65
+datafn/svelte/package.json
+  s_db19f67c172d5e::t_4bff36a1a9942b 22
+datafn/swift-bridge/package.json
+  s_db19f67c172d5e::t_ebb4a1aa1bb5d5 26-27
+package-lock.json
+  s_db19f67c172d5e::t_69f1e28d59341f 8783,8881-8882,9084,9087,9123,10109-10110,10131,10134,10142,10198,10432-10433
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_e7d58a3289754b::t_11ac8256928533 1-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c4d1ea40c66e42cac2a20dda571620e617f0acc",
+  "prompts": {},
+  "sessions": {
+    "s_31cb5ccabc3022": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21f0e-c81f-79f3-b868-25ad4a235188",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_db19f67c172d5e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21f0c-42f3-78a1-a2b9-9d51df1c22a1",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e7d58a3289754b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40a3643a-8132-4b11-b33e-8843d00857dc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

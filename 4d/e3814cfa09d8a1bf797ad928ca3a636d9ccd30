@@ -1,0 +1,32 @@
+plugfn/core/src/core/workflow-engine.ts
+  s_52aac795e73b3c::t_04d3f59db26959 363,372,374-376,388-390,392-394,453,503-504,513-516
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_52aac795e73b3c::t_41a48073c598ce 3,62-71,92-101
+  s_52aac795e73b3c::t_d6899e9d090a21 102-103
+plugfn/providers/src/github/index.ts
+  s_52aac795e73b3c::t_1bc1867512db57 1175-1191,1193,1205-1210,1212-1214,1220-1222,1224-1226
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_52aac795e73b3c::t_41a48073c598ce 8,249-257,378-379,397,402-434,493-494,531,549-551
+plugfn/core/src/types/trigger.ts
+  s_52aac795e73b3c::t_04d3f59db26959 38-39,41
+plugfn/core/src/router/http-router.ts
+  s_52aac795e73b3c::t_04d3f59db26959 878-880,886,889-890
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_52aac795e73b3c::t_04d3f59db26959 244,247,450-452,454-463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4de3814cfa09d8a1bf797ad928ca3a636d9ccd30",
+  "prompts": {},
+  "sessions": {
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

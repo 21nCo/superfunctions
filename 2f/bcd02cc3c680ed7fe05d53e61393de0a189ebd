@@ -1,0 +1,25 @@
+watchfn/typescript/src/business/stored-funnels.ts
+  s_1ae14c48a3aa67::t_51166a5df88323 85-90,99
+watchfn/typescript/src/storage/database.ts
+  s_1ae14c48a3aa67::t_97674d6736134a 6,158-165,172,178-188,191,206,211,218,222,224,228
+watchfn/typescript/tests/storage/bounded-scan.test.ts
+  s_1ae14c48a3aa67::t_637627314f21ab 1-7,18-31,73-87
+watchfn/typescript/tests/storage/indexed-log-volume.test.ts
+  s_1ae14c48a3aa67::t_3b2c733df89eef 30,40-45,47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fbcd02cc3c680ed7fe05d53e61393de0a189ebd",
+  "prompts": {},
+  "sessions": {
+    "s_1ae14c48a3aa67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1ae14c48a3aa67",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+apifn/README.md
+  s_13f35ef098767b::t_484740483c4ecf 199
+.github/workflows/apifn-api-check.yml
+  s_b20646d8f9ade1::t_4f1e6594227b91 503-512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebba3160c555b9dba8aa9895ad54bee7657ed755",
+  "prompts": {},
+  "sessions": {
+    "s_13f35ef098767b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2145f-9b5c-73f0-9133-4a95f3393b53",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b20646d8f9ade1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e60f0d-0c79-4d7b-9bba-1dc75c7577fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

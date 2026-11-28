@@ -1,0 +1,37 @@
+authfn/client/src/__tests__/client-password.test.ts
+  s_e5ac07859c1bc9::t_d36abc4d05a6f8 184-194
+authfn/client/src/types.ts
+  s_e5ac07859c1bc9::t_20e8ae5bc0be32 214-221
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_b3a94846c9a2ea 4,13,124-143,540,585-597
+authfn/core/src/core/users.ts
+  s_e5ac07859c1bc9::t_0703709cdb5b25 167-173,183-222
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_760c1f57a74ec5 354-364
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_f8df713a020ee3 153
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_52168ab836cda9 142
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_b73eac1ad3a0e3 5859,6480
+authfn/swift/Sources/AuthFnClient/AuthFnClient.swift
+  s_e5ac07859c1bc9::t_9a25125dc1edb6 115-144
+authfn/swift/Tests/AuthFnClientTests/AuthFnClientTests.swift
+  s_e5ac07859c1bc9::t_595d7c792b433d 69-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f3fe710f6a86d6913e47e1cfabcc9c5ac118009",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

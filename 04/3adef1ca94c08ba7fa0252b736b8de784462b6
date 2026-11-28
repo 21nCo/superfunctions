@@ -1,0 +1,39 @@
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_c8d3e62c4e5cbc::t_c01cf459f872dc 1-177
+mcpfn/auth/README.md
+  s_c8d3e62c4e5cbc::t_72362e2914d84b 19-22,32-39,103-109
+mcpfn/auth/src/oauth-client.ts
+  s_c8d3e62c4e5cbc::t_61de306b14d38d 247-257
+mcpfn/auth/src/provider-adapter.ts
+  s_c8d3e62c4e5cbc::t_c1979336e66166 82-91,121-122,127-134,152,167-176,264-265,276-284
+mcpfn/auth/src/resource-server.ts
+  s_c8d3e62c4e5cbc::t_f2f3ac16498d19 32-36,176-182
+mcpfn/auth/tests/auth.test.ts
+  s_c8d3e62c4e5cbc::t_56b0a689f0782e 170,205
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_c8d3e62c4e5cbc::t_24305c334fce8d 1617,1632,1644,1672,1697,1806,1839,1882,1893,1926,1934,1952
+mcpfn/docs/content/docs/authorization.md
+  s_c8d3e62c4e5cbc::t_4f98f741f6d1f9 25-28
+mcpfn/docs/content/docs/reference/auth.md
+  s_c8d3e62c4e5cbc::t_958a0270b566a5 22-25,35-42,106-112
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_bd72ae4de83467 35-38,448-451,461-468,532-538
+scripts/test-mcpfn-cloudflare-worker.mjs
+  s_c8d3e62c4e5cbc::t_94f267b937b44d 168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "043adef1ca94c08ba7fa0252b736b8de784462b6",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

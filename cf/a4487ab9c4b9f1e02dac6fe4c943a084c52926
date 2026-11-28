@@ -1,0 +1,35 @@
+clifn/core/src/document-output.ts
+  s_a0c7141ecd3a4c::t_0ade7a2d4637c5 12,38-49,73-79,92-104,172-176,178,189-197,263-264,293-315,317,319,325-327,332-333,335,338,341,349,351-354,365-370,403
+clifn/core/src/json-value.ts
+  s_a0c7141ecd3a4c::t_0fc2e2b3d29077 11-13,23-28,78-79,107-108,116,183-187,194,196-197,262-279,289,330-335,337,339-342,344,346-349,355-357,361-362,371-373,382-384,431-449,452-453,456,504-506,509-513,536
+clifn/core/src/runner.ts
+  s_09f19affbc7889::t_ec515ce48788e6 116-118,121-125,164,199-244,250-251,253-254,256-259,261-270,272,274,277-281,283-285,287,291-294
+clifn/core/tests/runner-document.test.ts
+  s_09f19affbc7889::t_5a74a18fcca9d8 990,1003,1006-1033
+clifn/core/tests/runner-document-bounds.test.ts
+  s_09f19affbc7889::t_254c8939c24ca3 2-4,6-8,10,459-692,694,696-702,704-706,748-768,770,809-822
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cfa4487ab9c4b9f1e02dac6fe4c943a084c52926",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a0c7141ecd3a4c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212bf-175e-7c93-aeb7-870aa83baab0",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

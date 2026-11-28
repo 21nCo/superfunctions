@@ -1,0 +1,39 @@
+recfn/.conduct/encrypted-capture-readiness.md
+  s_537e41bbbb1fe6::t_575add6ed75654 39-43
+recfn/.conduct/media-streaming-readiness.md
+  s_537e41bbbb1fe6::t_126c37e9d3ef81 29-32,35-37
+recfn/.conduct/upload-deadline-readiness.md
+  s_537e41bbbb1fe6::t_ac75f904e4b8bf 4-5
+recfn/README.md
+  s_537e41bbbb1fe6::t_480ac5de63a5b7 81,88,174-189
+recfn/server/__tests__/bot-worker-cleanup.test.ts
+  s_537e41bbbb1fe6::t_e6d6638f8743d0 92-124
+recfn/server/__tests__/recording-capture.test.ts
+  s_537e41bbbb1fe6::t_fe41e8a6e18821 2,188-222
+recfn/server/__tests__/storage-adapter.test.ts
+  s_537e41bbbb1fe6::t_408ce9b6adf620 1,9-10,15-33
+recfn/server/src/index.ts
+  s_537e41bbbb1fe6::t_92b855d1df0d7b 236,245-252
+recfn/server/src/integrations/storage.ts
+  s_537e41bbbb1fe6::t_579d1d6356317a 14,29-36,45
+recfn/server/src/recording/capture.ts
+  s_537e41bbbb1fe6::t_184fcf9622a978 30-33,50-73,92,125,149,152,171-172,174,200,213,241,269,301,336-337,340
+recfn/server/src/worker/bot-worker.ts
+  s_537e41bbbb1fe6::t_f210537a650db3 48,157-158,168-178,183,620-632,634-637,640-641
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0e36dc7fec3bb0609be92bf6b9cf74f7f2d2aa5",
+  "prompts": {},
+  "sessions": {
+    "s_537e41bbbb1fe6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_537e41bbbb1fe6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

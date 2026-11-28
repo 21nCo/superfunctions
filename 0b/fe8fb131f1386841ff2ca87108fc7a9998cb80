@@ -1,0 +1,29 @@
+flowfn/python/flowfn/stream/stream.py
+  s_da28bece1019d1::t_d70ca800ddec0c 30-48,118,121-126,135-142,205-208,309,331
+flowfn/python/tests/test_stream_closed_fence.py
+  s_da28bece1019d1::t_2c024099de9710 1-64
+flowfn/typescript/docs/API.md
+  s_da28bece1019d1::t_9f129c8a3a5eb3 875-881
+flowfn/typescript/src/stream/closed-fence.test.ts
+  s_da28bece1019d1::t_0f69a3242d6907 1-83
+flowfn/typescript/src/stream/stream.ts
+  s_da28bece1019d1::t_563e7cf806bbb4 110-114
+flowfn/typescript/src/workflow/expired-owner.test.ts
+  s_da28bece1019d1::t_f1dd909fa97495 63,68-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bfe8fb131f1386841ff2ca87108fc7a9998cb80",
+  "prompts": {},
+  "sessions": {
+    "s_da28bece1019d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_da28bece1019d1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

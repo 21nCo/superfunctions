@@ -1,0 +1,23 @@
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_f058f999ab46b7::t_b4ea0cac1772cf 286-300
+watchfn/typescript/README.md
+  s_f058f999ab46b7::t_5e14472ef33dff 46
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_f058f999ab46b7::t_1f3fbe0c02fe23 14,16,18,23-33,35,42-46,88-92,94,102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0063fefec06c78e36f8f9a7633264fefe6ea1a28",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

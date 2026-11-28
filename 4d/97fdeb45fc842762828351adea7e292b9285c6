@@ -1,0 +1,28 @@
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_09f19affbc7889::t_04fb86da2fd703 1135-1141,1197-1199
+datafn/server/src/routes/query/execute.ts
+  s_09f19affbc7889::t_02cf722b359de7 136
+  s_09f19affbc7889::t_5c13ee98336e9d 137,205,207,238,356
+datafn/server/src/execution/query/pushdown.ts
+  s_09f19affbc7889::t_99b4f000d8469d 241-243
+  s_09f19affbc7889::t_042bcae4cf2cd5 229
+datafn/server/src/execution/query/execute.ts
+  s_09f19affbc7889::t_c01488e883f12c 33,264-274
+  s_09f19affbc7889::t_ad2367e1ea246c 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d97fdeb45fc842762828351adea7e292b9285c6",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+mcpfn/auth/src/provider-adapter.ts
+  s_c8d3e62c4e5cbc::t_2938cc8f86b4dd 138-139,286-288
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_c8d3e62c4e5cbc::t_846aae5fef9225 103-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d630552104bf7a2853772067f7f37166c982942b",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

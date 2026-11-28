@@ -1,0 +1,21 @@
+sendfn/python/pyproject.toml
+  s_e2bd2c87504b16::t_e7a8a8244463de 57
+sendfn/python/tests/test_aws_ses_lifecycle.py
+  s_e2bd2c87504b16::t_698bdda7b74a6e 6,8,18-19,22,25,28,58,65-66,68-70,81,92,98-102,118-120,151-153,172-174,179,181,187,214,217,225,228,233-235,240,242,270-272,276,278,305-306,311-314,317,321,327,336-337,339,341,347-348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bc50c5827f5ed387dd94f10c1ddad26ba2722e2",
+  "prompts": {},
+  "sessions": {
+    "s_e2bd2c87504b16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d7f18af-08d5-4dc2-b561-2f3312d8fbf3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

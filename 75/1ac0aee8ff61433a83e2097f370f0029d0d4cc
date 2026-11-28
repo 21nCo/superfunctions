@@ -1,0 +1,53 @@
+clifn/core/CHANGELOG.md
+  s_13f35ef098767b::t_3d681e045bdfea 5-6
+clifn/core/README.md
+  s_cff285c8033656::t_4bba19ba2393b3 289-290
+clifn/core/src/runner.ts
+  s_cff285c8033656::t_626e28e71c218a 48,237-239
+clifn/core/src/update-check.ts
+  s_cff285c8033656::t_f1a62adcfb759b 2,4-11,14-15,48,66-68,134-136,139-141,154-168,183,232,253-269,273-274,276-282,322-323,346,350,364-374,376-385,388-396,398,400-404,406-417,421-427,429
+clifn/core/tests/runner-update-check.test.ts
+  s_cff285c8033656::t_a90839399b584b 4,7,99-113,153,194-196
+clifn/core/tests/update-check-deadline.test.ts
+  s_13f35ef098767b::t_e914cac4aef426 1-67
+clifn/core/tests/update-check.test.ts
+  s_13f35ef098767b::t_a97d1a85b7240c 12,37-38,61-73,75,86-91,115-116,155-176,257-296,391-392,395,398,402-432,436,443,445-448,453,455,457,462,464,477,481,496-503,515,530,538
+clifn/docs/content/docs/reference/core-readme.md
+  s_cff285c8033656::t_15d9cb060e70b9 292-293
+clifn/core/src/update-check-cache.ts
+  s_834101bca77562::t_b0bd121ad778be 1-116
+clifn/docs/static/llms-full.txt
+  s_834101bca77562::t_f8c25f451aa94c 600-601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "751ac0aee8ff61433a83e2097f370f0029d0d4cc",
+  "prompts": {},
+  "sessions": {
+    "s_13f35ef098767b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2145f-9b5c-73f0-9133-4a95f3393b53",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_834101bca77562": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03376d0f-fd91-4d72-bba7-38604ba0d5f7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+logfn/python/README.md
+  s_539025c4e580c2::t_44c0da5ff3ccdc 169-180
+logfn/typescript/README.md
+  s_539025c4e580c2::t_5e2b3370083035 625-637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c735bec5028f7f30fa2d5dc39bb12d257e1d81ed",
+  "prompts": {},
+  "sessions": {
+    "s_539025c4e580c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d77a1f1e-6dd6-46cf-b1b1-d21d27eb7e05",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

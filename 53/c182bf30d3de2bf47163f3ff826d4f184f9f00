@@ -1,0 +1,21 @@
+billfn/provider-apple/src/index.ts
+  s_19b587e18c7a39::t_435570e3bd36cc 72-74
+billfn/provider-apple/src/signed-data-verifier.ts
+  s_19b587e18c7a39::t_fabb3cde096f43 39-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53c182bf30d3de2bf47163f3ff826d4f184f9f00",
+  "prompts": {},
+  "sessions": {
+    "s_19b587e18c7a39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21d03f50-f3aa-4b14-9e21-801b7c16a4c7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

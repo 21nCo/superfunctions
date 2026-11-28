@@ -1,0 +1,43 @@
+clifn/core/CHANGELOG.md
+  s_13f35ef098767b::t_5162922bd52250 5
+clifn/core/README.md
+  s_13f35ef098767b::t_1540f72bb890b9 290
+clifn/docs/content/docs/reference/core-readme.md
+  s_13f35ef098767b::t_2dc9715512f720 293
+clifn/docs/static/llms-full.txt
+  s_13f35ef098767b::t_b91090d14c3be6 601
+clifn/core/src/update-check-cache.ts
+  s_e3b6e7bb2c4ad4::t_4b7a510a706b32 117-144
+clifn/core/src/update-check.ts
+  s_e3b6e7bb2c4ad4::t_ec811c152d8d51 6,67-69,192,286-289,330-332,334,339,375-376,397,400,403-411,427-433,438,442
+clifn/core/tests/runner-update-check.test.ts
+  s_e3b6e7bb2c4ad4::t_9fb7a35b3f2e1f 182-193
+clifn/core/tests/update-check-deadline.test.ts
+  s_e3b6e7bb2c4ad4::t_942cbc97521c20 60-61
+clifn/core/tests/update-check.test.ts
+  s_e3b6e7bb2c4ad4::t_02285cd1ae918b 37,156-165,308,313,318-319,322-352,469-498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8653701f72bf822eb16ca4bec5e24ad7b172fe2f",
+  "prompts": {},
+  "sessions": {
+    "s_13f35ef098767b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2145f-9b5c-73f0-9133-4a95f3393b53",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e3b6e7bb2c4ad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dae8378e-8118-40dd-b320-0d5ef2363243",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

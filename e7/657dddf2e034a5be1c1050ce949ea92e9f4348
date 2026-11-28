@@ -1,0 +1,59 @@
+apifn/README.md
+  s_f2a8788aafa614::t_d74d7ef343189d 24-35,37-40
+apifn/admin/package.json
+  s_f2a8788aafa614::t_2012bce91b92c3 3,41,47
+apifn/cli/package.json
+  s_f2a8788aafa614::t_0e786cd22ddbc2 26,28-29,31
+apifn/collections/package.json
+  s_f2a8788aafa614::t_ee21aeeb3ff320 3,23
+apifn/contracts/README.md
+  s_f2a8788aafa614::t_f3b4c02d812264 149,152
+apifn/contracts/package.json
+  s_f2a8788aafa614::t_0cb6775d3ff87c 39-40,43
+apifn/contracts/scripts/verify-packed-consumer.mjs
+  s_f2a8788aafa614::t_ad4e502a9d3ad1 4-10,21-22,64,148-156,162-169
+apifn/core/README.md
+  s_f2a8788aafa614::t_df7d29a9937f11 8,11-12,222-226,229,256-257
+apifn/core/__tests__/root-entry-graph.test.ts
+  s_f2a8788aafa614::t_395d4c6c635dac 1-95
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_f2a8788aafa614::t_d2f93565972e8e 1-4,6-7,22-23,28-32,43-47,62-65,67-68
+apifn/core/package.json
+  s_f2a8788aafa614::t_25bd2c0f12e3de 3,19-28,32,34-36,46-47,55-57,62-63
+apifn/core/scripts/fix-testfn-cjs-types.mjs
+  s_f2a8788aafa614::t_20e4369ccca9db 1-30
+apifn/core/scripts/verify-packed-consumer.mjs
+  s_f2a8788aafa614::t_2368b3154965c6 1-354
+apifn/core/tsup.config.ts
+  s_f2a8788aafa614::t_0a25394a8dc6a8 4-10
+apifn/core/turbo.json
+  s_f2a8788aafa614::t_23f5d75066e7e2 1-9
+apifn/docsfn/package.json
+  s_f2a8788aafa614::t_745ff589bc5caa 3,32-34
+apifn/mock/package.json
+  s_f2a8788aafa614::t_42cf4aaf56a901 3,23
+apifn/react/package.json
+  s_f2a8788aafa614::t_31c85cb0d452bd 3,22
+apifn/snippets/package.json
+  s_f2a8788aafa614::t_04e62d1eddf1fe 3,23
+apifn/svelte/package.json
+  s_f2a8788aafa614::t_276dd51553f623 3,50
+package-lock.json
+  s_f2a8788aafa614::t_2f008a13518898 93,96,99,113,115-116,118,137,140,266,305,315-316,324-325,333-335,346-349,353-387,392,395-397,429,432,443,446,846,849,860,863,37269,37278,37501,38554,38571,38581,38598,38608,38618,38625,38633,38658,38669,38682,38687,38698,38711,38718,38731,38766,38781,43298,43407,45731,50754,50841,53500,53751,54676,54690,54746,57571,57673,57681,57696,57704,57712,57717,57722,57730,57741,57749,57945
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7657dddf2e034a5be1c1050ce949ea92e9f4348",
+  "prompts": {},
+  "sessions": {
+    "s_f2a8788aafa614": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0216421-3ce7-4aec-bc92-7245787096fd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

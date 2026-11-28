@@ -1,0 +1,39 @@
+clifn/core/README.md
+  s_124319b903d839::t_f5410611d4be45 284
+clifn/core/src/document-output.ts
+  s_124319b903d839::t_933c516e46d21a 1,50-53,56-63
+clifn/core/src/json-value.ts
+  s_124319b903d839::t_ccaffc2e183176 45-105,107-112,115
+clifn/core/src/prompt.ts
+  s_124319b903d839::t_8716b042ff5372 5-14,18,21-26
+clifn/core/src/terminal.ts
+  s_124319b903d839::t_a518e6d55e2b49 31-32,50-53,55,111-113,128-135
+clifn/core/tests/prompt-input-error.test-d.ts
+  s_124319b903d839::t_ddb25aba036587 1-49
+clifn/core/tests/prompt-options.test.ts
+  s_124319b903d839::t_1fe967faca20b4 57-67
+clifn/core/tests/runner-document.test.ts
+  s_124319b903d839::t_72210cb4b4fe63 493-612
+clifn/core/tests/terminal.test.ts
+  s_124319b903d839::t_cdfd5b01e44884 1,110-167
+clifn/docs/content/docs/reference/core-readme.md
+  s_124319b903d839::t_82f55e0d80b16c 287
+clifn/docs/static/llms-full.txt
+  s_124319b903d839::t_1a39ca67dd9eb6 595
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab0acfa56a39c1059882ddc614d5c1bcf720ccce",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

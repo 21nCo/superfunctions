@@ -1,0 +1,21 @@
+billfn/core/src/__tests__/http-surface.test.ts
+  s_543ec25e9552f2::t_331dce313c4725 268-301
+billfn/core/src/http.ts
+  s_543ec25e9552f2::t_6c92dd759507c1 57-58,60-61,63-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b709d50639a4c0b8a2ebb0555e192478ae4711fa",
+  "prompts": {},
+  "sessions": {
+    "s_543ec25e9552f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b642f13-99e3-4b68-89ea-67e7f289a988",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

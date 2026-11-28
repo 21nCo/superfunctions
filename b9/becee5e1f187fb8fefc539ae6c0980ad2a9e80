@@ -1,0 +1,39 @@
+apifn/cli/README.md
+  s_646b1753df3755::t_c82e01f759f544 123,128-132,139-140,143-144
+apifn/cli/src/commands/check.ts
+  s_e5ac07859c1bc9::t_48acd5282e4c08 209-254,257-262,270,278-292,294-300,310-322,324-325,328-343,500-505,511-514,551-554,557,634,636,641,643,727-730,732-734,738-739,745-783,879-889,991-992
+apifn/cli/__tests__/check-command.test.ts
+  s_08cb3743a62bdd::t_c71b91520d147a 8,476-504,596-641,990-994,1003-1044
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9becee5e1f187fb8fefc539ae6c0980ad2a9e80",
+  "prompts": {},
+  "sessions": {
+    "s_08cb3743a62bdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37be229c-ecd0-426c-901d-87f724e36f3d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_646b1753df3755": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe5f-7ed4-7f62-8f18-d0420492a877",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

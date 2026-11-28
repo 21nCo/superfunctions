@@ -1,0 +1,61 @@
+testfn/admin/src/__tests__/admin.test.ts
+  s_f058f999ab46b7::t_252def10fad6b0 7,545-660
+testfn/python/tests/test_execution_contract.py
+  s_53517945679a72::t_debb07e0195979 285-344
+testfn/typescript/tests/analytics-history.test.ts
+  s_c719faa707762b::t_0dd7e983fae05a 4-9,178-227
+testfn/typescript/tests/storage-retention.test.ts
+  s_f058f999ab46b7::t_53f406cdf5efe2 2,53-111
+testfn/admin/README.md
+  s_f058f999ab46b7::t_b687a1734b9e58 9
+testfn/admin/src/domain-service.ts
+  s_f058f999ab46b7::t_ca3872896c3b69 128,135-137,143-151,156,229,247-250,255
+testfn/python/testfn/adapters/pytest.py
+  s_f058f999ab46b7::t_e14b93d85ba325 36-40
+testfn/typescript/README.md
+  s_f058f999ab46b7::t_816858274d49a1 263,267
+testfn/typescript/src/core/test-runner.ts
+  s_f058f999ab46b7::t_370d3f48d10d5e 46-50,127-134,136-137
+testfn/typescript/src/reporters/dashboard.ts
+  s_f058f999ab46b7::t_066c832a241d2b 6,22-23
+testfn/typescript/src/reporters/json-reporter.ts
+  s_f058f999ab46b7::t_dd3063ab3a5da6 10,55
+testfn/typescript/src/reporters/json-safe.ts
+  s_f058f999ab46b7::t_54243ee17708fa 1-58
+testfn/typescript/src/storage/artifacts.ts
+  s_f058f999ab46b7::t_1b841a3525b66f 12-17,26,28,50-61
+testfn/typescript/src/storage/test-storage.ts
+  s_f058f999ab46b7::t_425dcb2bd64ac6 99-100,111,115-122,143-148,167-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04eeb2821a21ad9b4485acedb023ee87ccf13413",
+  "prompts": {},
+  "sessions": {
+    "s_53517945679a72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6af5fcae-dfef-491d-8021-db324abc031b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c719faa707762b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0d229937-ba84-4ae8-ba85-eced28f5d576",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

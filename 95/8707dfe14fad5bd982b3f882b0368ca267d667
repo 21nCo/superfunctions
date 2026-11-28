@@ -1,0 +1,19 @@
+apifn/cli/__tests__/temp-dirs.ts
+  s_666180e3d05c4d::t_3d33c68be44c5d 9-10,12-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "958707dfe14fad5bd982b3f882b0368ca267d667",
+  "prompts": {},
+  "sessions": {
+    "s_666180e3d05c4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc5e-1463-7290-aeb7-a65bd7d53e70",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

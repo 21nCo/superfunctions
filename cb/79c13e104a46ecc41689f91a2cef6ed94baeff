@@ -1,0 +1,29 @@
+flowfn/python/flowfn/scheduler/__init__.py
+  s_0111345cfae3cd::t_e4704013b6d83e 18,27-30,268-272,292-294
+flowfn/python/tests/test_scheduler_faults.py
+  s_0111345cfae3cd::t_f2ed1ba1307a18 5,395-437
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_0111345cfae3cd::t_dab784dfee8451 14-16,120-122,130,151,157-160,196-202
+flowfn/typescript/src/core/scheduler-close.test.ts
+  s_0111345cfae3cd::t_9e4ea7b3b969c6 1-91
+flowfn/typescript/src/workflow/expired-owner.test.ts
+  s_0111345cfae3cd::t_e530d237f626b1 3-4,56-89
+flowfn/typescript/src/workflow/workflow.ts
+  s_0111345cfae3cd::t_543c23384b26a5 640-642,646-648
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb79c13e104a46ecc41689f91a2cef6ed94baeff",
+  "prompts": {},
+  "sessions": {
+    "s_0111345cfae3cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0111345cfae3cd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

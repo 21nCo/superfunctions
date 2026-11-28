@@ -1,0 +1,39 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_e5ac07859c1bc9::t_9eddef2ef17cf0 33-34
+authfn/adapters/lookup-dynamodb/package.json
+  s_e5ac07859c1bc9::t_f041fa2559cb88 35-36
+authfn/admin/package.json
+  s_e5ac07859c1bc9::t_a2ac24e2e09da1 40-41
+authfn/client/package.json
+  s_e5ac07859c1bc9::t_ced038989a521a 33
+authfn/core/package.json
+  s_e5ac07859c1bc9::t_7b2d42eb8c1063 76
+authfn/docs/package.json
+  s_e5ac07859c1bc9::t_7b49486811c2b2 34,44
+authfn/native-handoff/package.json
+  s_e5ac07859c1bc9::t_66da38d83ed46d 30
+authfn/oauth-provider/package.json
+  s_e5ac07859c1bc9::t_96299732211fb2 34
+authfn/schema-plugin/package.json
+  s_e5ac07859c1bc9::t_3340fe928dd76b 29-30
+authfn/social-oauth/package.json
+  s_e5ac07859c1bc9::t_497ae5d92b3368 34
+package-lock.json
+  s_e5ac07859c1bc9::t_9ae66d083e0eb9 1274-1275,1300-1301,1324-1325,1394,1660,1691,1787,1797,1847-1898,1926-1989,2076,2078-2079,2081-2088,2100-2109,2130-2185,4490,4528,4598-4599,4621,62160-62188,62193-62199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99adb78bf2548e45a9848be74d416064bd3c5584",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

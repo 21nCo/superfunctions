@@ -1,0 +1,44 @@
+searchfn/adapter-contracts/src/redaction.ts
+  s_1eb217f2cbe12c::t_fdf256d809ca8f 285-288,306-363,367-368,377-398,400-418,471-476,489,496,498-501,506,508-509,534-581
+  s_b996deaa3d01f1::t_826fcb46eca95e 40-42,48-49,52,79-80,86,284,289-305,419-421,482-488,490-492,495,497,511-512,514-533,582-642,646-653,663-664,762
+  s_0fa6ceac622b79::t_059772d7027a28 45-46,76-78,132-135,141-143,148-149,364-366,369-376,399,422-470,477-481,493-494,502-505,507,510,513
+  s_0fa6ceac622b79::t_d4718c27991386 59-64,796,806,833,844-847
+searchfn/adapter-contracts/__tests__/redaction-hardening.test.ts
+  s_0fa6ceac622b79::t_32d2b2df5216c5 10-38,314-320,359-367,445-450,457-458,544-550,579-584,624-630,691-695,746-750,811-817,858-872,949-955,1021-1108
+  s_b996deaa3d01f1::t_96fa7a71ac7b35 957-1000,1003-1020
+  s_1eb217f2cbe12c::t_ed199876eea0ac 1001-1002,1110-1187
+  s_1eb217f2cbe12c::t_bf5945e1a76ed7 1188-1190
+  s_0fa6ceac622b79::t_446f875c473eff 956,1109,1191-1245,1247-1258,1260-1276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d257ff0af8fb6ee73e730c9a50db9cb44285ce7b",
+  "prompts": {},
+  "sessions": {
+    "s_0fa6ceac622b79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a03cd86-b5bf-42a2-b240-a821dee46daf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

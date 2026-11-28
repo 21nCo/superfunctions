@@ -1,0 +1,25 @@
+plugfn/core/README.md
+  s_0741b83aee2314::t_4407e4fd85762f 139
+plugfn/core/src/scopes/grammar.ts
+  s_0741b83aee2314::t_cbc11b44d96253 148-160,168-170
+plugfn/core/src/scopes/types.ts
+  s_0741b83aee2314::t_fdc0cdc852ed84 159-162,168-169
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_0741b83aee2314::t_0e7464cd049b03 650-735
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed6150f5e28fb152ad7ec7f1398416c1ea3460ab",
+  "prompts": {},
+  "sessions": {
+    "s_0741b83aee2314": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07519613-db45-4f3a-bdc3-fb637671b362",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

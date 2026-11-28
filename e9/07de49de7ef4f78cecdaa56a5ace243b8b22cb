@@ -1,0 +1,29 @@
+filefn/server/src/authz/grants.routes.ts
+  s_b841cebdcfad95::t_4134dd84c3f881 6,13
+filefn/server/src/files/routes.ts
+  s_b841cebdcfad95::t_450c9cf285be48 6,17
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_03ac06d19fa404 7,18,99
+filefn/server/src/rate-limit-key.ts
+  s_b841cebdcfad95::t_f56792d28fdcb5 29-34
+filefn/server/src/shares/routes.ts
+  s_b841cebdcfad95::t_cba77af0983a3a 6,13-14
+filefn/server/tests/hardening.test.ts
+  s_b841cebdcfad95::t_633e0ce6604a20 49-62,256,265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e907de49de7ef4f78cecdaa56a5ace243b8b22cb",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

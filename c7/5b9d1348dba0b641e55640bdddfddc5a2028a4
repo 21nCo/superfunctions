@@ -1,0 +1,19 @@
+apifn/admin/vitest.config.ts
+  s_274aa3eaf3a9a2::t_d7386cddc8a2b8 4,9-19,31,39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c75b9d1348dba0b641e55640bdddfddc5a2028a4",
+  "prompts": {},
+  "sessions": {
+    "s_274aa3eaf3a9a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_274aa3eaf3a9a2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

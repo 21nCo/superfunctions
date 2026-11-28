@@ -1,0 +1,23 @@
+authfn/docs/content/docs/recipes/email-verification.md
+  s_e5ac07859c1bc9::t_6db919d3c1c87f 21-25,29-30
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_e24b81ef2c5c76 8839-8843,8847-8848
+authfn/examples/otp-recovery/client/src/App.svelte
+  s_e5ac07859c1bc9::t_d5963f70181720 96-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d334b7a58c1a31d733b0c7d3d0a8601f8189cb1d",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

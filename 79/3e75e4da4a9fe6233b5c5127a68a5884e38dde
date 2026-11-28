@@ -1,0 +1,39 @@
+plugfn/core/README.md
+  s_cff285c8033656::t_0d30794ccd1741 178-184
+plugfn/core/src/schema.ts
+  s_cff285c8033656::t_0d30794ccd1741 189,216
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_cff285c8033656::t_1c16fa81bf7704 230,255
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_0d30794ccd1741 623-624
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_0d30794ccd1741 853,860,876,899,950,973
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_b27cbe582c48dc 589,612-616,621
+  s_cff285c8033656::t_1ed44dd303e8f7 607,610
+  s_cff285c8033656::t_034606f252054a 513,537,548,609,632-634
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_0d30794ccd1741 15,1044,1073
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_0d30794ccd1741 82-83,100
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_0d30794ccd1741 23,40,55,208,260,299-300,309,324
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_cff285c8033656::t_034606f252054a 28,34,427,432-433,442
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "793e75e4da4a9fe6233b5c5127a68a5884e38dde",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

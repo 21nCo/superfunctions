@@ -1,0 +1,35 @@
+cachefn/typescript/README.md
+  s_b66d0e9dd4fae0::t_255a680c659c80 241-253,256-257
+cachefn/typescript/src/storage/redis/commands.ts
+  s_0b0647615a23f7::t_02ae473a29503b 49-60,70
+cachefn/README.md
+  s_b66d0e9dd4fae0::t_fc6917b48293e6 9,15-16
+cachefn/typescript/__tests__/redis-adapters.test.ts
+  s_b66d0e9dd4fae0::t_3622ec3cd05247 12-17,101-117,194-205
+cachefn/typescript/__tests__/redis-storage.test.ts
+  s_b66d0e9dd4fae0::t_a19c751c9a5c41 519-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe7254590dd988a6d3fbdfe62daf698b72234058",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

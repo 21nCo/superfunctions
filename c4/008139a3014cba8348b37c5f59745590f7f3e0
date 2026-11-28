@@ -1,0 +1,41 @@
+plugfn/core/src/webhooks/delivery-lifecycle.ts
+  s_cff285c8033656::t_aa1acf0bf2161b 17-22
+  s_cff285c8033656::t_2fbc2b8c2e89ec 51-57,59-62
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_2fbc2b8c2e89ec 93-94,96
+plugfn/core/src/core/workflow-engine.ts
+  s_cff285c8033656::t_a31c3363d54707 47,240,272,298,327,367,393,405,458,460-461,481,486,514,527,537,547-548,669,671
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_52c702ac7e80f7 1042-1043,1054-1055,1057
+  s_cff285c8033656::t_b65a463b95cab0 1037,1095
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_549cb4880dd252 280-318,363,366-377,380-382,388
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_2fbc2b8c2e89ec 16,624,627-640
+  s_cff285c8033656::t_21d7c2d4137160 23,577,625-626,641-643,652,654,657,675
+  s_cff285c8033656::t_aa1acf0bf2161b 541
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_2fbc2b8c2e89ec 512
+  s_cff285c8033656::t_52c702ac7e80f7 855-856,891,951,972
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_a31c3363d54707 136-137,461-466,474
+  s_cff285c8033656::t_b65a463b95cab0 32-37,130,146,156,286,352,448-449,460,467,473,475-477
+plugfn/core/src/types/trigger.ts
+  s_cff285c8033656::t_b65a463b95cab0 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4008139a3014cba8348b37c5f59745590f7f3e0",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,67 @@
+release-packages.json
+  s_a05e33c2ca1b61::t_1d68df9d10590b 165
+reviewfn/cli/package.json
+  s_a05e33c2ca1b61::t_d23300c41ca489 25
+reviewfn/cli/test/panel.test.ts
+  s_a05e33c2ca1b61::t_197a4e9be9ecbf 498-505
+reviewfn/harness-cli/LICENSE
+  s_a05e33c2ca1b61::t_c26146a4964ef2 1-21
+reviewfn/harness-cli/README.md
+  s_a05e33c2ca1b61::t_72da2fe8b7cd6f 1-131
+reviewfn/harness-cli/package.json
+  s_a05e33c2ca1b61::t_1510583a4bb737 1-51
+reviewfn/harness-cli/src/adapter.ts
+  s_a05e33c2ca1b61::t_d1729cfcee629c 1-976
+reviewfn/harness-cli/src/index.ts
+  s_a05e33c2ca1b61::t_1d3f975a0c28a3 1
+reviewfn/harness-cli/test/adapter.test.ts
+  s_a05e33c2ca1b61::t_4f18443048acc5 1-624
+reviewfn/harness-cli/test/fixtures/fake-cli.mjs
+  s_a05e33c2ca1b61::t_03234719e9ef2a 1-48
+reviewfn/harness-cli/test/launcher.ts
+  s_a05e33c2ca1b61::t_1fcdc96fcf7650 1-17
+reviewfn/harness-cli/test/panel.test.ts
+  s_a05e33c2ca1b61::t_77a7f9a8d11af7 1-145
+reviewfn/harness-cli/tsconfig.json
+  s_a05e33c2ca1b61::t_c142a68e45ce51 1-4
+reviewfn/harness-cli/vitest.config.ts
+  s_a05e33c2ca1b61::t_2eeec002c68520 1-2
+scripts/gate-reviewfn-release.mjs
+  s_a05e33c2ca1b61::t_47339ef5d083f3 10,73
+superfunctions.owners.json
+  s_b841cebdcfad95::t_e2e582107403f1 173
+package-lock.json
+  s_0d7e11293d5a4e::t_bff49c3ce38462 35392-35395,60719,61234-61259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebea16304b63a45e73a6c3248ad5a8f6c56cb4ef",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a05e33c2ca1b61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e81-c254-79b0-ad0b-af1d2a928e43",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

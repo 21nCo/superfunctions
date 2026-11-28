@@ -1,0 +1,21 @@
+authfn/svelte/package.json
+  s_fc285eff3f94eb::t_9a511db93307a6 3
+package-lock.json
+  s_fc285eff3f94eb::t_59688f47ae3029 4126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a87aadb202597f72c6005e19baff88018003bc10",
+  "prompts": {},
+  "sessions": {
+    "s_fc285eff3f94eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21387-8c2b-7361-b97d-3400ba684e34",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

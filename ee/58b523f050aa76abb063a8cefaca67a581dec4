@@ -1,0 +1,45 @@
+authfn/admin/package.json
+  s_da3f241ba36a14::t_b39d4327f17c99 40
+langfn/README.md
+  s_da3f241ba36a14::t_73e14bc60e8727 5,12
+langfn/typescript/README.md
+  s_da3f241ba36a14::t_92d7f22f22e29b 5,10
+langfn/typescript/package.json
+  s_da3f241ba36a14::t_f8a2a404fe30d7 3,104
+langfn/typescript/src/http/routes.ts
+  s_da3f241ba36a14::t_bf90b2d06a91d7 43
+langfn/typescript/src/mcp/client.ts
+  s_da3f241ba36a14::t_57e09605036910 9
+langfn/typescript/src/mcp/server.ts
+  s_da3f241ba36a14::t_4fe6af6e4982ad 115
+langfn/typescript/tests/http-routes.test.ts
+  s_da3f241ba36a14::t_c4d12cd48ea4ad 17
+langfn/typescript/tests/package-contract.test.ts
+  s_da3f241ba36a14::t_fa6d57dee4b751 19,48-54,62-63
+langfn/typescript/tests/release-gate.test.ts
+  s_da3f241ba36a14::t_c40ab5d588cd37 200
+memoryfn/typescript/package.json
+  s_da3f241ba36a14::t_bc1a7c35df7335 3,45
+package-lock.json
+  s_da3f241ba36a14::t_e90c11fd24bacf 1324,15105,15108,24353,24355,58467,58470,64231-64232,64509,64651
+packages/admin/package.json
+  s_da3f241ba36a14::t_64130a68c1a578 3,31
+superconsole/package.json
+  s_da3f241ba36a14::t_331db71314f3a1 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee58b523f050aa76abb063a8cefaca67a581dec4",
+  "prompts": {},
+  "sessions": {
+    "s_da3f241ba36a14": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c70878ba-577c-44db-bad8-9038eb57e9e4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

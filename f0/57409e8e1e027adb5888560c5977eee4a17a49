@@ -1,0 +1,45 @@
+memoryfn/docs/content/docs/operations-and-limits.md
+  s_19abec75182420::t_6cd58afc409c6f 19
+memoryfn/docs/content/docs/reference/storage-lifecycle.md
+  s_19abec75182420::t_90d3b7295346be 10,63
+memoryfn/docs/content/docs/storage.md
+  s_19abec75182420::t_0d9e6b4cf9043f 6,31
+memoryfn/docs/static/llms-full.txt
+  s_19abec75182420::t_db4f2a1d6079dd 201,286,339,409,434
+memoryfn/typescript/README.md
+  s_19abec75182420::t_e2c94d6d71c7c9 7,60
+memoryfn/typescript/migrations/0003-document-sources.sql
+  s_19abec75182420::t_d977e377dae917 1-5
+memoryfn/typescript/src/core/types.ts
+  s_19abec75182420::t_cb362d1d248fdb 22-25
+memoryfn/typescript/src/storage/adapter.ts
+  s_19abec75182420::t_dba98ea8133afb 4-5,15-26,46-55,63-87
+memoryfn/typescript/src/storage/memory/adapter.ts
+  s_19abec75182420::t_ff7bb90cd84c04 2-6,107-124,132-141,233-242,244,248-287
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_19abec75182420::t_b2e73952d939fc 1-5,31-42,54,193-254,269-273
+memoryfn/typescript/src/storage/pg/schema.ts
+  s_19abec75182420::t_1b598ee66f0499 20-23
+memoryfn/typescript/tests/memory-sources.test.ts
+  s_19abec75182420::t_035d5e0883cdc6 1-19
+memoryfn/typescript/tests/postgres.test.ts
+  s_19abec75182420::t_b7db8aab778350 8-10,21,28-51
+memoryfn/typescript/tests/source-contract.ts
+  s_19abec75182420::t_d8379381c4a60f 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f057409e8e1e027adb5888560c5977eee4a17a49",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

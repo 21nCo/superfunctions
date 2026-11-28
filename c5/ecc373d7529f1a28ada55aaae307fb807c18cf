@@ -1,0 +1,33 @@
+datafn/server/src/plugins/public-links.ts
+  s_09f19affbc7889::t_c1b7e80faae2d2 10,31-45,333,335,337-339
+datafn/server/__tests__/predicate-authz.test.ts
+  s_09f19affbc7889::t_96482590ed0dfe 168-180
+datafn/server/src/execution/query/filters.ts
+  s_09f19affbc7889::t_40b28c85432f2e 20-24,53-57,59-86,126
+  s_09f19affbc7889::t_60aa605850e75d 19,25-33,36,58,97
+datafn/server/__tests__/public-link-resolve-limits.test.ts
+  s_09f19affbc7889::t_00281b8fdaf9d7 138-142,149,152,155-158
+datafn/SECURITY.md
+  s_09f19affbc7889::t_00281b8fdaf9d7 24,64
+datafn/server/src/validation/authz.ts
+  s_09f19affbc7889::t_cd37e9d0cdd7a7 533-534,536-543,551,553-554
+datafn/server/src/server.ts
+  s_09f19affbc7889::t_00281b8fdaf9d7 1783-1786
+  s_09f19affbc7889::t_c1b7e80faae2d2 68-72,1677-1678,1688,1692-1697,1779-1782,1787-1794
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5ecc373d7529f1a28ada55aaae307fb807c18cf",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

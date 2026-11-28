@@ -1,0 +1,29 @@
+mcpfn/docs/content/docs/reference/architecture.md
+  s_c8d3e62c4e5cbc::t_6a6b1b7cfe3269 135-138
+mcpfn/core/src/client-profiles.ts
+  s_c8d3e62c4e5cbc::t_6a6b1b7cfe3269 117-123,197-201,219,385,565,567-568,571
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_6a6b1b7cfe3269 518-522
+mcpfn/core/tests/client-profiles.test.ts
+  s_c8d3e62c4e5cbc::t_f0a412890d5b3c 431-471
+mcpfn/ARCHITECTURE.md
+  s_c8d3e62c4e5cbc::t_6a6b1b7cfe3269 132-135
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_87cc13866ab40e 375-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "074e20a5a10bc0be6b574e05232f2abf08780caa",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

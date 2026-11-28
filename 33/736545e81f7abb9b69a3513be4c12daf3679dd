@@ -1,0 +1,21 @@
+apifn/README.md
+  s_a53647f7f9b276::t_de971b3df396f4 129
+apifn/examples/ci-cd/github-actions.yml
+  s_a53647f7f9b276::t_de971b3df396f4 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33736545e81f7abb9b69a3513be4c12daf3679dd",
+  "prompts": {},
+  "sessions": {
+    "s_a53647f7f9b276": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2139d-87fd-7710-98a5-0525e984c6d4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

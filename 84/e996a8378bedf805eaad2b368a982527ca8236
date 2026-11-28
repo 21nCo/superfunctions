@@ -1,0 +1,35 @@
+cachefn/typescript/README.md
+  s_ab63037dfb318d::t_50fdca4c056596 441-456,484
+cachefn/typescript/__tests__/cache-fill.test.ts
+  s_ab63037dfb318d::t_7117dbb262e880 1-79
+cachefn/typescript/__tests__/llm-cached-model.test.ts
+  s_ab63037dfb318d::t_ace05945b141a7 14-15,159-176,253,281-288,291,294,296-320,336-354,365-374,403-452,541-565
+cachefn/typescript/package.json
+  s_ab63037dfb318d::t_57b44a6720b6dc 133
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_ab63037dfb318d::t_b10afe3d6d8d65 152-153,164-168,194-214
+cachefn/typescript/src/core/cache.ts
+  s_ab63037dfb318d::t_8d95bd988954ea 320-332,350,353
+cachefn/typescript/src/llm/cached-model.ts
+  s_ab63037dfb318d::t_490cf07d7e052b 20,44-45,94,97,179-183,233-240,242,244-245,250,288,328-339,341-383,385-386,407-408,427-428
+cachefn/typescript/src/llm/canonical.ts
+  s_ab63037dfb318d::t_b05241d1e1cea3 25-32,81,110-136
+package-lock.json
+  s_ab63037dfb318d::t_1491e6c0f90535 18552,18610-18616,18846-18883
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "84e996a8378bedf805eaad2b368a982527ca8236",
+  "prompts": {},
+  "sessions": {
+    "s_ab63037dfb318d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ab63037dfb318d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

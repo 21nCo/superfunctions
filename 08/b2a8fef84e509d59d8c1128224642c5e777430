@@ -1,0 +1,19 @@
+filefn/server/tests/dependency-pins.test.ts
+  s_fc285eff3f94eb::t_7948ea1d38d45a 14-17,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08b2a8fef84e509d59d8c1128224642c5e777430",
+  "prompts": {},
+  "sessions": {
+    "s_fc285eff3f94eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21387-8c2b-7361-b97d-3400ba684e34",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

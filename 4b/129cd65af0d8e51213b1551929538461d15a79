@@ -1,0 +1,29 @@
+clifn/core/tests/consumer-contract.test-d.ts
+  s_be5f0485e39ce6::t_b3b3c2a3139cad 50,52-62
+clifn/core/tests/consumer-import-scanner.ts
+  s_be5f0485e39ce6::t_f6d36ef048b67d 10-18,24-27,43,45-46,49-86,90,94,104-108,112-119,121,123-131,134-157,187,191-197,199-201,204
+clifn/core/tests/consumer-scan.test.ts
+  s_be5f0485e39ce6::t_2b8344e21eb491 10-14,90-107,129-152,156-159
+clifn/core/tests/fixtures/consumer-scan/fail-closed-forms.ts
+  s_be5f0485e39ce6::t_fe328014d7311e 1-15
+clifn/core/tests/fixtures/consumer-scan/listed-forms.ts
+  s_be5f0485e39ce6::t_b3bbb2b715fb82 15-21,24
+clifn/core/turbo.json
+  s_be5f0485e39ce6::t_b25137a5ce86ce 3-5,8-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b129cd65af0d8e51213b1551929538461d15a79",
+  "prompts": {},
+  "sessions": {
+    "s_be5f0485e39ce6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "22215654-825c-45c5-908f-36633fb3ecaf",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

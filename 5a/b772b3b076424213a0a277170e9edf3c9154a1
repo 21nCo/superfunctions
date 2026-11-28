@@ -1,0 +1,21 @@
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_d943cf992963df 64-89,245,261,519,537
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_e5ac07859c1bc9::t_6fb6ba08ab7f7e 513-532,659,705,725,731,748
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ab772b3b076424213a0a277170e9edf3c9154a1",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+plugfn/core/src/scopes/grammar.ts
+  s_c2a5d567caf9e5::t_ce4a3907964910 4,1066
+plugfn/core/src/scopes/types.ts
+  s_c2a5d567caf9e5::t_06a4f7d20f654a 311-315
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_c2a5d567caf9e5::t_12153c9d7641e7 302-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4bcc4db5ba9fd3a2bf68340e052d705d12b8b0a5",
+  "prompts": {},
+  "sessions": {
+    "s_c2a5d567caf9e5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21e3d-5894-73c1-b159-8e4dadc7dbaa",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

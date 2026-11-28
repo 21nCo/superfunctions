@@ -1,0 +1,35 @@
+testfn/typescript/tests/storage-concurrency.test.ts
+  s_f058f999ab46b7::t_a84fc5cc736faf 1-2,81-230,242-243,245-248,251-256,258-267
+testfn/typescript/tests/storage.test.ts
+  s_f058f999ab46b7::t_067455dc405282 297-307,342-383
+testfn/admin/src/__tests__/admin.test.ts
+  s_f058f999ab46b7::t_b2b9b8cce9bc4b 669-689
+testfn/admin/src/domain-service.ts
+  s_f058f999ab46b7::t_91b628012fd35a 176-185,298-301,346-348,351-352
+testfn/typescript/README.md
+  s_f058f999ab46b7::t_167f7ef6e96864 267
+testfn/typescript/src/storage/artifacts.ts
+  s_f058f999ab46b7::t_cc21376b605295 9,12-18,20-21,23-25,29-33,35-38,47-54,57-59,76-86,88-91,93-94,106-112,117,125,171
+testfn/typescript/src/storage/backends.ts
+  s_f058f999ab46b7::t_da1ee55725bb69 29,142-146,178-181,183,197-209,213,271-276,320-324,327,330-337,342,344
+testfn/typescript/src/storage/indexeddb-manager.ts
+  s_f058f999ab46b7::t_7d11db6af99a60 186-191
+testfn/typescript/src/storage/test-storage.ts
+  s_f058f999ab46b7::t_e796180d62aff5 19-23,25-57,59-66,68,70,149-151,157,161,164-189,210-218,285-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61a28c3b5dab9819740ffdd7e26eb02df4abd4a3",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

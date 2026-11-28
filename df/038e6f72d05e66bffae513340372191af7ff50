@@ -1,0 +1,39 @@
+reviewfn/core/src/panel/coordinator.ts
+  s_c6f82d920994b6::t_8209bb60178c82 19,192-193
+reviewfn/core/src/panel/validate.ts
+  s_c6f82d920994b6::t_a4434cfc0f6871 253-256,258-269,306-320,332,334,652
+reviewfn/core/test/panel.test.ts
+  s_7a31ff21202e61::t_76aeefac5da24e 659-663,721-727
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_c6f82d920994b6::t_52cda6a6945c6e 18
+reviewfn/docs/panel-report-schema.md
+  s_c6f82d920994b6::t_11712f439a8e5e 15
+reviewfn/docs/static/llms-full.txt
+  s_c6f82d920994b6::t_ff3c65b7defcdb 224
+reviewfn/testing/test/panel-coordinator.test.ts
+  s_c6f82d920994b6::t_c1da7257e8cd7e 255-258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df038e6f72d05e66bffae513340372191af7ff50",
+  "prompts": {},
+  "sessions": {
+    "s_7a31ff21202e61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "56813ea1-68f3-4d05-8bc0-afab805624b4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c6f82d920994b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c97325-c7f2-4265-ad7e-40270886a3eb",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

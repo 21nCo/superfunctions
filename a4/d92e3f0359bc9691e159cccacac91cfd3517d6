@@ -1,0 +1,19 @@
+datafn/client/src/sync/engine.ts
+  s_638a994b69d08e::t_4d3c5df6574ac6 1882-1886
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4d92e3f0359bc9691e159cccacac91cfd3517d6",
+  "prompts": {},
+  "sessions": {
+    "s_638a994b69d08e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21264-fb13-7703-86f8-4ea0ca3fe7f4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

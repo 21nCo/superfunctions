@@ -1,0 +1,31 @@
+recfn/README.md
+  s_40f52af95b4867::t_a14897a710c5e8 120-126,183-186,242-243
+recfn/server/__tests__/deletion-sqlite.test.ts
+  s_40f52af95b4867::t_6b39c90b6e217e 158-161,252-284
+recfn/server/__tests__/recording-capture.test.ts
+  s_40f52af95b4867::t_160a721c94fa3d 2,6,204-228
+recfn/server/src/deletion/service.ts
+  s_40f52af95b4867::t_0f88f2fbd6a095 1,8-30,32,34-47,54-56
+recfn/server/src/index.ts
+  s_40f52af95b4867::t_c81f041042c087 47-51,96,114-120,125,261,325
+recfn/server/src/recording/capture.ts
+  s_40f52af95b4867::t_b6fdda20a2713d 32,57-66,69-70,74-75,261-264
+recfn/server/src/routes/bots.ts
+  s_40f52af95b4867::t_e1808143d830b7 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "289c7d1004bc1d28e1e8167563f32efdcc954d10",
+  "prompts": {},
+  "sessions": {
+    "s_40f52af95b4867": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_40f52af95b4867",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

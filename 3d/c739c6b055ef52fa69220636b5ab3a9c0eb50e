@@ -1,0 +1,27 @@
+authfn/client/package.json
+  s_aac68e49d9b4ad::t_1af5b4b92af430 41
+authfn/docs/package.json
+  s_aac68e49d9b4ad::t_93f16fdd79d863 31
+authfn/social-oauth/package.json
+  s_aac68e49d9b4ad::t_f50d5da078a689 3,41
+authfn/social-oauth/src/index.ts
+  s_aac68e49d9b4ad::t_9f6941a2323f31 70,379-382
+package-lock.json
+  s_aac68e49d9b4ad::t_cc8b16c22eaef9 1401,1526,4056,4065
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3dc739c6b055ef52fa69220636b5ab3a9c0eb50e",
+  "prompts": {},
+  "sessions": {
+    "s_aac68e49d9b4ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7cccf41-f4f8-408a-a490-96bc097cf2f8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

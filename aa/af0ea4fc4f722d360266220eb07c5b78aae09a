@@ -1,0 +1,43 @@
+langfn/typescript/package.json
+  s_c8d3e62c4e5cbc::t_07fd27781d711a 3,104
+mcpfn/auth/package.json
+  s_c8d3e62c4e5cbc::t_b6fccada6212be 3
+mcpfn/cli/package.json
+  s_c8d3e62c4e5cbc::t_74205d84d9fdf0 3,26-30
+mcpfn/client/CHANGELOG.md
+  s_c8d3e62c4e5cbc::t_f62f483fb0a60d 3-8
+mcpfn/client/package.json
+  s_c8d3e62c4e5cbc::t_988014708ad836 3,59
+mcpfn/core/package.json
+  s_c8d3e62c4e5cbc::t_58a8847d45aaed 3
+mcpfn/datafn/package.json
+  s_c8d3e62c4e5cbc::t_d2d52a429eb5ad 3,26,30
+mcpfn/inspector/package.json
+  s_c8d3e62c4e5cbc::t_9b22fa5a0b28f3 3,24-25,31
+mcpfn/testing/package.json
+  s_c8d3e62c4e5cbc::t_73cbe4556b24ff 3,33-35
+memoryfn/typescript/package.json
+  s_c8d3e62c4e5cbc::t_26fa7f1d3cfe5f 45
+package-lock.json
+  s_c8d3e62c4e5cbc::t_9eba599ad14c33 15055,15058,16868,17342,17345-17349,17802,17810,18270,18736,18741,18744,19196,19199-19200,19206,19662,19665-19667,24305,58420,64181
+packages/admin/package.json
+  s_c8d3e62c4e5cbc::t_c37745d5e16550 31
+superconsole/package.json
+  s_c8d3e62c4e5cbc::t_999d49498c3e3e 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aaaf0ea4fc4f722d360266220eb07c5b78aae09a",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

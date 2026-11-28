@@ -1,0 +1,29 @@
+NPM_PUBLISHING.md
+  s_efe7048d0eabad::t_7a65b5ae91166f 5
+scripts/check-release-paths.test.mjs
+  s_efe7048d0eabad::t_243d18348de47a 7,111-164
+scripts/release-row-coverage.mjs
+  s_efe7048d0eabad::t_e6033e7616463d 1-22
+scripts/verify-mdfn-package-graph.mjs
+  s_efe7048d0eabad::t_779e0c4358f640 5,224-228,230
+scripts/verify-uifn-package-graph.mjs
+  s_efe7048d0eabad::t_18b0339a4bb527 8,323-331,333-334
+scripts/verify-uifn-package-graph.test.mjs
+  s_efe7048d0eabad::t_808a427e21bdd7 21-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1265d51899b292b4f4a25a60cef251cd556ce1c7",
+  "prompts": {},
+  "sessions": {
+    "s_efe7048d0eabad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_efe7048d0eabad",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

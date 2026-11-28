@@ -1,0 +1,23 @@
+hostfn/cli/src/commands/server/setup.ts
+  s_545bb079978e5a::t_d01107eb76d7df 118
+filefn/python/filefn/server/upload_sessions/service.py
+  s_545bb079978e5a::t_2709411b2b6606 807,829-830,868-873,887-893,1048-1049,1073
+filefn/python/tests/test_upload_flow.py
+  s_545bb079978e5a::t_e7d347a9d6bc30 1278,1280-1281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bf38ff03d69065ad72da18ae85de3351aee4493",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

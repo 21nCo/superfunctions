@@ -1,0 +1,27 @@
+authfn/python/authfn/plugins/social_oauth.py
+  s_e5ac07859c1bc9::t_5c5887b65c9973 16,276-279,298-300,310,342-343
+authfn/python/tests/test_social_oauth.py
+  s_e5ac07859c1bc9::t_f674cc303bc0f8 121-123,907-941
+authfn/docs/content/docs/quickstart/python.md
+  s_e5ac07859c1bc9::t_a1001648ad5de6 56
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_c12f62df2374e4 7710
+authfn/python/README.md
+  s_e5ac07859c1bc9::t_c3f89502dd1436 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "049e0c242c5b56dc344393a70eb7265411194ee6",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,69 @@
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_f872b19c2f80fe::t_150ab805d43bdd 1,21-39,41,45-50,53
+cifn/typescript/control-plane/src/dispatch/types.ts
+  s_f872b19c2f80fe::t_5c1a543efc4e14 19-20,25,30
+cifn/typescript/control-plane/src/pipeline/git-checkout.ts
+  s_b996deaa3d01f1::t_56a83b5efe772d 19-28,33
+cifn/typescript/control-plane/src/pipeline/resolver-credentials.test.ts
+  s_b996deaa3d01f1::t_5a153082ff8294 1-32
+cifn/typescript/control-plane/src/pipeline/resolver.ts
+  s_b996deaa3d01f1::t_fc3f908bce546a 9,45-66,119
+cifn/typescript/control-plane/src/server.ts
+  s_b996deaa3d01f1::t_6e614145c288a6 3,70,74
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_f872b19c2f80fe::t_0c221abad07386 41-45,69,86,166,188,200,216,269,376,381,386,819,829
+cifn/README.md
+  s_b996deaa3d01f1::t_08e4866e759269 240-245,398
+cifn/typescript/control-plane/scripts/verify-lifecycle.mjs
+  s_b996deaa3d01f1::t_bd429d6c9ae765 30
+cifn/typescript/control-plane/src/api/routes.ts
+  s_b996deaa3d01f1::t_4c34d5a8c0d944 9,374-375,377
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_b996deaa3d01f1::t_10c70da047fb67 11,55-56
+cifn/typescript/control-plane/src/dispatch/process-secrets.ts
+  s_b996deaa3d01f1::t_d2c35e1b9cca72 1-32
+cifn/typescript/control-plane/src/observability/lifecycle.test.ts
+  s_b996deaa3d01f1::t_57555ef0c96053 18,21,24-46
+cifn/typescript/control-plane/src/observability/lifecycle.ts
+  s_b996deaa3d01f1::t_24e20eea664824 18-19,50-51,56-58,60-61,63-65,71,73,76-79,85-96,98
+cifn/typescript/control-plane/src/queue/queue.test.ts
+  s_b996deaa3d01f1::t_d68d7e1d2e15ca 272-304
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_de68c6d89cdbd1 53,59,298-314,882-914
+cifn/typescript/control-plane/src/store/runtime-store.ts
+  s_b996deaa3d01f1::t_eda87eef6bb743 40
+cifn/typescript/runner/src/claim-journal.ts
+  s_b996deaa3d01f1::t_9266e5057d2352 8-9,34-37,44,63-66,68
+cifn/typescript/runner/src/log-spool.ts
+  s_b996deaa3d01f1::t_88f96fffa753b1 67-96,128
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_b996deaa3d01f1::t_edce87ba14b424 6-7,364-441,461-462,464,466-468,473-485
+cifn/typescript/runner/src/remote-runner.ts
+  s_b996deaa3d01f1::t_89825555456f24 4,63-80,139-172,184,212,238-247,267-274,295,301,304-305
+cifn/typescript/runner/src/runner.ts
+  s_b996deaa3d01f1::t_cf6c88691ae0fb 8,239-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "573c7e1462dfe8fd66e084e7b9582fa09b172797",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f872b19c2f80fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed7758d8-5e96-46ba-be89-6e9fe13b259c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

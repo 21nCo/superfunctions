@@ -1,0 +1,25 @@
+plugfn/core/README.md
+  s_6938022c1cfd65::t_473ae368ffac49 133,139-140,144
+plugfn/core/src/scopes/grammar.ts
+  s_6938022c1cfd65::t_15d7284f8e1014 111-113,115-117,119-130,133-163,172-173,183-185,236-237,239,289-291,297-298,327-331,335-336,340,342-345,349-350,355-356,371-384,387-422,428-440,447-450,454,456,462,502-511,514-515,524-526,534-562,569,572,597,603-609
+plugfn/core/src/scopes/types.ts
+  s_6938022c1cfd65::t_068b475fa5dac6 138-145,157-159,163-165,170-182,201,207-212
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_6938022c1cfd65::t_4afa2923dcd2ef 34-43,112-113,119-143,181-185,350,353-354,426,451,453-460,462,501-677,712,847-848,868,932-950
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27069e9a9099d19675888bbc63aeb64899306aec",
+  "prompts": {},
+  "sessions": {
+    "s_6938022c1cfd65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caf48fd3-d347-46ce-aa24-1e7ef2188bd1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

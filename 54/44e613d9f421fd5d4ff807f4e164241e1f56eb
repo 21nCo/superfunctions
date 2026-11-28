@@ -1,0 +1,40 @@
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_e53a9c82062042 92-93
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_ddb3a1d59749b1 608-609,611-612,614,617,620,635-649,651
+  s_cff285c8033656::t_ccc16e4c0f487c 584-586,650,652
+  s_cff285c8033656::t_10a1e399120d48 629
+  s_cff285c8033656::t_dde188a4d56bdc 653-654
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_ca083716fb52e6 629
+  s_cff285c8033656::t_e53a9c82062042 630-632,634
+plugfn/README.md
+  s_cff285c8033656::t_e53a9c82062042 66
+plugfn/CHANGELOG.md
+  s_cff285c8033656::t_e53a9c82062042 5
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_ca083716fb52e6 1106
+  s_cff285c8033656::t_e53a9c82062042 1069-1072,1078-1079,1086,1102,1107
+plugfn/core/README.md
+  s_cff285c8033656::t_e53a9c82062042 180-182
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_e53a9c82062042 66,124,935-937,939,948,964,1000,1007
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_e53a9c82062042 64-67,326,328-334,337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5444e613d9f421fd5d4ff807f4e164241e1f56eb",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

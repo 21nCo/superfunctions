@@ -1,0 +1,43 @@
+mdfn/contentfn/src/contentfn.test.ts
+  s_192d8000f9c548::t_460398b3b59953 107-115
+mdfn/core/src/core.test.ts
+  s_192d8000f9c548::t_7ce8dcb4b77566 39-65,199-204,484-489
+mdfn/testing/README.md
+  s_192d8000f9c548::t_8e6bf17ead4bbd 13-15
+mdfn/testing/src/testing.test.ts
+  s_192d8000f9c548::t_37f00c27e28c82 16-20,71-80,83
+mdfn/contentfn/src/index.ts
+  s_a693eb3948b3f7::t_62b04cc9f86cb4 209
+mdfn/core/src/anchors.ts
+  s_a693eb3948b3f7::t_bdbe41aa5984a2 37-39,45-55
+mdfn/core/src/immutable.ts
+  s_a693eb3948b3f7::t_5fbb9bea1ccd90 3-5,8,16,23,25
+mdfn/core/src/selection.ts
+  s_a693eb3948b3f7::t_9fb52e13840a34 21-23,32,34
+mdfn/core/src/sidecar.ts
+  s_a693eb3948b3f7::t_e4534db0524ce9 8-11,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54e13b8d86097eed578a74877a2fd61c853d570c",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a693eb3948b3f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a693eb3948b3f7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

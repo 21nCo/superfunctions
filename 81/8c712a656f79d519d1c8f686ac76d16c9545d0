@@ -1,0 +1,25 @@
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_a144a292482c16::t_b5722c95bc1a76 44-52,62-63,67-71,80-82,85-89,93-94,97-98
+logfn/python/src/logfn/default_redaction.py
+  s_a144a292482c16::t_56d7b363f16ed5 74-83,92,97-102,112-114,119-121,134,136
+logfn/python/tests/test_default_redaction.py
+  s_a144a292482c16::t_a9926be01519ed 3,10,233-283
+logfn/typescript/src/core/default-redaction.test.ts
+  s_a144a292482c16::t_26dced664b7225 9,172-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "818c712a656f79d519d1c8f686ac76d16c9545d0",
+  "prompts": {},
+  "sessions": {
+    "s_a144a292482c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de0cef48-8907-4b0d-b7ca-3e156924a5ed",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

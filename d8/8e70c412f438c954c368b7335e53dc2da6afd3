@@ -1,0 +1,27 @@
+.github/workflows/ci.yml
+  s_3b7ffdae337f69::t_818f4890843a8f 97-100
+turbo.json
+  s_3b7ffdae337f69::t_bad7bd51103a17 18
+.github/workflows/notify-next-sync.yml
+  s_3b7ffdae337f69::t_eb4ac564fd8c15 1-70
+scripts/ci-plan.mjs
+  s_3b7ffdae337f69::t_3419b85b2fa421 45
+scripts/notify-next-sync-workflow.test.mjs
+  s_3b7ffdae337f69::t_0b3034549eca33 1-206,1-137,139-163,168-175,179-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d88e70c412f438c954c368b7335e53dc2da6afd3",
+  "prompts": {},
+  "sessions": {
+    "s_3b7ffdae337f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13c7e944-15d1-4421-9eb4-c991d75b96d8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

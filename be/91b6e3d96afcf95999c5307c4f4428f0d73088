@@ -1,0 +1,27 @@
+.github/workflows/publish-tag.yml
+  s_613024abc9efdd::t_c7a565ba33a419 76,89
+README.md
+  s_613024abc9efdd::t_130c54abccc33b 71-77,88
+scripts/assert-release-ci.test.mjs
+  s_613024abc9efdd::t_bc1591f54600fe 19-21,24,105-110,119-124,128-146,149-151,192,194,204,206
+scripts/release-gate-workflows.test.mjs
+  s_613024abc9efdd::t_9468bf2bb9e509 73,84-85,180-181,183,203-205,240,242-252,279-287,298-303
+scripts/assert-release-ci.mjs
+  s_613024abc9efdd::t_afd0a06537ba1b 10-18,37,51-62,66-67,81-82,87-89,91,94-96,121,129-130,133,135,139,167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be91b6e3d96afcf95999c5307c4f4428f0d73088",
+  "prompts": {},
+  "sessions": {
+    "s_613024abc9efdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb8fb86f-a956-4f54-811b-a0564fa1fda7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

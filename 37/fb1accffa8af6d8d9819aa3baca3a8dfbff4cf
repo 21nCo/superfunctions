@@ -1,0 +1,29 @@
+cmsfn/studio/src/__tests__/media-boundaries.test.tsx
+  s_903cc50dad9f1f::t_fbaddb8d50a6f8 21-45
+cmsfn/studio/src/media/upload.ts
+  s_9fd5a682be05fa::t_2c24341f1638a5 11-22,51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37fb1accffa8af6d8d9819aa3baca3a8dfbff4cf",
+  "prompts": {},
+  "sessions": {
+    "s_903cc50dad9f1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-acb03b41e4cb4c1d9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_9fd5a682be05fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad3e5452262d43bb2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

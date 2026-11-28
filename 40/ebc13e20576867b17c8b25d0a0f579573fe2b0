@@ -1,0 +1,51 @@
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_19abec75182420::t_118e257b0fa5c6 157-158
+devfn/cli/SECURITY.md
+  s_e5ad82513ddc4e::t_9f71f736c33454 19
+devfn/cli/test/killed-lock-holders.test.ts
+  s_e5ad82513ddc4e::t_66b21f6e24a842 1-121
+devfn/config/src/trust.ts
+  s_e5ad82513ddc4e::t_d5281da41c7aab 38-49,51,62,68,71,90,94,100
+devfn/config/test/config.test.ts
+  s_e5ad82513ddc4e::t_ad31674f9081d2 1,513-541
+devfn/core/src/orchestrator.ts
+  s_e5ad82513ddc4e::t_a97d806a7d8d19 512-520,549,571
+devfn/core/src/tasks.ts
+  s_e5ad82513ddc4e::t_3f1bf2a4024c6a 406
+devfn/core/test/lock-windows.test.ts
+  s_e5ad82513ddc4e::t_264c2137490260 1-138
+devfn/docs/content/docs/reference/ports.md
+  s_e5ad82513ddc4e::t_c95db39b675860 15
+devfn/docs/content/docs/reference/security.md
+  s_e5ad82513ddc4e::t_5a9dfb480c774a 22
+devfn/ports/src/index.ts
+  s_e5ad82513ddc4e::t_b52fc33a9fd374 2
+devfn/ports/src/lock.ts
+  s_e5ad82513ddc4e::t_7731bd89b9b26e 13-14,25,34-46,74-75,87,134-153
+devfn/ports/test/lock-recovery.test.ts
+  s_e5ad82513ddc4e::t_875e439ddaf393 1-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40ebc13e20576867b17c8b25d0a0f579573fe2b0",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ad82513ddc4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "12a0ff39-5fcb-43fe-a79e-19229d1312e2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

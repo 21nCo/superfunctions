@@ -1,0 +1,21 @@
+clifn/core/tests/update-check-delivery.test.ts
+  s_c8a5a182e64536::t_513c4c201fe118 19-20,57-63,110,143-144,148-164,182-183,189-190,234,239-241,277,281,305,309-311,319-324,329,360-361,367,371,387,398-400,411,414,425-427,441-443,465,479,483-484,503,508-511,518,536,550-551,568-569,571,589-590
+clifn/core/tests/update-check.test.ts
+  s_c8a5a182e64536::t_eb740a4982a627 87-91,104,106-109,288-289,306,337-338,516-517,529-531,559-565,579-580,592,603
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "527a283344526884d0454a5b6f92f83cc0dc4a4e",
+  "prompts": {},
+  "sessions": {
+    "s_c8a5a182e64536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8203bf16-8b09-4e8b-aa28-f6dc30f3f764",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

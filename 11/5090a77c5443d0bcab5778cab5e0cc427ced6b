@@ -1,0 +1,19 @@
+datafn/server/src/execution/sync/pull.ts
+  s_df6686278ce1d2::t_411e86d7a4273d 128-132,233-255,257,324-325,342,493-496,763-765,772,775-777,784,813-815,822,825-827,834
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "115090a77c5443d0bcab5778cab5e0cc427ced6b",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

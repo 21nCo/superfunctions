@@ -1,0 +1,27 @@
+filefn/docs/content/docs/quickstart/express.md
+  s_b841cebdcfad95::t_2c50e8c591acdb 53-55
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_f589980e41c39a 5685-5687
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_5494bddc7fc58d 332-342
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_4a8c45a4efd36b 383-391
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_25ee06150a2d7d 322-366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e7323cc220367c10cae85df2b26d4b6dc7bd375",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

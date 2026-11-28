@@ -1,0 +1,37 @@
+mcpfn/auth/README.md
+  s_24a7a15f780d1e::t_f78569bfcf500c 94-127
+mcpfn/auth/package.json
+  s_24a7a15f780d1e::t_49bf4a19dff47c 3
+mcpfn/auth/src/hosted-authorization.ts
+  s_24a7a15f780d1e::t_9eb96157088afc 363-393,416-417,458,764,774-849
+mcpfn/auth/tests/authorization-errors.test.ts
+  s_24a7a15f780d1e::t_31593c5b94adac 1-247
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_24a7a15f780d1e::t_cf0c4574ae3421 788-792
+mcpfn/cli/package.json
+  s_24a7a15f780d1e::t_4ff56f7b9439b6 26
+mcpfn/docs/content/docs/reference/auth.md
+  s_24a7a15f780d1e::t_83a1571c051f92 97-130
+mcpfn/docs/static/llms-full.txt
+  s_24a7a15f780d1e::t_0d2204f5df1684 518-551
+mcpfn/testing/package.json
+  s_24a7a15f780d1e::t_bff071312fae4d 33
+package-lock.json
+  s_24a7a15f780d1e::t_b9dbde3a3f3663 17646,18109,20370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77c5b1d7ac5635d5c34bb9e65146fd7a587a97b5",
+  "prompts": {},
+  "sessions": {
+    "s_24a7a15f780d1e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7eca62b1-112f-4b05-85cd-c51f668b94fd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

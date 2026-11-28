@@ -1,0 +1,23 @@
+watchfn/agents/browser/README.md
+  s_59718a9b1011e5::t_7707d79ced4648 29
+watchfn/agents/browser/src/index.ts
+  s_59718a9b1011e5::t_c19d657af93e10 42,252-259,266-296,320-321,323,331-338
+watchfn/agents/browser/tests/delivery.test.ts
+  s_59718a9b1011e5::t_f1f713d06f3904 206-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88b70449fb0e31c7bda60020875abb7d8378821c",
+  "prompts": {},
+  "sessions": {
+    "s_59718a9b1011e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb479e62-8864-49f5-a298-31758c4d3d6a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

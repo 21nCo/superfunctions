@@ -1,0 +1,25 @@
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_97acd1a94e349a 99-108
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_97acd1a94e349a 1105-1112,1114-1115,1125,1127
+billfn/docs/content/docs/providers/dodo.mdx
+  s_0d7e11293d5a4e::t_f7dfc408f3ff47 79
+billfn/provider-dodo/src/__tests__/refund-revocation.test.ts
+  s_0d7e11293d5a4e::t_c6150a800966c9 156-157,159,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cadb138334680befdf81c70b5604f067c3547289",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

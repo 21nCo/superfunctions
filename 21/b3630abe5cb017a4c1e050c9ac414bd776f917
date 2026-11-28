@@ -1,0 +1,19 @@
+sendfn/typescript/tests/aws-ses-lifecycle.test.ts
+  s_e2bd2c87504b16::t_a03c82d9a52cfa 3,17,23-29,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21b3630abe5cb017a4c1e050c9ac414bd776f917",
+  "prompts": {},
+  "sessions": {
+    "s_e2bd2c87504b16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d7f18af-08d5-4dc2-b561-2f3312d8fbf3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

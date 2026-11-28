@@ -1,0 +1,31 @@
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_5d858f1e28a081 24,94-97
+filefn/server/src/upload-sessions/service.ts
+  s_7e79858c45394b::t_b23c01406e2b0a 535,1139,1206-1216,1427-1428
+filefn/server/tests/hardening.test.ts
+  s_b841cebdcfad95::t_bc134bb81346f1 101-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6602c3e8b6b2695485a03b0d5df3a999b99d40d",
+  "prompts": {},
+  "sessions": {
+    "s_7e79858c45394b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f5c118b-2f9b-4e4a-814e-a9afecc50bbd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

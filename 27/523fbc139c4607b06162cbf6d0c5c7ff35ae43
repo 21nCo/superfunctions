@@ -1,0 +1,19 @@
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_63937591ae644c 367-369,830-836,995,997,1009,1011-1013
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27523fbc139c4607b06162cbf6d0c5c7ff35ae43",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+authfn/client/src/__tests__/client-password.test.ts
+  s_e5ac07859c1bc9::t_3085ad45e4b9bb 182,204
+authfn/docs/content/docs/recipes/email-verification.md
+  s_e5ac07859c1bc9::t_4ea06708c84705 52
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_206b29c29768d5 8901
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a74ca91d4102d62e20549dc607a6503db3efeac5",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

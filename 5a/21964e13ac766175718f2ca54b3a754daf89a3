@@ -1,0 +1,32 @@
+datafn/server/__tests__/public-link-resolve-limits.test.ts
+  s_1731e39e38ef67::t_f74359c73e2b22 1-193
+  s_033d3e6d4fb9b2::t_924c12fd5024f4 194-207
+datafn/server/src/http/middleware.ts
+  s_033d3e6d4fb9b2::t_6fd09ac5d6c63f 23-30,32-33,35,39,44-46,48-50,52-61,74-95
+datafn/server/src/server.ts
+  s_033d3e6d4fb9b2::t_25d4b91dd68624 50,1535-1583,1596-1599,1703
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a21964e13ac766175718f2ca54b3a754daf89a3",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

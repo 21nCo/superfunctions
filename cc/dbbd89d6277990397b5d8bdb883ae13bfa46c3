@@ -1,0 +1,125 @@
+clifn/core/CHANGELOG.md
+  s_09f19affbc7889::t_6170c4bb236358 3-9
+clifn/core/package.json
+  s_09f19affbc7889::t_952193eae7f71f 3
+clifn/core/src/diagnostics.ts
+  s_ad3a3856a87c81::t_db54fd13b5d562 1,82
+clifn/core/src/document-output.ts
+  s_a8cc2dd76ee0e3::t_0ba68c448bc430 1-356
+clifn/core/src/errors.ts
+  s_ad3a3856a87c81::t_c758deeaa47933 40-44,48,61,65,70,121,127-140
+clifn/core/src/index.ts
+  s_ad3a3856a87c81::t_ea9c2e624ca2c6 17
+clifn/core/src/json-value.ts
+  s_09f19affbc7889::t_d23caecd4f95f0 1-465
+clifn/core/src/runner.ts
+  s_ad3a3856a87c81::t_efaf7b445f1b96 2,14-21,31,92-113,131,135-141,155-158,190-219
+clifn/core/src/sensitive-keys.ts
+  s_09f19affbc7889::t_75efdf52cffaed 1-17
+clifn/core/src/terminal.ts
+  s_ad3a3856a87c81::t_e5bcc29c13d83b 105-106,109-111,142
+clifn/core/tests/fixtures/cac/index.ts
+  s_ad3a3856a87c81::t_fd28553542e477 2,9,31-38
+clifn/core/tests/fixtures/commander/index.ts
+  s_ad3a3856a87c81::t_fe3fd3e3620e86 2,8,23,31-42
+clifn/core/tests/fixtures/parse-args/index.ts
+  s_ad3a3856a87c81::t_5d36dfef477596 2,21-26,30-37
+clifn/core/tests/fixtures/shared.ts
+  s_ad3a3856a87c81::t_f819ce9a919d35 2,60-100
+clifn/core/tests/parser-canaries.test.ts
+  s_ee025abfcc6d50::t_06d8d6ed10386f 41-67,86-89
+clifn/core/tests/runner-document-bounds.test.ts
+  s_4feee1d05963af::t_0969023ce4e5cc 1-544
+clifn/core/tests/runner-document.test.ts
+  s_09f19affbc7889::t_20c7fdaaf7d3ef 1-1659
+clifn/core/tests/runner-golden.test.ts
+  s_ad3a3856a87c81::t_9cb6cad8681f04 3-4,122-133
+clifn/core/tests/terminal.test.ts
+  s_ad3a3856a87c81::t_19ee2bbe77e4bd 59,62,165
+clifn/docs/static/llms-full.txt
+  s_bb920b07b1a6d7::t_88a1967b75112b 573-576,597,743
+devfn/cli/package.json
+  s_09f19affbc7889::t_0ca5d0bc9362a9 17
+devfn/config/package.json
+  s_09f19affbc7889::t_031040817b5d5b 22
+extfn/cli/__tests__/dev.test.ts
+  s_09f19affbc7889::t_0f49891af835a3 97
+extfn/cli/package.json
+  s_09f19affbc7889::t_8a51a9f8b68f03 38
+mailfn/cli/package.json
+  s_09f19affbc7889::t_1a5deebacde6c4 17
+package-lock.json
+  s_4feee1d05963af::t_e7fa36cb8a6a1d 8364,10607,10683,11283,15574,59638
+plugfn/cli/package.json
+  s_09f19affbc7889::t_07204a750b6461 36
+clifn/core/README.md
+  s_36d53093d3b627::t_29e6b840eaa5ec 262-265,286
+clifn/docs/content/docs/reference/core-readme.md
+  s_36d53093d3b627::t_b89302408df7f5 265-268,289
+clifn/docs/content/docs/reference/exports.md
+  s_36d53093d3b627::t_52dc8a5b31699f 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ccdbbd89d6277990397b5d8bdb883ae13bfa46c3",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_36d53093d3b627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ce62266-5cb0-4cc5-8d2d-40ef63a01a67",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_4feee1d05963af": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21294-6581-7703-9503-119b1327bd51",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a8cc2dd76ee0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21202-c99a-74b2-ab81-600ff17fc0ab",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_bb920b07b1a6d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126d-1022-7e61-bb0e-9ba7820008ae",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ee025abfcc6d50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b77d02-eb0d-440c-9830-00ecd45011c8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

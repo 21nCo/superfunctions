@@ -1,0 +1,31 @@
+langfn/typescript/src/models/responses/credentials.ts
+  s_2c5d0f0bda6e4e::t_d743842065852c 32
+langfn/typescript/src/models/responses/model.ts
+  s_2c5d0f0bda6e4e::t_33881fc15b74fd 7,45-46,297,304,310,321-355
+langfn/typescript/src/models/responses/response.ts
+  s_2c5d0f0bda6e4e::t_5d05b4c26c5ca0 525,550
+langfn/typescript/tests/fixtures/responses/openrouter/failed-insufficient-credits.json
+  s_2c5d0f0bda6e4e::t_5833707f48dd12 1-16
+langfn/typescript/tests/fixtures/responses/openrouter/stream-error-insufficient-credits.sse
+  s_2c5d0f0bda6e4e::t_b69e5a6667f2c3 1-4
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-insufficient-credits.sse
+  s_2c5d0f0bda6e4e::t_a9984b2e18ae83 1-4
+langfn/typescript/tests/responses-credentials.test.ts
+  s_2c5d0f0bda6e4e::t_dcc9ddb0516318 6,85-97,144-148,200-251,302-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fb8ebef565de89cdcebf832d097c41e1ccf6131",
+  "prompts": {},
+  "sessions": {
+    "s_2c5d0f0bda6e4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "954f3c03-1385-4445-a7b3-d1f8fe52420d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

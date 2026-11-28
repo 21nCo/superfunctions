@@ -1,0 +1,107 @@
+langfn/typescript/src/models/index.ts
+  s_c2d6ef2e96fafa::t_d68938db701006 9-10
+langfn/typescript/src/models/profiles/index.ts
+  s_c2d6ef2e96fafa::t_129e8fb7161039 1-3
+langfn/typescript/src/models/profiles/openai.ts
+  s_c2d6ef2e96fafa::t_9d2fd97eeeba1f 1-20
+langfn/typescript/src/models/profiles/openrouter.ts
+  s_c2d6ef2e96fafa::t_1175c2ee05675f 1-42
+langfn/typescript/src/models/profiles/types.ts
+  s_c2d6ef2e96fafa::t_aee24e4ae06390 1-93
+langfn/typescript/src/models/responses/index.ts
+  s_c2d6ef2e96fafa::t_8f34d9ed53d4ba 1-5
+langfn/typescript/src/models/responses/model.ts
+  s_c2d6ef2e96fafa::t_16d8f22a00afe0 1-208
+langfn/typescript/src/models/responses/request.ts
+  s_c2d6ef2e96fafa::t_8d34ec305ce418 1-295
+langfn/typescript/src/models/responses/types.ts
+  s_eb415f203c1fbe::t_305d721a31ab23 1-67
+langfn/typescript/tests/responses-conformance.test.ts
+  s_40895d44669ca1::t_f4724d2c3377c8 1-358
+langfn/typescript/tests/fixtures/responses/openai/auth.json
+  s_fdbebe3d0ce817::t_d85b1253ac0e30 1-14
+langfn/typescript/tests/fixtures/responses/openai/context-length.json
+  s_fdbebe3d0ce817::t_eea081ed12effd 1-14
+langfn/typescript/tests/fixtures/responses/openai/rate-limit.json
+  s_fdbebe3d0ce817::t_9a630f2b09f670 1-15
+langfn/typescript/tests/fixtures/responses/openai/server-error.json
+  s_fdbebe3d0ce817::t_85bb85c40de174 1-14
+langfn/typescript/tests/fixtures/responses/openai/stream-failed.sse
+  s_fdbebe3d0ce817::t_1ea32fdee8e50a 1-9
+langfn/typescript/tests/fixtures/responses/openai/stream-reasoning.sse
+  s_fdbebe3d0ce817::t_114c3ac98ed949 1-45
+langfn/typescript/tests/fixtures/responses/openai/stream-tool-call.sse
+  s_fdbebe3d0ce817::t_ae54aaae2acb7d 1-21
+langfn/typescript/tests/fixtures/responses/openai/text.json
+  s_fdbebe3d0ce817::t_f6d4ad47fb6044 1-49
+langfn/typescript/tests/fixtures/responses/openai/tool-call.json
+  s_fdbebe3d0ce817::t_87df4d8a0ffc9f 1-48
+langfn/typescript/tests/fixtures/responses/openai/tool-continuation.json
+  s_fdbebe3d0ce817::t_fedfcdd70faa90 1-43
+langfn/typescript/tests/fixtures/responses/openrouter/auth.json
+  s_fdbebe3d0ce817::t_c75fdfdea52a06 1-12
+langfn/typescript/tests/fixtures/responses/openrouter/context-length.json
+  s_fdbebe3d0ce817::t_05d279eb458e2a 1-15
+langfn/typescript/tests/fixtures/responses/openrouter/rate-limit.json
+  s_fdbebe3d0ce817::t_a14be7cc4d164a 1-20
+langfn/typescript/tests/fixtures/responses/openrouter/server-error.json
+  s_fdbebe3d0ce817::t_b1135eac9748d3 1-16
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed.sse
+  s_fdbebe3d0ce817::t_e7529a90f962cb 1-10
+langfn/typescript/tests/fixtures/responses/openrouter/stream-reasoning.sse
+  s_fdbebe3d0ce817::t_3055c95982e9e4 1-36
+langfn/typescript/tests/fixtures/responses/openrouter/stream-tool-call.sse
+  s_fdbebe3d0ce817::t_9ebb28751b7415 1-20
+langfn/typescript/tests/fixtures/responses/openrouter/text.json
+  s_fdbebe3d0ce817::t_63f04425cc3686 1-50
+langfn/typescript/tests/fixtures/responses/openrouter/tool-call.json
+  s_fdbebe3d0ce817::t_04d68f1c58de47 1-49
+langfn/typescript/tests/fixtures/responses/openrouter/tool-continuation.json
+  s_fdbebe3d0ce817::t_35c1f332b5f602 1-44
+langfn/typescript/src/models/responses/response.ts
+  s_c2d6ef2e96fafa::t_1e0dada6453927 1-237
+langfn/typescript/src/models/responses/stream.ts
+  s_c2d6ef2e96fafa::t_534bd2a3330558 1-134
+langfn/typescript/tests/responses-mapping.test.ts
+  s_c2d6ef2e96fafa::t_a98f22209d06fd 1-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c97d4c7ca72afc93ac05ffebca167571fb39845",
+  "prompts": {},
+  "sessions": {
+    "s_40895d44669ca1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "627dae41-3119-4f51-9c83-8f4b759b599c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c2d6ef2e96fafa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06fe544c-d9eb-46b8-b581-824711a616bb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_eb415f203c1fbe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61830fa3-935c-44a8-8e9e-1bb32c2675e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_fdbebe3d0ce817": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fab0-2725-77f3-97af-373fcf0222d6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

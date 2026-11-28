@@ -1,0 +1,65 @@
+flowfn/admin/README.md
+  s_19abec75182420::t_89134a8cad2893 29-34
+flowfn/admin/src/__tests__/admin.test.ts
+  s_19abec75182420::t_3ead8c55db5e6c 9,644,646,649,878-883,975-979,981-995,997-998,1001,1004,1006,1012-1031
+flowfn/admin/src/domain-service.ts
+  s_19abec75182420::t_ab94d31d09fbce 82-85,399-407,437-438,440-441,443,447-448,455,480-484
+flowfn/python/README.md
+  s_19abec75182420::t_730fe5204dbece 186
+flowfn/python/flowfn/adapters/memory.py
+  s_19abec75182420::t_fc1ec2bd78acb5 12,272-275,282-292
+flowfn/python/flowfn/adapters/native_queues.py
+  s_19abec75182420::t_90df26f03aac33 13,82
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_19abec75182420::t_a45e2cad52fdff 11,63-65
+flowfn/python/flowfn/queue/types.py
+  s_19abec75182420::t_f13024e1c8c716 77-93
+flowfn/python/tests/dlq_dedup_contract.py
+  s_19abec75182420::t_638fd4dc2c956b 62-102
+flowfn/python/tests/test_dlq_recovery.py
+  s_19abec75182420::t_bb58574c4f73b6 113-114,120-121
+flowfn/python/tests/test_durable_adapters.py
+  s_19abec75182420::t_5216427c8a376b 80-81,87-88
+flowfn/typescript/docs/queue-ownership.md
+  s_19abec75182420::t_9fe0b062888e61 20-28
+flowfn/typescript/src/adapters/base.ts
+  s_19abec75182420::t_f024e1d9b48147 23-44,64,67-68,74-77
+flowfn/typescript/src/adapters/memory-order.test.ts
+  s_19abec75182420::t_6e01fa937a31ab 3,84-91
+flowfn/typescript/src/adapters/memory.ts
+  s_19abec75182420::t_080d0c86895dd0 3,39,45,49-50
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_19abec75182420::t_7b7ed1b7c2f6d8 7,225,232,250,275
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_19abec75182420::t_d05da5380def55 19,442-449
+flowfn/typescript/src/adapters/redis.test.ts
+  s_19abec75182420::t_7de771db037d6f 20,299-306
+flowfn/typescript/src/adapters/redis.ts
+  s_19abec75182420::t_9f267ffb39d9a2 6,384,386-387,397
+flowfn/typescript/src/queue/dlq.ts
+  s_19abec75182420::t_1103ae4b32dbf0 105-106,111,139-143,145,225-228,280
+flowfn/typescript/src/queue/job.ts
+  s_19abec75182420::t_59460ba170e6ed 6,85,102
+flowfn/typescript/src/queue/queue.ts
+  s_19abec75182420::t_ac8af0d8205807 192,194-198,214-215,219-220,222,262-264
+flowfn/typescript/src/queue/types.ts
+  s_19abec75182420::t_53cd0be66ef4fe 12,125-129
+flowfn/typescript/tests/dlq.test.ts
+  s_19abec75182420::t_31392229457b26 297-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0c9173b1489d5d6b594265b29f3cdad699b12469",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

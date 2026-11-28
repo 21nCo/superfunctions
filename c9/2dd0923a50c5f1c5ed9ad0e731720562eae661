@@ -1,0 +1,41 @@
+clifn/core/CHANGELOG.md
+  s_b15184ae60b291::t_19b1552296008c 6
+clifn/core/README.md
+  s_b15184ae60b291::t_b536c82fd346c1 220
+clifn/core/src/config.ts
+  s_b15184ae60b291::t_7f36cefa256f7e 66-69,103
+clifn/core/src/credentials.ts
+  s_b15184ae60b291::t_53d0646a42d4eb 96-98
+clifn/core/src/store-options.ts
+  s_b15184ae60b291::t_04c3e4752aeb7d 47-50,53-63,65-70,76-77,95-99,110,128-134,137
+clifn/core/tests/app-stores.test.ts
+  s_b15184ae60b291::t_d5807dd93592fd 18-27,122-147,244-246,261-311
+clifn/docs/content/docs/reference/core-readme.md
+  s_b15184ae60b291::t_9fdff3b966f211 223
+clifn/docs/static/llms-full.txt
+  s_e3b76681426084::t_c11477ef628bd0 531
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c92dd0923a50c5f1c5ed9ad0e731720562eae661",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e3b76681426084": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "83fbb219-35c4-4988-9e90-d9c46e612aff",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

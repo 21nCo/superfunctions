@@ -1,0 +1,25 @@
+watchfn/python/tests/test_bounded_scan.py
+  s_858a8d6335aae3::t_c288abae77b89a 17,170-200
+watchfn/typescript/src/query/query-engine.ts
+  s_858a8d6335aae3::t_856c66d15ab1f0 46-48,52,71,148-163
+watchfn/typescript/src/storage/database.ts
+  s_858a8d6335aae3::t_e6c5b9da6821e7 236
+watchfn/typescript/tests/storage/indexed-log-volume.test.ts
+  s_858a8d6335aae3::t_4964811a354ae8 66-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7106c86ebf8fbe97e377fe58b0d4a7f5654073f8",
+  "prompts": {},
+  "sessions": {
+    "s_858a8d6335aae3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_858a8d6335aae3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

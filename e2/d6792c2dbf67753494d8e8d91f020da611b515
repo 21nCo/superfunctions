@@ -1,0 +1,45 @@
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_7a328199137572 1-218
+authfn/client/src/client.ts
+  s_e5ac07859c1bc9::t_89354e7f26fb72 43-45
+authfn/core/src/__tests__/integration-browser.test.ts
+  s_e5ac07859c1bc9::t_382d8ff4c252d4 326-334
+authfn/core/src/core/api-keys.ts
+  s_e5ac07859c1bc9::t_02619754da4bd6 16,244
+authfn/core/src/core/passwords.ts
+  s_e5ac07859c1bc9::t_c6894f54dc071f 23,97,104,107,329-348
+authfn/core/src/core/sessions.ts
+  s_e5ac07859c1bc9::t_b9cb5bfc9d392d 36,256-264,490
+authfn/core/src/core/users.ts
+  s_e5ac07859c1bc9::t_58b85341b8c0ca 4,127-176
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_678b5f7ea81d06 26-32,355,357,449-467,499-502,852,856,861
+authfn/docs/content/docs/core-concepts/account-linking.md
+  s_e5ac07859c1bc9::t_bcc71d0766df42 71
+authfn/docs/content/docs/plugins/api-keys.md
+  s_e5ac07859c1bc9::t_c1469b6eca4edc 59
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_682e64933d44ee 153-154
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_0809b3e6d2bf0d 55,58,128-129,132-140
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_087360f44ad3cd 1510,5195,5859-5860,6393,6396,6466-6467,6470-6478
+authfn/password/src/index.ts
+  s_e5ac07859c1bc9::t_f969e60f1a3e18 13-18,100,252-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2d6792c2dbf67753494d8e8d91f020da611b515",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

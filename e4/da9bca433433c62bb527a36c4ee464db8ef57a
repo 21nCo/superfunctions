@@ -1,0 +1,27 @@
+mcpfn/auth/src/hosted-authorization.ts
+  s_c8d3e62c4e5cbc::t_ee6268979115fa 1596,1606-1627
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_c8d3e62c4e5cbc::t_70ee53b9354c4d 1308
+mcpfn/testing/src/conformance.ts
+  s_c8d3e62c4e5cbc::t_10159475e5670d 274-283
+mcpfn/testing/src/host-authorization.ts
+  s_c8d3e62c4e5cbc::t_9654aa09605c28 93-95,672-673
+mcpfn/testing/tests/authenticated-output.test.ts
+  s_c8d3e62c4e5cbc::t_d3ce2155751cd0 155-156,159,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4da9bca433433c62bb527a36c4ee464db8ef57a",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

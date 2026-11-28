@@ -1,0 +1,21 @@
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_315bbcf88a6a6c 296-305
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_af9ebb6d629a95 382-386,388-389
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22e7c0917b1178a451016c2995a2feb1a584f0bd",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
