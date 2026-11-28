@@ -590,7 +590,9 @@ try {
     "@superfunctions/delivery",
     "@superfunctions/http",
     "@superfunctions/http-openapi",
-    "authfn",
+    // By path: npm reads a bare "authfn" as the authfn/ directory and would
+    // build every AuthFn workspace.
+    "authfn/core",
     "@authfn/oauth-provider",
   ]) {
     npmStep(`dependency:build:${workspace}`, ["run", "build", "--workspace", workspace]);
