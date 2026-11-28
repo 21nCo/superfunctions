@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Released with the bare `superfunctions` package, the Superfunctions front door: `npx superfunctions` runs this CLI at the same version (and so does the `sfs` alias once `superfunctions` is installed). A project that adds `superfunctions` should drop a direct `@superfunctions/cli` dependency or keep it at the same version, since both provide the `superfunctions` and `sfs` commands.
+- `init` writes `superfunctions.config.js` as a plain object, no longer importing `defineConfig` from `@superfunctions/cli`, so it loads (and type-checks) where only the `superfunctions` package is installed. Its header comment shows the optional JSDoc type for projects that depend on `@superfunctions/cli` directly. `defineConfig` is still exported.
+- When started with `BARE_EXPECTED_CLI` naming `@superfunctions/cli` at another version (the bare package reached a different installed copy through `npm exec`), the CLI exits 1 with the version it expected and how to run it.
+
 ## 0.2.2
 
 - MySQL migrations: introspected `TEXT`, `MEDIUMTEXT` and `LONGTEXT` columns (reported with a length such as 65535) now match schema strings without a `maxLength`, and `TINYINT(1)` columns match boolean fields (numeric fields keep comparing them as integers), so unchanged columns no longer produce changes or errors on upgrade.

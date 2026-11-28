@@ -50,6 +50,7 @@
   { "slug": "superfunctions-auth", "path": "packages/auth", "name": "@superfunctions/auth" },
   { "slug": "superfunctions-admin", "path": "packages/admin", "name": "@superfunctions/admin" },
   { "slug": "superfunctions-cli", "path": "packages/cli", "name": "@superfunctions/cli" },
+  { "slug": "superfunctions", "path": "packages/superfunctions", "name": "superfunctions", "kind": "bare", "cli": "superfunctions-cli" },
   { "slug": "superfunctions-db", "path": "packages/db", "name": "@superfunctions/db" },
   { "slug": "superfunctions-config", "path": "packages/config", "name": "@superfunctions/config" },
   { "slug": "superfunctions-envelope", "path": "packages/envelope", "name": "@superfunctions/envelope" },

@@ -196,6 +196,7 @@
     "secfn-server": "public",
     "sendfn": "public",
     "sendfn-admin": "public",
+    "superfunctions": "public",
     "superfunctions-admin": "public",
     "superfunctions-auth": "public",
     "superfunctions-botfn-admin": "public",

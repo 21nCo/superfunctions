@@ -6,9 +6,16 @@
 
 import { Command } from "commander";
 import { createRequire } from "node:module";
+import { expectedCliMismatch } from "./utils/expected-cli.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
+
+const mismatch = expectedCliMismatch(pkg);
+if (mismatch) {
+  console.error(`superfunctions: ${mismatch}`);
+  process.exit(1);
+}
 
 const program = new Command();
 

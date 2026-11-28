@@ -1,0 +1,47 @@
+{
+  "name": "superfunctions",
+  "version": "0.2.3",
+  "description": "The Superfunctions command line: npx superfunctions runs @superfunctions/cli at the same version",
+  "type": "module",
+  "bin": {
+    "superfunctions": "./bin/cli.mjs",
+    "sfs": "./bin/cli.mjs"
+  },
+  "frontDoor": {
+    "cli": "@superfunctions/cli"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node --check bin/cli.mjs",
+    "test": "node --test test/front-door.test.mjs"
+  },
+  "dependencies": {
+    "@superfunctions/cli": "0.2.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "superfunctions",
+    "cli",
+    "schema",
+    "migration"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "packages/superfunctions"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/superfunctions/issues"
+  },
+  "homepage": "https://github.com/21nCo/superfunctions/tree/dev/packages/superfunctions#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

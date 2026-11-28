@@ -35,7 +35,7 @@ export async function initConfig(options: { force: boolean }) {
       return;
     }
 
-    const template = `// superfunctions.config.js\n// Minimal JS config (use JS to avoid runtime TS loader requirements)\nimport { defineConfig } from '@superfunctions/cli';\n\nexport default defineConfig({\n  adapter: { type: '${adapterType}' },\n  migrationsDir: './migrations',\n  // Option 1: Specify files manually\n  // libraries: ['./src/index.ts', './src/server.ts'],\n  \n  // Option 2: Auto-discover (recommended)\n  autoDiscover: true,\n});\n`;
+    const template = `// superfunctions.config.js\n// Minimal JS config (use JS to avoid runtime TS loader requirements). A plain object, so it needs no import of\n// @superfunctions/cli (for example when only the superfunctions package is installed). With @superfunctions/cli as a\n// direct dependency, editors can type it: /** @type {import('@superfunctions/cli').SuperfunctionsConfig} */\n\nexport default {\n  adapter: { type: '${adapterType}' },\n  migrationsDir: './migrations',\n  // Option 1: Specify files manually\n  // libraries: ['./src/index.ts', './src/server.ts'],\n  \n  // Option 2: Auto-discover (recommended)\n  autoDiscover: true,\n};\n`;
 
     // Write config file
     fs.writeFileSync(target, template, "utf8");
