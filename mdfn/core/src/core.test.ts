@@ -5,18 +5,21 @@ import {
   createSnapshot,
   hashString,
   mapAnchor,
+  mapSidecar,
   resolveExtensions,
   restoreSnapshot,
   smallestSourceChange,
   type EditorProjector,
   type MdfnDocument,
   type MdfnExtension,
+  type MdfnSelection,
   createCommentThread,
   createSuggestion,
   decideSuggestion,
   transitionReview,
   validateMdfnSidecar,
 } from "./index";
+import { immutableValue } from "./immutable";
 
 const projector: EditorProjector = {
   parse(markdown) {
@@ -36,6 +39,33 @@ const projector: EditorProjector = {
 };
 
 describe("@mdfn/core", () => {
+  it("preserves own JSON prototype-named metadata without changing the object prototype", () => {
+    const metadata = JSON.parse('{"__proto__":{"secret":"own-data"},"constructor":"literal"}');
+    const sidecar = validateMdfnSidecar({ assets: [{ id: "a", mediaType: "text/plain", metadata }] })!;
+    const cloned = sidecar.assets![0].metadata!;
+    expect(Object.hasOwn(cloned, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+    expect(JSON.stringify(cloned)).toBe(JSON.stringify(metadata));
+    expect(Object.isFrozen(cloned.__proto__)).toBe(true);
+  });
+
+  it("reuses unchanged immutable sidecar data and reports only actual anchor changes", () => {
+    const input = { assets: [{ id: "a", mediaType: "text/plain", metadata: { large: ["data"] } }], comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "m", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00Z" }] }] };
+    // A shallow-frozen input must still be detached from mutable descendants.
+    const editor = createEditor({ markdown: "abc", projector, sidecar: Object.freeze(input) });
+    const before = editor.getState().sidecar!;
+    input.assets[0].metadata.large[0] = "mutated";
+    expect(before.assets![0].metadata!.large).toEqual(["data"]);
+    expect(editor.dispatch(new Transaction().replaceSource(3, 3, "d")).sidecarChanged).toBe(false);
+    expect(editor.getState().sidecar).toBe(before);
+    expect(editor.dispatch(new Transaction().replaceSource(0, 0, "x")).sidecarChanged).toBe(true);
+    const after = editor.getState().sidecar!;
+    expect(after.assets).toBe(before.assets);
+    expect(after.comments![0].messages).toBe(before.comments![0].messages);
+    expect(after.comments![0].anchor).toEqual({ from: 2, to: 3 });
+    expect(before.comments![0].anchor).toEqual({ from: 1, to: 2 });
+  });
+
   it("detaches and deep-freezes projected documents before exposing editor state", () => {
     const projected: MdfnDocument = {
       type: "doc",
@@ -167,6 +197,33 @@ describe("@mdfn/core", () => {
     expect(editor.canUndo()).toBe(false);
     expect(editor.canRedo()).toBe(false);
     expect(editor.undo()).toBe(false);
+  });
+
+  it("keeps selection fields supplied through a prototype", () => {
+    const editor = createEditor({ markdown: "abc\n", projector });
+    editor.dispatch(new Transaction().setSelection(Object.create({ kind: "text", anchor: 1, head: 2 })));
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: 1, head: 2 });
+  });
+
+  it("commits the selection values it validated when fields are getters", () => {
+    const editor = createEditor({ markdown: "abc\n", projector });
+    const reads = { anchor: 0, head: 0, nodeId: 0 };
+    const text = {
+      kind: "text",
+      get anchor() { reads.anchor += 1; return reads.anchor === 1 ? 1 : 999; },
+      get head() { reads.head += 1; return reads.head === 1 ? 2 : -1; },
+    } as unknown as MdfnSelection;
+    editor.dispatch(new Transaction().setSelection(text));
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: 1, head: 2 });
+    expect(reads).toMatchObject({ anchor: 1, head: 1 });
+
+    const node = {
+      kind: "node",
+      get nodeId() { reads.nodeId += 1; return reads.nodeId === 1 ? "paragraph-1" : 42; },
+    } as unknown as MdfnSelection;
+    editor.dispatch(new Transaction().setSelection(node));
+    expect(editor.getState().selection).toEqual({ kind: "node", nodeId: "paragraph-1" });
+    expect(reads.nodeId).toBe(1);
   });
 
   it("maps canonical selections through source replacement", () => {
@@ -446,6 +503,171 @@ describe("@mdfn/core", () => {
     expect(Object.isFrozen(validated.assets)).toBe(true);
     expect(Object.isFrozen(validated.assets?.[0]?.metadata)).toBe(true);
     expect(Object.isFrozen(validated.assets?.[0]?.metadata?.nested)).toBe(true);
+  });
+
+  it("bounds aggregate editorial text by maxTextLength unless another limit is configured", () => {
+    const message = (index: number) => ({ id: `m${index}`, authorId: "a", body: "x".repeat(6), createdAt: "2026-01-01T00:00:00.000Z" });
+    const sidecar = { comments: [{ id: "c", anchor: { from: 0, to: 0 }, resolved: false, messages: [0, 1, 2, 3].map(message) }] };
+    expect(() => validateMdfnSidecar(sidecar, { maxTextLength: 8 })).toThrowError("MDFN_SIDECAR_TEXT_LIMIT_EXCEEDED");
+    expect(validateMdfnSidecar(sidecar, { maxTextLength: 8, maxAggregateTextLength: 24 })?.comments).toHaveLength(1);
+  });
+
+  describe("anchor mapping matches the dev implementation", () => {
+    type Range = { from: number; to: number; insertedLength: number };
+    type Anchor = Parameters<typeof mapAnchor>[0];
+    type Sidecar = NonNullable<Parameters<typeof mapSidecar>[0]>;
+    // Inline copy of mapAnchor/mapSidecar on dev before reuse was ported; the
+    // ported versions must behave the same for every input that is not reused.
+    const devMapPosition = (position: number, range: Range, affinity: "before" | "after") => {
+      const delta = range.insertedLength - (range.to - range.from);
+      if (position < range.from || (position === range.from && affinity === "before")) return position;
+      if (position > range.to || (position === range.to && affinity === "after")) return position + delta;
+      return affinity === "before" ? range.from : range.from + range.insertedLength;
+    };
+    const devMapAnchor = (anchor: Anchor, ranges: readonly Range[]): Anchor =>
+      ranges.reduce<Anchor>((current, range) => {
+        const affinity = current.affinity ?? "after";
+        const from = devMapPosition(current.from, range, affinity === "before" ? "before" : "after");
+        const to = devMapPosition(current.to, range, affinity === "after" ? "after" : "before");
+        return { ...current, from: Math.min(from, to), to: Math.max(from, to) };
+      }, anchor);
+    const devMapSidecar = (sidecar: Sidecar | undefined, ranges: readonly Range[]) => {
+      if (!sidecar || ranges.length === 0) return sidecar;
+      return immutableValue({
+        ...sidecar,
+        comments: sidecar.comments?.map((thread) => ({ ...thread, anchor: devMapAnchor(thread.anchor, ranges) })),
+        suggestions: sidecar.suggestions?.map((suggestion) => ({ ...suggestion, anchor: devMapAnchor(suggestion.anchor, ranges) })),
+      });
+    };
+    const outcome = (run: () => unknown) => {
+      try {
+        const value = run();
+        return { value, frozen: Object.isFrozen(value) };
+      } catch (error) {
+        return { error: String(error) };
+      }
+    };
+    // Each case builds fresh inputs per call, because its getters and proxies keep state.
+    const sameAsDevAnchor = (make: () => [Anchor, readonly Range[]]) => {
+      const ported = outcome(() => mapAnchor(...make()));
+      expect(ported).toEqual(outcome(() => devMapAnchor(...make())));
+      return ported;
+    };
+    const sameAsDevSidecar = (make: () => [Sidecar | undefined, readonly Range[]]) => {
+      const ported = outcome(() => mapSidecar(...make()));
+      expect(ported).toEqual(outcome(() => devMapSidecar(...make())));
+      return ported;
+    };
+    const insertAtZero = (): Range[] => [{ from: 0, to: 0, insertedLength: 1 }];
+    const thread = (anchor: Anchor) => ({ id: "c", anchor, resolved: false, messages: [] });
+    const suggestion = (anchor: Anchor) => ({ id: "s", anchor, replacement: "x", authorId: "a", status: "pending" as const, createdAt: "2026-08-12T00:00:00.000Z" });
+    // The has trap reports index 0 present on the first check only.
+    const presentOnce = () => {
+      let checks = 0;
+      return new Proxy(insertAtZero(), { has: (target, key) => (key === "0" ? ++checks === 1 : Reflect.has(target, key)) });
+    };
+    const throwingRanges = () => new Proxy(insertAtZero(), {
+      has: (target, key) => { if (key === "0") throw new Error("range checked"); return Reflect.has(target, key); },
+      get: (target, key, receiver) => { if (key === "0") throw new Error("range read"); return Reflect.get(target, key, receiver); },
+    });
+    const withAffinityGetter = (onRead: () => void) => Object.defineProperty({ from: 3, to: 3 }, "affinity", {
+      enumerable: true,
+      get: () => { onRead(); return undefined; },
+    }) as unknown as Anchor;
+
+    it("applies a range seen once by the has trap inside a one-entry sidecar", () => {
+      expect(sameAsDevAnchor(() => [{ from: 3, to: 3 }, presentOnce()]).value).toEqual({ from: 4, to: 4 });
+      expect(sameAsDevSidecar(() => [{ comments: [thread({ from: 3, to: 3 })] }, presentOnce()]).value?.comments?.[0]?.anchor).toEqual({ from: 4, to: 4 });
+      expect(sameAsDevSidecar(() => [{ suggestions: [suggestion({ from: 3, to: 3 })] }, presentOnce()]).value?.suggestions?.[0]?.anchor).toEqual({ from: 4, to: 4 });
+    });
+
+    it("does not probe the ranges when a sidecar has no anchors", () => {
+      expect(sameAsDevSidecar(() => [{ comments: [] }, throwingRanges()])).not.toHaveProperty("error");
+      expect(sameAsDevSidecar(() => [{ suggestions: [] }, throwingRanges()])).not.toHaveProperty("error");
+      expect(sameAsDevSidecar(() => [{}, throwingRanges()])).not.toHaveProperty("error");
+    });
+
+    it("handles holes, inherited fields and getters the way dev does", () => {
+      sameAsDevAnchor(() => [{ from: 1, to: 2 }, new Array(1)]);
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 1, to: 2 })] }, new Array(1)]);
+      const sparse = (): Range[] => { const ranges: Range[] = []; ranges[1] = { from: 0, to: 0, insertedLength: 1 }; return ranges; };
+      expect(sameAsDevAnchor(() => [{ from: 1, to: 2 }, sparse()]).value).toEqual({ from: 2, to: 3 });
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 1, to: 2 })] }, sparse()]);
+
+      const inherited = () => Object.assign(Object.create({ affinity: "before" }), { from: 2, to: 2 }) as Anchor;
+      const atAnchor = (): Range[] => [{ from: 2, to: 2, insertedLength: 3 }];
+      sameAsDevAnchor(() => [inherited(), atAnchor()]);
+      sameAsDevSidecar(() => [{ comments: [thread(inherited())] }, new Array(1)]);
+      sameAsDevSidecar(() => [{ comments: [thread(inherited())] }, atAnchor()]);
+
+      class Thread {
+        readonly id = "c";
+        readonly resolved = false;
+        readonly messages = [];
+        get anchor() { return { from: 1, to: 2 }; }
+      }
+      class GetterSidecar {
+        get comments() { return [new Thread()]; }
+        get suggestions() { return [suggestion({ from: 0, to: 1 })]; }
+      }
+      sameAsDevSidecar(() => [new GetterSidecar() as unknown as Sidecar, [{ from: 5, to: 5, insertedLength: 1 }]]);
+      sameAsDevSidecar(() => [{ comments: null } as unknown as Sidecar, insertAtZero()]);
+    });
+
+    it("visits ranges as native reduce does when getters change them", () => {
+      const deletingFirst = (): [Anchor, Range[]] => { const ranges = insertAtZero(); return [withAffinityGetter(() => { delete ranges[0]; }), ranges]; };
+      expect(sameAsDevAnchor(deletingFirst).value).toMatchObject({ from: 4, to: 4 });
+      sameAsDevSidecar(() => { const [anchor, ranges] = deletingFirst(); return [{ comments: [thread(anchor)] }, ranges]; });
+
+      const appending = (): [Anchor, Range[]] => { const ranges = insertAtZero(); return [withAffinityGetter(() => { ranges.push({ from: 0, to: 0, insertedLength: 5 }); }), ranges]; };
+      expect(sameAsDevAnchor(appending).value).toMatchObject({ from: 4, to: 4 });
+
+      const fractional = () => new Proxy([...insertAtZero(), { from: 0, to: 0, insertedLength: 5 }], {
+        get: (target, key, receiver) => (key === "length" ? 1.5 : Reflect.get(target, key, receiver)),
+      });
+      expect(sameAsDevAnchor(() => [{ from: 3, to: 3 }, fractional()]).value).toEqual({ from: 4, to: 4 });
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 3, to: 3 })] }, fractional()]);
+
+      // Collection getters that replace or append ranges before the entries are mapped.
+      const replacing = (): [Sidecar, Range[]] => {
+        const ranges = insertAtZero();
+        return [Object.defineProperty({}, "comments", { enumerable: true, get: () => { ranges[0] = { from: 0, to: 0, insertedLength: 5 }; return [thread({ from: 1, to: 2 })]; } }) as Sidecar, ranges];
+      };
+      expect(sameAsDevSidecar(replacing).value?.comments?.[0]?.anchor).toEqual({ from: 6, to: 7 });
+      const growing = (): [Sidecar, Range[]] => {
+        const ranges = insertAtZero();
+        return [Object.defineProperties({}, {
+          comments: { enumerable: true, get: () => [thread({ from: 1, to: 2 })] },
+          suggestions: { enumerable: true, get: () => { ranges.push({ from: 0, to: 0, insertedLength: 5 }); return [suggestion({ from: 1, to: 2 })]; } },
+        }) as Sidecar, ranges];
+      };
+      sameAsDevSidecar(growing);
+    });
+
+    it("reuses only unchanged values it already detached and never returns a caller-owned sidecar", () => {
+      const later = (): Range[] => [{ from: 9, to: 9, insertedLength: 1 }];
+      const frozenAnchor = immutableValue({ from: 1, to: 2 });
+      expect(mapAnchor(frozenAnchor, later())).toBe(frozenAnchor);
+      const owned = { from: 1, to: 2 };
+      const copied = mapAnchor(owned, later());
+      expect(copied).not.toBe(owned);
+      owned.from = 0;
+      expect(copied).toEqual({ from: 1, to: 2 });
+
+      const frozenSidecar = immutableValue({ comments: [thread({ from: 1, to: 2 })], suggestions: [suggestion({ from: 4, to: 5 })] }) as Sidecar;
+      expect(mapSidecar(frozenSidecar, later())).toBe(frozenSidecar);
+      const moved = mapSidecar(frozenSidecar, [{ from: 3, to: 3, insertedLength: 1 }])!;
+      expect(moved).not.toBe(frozenSidecar);
+      expect(Object.isFrozen(moved)).toBe(true);
+      expect(moved.comments![0]).toBe(frozenSidecar.comments![0]);
+      expect(moved.suggestions![0]!.anchor).toEqual({ from: 5, to: 6 });
+      expect(moved).toEqual(devMapSidecar(frozenSidecar, [{ from: 3, to: 3, insertedLength: 1 }]));
+
+      const callerOwned = { comments: [thread({ from: 1, to: 2 })] };
+      const mapped = sameAsDevSidecar(() => [callerOwned, later()]);
+      expect(mapped.value).not.toBe(callerOwned);
+      expect(mapped.frozen).toBe(true);
+    });
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {
