@@ -683,6 +683,43 @@ describe("completion names and descriptions", () => {
     );
   });
 
+  it("cuts a command left out where it leads back to a kept command above it", () => {
+    type Node = { name: string; options: CompletionOption[]; commands: Node[] };
+    // c1, c2 and c3 are kept, c4 is too deep and c5 to c32 are reported inside it.
+    const chain = (): Node[] => {
+      const nodes: Node[] = Array.from({ length: 32 }, (_, index) => ({ name: `c${index + 1}`, options: [], commands: [] }));
+      nodes.forEach((node, index) => node.commands.push(...nodes.slice(index + 1, index + 2)));
+      return nodes;
+    };
+    const plain = chain();
+    const looped = chain();
+    looped[31]!.commands.push(looped[0]!);
+    const render = (nodes: Node[]) => renderCompletion({ name: "tool", options: [], commands: [nodes[0]!] } as CompletionSpec, "bash");
+    const expected = render(plain);
+    expect(expected.skipped).toHaveLength(29);
+    expect(render(looped)).toEqual(expected);
+  });
+
+  it("cuts a command with no usable name where it leads back to the kept command it sits under", () => {
+    type Node = { name: string; options: CompletionOption[]; commands: Node[] };
+    const kept: Node = { name: "kept", options: [{ long: "--x", takesValue: false } as CompletionOption], commands: [] };
+    kept.commands.push({ name: "bad!", options: [], commands: [kept] });
+    expect(renderCompletion({ name: "tool", options: [], commands: [kept] } as CompletionSpec, "bash").skipped).toEqual([
+      { kind: "command", name: "bad!", path: ["kept"], reason: "invalid-name" },
+    ]);
+  });
+
+  it("does not list a kept command again inside a too-deep command of a two-command cycle", () => {
+    type Node = { name: string; options: CompletionOption[]; commands: Node[] };
+    // a and b list each other: a, b and a are kept, b is too deep there and a is not listed again inside it.
+    const a: Node = { name: "a", options: [{ long: "--x", takesValue: false } as CompletionOption], commands: [] };
+    const b: Node = { name: "b", options: [], commands: [a] };
+    a.commands.push(b);
+    expect(renderCompletion({ name: "tool", options: [], commands: [a] } as CompletionSpec, "bash").skipped).toEqual([
+      { kind: "command", name: "b", path: ["a", "b", "a"], reason: "too-deep" },
+    ]);
+  });
+
   it("stops at the third level of a cyclic hand-written spec", () => {
     const loop: { name: string; options: never[]; commands: unknown[] } = { name: "loop", options: [], commands: [] };
     loop.commands.push(loop);
