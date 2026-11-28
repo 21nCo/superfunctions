@@ -87,6 +87,7 @@ describe("parser canaries", () => {
       "src/json-value.ts",
       "src/sensitive-keys.ts",
       "src/errors.ts",
+      "src/completion.ts",
     ];
 
     const contents = await Promise.all(

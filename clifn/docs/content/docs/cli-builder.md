@@ -33,4 +33,6 @@ In text mode, emit user-facing messages with `ctx.output`. In JSON mode, returne
 
 Return `exitCode` for an expected product failure you have handled. An invalid or negative returned exit code normalizes to zero, so set explicit positive codes for failure cases. Thrown failures normalize to code 1. The runner does not print collected diagnostics automatically; use `onDiagnostics` or your own output policy to present them.
 
+To add a `completion bash` command, pass a hand-written spec to `renderCompletion(spec, "bash")` from `@clifn/core/completion` and print the script; `completionInstructions(name, "bash")` gives the lines that tell users where to save it. See the [package README](/docs/reference/core-readme) for the full example.
+
 See the [runner source](https://github.com/21nCo/super-functions/blob/dev/clifn/core/src/runner.ts) and [package examples](/docs/reference/core-readme) for `commander` and `cac` integration.

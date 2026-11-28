@@ -116,6 +116,21 @@ export {
   type ApiRequestOptions,
   type ApiResponse,
 } from "./client.js";
+export {
+  CompletionError,
+  completionInstructions,
+  renderCompletion,
+  type CompletionCommand,
+  type CompletionErrorCode,
+  type CompletionInstructionsOptions,
+  type CompletionOption,
+  type CompletionResult,
+  type CompletionShell,
+  type CompletionSkip,
+  type CompletionSkipKind,
+  type CompletionSkipReason,
+  type CompletionSpec,
+} from "./completion.js";
 export { ui } from "./ui.js";
 export { readJsonStdin, writeJsonStdout, InvalidJsonStdinError } from "./stdio.js";
 export {
