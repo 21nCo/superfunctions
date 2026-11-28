@@ -295,6 +295,36 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - requests `GET <registry>/-/package/<name>/dist-tags` (a scoped name as `@scope%2Fname`) with `Accept: application/json`, from `registryUrl`, else an `https:` `npm_config_registry` / `NPM_CONFIG_REGISTRY`, else `https://registry.npmjs.org`; only `latest` is read, and a network error, timeout, status other than 200, body that is not JSON (or over 64 KiB) or missing `latest` caches `{ checkedAt, error: true }` and gives no notice
   - versions follow a closed grammar (D13), `MAJOR.MINOR.PATCH` with an optional `-prerelease` and ignored `+build`, compared by SemVer 2.0.0 precedence; a notice needs a `latest` that is greater and not a prerelease
   - the cache is `<state>/update-check.json` under `resolveAppPaths(appName).state`, written to a unique temporary file and renamed (mode `0o600` on POSIX), so concurrent runs leave one valid file; a missing, unreadable or malformed cache counts as never checked, and temporary files older than an hour are removed by the next write. A hostile registry or proxy beyond TLS, symlinks planted in the state directory and a hostile local user are not defended against yet
+- `@clifn/core/completion`
+  - `renderCompletion(spec, "bash")` -> `{ script, skipped }`: subcommands (to three levels), their aliases, flags (each flag name at a level follows one definition: the level's own, else the nearest ancestor's that passes down) and the choices of a flag that takes a value; a value without choices is left to bash's default completion, and a following word that starts with `-` is not read as a value the flag may leave out (`valueOptional`). The script uses only bash 3.2 constructs (no `mapfile`, associative arrays or `compopt`), joins the parts of a word bash splits at `:` and `=`, runs such as `::` included (blanks keep separate words apart), shows no descriptions, stops completing flags and subcommands after a standalone `--`, and compares the words before the cursor without the quotes and backslashes typed into them (nothing is evaluated)
+  - the spec is written by hand: `{ name, commands: [{ name, description?, aliases?, options, commands? }], options: [{ long?, short?, description?, takesValue, choices?, valueOptional?, inherited? }] }`, with flags written with their dashes (`--format`, `-f`); `inherited: false` keeps a flag from the level's subcommands, which keep their ancestor's definition of the same name
+  - command, alias and flag names (without dashes) and choices must match `^[A-Za-z0-9][A-Za-z0-9:_-]*$`; any other name, a repeated name and a command below the third level is left out of the script and listed in `skipped` (`{ kind, name, path, reason }`); a program name outside the grammar or a malformed spec throws `CompletionError` with `CLIFN_COMPLETION_INVALID_SPEC`, and any shell other than `bash` `CLIFN_COMPLETION_UNSUPPORTED_SHELL`
+  - `completionInstructions(name, "bash", { command? })` returns the lines telling the user where the script goes (`~/.local/share/bash-completion/completions/<name>` or `eval` from `~/.bashrc`); nothing writes files (D11)
+
+### Shell completion
+
+A `completion bash` command takes a few lines. Print the script on stdout, so users can redirect it to a file, and the instructions on stderr:
+
+```ts
+import { completionInstructions, renderCompletion, type CompletionSpec } from "@clifn/core/completion";
+
+const spec: CompletionSpec = {
+  name: "my-cli",
+  options: [{ long: "--format", short: "-f", description: "Output format", takesValue: true, choices: ["text", "json"] }],
+  commands: [{ name: "serve", aliases: ["s"], options: [{ long: "--port", takesValue: true }] }],
+};
+
+program
+  .command("completion")
+  .description("Print the bash completion script")
+  .argument("<shell>", "bash")
+  .action((shell) => {
+    process.stdout.write(renderCompletion(spec, shell).script);
+    for (const line of completionInstructions(spec.name, shell)) process.stderr.write(`${line}\n`);
+  });
+```
+
+Interactive checks in a real bash are part of CLI-8.
 
 ## Adoption boundary
 
@@ -405,6 +435,7 @@ If `extfn/cli` needs a generic capability that is not yet exported by `clifn`, t
 - `@clifn/core/config-loader` rejects remote config URLs and unsupported extensions with explicit error codes.
 - `@clifn/core/config-loader` with `policy: "data-only"` never runs a discovered config and runs an explicit TS/JS/MJS/CJS config only with `trustExecutableConfig: true` (`CLIFN_CONFIG_UNTRUSTED` otherwise).
 - `@clifn/core/env` uses explicit `CLIFN_ENV_*` error codes for missing, invalid, and out-of-range values.
+- `@clifn/core/completion` only builds script text: it never writes files.
 
 ## Conduct v0.3 compatibility note
 

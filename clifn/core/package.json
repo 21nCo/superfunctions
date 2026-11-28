@@ -1,6 +1,6 @@
 {
   "name": "@clifn/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Reusable CLI primitives runtime for the Superfunctions ecosystem",
   "type": "module",
   "main": "./dist/index.js",
@@ -73,6 +73,10 @@
     "./update-check": {
       "types": "./dist/update-check.d.ts",
       "import": "./dist/update-check.js"
+    },
+    "./completion": {
+      "types": "./dist/completion.d.ts",
+      "import": "./dist/completion.js"
     }
   },
   "engines": {
@@ -103,7 +107,8 @@
     "paths",
     "terminal",
     "stdio",
-    "update-check"
+    "update-check",
+    "completion"
   ],
   "author": "21n",
   "license": "MIT",
