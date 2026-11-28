@@ -1,0 +1,44 @@
+scripts/assert-bare-release.mjs
+  s_b7546bb15c0313::t_f4aef99ab913b4 1-195,197-202
+  s_b7546bb15c0313::t_8fdef58ed09160 196
+README.md
+  s_b7546bb15c0313::t_a4b64564324ea5 172-202
+scripts/assert-bare-release.test.mjs
+  s_b7546bb15c0313::t_4c42b2db9b0414 99,282
+  s_b7546bb15c0313::t_30bb4befb234f3 1-98,100-281,283-303
+scripts/verify-owners.test.mjs
+  s_b7546bb15c0313::t_7eaed54012565d 171-189
+scripts/resolve-release-tag.mjs
+  s_b7546bb15c0313::t_8a8a699af2671b 20,81-82,88,92-125,152
+scripts/bare-cli-shim.mjs
+  s_b7546bb15c0313::t_31e852b2e05569 15,100-101
+  s_b7546bb15c0313::t_a8eb9e7dd4a97f 1-14,16-99,102-103
+.github/workflows/ci.yml
+  s_b7546bb15c0313::t_91318afe7a3e43 532-534
+scripts/release-gate-workflows.test.mjs
+  s_b7546bb15c0313::t_d93ec6d29716e9 146-156
+turbo.json
+  s_b7546bb15c0313::t_91318afe7a3e43 14-15
+scripts/ci-plan.mjs
+  s_b7546bb15c0313::t_91318afe7a3e43 49-50
+.github/workflows/publish-tag.yml
+  s_b7546bb15c0313::t_91318afe7a3e43 110-116
+scripts/verify-owners.mjs
+  s_b7546bb15c0313::t_802dc0bf650acf 51-54,811-827,842
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72d4eab160a65aa5f2d6a9f8ffbb4a7ea5262353",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
