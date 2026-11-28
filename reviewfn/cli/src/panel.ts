@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { ComposioLinearContextAdapter } from "@superfunctions/reviewfn-context-composio";
 import {
-  effectiveRetention, FileArtifactStore, isPanelReport, isolatedGitEnvironment, loadPanelPolicy, PANEL_REPORT_COPY_NAMES, panelReportCanceled, panelStructureIssues, PanelCoordinator, RepositoryMarkdownContextAdapter, renderMarkdownReport, renderPanelMarkdownReport,
+  CODE_REFERENCES_ADAPTER_ID, CodeReferencesContextAdapter, codeReferencesOptions, effectiveRetention, FileArtifactStore, isPanelReport, isolatedGitEnvironment, loadPanelPolicy, PANEL_REPORT_COPY_NAMES, panelReportCanceled, panelStructureIssues, PanelCoordinator, RepositoryMarkdownContextAdapter, renderMarkdownReport, renderPanelMarkdownReport,
   ReviewFnError, safeDirectory, safeRead, validateConfig, validatePolicy,
   type ArtifactStore, type ContextAdapter, type ExecutionAdapter, type PanelHarnessAdapter, type PanelPolicy, type PanelReport, type ReviewFnConfig, type ReviewPolicy, type ReviewReport,
 } from "@superfunctions/reviewfn-core";
@@ -64,10 +64,15 @@ export async function loadRunConfiguration(root: string, base: string, flags: Fl
   return { config: validateConfig(config), policy: validatePolicy(policy) };
 }
 
-export function contextAdapters(config: ReviewFnConfig): ContextAdapter[] {
+/**
+ * The context adapters a configuration names. `code-references` takes its pairs and exclusions from the loaded panel
+ * policy, and its defaults (no pairs, the default exclusions) without one.
+ */
+export function contextAdapters(config: ReviewFnConfig, panelPolicy?: PanelPolicy): ContextAdapter[] {
   const adapters = new Map<string, ContextAdapter>();
   for (const item of config.context) {
     if (item.adapter === "repository-markdown") adapters.set(item.adapter, new RepositoryMarkdownContextAdapter());
+    else if (item.adapter === CODE_REFERENCES_ADAPTER_ID) adapters.set(item.adapter, new CodeReferencesContextAdapter(panelPolicy ? codeReferencesOptions(panelPolicy) : {}));
     else if (item.adapter === "composio-linear") adapters.set(item.adapter, new ComposioLinearContextAdapter());
   }
   return [...adapters.values()];
@@ -354,7 +359,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       await mkdir(ownedArtifacts, { recursive: true, mode: 0o700 });
       coordinator = new PanelCoordinator({
         sourceControl: new GitSourceControlAdapter({ targetBranch: snapshot.targetBranch }),
-        contexts: contextAdapters(config),
+        contexts: contextAdapters(config, panelPolicy),
         harnesses,
         harnessContractVersions: contractVersions,
         execution: dependencies.execution?.(ownedStore) ?? new LocalIsolatedExecutionAdapter(ownedStore),

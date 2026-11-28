@@ -57,6 +57,10 @@ export function applyRepositoryPanelPolicy(trustedInput: PanelPolicy, repository
     if (!Object.hasOwn(trustedProfiles, name) || trustedProfiles[name] === undefined) reasons.push(`adds harness profile ${name}`);
     else if (stableStringify(profile) !== stableStringify(trustedProfiles[name])) reasons.push(`changes harness profile ${name}`);
   }
+  // Code-reference context rules come only from trusted configuration, like profiles.
+  for (const key of ["contextPairs", "contextExcludeGlobs"] as const) {
+    if (stableStringify(repository[key] ?? null) !== stableStringify(trusted[key] ?? null)) reasons.push(`changes ${key}`);
+  }
   const repositoryIds = new Set(repository.slots.map(slot => slot.id));
   trusted.slots.forEach((slot, index) => {
     const candidate = repository.slots[index];

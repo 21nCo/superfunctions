@@ -17,6 +17,8 @@ export interface GitRunOptions {
   maxOutputBytes?: number;
   /** Receives standard output as it arrives instead of keeping it, so no output limit applies. */
   onOutput?: (chunk: Buffer) => void;
+  /** Exit codes other than 0 that also succeed, such as 1 for a `git grep` without matches. */
+  successExitCodes?: readonly number[];
 }
 
 /**
@@ -44,7 +46,7 @@ export function runGit(executable: string, args: string[], options: GitRunOption
     child.once("error", reject);
     child.once("close", code => {
       if (overflow) reject(new GitOutputLimitError(`git ${command} printed more than the run's ${limit}-byte limit for Git output.`));
-      else if (code === 0) resolve(Buffer.concat(chunks).toString("utf8"));
+      else if (code === 0 || (code !== null && options.successExitCodes?.includes(code))) resolve(Buffer.concat(chunks).toString("utf8"));
       else reject(new Error(`git ${command} exited with ${String(code)}: ${stderr.trim()}`));
     });
   });

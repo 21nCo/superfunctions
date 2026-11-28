@@ -1,11 +1,15 @@
 import { sha256 } from "./canonical.js";
+import { isReviewContextSource } from "./context/code-references.js";
 import type { ChangeSnapshot, ContextManifest, ReviewFnConfig, ReviewPolicy, TestReceipt } from "./types.js";
 
 export const REVIEW_PROMPT_VERSION = "reviewfn-v1";
 
-/** The frozen context a prompt may show: sources of accepted types (comments only when they may clarify), and the available ones that must be accounted for. */
+/**
+ * The frozen context a prompt may show as authority: sources of accepted types (comments only when they may clarify),
+ * never code-reference review context, and the available ones that must be accounted for.
+ */
 export function authorizedPromptContext(context: ContextManifest, policy: ReviewPolicy): { context: ContextManifest; authoritativeSourceIds: string[] } {
-  const authorizedSources = context.sources.filter(source => policy.sourceAuthority.acceptedTypes.includes(source.type) && (source.type !== "comment" || policy.sourceAuthority.commentsMayClarify));
+  const authorizedSources = context.sources.filter(source => !isReviewContextSource(source) && policy.sourceAuthority.acceptedTypes.includes(source.type) && (source.type !== "comment" || policy.sourceAuthority.commentsMayClarify));
   return {
     context: { ...context, sources: authorizedSources, selection: { ...context.selection, selected: context.selection.selected.filter(id => authorizedSources.some(source => source.id === id)) } },
     authoritativeSourceIds: authorizedSources.filter(source => source.status === "available" && typeof source.content === "string" && source.content !== "").map(source => source.id),
