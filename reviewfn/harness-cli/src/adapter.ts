@@ -230,7 +230,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       try {
         const executable = await this.resolveExecutable(config);
         const key = await this.versionKey(executable, profile, environment);
-        const probed = await this.probeVersion(executable, key, profile, environment, secrets, VERSION_TIMEOUT_MS, signal);
+        const probed = await this.probeVersion(executable, key, profile, environment, secrets, Date.now() + VERSION_TIMEOUT_MS, signal);
         if ("error" in probed) diagnostics.push({ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: redact(probed.error, secrets) });
         else version = probed.version;
       } catch (error) {
@@ -300,7 +300,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const cached = this.versions.get(key);
     const warm = cached && publishable(cached, run.secrets);
     const remaining = run.deadline - Date.now();
-    const probed = warm && !("error" in warm) ? warm : run.input.signal?.aborted || remaining <= 0 ? undefined : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, Math.min(VERSION_TIMEOUT_MS, remaining), run.input.signal);
+    const probed = warm && !("error" in warm) ? warm : run.input.signal?.aborted || remaining <= 0 ? undefined : await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, Math.min(Date.now() + VERSION_TIMEOUT_MS, run.deadline), run.input.signal);
     if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
     if (!probed || Date.now() >= run.deadline) return run.state.finish("timed_out", "The CLI exceeded its configured bound before its version was read.");
     if (!("error" in probed)) { run.state.harnessVersion = probed.version; return undefined; }
@@ -470,14 +470,14 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * failure's detail is redacted before it is cut to length, so a secret that crosses the cut cannot leak its prefix. A
    * probe that hangs or overruns its output bound says so, so the run can end timed_out.
    */
-  private async probeVersion(executable: string, key: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ version: string } | { error: string; timedOut: boolean }> {
+  private async probeVersion(executable: string, key: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], until: number, signal?: AbortSignal): Promise<{ version: string } | { error: string; timedOut: boolean }> {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
-    const started = Date.now();
+    const timeoutMs = Math.max(1, until - Date.now());
     try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
     catch (error) { return { error: redact(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
-    // A result that arrives after the probe's bound (and so after a run's deadline) is a timeout: nothing it printed is cached.
-    if (result.timedOut || Date.now() - started > timeoutMs) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
+    // A result that arrives, or is checked, after the probe's bound (never past a run's deadline) is a timeout and not cached.
+    if (result.timedOut || Date.now() > until) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
     // An interrupted probe observes nothing, so what it printed is neither published nor cached.
     if (result.canceled || signal?.aborted) return { error: "The CLI version command was canceled.", timedOut: false };
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
@@ -486,7 +486,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // Cached only once this caller's check accepts it, so a refusal never enters the cache or replaces an accepted entry.
     const observation = { ...version, output: `${result.stdout}\n${result.stderr}` };
     const checked = publishable(observation, secrets);
-    if (!("error" in checked)) this.versions.set(key, observation);
+    if (!("error" in checked) && Date.now() <= until) this.versions.set(key, observation);
     return checked;
   }
 

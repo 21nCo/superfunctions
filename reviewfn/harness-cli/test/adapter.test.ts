@@ -998,20 +998,25 @@ describe("CliHarnessAdapter preflight and configuration", () => {
 
   it("ends timed_out, not a pin mismatch, a run whose replacement version probe returns after its deadline", async () => {
     const secret = ["slow", "fixture", "credential"].join("-");
+    // What each probe reports depends on the test's phase, not on how many probes ran before it.
+    let phase: "seed" | "late" | "next" = "seed";
     let probes = 0;
     const runner: CommandRunner = async (_command, args) => {
       if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
-      if ((probes += 1) === 2) await new Promise(resolve => setTimeout(resolve, 150));
-      return { code: 0, signal: null, stdout: `fake-cli version ${[`1.2.3+build.${secret}`, "9.8.7"][probes - 1] ?? "1.2.3"}\n`, stderr: "", timedOut: false, canceled: false };
+      probes += 1;
+      if (phase === "late") await new Promise(resolve => setTimeout(resolve, 600));
+      return { code: 0, signal: null, stdout: `fake-cli version ${{ seed: `1.2.3+build.${secret}`, late: "9.8.7", next: "1.2.3" }[phase]}\n`, stderr: "", timedOut: false, canceled: false };
     };
     const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
     const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
     const allowlisted = { ...designated, inference: { ...designated.inference, credentialEnv: undefined } };
     expect((await harness.preflight(allowlisted)).ok).toBe(true);
-    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 50 } };
+    phase = "late";
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 300 } };
     const output = await harness.run(input(designated, { policy }));
     expect([output.terminal, output.error]).toEqual(["timed_out", "The CLI exceeded its configured bound before its version was read."]);
     // The late observation was not cached: the next run probes again and confirms its own version.
+    phase = "next";
     expect((await harness.run(input(designated))).observed?.harnessVersion).toBe("1.2.3");
     expect(probes).toBe(3);
   });
