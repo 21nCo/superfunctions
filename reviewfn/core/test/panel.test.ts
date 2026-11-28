@@ -149,7 +149,10 @@ describe("panel report v1", () => {
   });
 
   it("covers every validation code with a negative fixture", () => {
-    expect(negatives.map(([code]) => code).sort()).toEqual([...PANEL_VALIDATION_CODES].sort());
+    // REVIEWFN_GLOB_UNSUPPORTED comes only from validatePanelPolicy (a report with an invalid policy is
+    // REVIEWFN_PANEL_SCHEMA); test/code-references.test.ts covers it.
+    const policyOnly = new Set(["REVIEWFN_GLOB_UNSUPPORTED"]);
+    expect(negatives.map(([code]) => code).sort()).toEqual(PANEL_VALIDATION_CODES.filter(code => !policyOnly.has(code)).sort());
   });
 
   it.each(negatives)("returns exactly %s for its negative fixture", async (code, change) => {
