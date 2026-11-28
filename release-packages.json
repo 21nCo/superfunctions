@@ -164,6 +164,7 @@
   { "slug": "sendfn-admin", "path": "sendfn/admin", "name": "@sendfn/admin" },
   {"slug": "reviewfn-core", "path": "reviewfn/core", "name": "@superfunctions/reviewfn-core"},
   {"slug": "reviewfn-cli", "path": "reviewfn/cli", "name": "@superfunctions/reviewfn-cli"},
+  {"slug": "reviewfn", "path": "reviewfn/bare", "name": "reviewfn", "kind": "bare", "core": "reviewfn-core", "cli": "reviewfn-cli"},
   {"slug": "reviewfn-harness-codex", "path": "reviewfn/harness-codex", "name": "@superfunctions/reviewfn-harness-codex"},
   {"slug": "reviewfn-harness-claude-code", "path": "reviewfn/harness-claude-code", "name": "@superfunctions/reviewfn-harness-claude-code"},
   {"slug": "reviewfn-harness-cli", "path": "reviewfn/harness-cli", "name": "@superfunctions/reviewfn-harness-cli"},

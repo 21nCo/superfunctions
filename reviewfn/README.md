@@ -8,6 +8,7 @@ The first release is deliberately advisory. It cannot edit code, push, merge, or
 
 | Package | Responsibility |
 | --- | --- |
+| `reviewfn` | The front door: re-exports `@superfunctions/reviewfn-core`, and its `reviewfn` command runs `@superfunctions/reviewfn-cli` at the same version |
 | `@superfunctions/reviewfn-core` | Versioned contracts, identity, policy, orchestration, validation, artifacts and rendering |
 | `@superfunctions/reviewfn-cli` | Initialization, preflight, review, report rendering and evaluation commands |
 | `@superfunctions/reviewfn-harness-codex` | Codex CLI capability checks, bounded execution, JSONL normalization and structured output |
@@ -20,6 +21,8 @@ Every package is independently installable. No package depends on another Superf
 ## Local quick start
 
 Requires Node.js 22 or newer, Git, and a supported Codex CLI installation.
+
+Run it once with `npx reviewfn <command>` (the `reviewfn` package fetches the CLI at its own version), or install the CLI in the repository:
 
 ```sh
 npm install --save-dev @superfunctions/reviewfn-cli
