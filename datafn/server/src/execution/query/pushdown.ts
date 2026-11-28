@@ -268,6 +268,7 @@ export async function executePartialPushdownQuery(
   namespace: string,
   actorId?: string,
   allowUnknownResources = true,
+  projectRecords = true,
 ): Promise<QueryResult> {
   // 1. Execute the push-down core (same as FULL_PUSHDOWN up to trimming)
   const { records, nextCursor, count } = await pushdownCore(
@@ -278,6 +279,8 @@ export async function executePartialPushdownQuery(
     actorId,
     allowUnknownResources,
   );
+  // Unprojected stored rows (a versioned query pairs them with revisions).
+  if (!projectRecords) return { data: records, count, nextCursor };
 
   // 2. Build a targeted DataStore from the already-fetched primary records.
   //    forPushdownResult() only loads related records that the select list
@@ -541,7 +544,7 @@ async function pushdownCore(
  * Simple field projection for the FULL_PUSHDOWN path.
  * Returns only base schema fields — no relation expansion.
  */
-function projectFieldsPushdown(
+export function projectFieldsPushdown(
   record: Record<string, unknown>,
   resource: string,
   schema: DatafnSchema,

@@ -128,6 +128,8 @@ See [Plugins → Native handoff](../native-handoff) for the full flow.
 
 A session token in a redirect URL can be read by any app that registers the same URL scheme. To avoid that, the client keeps a random verifier (43-128 characters) and sends `handoffChallenge`, the base64url SHA-256 of the verifier, to `/social/start` together with `handoffMode: 'session-token'` and a native `returnTo`. The callback then issues no session. It redirects to `returnTo#token=<one-time code>&handoff=code&regionId=...`, and the client exchanges the code with `POST /social/handoff/exchange` (`client.exchangeSocialHandoff({ code, verifier })`). The code is single use, expires after `handoffCodeTtlSeconds`, is stored hashed, and is refused without the matching verifier. The code travels in the `token` fragment parameter so native shells that already forward `token` keep working. Set `requireHandoffChallenge: true` once every client sends a challenge.
 
+Browser apps can let `createBrowserHandoff` from `@authfn/client` keep the verifier, bind the return to the flow that started it, and retire it after one use; see [SDK → Client → Browser social handoff](../../sdk/client#browser-social-handoff).
+
 ## Schema
 
 The plugin contributes:

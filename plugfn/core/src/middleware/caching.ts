@@ -1,7 +1,66 @@
 import type { CacheOptions } from '../types/action.js';
 import type { Logger } from '../types/action.js';
 import type { KVStoreAdapter } from '@superfunctions/db';
-import { hash } from '../utils/crypto.js';
+import { createHmac, randomBytes } from 'node:crypto';
+import { hash, validateEncryptionKey } from '../utils/crypto.js';
+
+function credentialSegment(binding: string | undefined): string {
+  if (binding === undefined) return '';
+  if (!/^[a-f0-9]{64}$/.test(binding)) {
+    throw new TypeError('credentialBinding must be an HMAC-SHA-256 hex digest');
+  }
+  return `:credential-hmac=${binding}`;
+}
+
+const CACHE_BINDING_LABEL = 'plugfn/action-cache/credential-binding/v1';
+const CACHE_BINDING_KEY_BYTES = 32;
+
+/**
+ * Derive the server-side key that binds cache entries to credentials from the
+ * configured PlugFn encryption key, under a fixed label, so the encryption key
+ * itself is never used for anything but token encryption.
+ */
+export function deriveCacheBindingKey(encryptionKey: string): Uint8Array {
+  validateEncryptionKey(encryptionKey);
+  return createHmac('sha256', Buffer.from(encryptionKey, 'hex'))
+    .update(CACHE_BINDING_LABEL)
+    .digest();
+}
+
+/** A random binding key, for executors built without a configured secret. */
+export function randomCacheBindingKey(): Uint8Array {
+  return randomBytes(CACHE_BINDING_KEY_BYTES);
+}
+
+/** Locale-independent ordering by UTF-16 code units. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+/**
+ * Keyed HMAC-SHA-256 (hex) of a credential version and the sorted set of
+ * granted scopes. The version is a non-secret identifier of the stored
+ * credential (see ConnectionManager.credentialVersion), never the secret, so
+ * a cache key or log line that carries this value reveals nothing about it.
+ */
+export function credentialBinding(
+  bindingKey: Uint8Array,
+  credentialVersion: string,
+  scopes: readonly string[] | undefined
+): string {
+  if (!(bindingKey instanceof Uint8Array) || bindingKey.length < CACHE_BINDING_KEY_BYTES) {
+    throw new TypeError('cache binding key must be at least 32 bytes');
+  }
+  if (typeof credentialVersion !== 'string' || credentialVersion === '') {
+    throw new TypeError('credential version must be a non-empty string');
+  }
+  const canonical = JSON.stringify([
+    credentialVersion,
+    [...new Set(scopes ?? [])].sort(compareCodeUnits),
+  ]);
+  return createHmac('sha256', bindingKey).update(canonical, 'utf8').digest('hex');
+}
 
 interface CacheEntry {
   data: any;
@@ -147,17 +206,20 @@ export class CacheMiddleware {
   }
 
   /**
-   * Generate cache key for action
+   * Generate cache key for action. A credential binding (see
+   * {@link credentialBinding}) ties the entry to the credential and granted
+   * scopes that produced it; keys without one are unchanged.
    */
   generateKey(
     provider: string,
     action: string,
     params: any,
     userId?: string,
-    connectionId?: string
+    connectionId?: string,
+    credentialBindingDigest?: string
   ): string {
     const paramsHash = hash(JSON.stringify(params));
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:${paramsHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialBindingDigest)}:${paramsHash}`;
   }
 
   /** Generate a key in a namespace that cannot collide with parameter-derived keys. */
@@ -166,10 +228,11 @@ export class CacheMiddleware {
     action: string,
     customKey: string,
     userId?: string,
-    connectionId?: string
+    connectionId?: string,
+    credentialBindingDigest?: string
   ): string {
     const customKeyHash = hash(customKey);
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:custom:${customKeyHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialBindingDigest)}:custom:${customKeyHash}`;
   }
 
   /**

@@ -145,8 +145,20 @@ for (const { operation, code, reason } of skipped) {
   shape or method; a schema that is discarded, or whose `writeOnly`
   properties are left out, is first compiled by mcpFn's validator as
   written. A `HEAD` tool never declares an output schema, since its response
-  has no body. Otherwise the schema becomes the output schema when it
-  accepts objects and nothing else (also through a 3.1 `$ref` with sibling
+  has no body. When the executor sets `outputSchemaRule: "every-success"`
+  (as `httpExecutor` does), neither does an operation that documents a
+  `default` response (which covers the 2xx statuses not listed, the
+  bodyless `204` and `205` among them) or whose documented 2xx responses do
+  not all offer only JSON content with that same schema (such as a `200`
+  with a body beside a `204`, a `2XX` range, which also covers the bodyless
+  `204` and `205`, `201` and `202` with different bodies, or a JSON body
+  beside `text/plain`), since a call could succeed with a body the schema
+  does not describe, or with none. Under that rule a schema
+  written on a `204` or `205` entry is neither converted nor compiled, and
+  two responses count as having the same schema when it is the same object
+  or written identically (compared once per pair of shared values, within a
+  fixed budget; past it, no output schema). Otherwise the schema becomes
+  the output schema when it accepts objects and nothing else (also through a 3.1 `$ref` with sibling
   keywords, an `allOf`, or a `not` of bare types such as
   `not: { type: "null" }`), with `writeOnly` properties left out by the same
   rule as `readOnly` ones in inputs; when that rule cannot be applied, the
@@ -244,6 +256,235 @@ for (const { operation, code, reason } of skipped) {
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.
+- **Security.** `operation.security` is the operation's requirement list,
+  else the document's, and `operation.securitySchemes` holds the schemes it
+  names that `components.securitySchemes` defines (`$ref` followed, each
+  name resolved at most once per conversion), each as
+  `{ type, name?, in?, scheme? }`. Credentials are the executor's job (D9):
+  a parameter an `apiKey` scheme of the operation sends its credential in
+  (header, query or cookie) is never a tool input, whatever the executor.
+- **Executor.** `execute` receives `{ operation, args, context, signal,
+  hasOutputSchema, checkOutput }`: `context` is the trusted context the
+  server's `context` factory built for the call, `hasOutputSchema` says
+  whether a success must carry `structuredContent`, and `checkOutput(value)`
+  (with an output schema) says whether the registry's output validator
+  (its `compileSchema`'s, or the built-in one's) accepts a value. An executor may
+  set `outputSchemaRule` (see Outputs) and implement `unsupported(operation)`,
+  returning why it cannot send an operation; such operations are skipped
+  (`unsupported-by-executor`) before any tool name is chosen. It may also
+  implement `ownsParameter({ name, in, required })` for query and header
+  parameters: one it supplies itself returns `true` and is left out of the
+  tool input and `operation.parameters`, so no caller value is accepted for it.
+  An executor that implements `sendsRequestMedia(contentType)` has the
+  request body chosen only among the JSON entries it can send, when there is
+  one, so the tool takes that entry's schema and media type together.
+
+### Sending calls over HTTP
+
+`httpExecutor()` is the executor that sends each call as one HTTP request to
+an API the operator fixes, with credentials the operator supplies:
+
+```ts
+import { fromOpenAPI, httpExecutor } from "@mcpfn/core/openapi";
+
+const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
+  executor: httpExecutor<{ apiToken: string }>({
+    baseUrl: "https://api.example.com/v1",
+    headers: (context) => ({ authorization: `Bearer ${context.apiToken}` }),
+    timeoutMs: 30_000,
+    maxResponseBytes: 1024 * 1024,
+  }),
+});
+```
+
+- **Where requests go.** `baseUrl` is an absolute `http:` or `https:` URL
+  without credentials, query or fragment; the operation's path is appended
+  to its path, and the document's `servers` are ignored. Path parameters are
+  percent-encoded with `encodeURIComponent` (array items joined by commas, a
+  schema-valid `null` empty), so `/`, `?` and `#` stay inside their segment.
+  A call whose templated segment would be empty, `.` or `..`, or whose path
+  a URL parser would rewrite (such as a template with a backslash), is
+  refused with an `isError` result before anything is sent; an operation
+  whose template text outside its `{name}` parts a URL parser would rewrite
+  (such as `/a b` or `/café`) is skipped as `unsupported-by-executor`, by the
+  same check. Query
+  parameters use `form` style, arrays repeating the key; with
+  `allowReserved`, `:/?@$,;[]` are sent as they are while `&`, `=`, `+` and
+  `#` stay encoded so a value cannot add parameters. A `null` query or
+  header value is left out. The JSON body is sent with the operation's media
+  type (`application/json` or the selected `*+json` type). Operations fetch
+  cannot send (`TRACE`, `GET` or `HEAD` with a request body, a required
+  header fetch manages, such as `Connection`, `Sec-Fetch-Mode` or `Range`,
+  a required header whose name is not an HTTP token (such as `X Bad`), or a body
+  whose documented media type names a charset other than UTF-8, since the
+  body is sent as UTF-8, or has a character no header can carry, such as a
+  CR, LF, NUL or one above 0xFF, unless another documented JSON entry can be
+  sent, which is then the one used) are skipped by `fromOpenAPI`
+  as `unsupported-by-executor`, and so is an operation whose every security
+  requirement needs an `apiKey` credential in the query or in a header
+  fetch manages, which operator headers cannot carry, and one whose security
+  is malformed (a level that is not a list, a requirement that is not a
+  plain object, such as a `Map`, `Date` or class instance, or one with a
+  non-enumerable key, a `security` that is not enumerable, or one held by
+  a document or operation that is not a plain object (an inherited or
+  prototype-getter `security`), so it never reads as absent, scopes that
+  are not a list of strings; `fromOpenAPI` reports it
+  to any executor as `operation.securityUnresolved`) or names a scheme that
+  does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
+  does not define such as `api-key`, a scheme object that is not a plain
+  object or has a non-enumerable key, such as a non-enumerable `$ref`) or an `apiKey` scheme without a usable `name` and `in` (a header
+  or cookie name must be an HTTP token, a query name not empty), since the parameter that carries its credential is then
+  unknown. `fromOpenAPI` reads the document once: it copies it, reading
+  each own property of each object once through its descriptor, and makes
+  every decision (security included) from that copy, so no operator code
+  (a getter, `toString`, `valueOf`, `Symbol.toPrimitive`, an iterator)
+  runs and what is checked is what was copied. A `Date` is copied by its
+  time value, a `Map` or `Set` entry by entry and a typed array by its
+  bytes, whatever their prototypes; any other object as a plain object of
+  its own enumerable data properties (as `structuredClone` copies a class
+  instance), marked as not plain where that matters. An object is plain
+  only on positive proof, never because no known slot was found: it
+  carries no internal slot such as a boxed primitive's, an `ArrayBuffer`'s,
+  a `DataView`'s, an `Error`'s or a `RegExp`'s (told by its slots, never by
+  its prototype), its prototype is `null` or `Object.prototype` (a
+  prototype that is a `Proxy` is never read; where the runtime cannot tell
+  a `Proxy`, only `null` and this realm's `Object.prototype` count), it has
+  no own symbol key and every own string key is an enumerable data
+  property, and, when it has no own key at all (so it would read as an
+  anonymous requirement), `structuredClone` of that one empty object (which
+  runs no operator code) returns an ordinary object. So an iterator, an
+  `Intl` object, a `URL`, `Headers`, `URLSearchParams` or `DOMException`, or
+  a `Proxy`, given a `null` or `Object.prototype` prototype, is not plain
+  where it would read as `{}`; without `structuredClone` no empty object is
+  plain, so security fails closed. Known limits: an exotic or host object
+  given such a prototype and its own enumerable keys copies as those keys
+  (how JSON reads it; never as `{}`), and an object whose only state is in
+  private class fields or outside it (as Node implements `Event`,
+  `AbortSignal` or `TextEncoder` in JavaScript) is an ordinary object and,
+  with no own key, copies as `{}`, as JSON and `structuredClone` read it;
+  `DOMException` is told by its brand check. Shared objects and
+  cycles stay shared. Whatever the executor, it throws
+  `McpFnValidationError` ("fromOpenAPI expects a plain JSON document") when
+  any object reachable from the document, `Map` and `Set` entries included,
+  has an accessor (getter or setter) property, or holds a function, a
+  symbol, an object `structuredClone` cannot copy (a `WeakMap`, `WeakSet`,
+  `WeakRef`, `FinalizationRegistry`, `Promise`, generator or iterator,
+  where the runtime can tell one) or a `Proxy` (where the runtime can tell one, as Node can; elsewhere
+  a `Proxy` is read through its traps, still once per property); the error
+  names the path, never a value. It sets `outputSchemaRule: "every-success"`
+  (see Outputs).
+- **Credentials (D9).** `headers` is a plain object (prototype
+  `Object.prototype` or `null`) or a function of the server's trusted
+  context (and the operation), called on every call, returning one or a
+  promise of one; values are printable ASCII. Leaving `headers` out sends
+  none; `null` or any other value is refused when the executor is created,
+  and a function result that is not a plain object refuses the call. A record is validated once,
+  when the executor is created, and that copy is sent on every call:
+  changing the object later changes nothing, so rotate credentials with a
+  function. A `Map`, a `Headers` or
+  another realm's object is refused rather than read as empty, and so is a
+  record with a symbol or non-enumerable key: every own key is sent or
+  refused, so only an explicit `{}` sends no operator headers. An operator
+  `Content-Type` is sent as written with a JSON body only when its media
+  type is the operation's documented one, any charset it names is UTF-8, and
+  it has the same other parameters (such as `profile`) as the documented media
+  type, in both directions: neither has a name the other lacks or gives
+  another value (names compared without case, values exactly);
+  otherwise the call is refused before it is sent. With such a `Content-Type`
+  in a record, the request body is chosen among the documented JSON entries
+  it can label, by the same rule; when none can, an operation whose body is
+  required is skipped as `unsupported-by-executor` (every call would be
+  refused), and one whose body is optional stays listed (a call without a
+  body can still be made) while a call with a body is refused. A function
+  source is checked per call. The tool input offers only what the executor sends: the
+  forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
+  `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
+  (`Connection`, `Transfer-Encoding`, `Expect`, and the headers undici
+  rewrites: `Sec-Fetch-Mode`, and `Range`, beside which it adds `identity`
+  to `Accept-Encoding`; an operator entry for one is refused), optional
+  headers whose name is not an HTTP token, `apiKey` credential
+  parameters and, with a `headers` record, every header it sets are not
+  inputs; a value injected past validation for one of them is never sent,
+  and an `apiKey` credential the operator does not set goes unsent. With a
+  `headers` function, whose header names are known only per call, a call
+  that gives a header parameter it sets a value is refused with an
+  `isError` result rather than having the value dropped; a required header
+  parameter the function sets therefore refuses every call, so set such a
+  header with a `headers` record, which removes it from the input. So a caller can
+  neither replace nor add credentials; argument names the operation does not
+  declare are never read. Nothing from the MCP client's request, such as its
+  `Authorization` header, is forwarded. Every operator header value is
+  treated as a secret and never appears in results or errors. The executor
+  looks for each value as sent (trimmed), the credential after a scheme such
+  as `Bearer`, and each value of a `Cookie` header, also percent-decoded as
+  UTF-8 (a cookie parser's reading); and for echoes of these spelled with
+  JSON escapes, percent escapes (also with `+` for a space) or HTML character
+  references as HTML decodes them (numeric references and every named
+  reference to an ASCII character, with or without the closing `;` where HTML
+  allows it), one or two of these, in either order. When a credential form
+  has a non-ASCII character (a percent-decoded cookie value), any named
+  reference left undecoded (such as `&eacute;`) counts as an echo. A body is decoded in
+  the encoding it marks or declares (a UTF-16 or UTF-8 byte order mark,
+  else the `Content-Type` charset, read with quoted values respected, else
+  UTF-8) and checked in that text, also with any NUL characters removed,
+  and read as UTF-8; its bytes are searched for each credential in UTF-8,
+  UTF-16LE and UTF-16BE at any offset, so the check never depends on the
+  declared charset being honest. One whose `Content-Type` cannot be parsed
+  or whose charset cannot be decoded is withheld. In a JSON body each
+  number is also read as written, as a parser reads it (also under a
+  duplicate key), so one that parses to a credential (`1.2345e4` for
+  `12345`) is caught; a number spelled inside a string, or in a body that
+  is not JSON, is left alone. Structured content is returned with its
+  compact serialization as text (no pretty-printing, which deep nesting
+  would multiply), and both are checked as returned.
+  An error body that reveals no credential is excerpted as it is. One that
+  reveals a credential is redacted only when it is plain, so its literal
+  text is its only reading: UTF-8 that decodes cleanly, with no NUL and no
+  byte order mark, no JSON escape, percent escape, `+` or HTML reference,
+  JSON written as its compact serialization (the reading a success body is
+  checked in) with every number written as it parses, and no UTF-16 form of a
+  credential in its bytes. Its literal echoes (overlapping and adjacent ones
+  merged) are then shown as `[REDACTED]`, never cut inside one, and the body
+  with them masked, and the excerpt as returned, must reveal nothing. Any
+  other body that reveals a credential is withheld whole. Redaction uses a mask of
+  the body's length, so memory stays a small multiple of `maxResponseBytes`
+  however densely the body echoes a credential. A success body that reveals one is withheld with
+  an `isError` result that says the call succeeded, since rewriting it could
+  change the data; so a short or common header value withholds every
+  success body that happens to contain it. These spellings cover an upstream
+  that reflects a credential it received; an upstream set on leaking one can
+  always disguise it, and is outside what the executor can detect. An
+  invalid header, a record whose properties throw, or a `headers` function
+  that fails or returns no record is a server error (`MCPFN_TOOL_ERROR` for the client) whose
+  message names at most the header, never a value or the function's own
+  error.
+- **Responses.** Redirects are never followed (`redirect: "manual"`): a 3xx
+  is an `isError` result naming the status. A 2xx becomes structured content
+  when the tool has an output schema, else text. A 2xx the output schema
+  does not describe (no body, as for `204` or `HEAD`, a body that is not a
+  JSON object, one that fails `checkOutput`, or one whose numbers JSON
+  parsing would change, such as an integer beyond 2^53 however it is
+  spelled or a decimal with more digits than a double holds, like
+  `1.0000000000000001`) cannot be
+  structured content; it is an `isError` result that says the call
+  succeeded and not to repeat it, followed by the body text. Any other
+  status is an `isError` result with the status and an excerpt of at most
+  4 KiB of its body, which is read whole first. A body over
+  `maxResponseBytes` (default 1 MiB), read or declared by `Content-Length`,
+  is cancelled and reported with the status and no excerpt. `timeoutMs`
+  (default 30 s) bounds the response and its body; a status already
+  received is still reported, and after a 2xx the result says the call may
+  have taken effect, so it is not retried as unanswered. The MCP request's abort signal cancels
+  the call, also while the `headers` function runs; a response that arrives
+  after either has its body cancelled. Network failures are reported
+  without details. With the default `fetch`, a `407 Proxy Authentication
+  Required` reaches the executor as a network error (Fetch turns it into
+  one), so it is reported as a failed request with no status or excerpt; a
+  `fetch` that returns the `407` response gets the result described above
+  for any other status. Pass `fetch` to use another implementation.
+- **Not covered.** A base URL that resolves to internal addresses (DNS
+  rebinding), instructions inside upstream responses, and a local user who
+  can read the operator's environment are outside this executor's guarantees.
 
 ## Server context and errors
 
@@ -260,9 +501,13 @@ const server = createMcpFnServer({
 ```
 
 For tenant- or actor-specific discovery, use `toolVisibility`. McpFn applies
-the hook to both `tools/list` and `tools/call`; a hidden call returns the same
-protocol `MethodNotFound` response as an unknown tool. The static manifest
-continues to describe the complete server contract.
+the hook to both `tools/list` and `tools/call` and passes the request in
+`requestKind` (`"tools/list"` or `"tools/call"`). A tool the hook rejects for
+`tools/list` is left out of that listing; a call the hook rejects for
+`tools/call` returns the same protocol `MethodNotFound` response as an unknown
+tool and never reaches the handler. A hook that ignores `requestKind` applies
+one decision to both. The static manifest continues to describe the complete
+server contract.
 
 ```ts
 const server = createMcpFnServer({
@@ -273,6 +518,24 @@ const server = createMcpFnServer({
     context.permissions.includes(String(tool._meta?.permission)),
 });
 ```
+
+A host may decide the two requests differently. Keep the authorization check
+for both request kinds and add any discovery-only condition separately, for
+example to keep a permitted tool out of listings while still accepting direct
+calls to it:
+
+```ts
+toolVisibility: ({ tool, context, requestKind }) => {
+  if (!context.permissions.includes(String(tool._meta?.permission))) {
+    return false;
+  }
+  return requestKind === "tools/call" || tool._meta?.hideFromDiscovery !== true;
+},
+```
+
+A hook that returns `true` for every `tools/call` lets any caller reach the
+tool by name, so do that only when the tool handler performs the same
+authorization check itself.
 
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 

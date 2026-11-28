@@ -6,6 +6,7 @@
 // Builds the package first, so it never checks a missing or stale dist.
 // TypeScript and esbuild resolve from the package, as in an isolated
 // release install. `--keep` keeps the temp directory.
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
@@ -115,7 +116,13 @@ try {
   const installed = realpathSync(path.join(consumer, "node_modules/catchfn"));
   if (!installed.startsWith(consumer)) throw new Error(`catchfn resolved outside the consumer: ${installed}`);
   const manifest = JSON.parse(readFileSync(path.join(installed, "package.json"), "utf8"));
-  if (manifest.version !== "0.1.0") throw new Error(`expected catchfn 0.1.0, found ${manifest.version}`);
+  const { version } = require("./package.json");
+  assert.equal(manifest.version, version);
+  assert.deepEqual(manifest.repository, {
+    type: "git",
+    url: "git+https://github.com/21nCo/superfunctions.git",
+    directory: "catchfn/typescript",
+  });
   for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
     if (manifest[field] && Object.keys(manifest[field]).length > 0) throw new Error(`catchfn declares ${field}`);
   }

@@ -4,17 +4,38 @@ import { createPendingMigration, introspectCurrentTables } from '../commands/gen
 import type { SuperfunctionsConfig } from '../index.js';
 import { createAdapterFromConfig, type AdapterConnection } from '../utils/adapter-helper.js';
 import type { DatabaseColumn, DatabaseTable } from '../utils/introspection.js';
-import { getSchema, PLUGFN_SCHEMA_VERSION } from '../../../../plugfn/core/src/schema.js';
+import { getSchema } from '../../../../plugfn/core/src/schema.js';
 
 // The last schema version whose plugfn_sync_jobs.claim_token was VARCHAR(64)
 // on dev. next shipped the same version with VARCHAR(768).
 const V7_SCHEMA_VERSION = 7;
+const V8_SCHEMA_VERSION = 8;
 const DEV_V7_CLAIM_TOKEN_LENGTH = 64;
 const NEXT_V7_CLAIM_TOKEN_LENGTH = 768;
 // information_schema.COLUMNS.CHARACTER_MAXIMUM_LENGTH for a MySQL TEXT column.
 const MYSQL_TEXT_REPORTED_LENGTH = 65_535;
 // Key prefix the generators use when indexing a TEXT column.
 const MYSQL_TEXT_INDEX_PREFIX = 191;
+const RECEIPT_TABLE = 'plugfn_webhook_receipts';
+const WORKFLOW_RECEIPT_INDEX = 'idx_plugfn_webhook_receipts_workflow_idempotency';
+
+function getV8Tables(): TableSchema[] {
+  return getSchema().schemas.map((table) => {
+    if (table.modelName === 'plugfn_webhook_deliveries') {
+      const fields = { ...table.fields };
+      delete fields.workflowScoped;
+      delete fields.signatureVerified;
+      return { ...table, fields };
+    }
+    if (table.modelName !== RECEIPT_TABLE) return table;
+    const fields = { ...table.fields };
+    delete fields.workflowIdempotencyKey;
+    delete fields.workflowTenantId;
+    delete fields.signatureVerified;
+    const indexes = table.indexes?.filter((index) => index.name !== WORKFLOW_RECEIPT_INDEX);
+    return { ...table, fields, indexes };
+  });
+}
 
 /** A column as introspectMySQL reports it from information_schema. */
 function mysqlColumn(tableName: string, columnName: string, field: FieldSchema): DatabaseColumn {
@@ -227,18 +248,16 @@ function expectDevV7Widening(adapterType: 'drizzle' | 'kysely' | 'prisma', pendi
   expect(up.match(/MODIFY COLUMN/g), adapterType).toHaveLength(1);
   expect(up, adapterType).not.toMatch(/DROP TABLE|CREATE TABLE|DROP COLUMN|ADD COLUMN|dropIndex|INDEX/i);
   expect(up.indexOf('MODIFY COLUMN')).toBeLessThan(
-    up.search(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`)),
+    up.search(new RegExp(`version\\s*[:=]\\s*${V8_SCHEMA_VERSION}\\b`)),
   );
 }
 
 describe('plugfn schema v8 migration', () => {
-  const schema = getSchema();
+  const schema = { version: V8_SCHEMA_VERSION, schemas: getV8Tables() };
   const library = { libraryName: 'plugfn', namespace: 'plugfn', version: schema.version, tables: schema.schemas };
   const adapterTypes = ['drizzle', 'kysely', 'prisma'] as const;
 
   it('widens a dev v7 claim_token in place, keeping its unique index and unchanged TEXT columns', () => {
-    expect(PLUGFN_SCHEMA_VERSION).toBeGreaterThan(V7_SCHEMA_VERSION);
-
     for (const adapterType of adapterTypes) {
       const pending = createPendingMigration({
         adapterType,
@@ -372,19 +391,57 @@ describe('plugfn schema v8 migration', () => {
       expect(pending!.tableDiffs).toEqual([]);
       const up = upStatements(adapterType, pending!.migrationFile.content);
       expect(up, adapterType).not.toMatch(/ALTER TABLE|MODIFY COLUMN|INDEX|dropIndex|CREATE TABLE|DROP TABLE/i);
-      expect(up, adapterType).toMatch(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`));
+      expect(up, adapterType).toMatch(new RegExp(`version\\s*[:=]\\s*${V8_SCHEMA_VERSION}\\b`));
     }
   });
 
-  it('reports a database already at the current version as up to date', () => {
+  it('reports a database at v8 as up to date for a v8 target', () => {
     expect(
       createPendingMigration({
         adapterType: 'drizzle',
         dialect: 'mysql',
         library,
-        currentVersion: PLUGFN_SCHEMA_VERSION,
+        currentVersion: V8_SCHEMA_VERSION,
         currentTables: mysqlV7Snapshot(schema.schemas, NEXT_V7_CLAIM_TOKEN_LENGTH),
       }),
     ).toBeNull();
   });
+});
+
+describe('plugfn schema v9 migration', () => {
+  it.each(['drizzle', 'prisma', 'kysely'] as const)(
+    'preserves standalone receipt keys and scopes uniqueness in %s',
+    (adapterType) => {
+      const schema = getSchema();
+      const pending = createPendingMigration({
+        adapterType,
+        dialect: 'mysql',
+        library: { libraryName: 'plugfn', namespace: 'plugfn', version: schema.version, tables: schema.schemas },
+        currentVersion: V8_SCHEMA_VERSION,
+        currentTables: mysqlV7Snapshot(getV8Tables(), NEXT_V7_CLAIM_TOKEN_LENGTH),
+      });
+
+      expect(pending?.tableDiffs).toEqual([
+        expect.objectContaining({
+          tableName: RECEIPT_TABLE,
+          missingColumns: ['workflow_idempotency_key', 'workflow_tenant_id', 'signature_verified'],
+          missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
+          changedIndexes: [],
+        }),
+        expect.objectContaining({
+          tableName: 'plugfn_webhook_deliveries',
+          missingColumns: ['workflow_scoped', 'signature_verified'],
+        }),
+      ]);
+
+      const up = upStatements(adapterType, pending!.migrationFile.content);
+      expect(up).toContain(adapterType === 'kysely'
+        ? `.addColumn('workflow_idempotency_key', 'varchar(64)', (col) => col)`
+        : `ADD COLUMN workflow_idempotency_key VARCHAR(64);`);
+      expect(up).not.toContain('runtime_replay_context');
+      expect(up).toContain('workflow_tenant_id');
+      expect(up.match(/signature_verified/g)).toHaveLength(2);
+      expect(up).toContain(`CREATE UNIQUE INDEX ${WORKFLOW_RECEIPT_INDEX} ON ${RECEIPT_TABLE} (workflow_idempotency_key)`);
+    },
+  );
 });

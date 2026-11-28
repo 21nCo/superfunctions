@@ -9,11 +9,21 @@ describe('PlugFn schema metadata', () => {
       (table) => table.modelName === 'plugfn_webhook_receipts'
     );
 
-    expect(PLUGFN_SCHEMA_VERSION).toBe(8);
-    expect(schema.version).toBe(8);
+    expect(PLUGFN_SCHEMA_VERSION).toBe(9);
+    expect(schema.version).toBe(9);
+    expect(receipts?.fields.workflowIdempotencyKey).toMatchObject({
+      fieldName: 'workflow_idempotency_key',
+      required: false,
+      maxLength: 64,
+    });
     expect(receipts?.indexes).toContainEqual({
       name: 'idx_plugfn_webhook_receipts_idempotency',
       fields: ['provider', 'idempotencyKey'],
+      unique: true,
+    });
+    expect(receipts?.indexes).toContainEqual({
+      name: 'idx_plugfn_webhook_receipts_workflow_idempotency',
+      fields: ['workflowIdempotencyKey'],
       unique: true,
     });
 

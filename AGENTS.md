@@ -52,6 +52,15 @@ Repository: <repo>, base branch <branch>
 
 For example `Repository: 21nCo/superfunctions, base branch dev` or `Repository: 21nCo/super-functions.next, base branch next`. Work in the checkout and branch it names. An issue that creates a new `next`-owned entry registers it in `superfunctions.owners.next.json` on `next`, because an unregistered path there is public-owned. A change to an existing public-owned path lands on `dev` first, never on `next`. If the issue would change a path the other repository owns in any other way, stop and say so instead of editing it.
 
+## Bare npm package names
+
+- Every product's unscoped (bare) npm package is its front door. `superfunctions` (bare) is the Superfunctions CLI (`@superfunctions/cli`, bins `superfunctions` and `sfs`), never a barrel of all packages.
+  - With a CLI, the bare package's `bin` maps the product name to the CLI executable, so `npx <name>` runs it. With a core SDK, `exports["."]` is that core (a re-export of `@<scope>/core` is fine), so `import … from "<name>"` gives the core.
+  - A product with a CLI but no SDK ships only the bin. An SDK with no CLI ships only the core export, and adds the bin later (adding it doesn't break importers). A product with neither gets no bare package.
+- A bare package belongs to, publishes from and is registered in the owners manifest of the same repository as the product's scoped packages. `publish-tag.yml` builds it in the same release, at the same version as whichever of `@<scope>/core` and `@<scope>/cli` the product has (a product with both aligns their versions before its first bare release, then releases all three together), through OIDC trusted publishing (one trusted publisher per bare name; never npm tokens). The README's name-claim step (a `0.0.0` publish so the trusted publisher can be attached) still applies to a new bare name; no placeholder ships past it.
+- When the bare package also exports a core, keep the CLI's heavy dependencies out of its default install graph, direct or through `@<scope>/cli`: the bin loads them lazily and makes the version-matched CLI available when it runs, so SDK importers don't install, load or bundle them. A CLI-only bare package such as `superfunctions` just depends on what its CLI needs.
+- Scoped packages stay canonical for granular imports. Names npm refused as "too similar" use their scopes only. No placeholder bare packages: each released one is the CLI and/or the core.
+
 ## Codex hooks (Entire)
 
 - Entire's Codex hooks live in the global Codex config (`~/.codex/hooks.json`). Do not add or commit a repo-level `.codex/hooks.json`.

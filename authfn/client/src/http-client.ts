@@ -1,13 +1,69 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
-import type { AuthFnClientOptions, AuthFnErrorEnvelope } from './types.js';
+import { isRegionId } from './region-id.js';
+import { collectBodyStrings, repeatsSecret, safeLabel, safeText, sharesText, type TextCheck } from './secret-text.js';
+import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
   body?: unknown;
   csrf?: boolean;
+  /**
+   * The body carries one-time secrets (a handoff code and verifier). The
+   * body is serialized once, before anything is awaited, and its strings
+   * are the secrets. Everything the request reports then passes through
+   * `redactSensitive`: no response text, error message, stack or cause
+   * reaches `onRequestMetric` or the returned error envelope.
+   */
+  sensitiveBody?: boolean;
 }
 
+const TRANSPORT_FAILURE_MESSAGE = 'AuthFn request failed before a response was received';
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const DURATION_PATTERN = /^\d{1,9}(\.\d{1,6})?$/;
+const COUNT_PATTERN = /^\d{1,9}$/;
+const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
+/** The statuses fetch follows as redirects. */
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+/** The base a relative reference is resolved against when no request URL is known. */
+const PLACEHOLDER_ORIGIN = 'https://authfn.invalid';
+/** Up to 2048 characters, none of them whitespace or control characters (`new URL` drops some). */
+const URL_TEXT_PATTERN = /^[^\s\u0000-\u001f\u007f-\u009f]{1,2048}$/;
+const ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+/** The request fields the social handoff exchange reports in a validation error. */
+const EXCHANGE_VALIDATION_FIELDS: ReadonlySet<string> = new Set(['code', 'verifier', 'userId']);
+/**
+ * The error details current hosts act on, per code, each kept only when it
+ * has its shape and shares no text with the body; all others are dropped.
+ */
+const KEPT_ERROR_DETAILS: Readonly<Record<string, Readonly<Record<string, TextCheck | 'boolean'>>>> = {
+  AUTHFN_REGION_MISMATCH: {
+    regionId: isRegionId,
+    authority: isAbsoluteHttpUrl,
+    redirectTo: isAbsoluteHttpUrl,
+    continueLocally: 'boolean'
+  },
+  AUTHFN_RATE_LIMITED: { resetAt: isIsoTimestamp },
+  AUTHFN_REDIRECT_REQUIRES_NAVIGATION: { redirectTo: isNavigationTarget },
+  AUTHFN_VALIDATION_ERROR: { field: (value) => EXCHANGE_VALIDATION_FIELDS.has(value) }
+};
+/**
+ * The metric header fields a sensitive request may report, each only when
+ * it matches its pattern and shares no text with the body. `serverTiming`
+ * is free text, so it is never reported.
+ */
+const SENSITIVE_METRIC_FIELDS = {
+  requestId: REQUEST_ID_PATTERN,
+  dbDurationMs: DURATION_PATTERN,
+  dbCallCount: COUNT_PATTERN,
+  cacheDurationMs: DURATION_PATTERN,
+  cacheCallCount: COUNT_PATTERN,
+  lookupDurationMs: DURATION_PATTERN,
+  lookupCallCount: COUNT_PATTERN,
+  workerColo: /^[A-Za-z0-9-]{1,16}$/,
+  accountRegion: isRegionId
+} as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, TextCheck>>;
 export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = (options.baseUrl ?? '/auth').replace(/\/$/, '');
@@ -45,8 +101,14 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
     requestId: 'authfn-transport-error'
   });
 
-  return {
-    requestJson: async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
+  // Sends one request; the body is serialized where it always was, after the bearer token.
+  const transport = {
+    send: async <T>(
+      request: RequestOptions,
+      serializeBody: () => string | undefined,
+      // Optional chaining on the call skips building the metric when no hook will receive it.
+      report: ((metric: AuthFnClientRequestMetric) => void) | undefined
+    ): Promise<T | AuthFnErrorEnvelope> => {
       const headers = new Headers();
       const url = `${baseUrl}${request.path}`;
       const startedAt = now();
@@ -73,28 +135,24 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
           method: request.method,
           headers,
           credentials,
-          body: request.body !== undefined ? JSON.stringify(request.body) : undefined
+          body: serializeBody(),
+          // A followed 307/308 would resend a sensitive body to the Location
+          // target, so such a request stops at the redirect instead.
+          ...(request.sensitiveBody === true ? { redirect: 'manual' as const } : {})
         });
       } catch (error) {
-        options.onRequestMetric?.({
+        report?.({
           method: request.method,
           path: request.path,
           url,
           ok: false,
           durationMs: now() - startedAt,
-          error: error instanceof Error
-            ? {
-                name: error.name,
-                message: error.message
-              }
-            : {
-                message: String(error)
-              }
+          error: describeRejection(error)
         });
         return buildTransportError(error);
       }
 
-      options.onRequestMetric?.({
+      report?.({
         method: request.method,
         path: request.path,
         url,
@@ -113,7 +171,17 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         accountRegion: response.headers.get('x-account-region') ?? undefined
       });
 
-      if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      const location = response.headers.get('location');
+      // A browser answers a redirect it did not follow with an opaque
+      // response: status 0 and no Location.
+      // A redirect status with any Location, even an empty one (the request
+      // URL itself), is a redirect fetch would follow.
+      if (
+        response.type === 'opaqueredirect'
+        || (response.status >= 300 && response.status < 400 && location)
+        || (location !== null && REDIRECT_STATUSES.has(response.status))
+      ) {
+        releaseBody(response);
         return {
           ok: false,
           error: {
@@ -122,7 +190,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
             retryable: false,
             details: {
               status: response.status,
-              redirectTo: response.headers.get('location')
+              ...(location ? { redirectTo: location } : {})
             }
           },
           requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
@@ -188,6 +256,293 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       }
     }
   };
+
+  /**
+   * A request whose body holds secrets: the body is serialized and its
+   * secrets collected before anything is awaited, so a caller that changes
+   * the object later changes neither, and the request reports only what
+   * `redactSensitive` lets through.
+   */
+  const sendSensitive = async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
+    let body: string | undefined;
+    let secrets: string[];
+    try {
+      body = request.body !== undefined ? JSON.stringify(request.body) : undefined;
+      secrets = body === undefined ? [] : collectBodyStrings(JSON.parse(body));
+    } catch {
+      return redactSensitive.envelope(undefined, undefined, []) as AuthFnErrorEnvelope;
+    }
+    let status: number | undefined;
+    let requestId: string | undefined;
+    let result: unknown;
+    let transportFailed = false;
+    try {
+      result = await transport.send<T>(request, () => body, (metric) => {
+        status = metric.status;
+        requestId = metric.requestId;
+        try {
+          options.onRequestMetric?.(redactSensitive.metric(metric, secrets));
+        } catch {
+          // A failing metric hook must not turn an issued session into an error.
+        }
+      });
+    } catch {
+      // The response arrived but its body could not be read (for example an
+      // aborted stream): the request did not complete, as when fetch fails.
+      transportFailed = true;
+      result = { ok: false, error: { code: NETWORK_ERROR_CODE, retryable: true }, requestId };
+    }
+    return redactSensitive.envelope(
+      result,
+      status,
+      secrets,
+      transportFailed,
+      absoluteUrl(`${baseUrl}${request.path}`)
+    ) as T | AuthFnErrorEnvelope;
+  };
+
+  return {
+    requestJson: <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> =>
+      request.sensitiveBody === true
+        ? sendSensitive<T>(request)
+        : transport.send<T>(
+            request,
+            () => (request.body !== undefined ? JSON.stringify(request.body) : undefined),
+            options.onRequestMetric ? (metric) => options.onRequestMetric?.(metric) : undefined
+          )
+  };
+}
+
+/**
+ * The one shape a sensitive request reports in. The metric keeps method,
+ * path, url, status, ok and duration, plus header fields that match their
+ * pattern and share no text with the body; a transport failure is a fixed
+ * name and message. A success envelope is passed on with a safe request id;
+ * any other result becomes an error envelope with a code that matches the
+ * error code pattern, a fixed message, `details: { status }` and a safe
+ * request id, plus the few details `KEPT_ERROR_DETAILS` lists for its code.
+ * An error code or detail equal to one of the client's fixed public labels
+ * (`safeLabel`) is that label, not a reflection of the body.
+ * A success envelope with any string (other than its request id) that
+ * repeats the body is not passed on: it becomes that error envelope too.
+ * A request that failed before
+ * its response was read (fetch threw, or the body stream failed) is
+ * `AUTHFN_NETWORK_ERROR` with the fixed transport message.
+ */
+const redactSensitive = {
+  metric(metric: AuthFnClientRequestMetric, secrets: readonly string[]): AuthFnClientRequestMetric {
+    const safe: AuthFnClientRequestMetric = {
+      method: metric.method,
+      path: metric.path,
+      url: metric.url,
+      ...(metric.status !== undefined ? { status: metric.status } : {}),
+      ok: metric.ok,
+      durationMs: metric.durationMs
+    };
+    for (const [field, check] of Object.entries(SENSITIVE_METRIC_FIELDS)) {
+      const value = safeText(metric[field as keyof typeof SENSITIVE_METRIC_FIELDS], check, secrets);
+      if (value !== undefined) {
+        safe[field as keyof typeof SENSITIVE_METRIC_FIELDS] = value;
+      }
+    }
+    if (metric.error) {
+      safe.error = { name: 'AuthFnTransportError', message: TRANSPORT_FAILURE_MESSAGE };
+    }
+    return safe;
+  },
+
+  envelope(
+    result: unknown,
+    status: number | undefined,
+    secrets: readonly string[],
+    transportFailed = false,
+    requestUrl?: string
+  ): unknown {
+    const candidate = (typeof result === 'object' && result !== null ? result : {}) as {
+      ok?: unknown;
+      requestId?: unknown;
+      error?: { code?: unknown; retryable?: unknown; details?: unknown };
+    };
+    const requestId = safeText(candidate.requestId, REQUEST_ID_PATTERN, secrets) ?? 'authfn-redacted';
+    if (candidate.ok === true) {
+      // The request id is replaced on its own; any other string that repeats
+      // the body turns the whole success into an error.
+      const { requestId: _requestId, ...rest } = candidate;
+      if (!repeatsSecret(rest, secrets)) {
+        return candidate.requestId === requestId ? result : { ...candidate, requestId };
+      }
+    }
+    const error = candidate.ok !== true && typeof candidate.error === 'object' && candidate.error !== null
+      ? candidate.error
+      : {};
+    const code = safeLabel(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR';
+    return {
+      ok: false,
+      error: {
+        code,
+        message: status === undefined || transportFailed ? TRANSPORT_FAILURE_MESSAGE : `AuthFn request failed (${status})`,
+        retryable: typeof error.retryable === 'boolean' ? error.retryable : status === undefined || status >= 500,
+        details: {
+          ...(status === undefined ? {} : { status }),
+          ...keptDetails(code, error.details, secrets, requestUrl)
+        }
+      },
+      requestId
+    } satisfies AuthFnErrorEnvelope;
+  }
+};
+
+/**
+ * The details of `KEPT_ERROR_DETAILS[code]` that have their shape and share
+ * no text with `secrets`. A navigation target is judged against `requestUrl`,
+ * the URL the request was sent to.
+ */
+function keptDetails(
+  code: string,
+  details: unknown,
+  secrets: readonly string[],
+  requestUrl: string | undefined
+): Record<string, unknown> {
+  const fields = Object.hasOwn(KEPT_ERROR_DETAILS, code) ? KEPT_ERROR_DETAILS[code]! : {};
+  const kept: Record<string, unknown> = {};
+  for (const [field, rule] of Object.entries(fields)) {
+    const check: TextCheck | 'boolean' = rule === isNavigationTarget
+      ? (value: string) => isNavigationTarget(value, requestUrl)
+      : rule;
+    const value = details && typeof details === 'object' && Object.hasOwn(details, field)
+      ? (details as Record<string, unknown>)[field]
+      : undefined;
+    const keep = check === 'boolean'
+      ? typeof value === 'boolean'
+      : safeLabel(value, check, secrets) !== undefined
+        && !((rule === isAbsoluteHttpUrl || rule === isNavigationTarget) && parsedUrlSharesText(value as string, secrets));
+    if (keep) {
+      kept[field] = value;
+    }
+  }
+  return kept;
+}
+
+/**
+ * An ISO-8601 date and time with a zone whose calendar fields all exist, so
+ * an impossible date such as February 31, which `Date.parse` rolls over, fails.
+ */
+function isIsoTimestamp(value: string): boolean {
+  const match = ISO_TIMESTAMP_PATTERN.exec(value);
+  if (!match) {
+    return false;
+  }
+  const [year, month, day, hour, minute, second, offsetHour = 0, offsetMinute = 0] = match
+    .slice(1)
+    .map((part) => (part === undefined ? undefined : Number(part)));
+  const leapYear = year! % 4 === 0 && (year! % 100 !== 0 || year! % 400 === 0);
+  const daysInMonth = month === 2 ? (leapYear ? 29 : 28) : [4, 6, 9, 11].includes(month!) ? 30 : 31;
+  return month! >= 1 && month! <= 12 && day! >= 1 && day! <= daysInMonth
+    && hour! <= 23 && minute! <= 59 && second! <= 59
+    && offsetHour <= 23 && offsetMinute <= 59;
+}
+
+/** An absolute http(s) URL of at most 2048 characters, without credentials. */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return URL_TEXT_PATTERN.test(value) && /^https?:$/.test(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An absolute http(s) URL as `isAbsoluteHttpUrl` accepts, or a reference
+ * relative to the request (a path, '../', '?query' or '#fragment' with no
+ * scheme and no '//' authority) that resolves against `requestUrl` to such a
+ * URL. The value is kept as sent, so the host resolves it as the server meant.
+ * Without an absolute request URL it is checked against a placeholder https
+ * base: a reference with no scheme and no authority cannot leave whatever
+ * origin the host resolves it against, nor add credentials.
+ */
+function isNavigationTarget(value: string, requestUrl?: string): boolean {
+  if (isAbsoluteHttpUrl(value)) {
+    return true;
+  }
+  // A scheme ('mailto:', 'javascript:', 'https:host') or an authority
+  // ('//host', or the same with backslashes) leaves the request's origin.
+  if (!URL_TEXT_PATTERN.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || /^[/\\][/\\]/.test(value)) {
+    return false;
+  }
+  try {
+    const resolved = new URL(value, requestUrl ?? PLACEHOLDER_ORIGIN);
+    return /^https?:$/.test(resolved.protocol) && !resolved.username && !resolved.password;
+  } catch {
+    return false;
+  }
+}
+
+/** `url` as an absolute URL, resolved against the page when it is relative, or `undefined`. */
+function absoluteUrl(url: string): string | undefined {
+  const page = (globalThis as { location?: { href?: unknown } }).location?.href;
+  try {
+    return new URL(url, typeof page === 'string' ? page : undefined).href;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether the URL as `new URL` rebuilds it shares text with `secrets`: its
+ * href, and its hostname (lowercased and IDNA-mapped, so upper case, fullwidth
+ * letters or an ignored soft hyphen can spell a secret) against the
+ * lowercased secrets. A value that does not parse counts as sharing.
+ */
+function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean {
+  let url: URL;
+  let relative = false;
+  try {
+    // An absolute value is parsed on its own, as `isAbsoluteHttpUrl` parses
+    // it: against an https base, 'https:host' would be a path, not a host.
+    url = new URL(value);
+  } catch {
+    try {
+      url = new URL(value, PLACEHOLDER_ORIGIN);
+      relative = true;
+    } catch {
+      return true;
+    }
+  }
+  // Text the placeholder base adds is not the response's, so it is not compared.
+  if (relative && url.origin === PLACEHOLDER_ORIGIN) {
+    const rest = url.href.slice(url.origin.length);
+    return secrets.some((secret) => sharesText(rest, secret));
+  }
+  return secrets.some((secret) => sharesText(url.href, secret) || sharesText(url.hostname, secret.toLowerCase()));
+}
+
+/**
+ * Cancels a response body that will not be read (a redirect not followed
+ * leaves one open in Node), without waiting for it or letting it fail.
+ */
+function releaseBody(response: Response): void {
+  try {
+    response.body?.cancel().catch(() => undefined);
+  } catch {
+    // A body that cannot be canceled is left to the runtime.
+  }
+}
+
+/**
+ * Describes a fetch rejection for the request metric without throwing: a
+ * value that cannot be turned into a string (such as a null-prototype object)
+ * gets the fixed transport message.
+ */
+function describeRejection(error: unknown): { name?: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  try {
+    return { message: String(error) };
+  } catch {
+    return { message: 'AuthFn request failed before a response was received' };
+  }
 }
 
 function now(): number {

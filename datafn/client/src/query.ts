@@ -759,7 +759,8 @@ function sentMutation(schema: DatafnSchema, mutation: Record<string, unknown>): 
   const { resource, relations } = mutation;
   if (typeof resource !== "string" || !isPlainRecord(relations)) return mutation;
   return { ...mutation, relations: Object.fromEntries(Object.entries(relations).map(([name, payload]) => {
-    const kept = schema.relations?.filter((relation) => relation.relation === name && endpointIncludes(relation.from, resource)).at(-1);
+    const matched = schema.relations?.filter((relation) => relation.relation === name && endpointIncludes(relation.from, resource));
+    const kept = matched?.[matched.length - 1];
     const strip = (item: unknown): unknown => Array.isArray(item) ? item.map(strip) : !isPlainRecord(item) || typeof item.$ref !== "string" ? item
       : Object.fromEntries(Object.entries(item).filter(([key, value]) => value !== undefined && (key === "$ref" || !kept || kept.metadata?.some((entry) => entry.name === key))));
     return [name, strip(payload)];
@@ -991,7 +992,8 @@ function unwrittenPathKeys(schema: DatafnSchema, page: PageRow, current: Record<
 
 /** Whether the last of `*` and `**` is `**` (descendants, not direct children). */
 function selectsDescendants(query: Record<string, unknown>): boolean {
-  return stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
+  const stars = stringTokens(query.select).filter((token) => token === "*" || token === "**");
+  return stars[stars.length - 1] === "**";
 }
 
 /**

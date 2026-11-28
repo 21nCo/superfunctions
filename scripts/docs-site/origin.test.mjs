@@ -27,7 +27,9 @@ it.each(["extfn", "authfn", "filefn"])("%s generator owns public URLs independen
     for (const file of ["package.json", "docsfn.config.ts", "scripts/generate-llms.mjs"]) {
       put(base, `${product}/docs/${file}`, readFileSync(join(root, product, "docs", file)));
     }
-    put(base, "scripts/docs-site/llms.mjs", readFileSync(join(root, "scripts/docs-site/llms.mjs")));
+    for (const file of ["llms.mjs", "front-matter.mjs"]) {
+      put(base, `scripts/docs-site/${file}`, readFileSync(join(root, "scripts/docs-site", file)));
+    }
     cpSync(join(root, product, "docs/content"), join(base, product, "docs/content"), { recursive: true });
     mkdirSync(join(base, product, "docs/static"));
     mkdirSync(join(base, product, "docs/node_modules/@docsfn"), { recursive: true });

@@ -12,6 +12,13 @@ import type {
   PlugFnWebhookReceipt,
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
+import {
+  assertWebhookReceiptProvider,
+  assertWebhookUpdateFields,
+  normalizeWebhookStorageRow,
+  webhookDeliveryReassignmentConflict,
+  webhookRetryUpdates,
+} from '../../webhooks/webhook-handler.js';
 import type { WebhookRecord } from '../webhook-storage.js';
 
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
@@ -464,14 +471,14 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     return this.database.create<PlugFnWebhookReceipt>({
       model: this.models.webhookReceipts,
       data: cloneRecord(receipt),
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async getWebhookReceipt(id: string): Promise<PlugFnWebhookReceipt | null> {
     return this.database.findOne<PlugFnWebhookReceipt>({
       model: this.models.webhookReceipts,
       where: [{ field: 'id', operator: 'eq', value: id }],
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async findWebhookReceiptByIdempotencyKey(
@@ -483,37 +490,90 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       where: [
         { field: 'provider', operator: 'eq', value: provider },
         { field: 'idempotencyKey', operator: 'eq', value: idempotencyKey },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: null },
       ],
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateWebhookReceipt(
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
-    return this.database.update<PlugFnWebhookReceipt>({
-      model: this.models.webhookReceipts,
-      where: [{ field: 'id', operator: 'eq', value: id }],
-      data: cloneRecord(updates),
-    });
+    assertWebhookUpdateFields(updates, 'receipt');
+    const model = this.models.webhookReceipts;
+    const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+    const data = cloneRecord(updates);
+    const { provider } = data;
+    delete data.provider;
+    delete data.workflowIdempotencyKey;
+    delete data.workflowTenantId;
+    delete data.signatureVerified;
+    let existing: PlugFnWebhookReceipt | null = null;
+    if (provider !== undefined || 'connectionId' in data || 'event' in data || 'idempotencyKey' in data ||
+        'payloadHash' in data || 'id' in data || 'ownerKind' in data || 'ownerId' in data) {
+      existing = await this.getWebhookReceipt(id);
+      if (!existing) throw new NotFoundError(model, where);
+      assertWebhookReceiptProvider(existing, provider);
+      if (existing.workflowIdempotencyKey) {
+        delete data.connectionId;
+        delete data.event;
+        delete data.idempotencyKey;
+        delete data.payloadHash;
+        delete data.id;
+        delete data.ownerKind;
+        delete data.ownerId;
+      } else if (provider !== undefined && provider !== existing.provider) {
+        data.provider = provider;
+        // A provider change may only update a row that is still standalone.
+        where.push({ field: 'workflowIdempotencyKey', operator: 'eq', value: null });
+      }
+    }
+    if (Object.keys(data).length === 0) {
+      const receipt = existing ?? await this.getWebhookReceipt(id);
+      if (!receipt) throw new NotFoundError(model, where);
+      return receipt;
+    }
+    return this.database.update<PlugFnWebhookReceipt>({ model, where, data }).then(normalizeWebhookStorageRow);
   }
 
   async createWebhookDelivery(delivery: PlugFnWebhookDelivery): Promise<PlugFnWebhookDelivery> {
     return this.database.create<PlugFnWebhookDelivery>({
       model: this.models.webhookDeliveries,
       data: cloneRecord(delivery),
-    });
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateWebhookDelivery(
     id: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
+    assertWebhookUpdateFields(updates, 'delivery');
+    const model = this.models.webhookDeliveries;
+    const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+    const data = cloneRecord(updates);
+    delete data.workflowScoped;
+    delete data.signatureVerified;
+    if (data.receiptId === undefined) {
+      delete data.receiptId;
+    } else {
+      const existing = await this.database.findOne<PlugFnWebhookDelivery>({ model, where });
+      if (!existing) throw new NotFoundError(model, where);
+      if (existing.receiptId !== data.receiptId &&
+          (existing.workflowScoped || (await this.getWebhookReceipt(existing.receiptId))?.workflowIdempotencyKey ||
+           (await this.getWebhookReceipt(data.receiptId))?.workflowIdempotencyKey)) {
+        throw webhookDeliveryReassignmentConflict();
+      }
+    }
+    if (Object.keys(data).length === 0) {
+      const delivery = await this.database.findOne<PlugFnWebhookDelivery>({ model, where });
+      if (!delivery) throw new NotFoundError(model, where);
+      return normalizeWebhookStorageRow(delivery);
+    }
     return this.database.update<PlugFnWebhookDelivery>({
-      model: this.models.webhookDeliveries,
-      where: [{ field: 'id', operator: 'eq', value: id }],
-      data: cloneRecord(updates),
-    });
+      model,
+      where,
+      data,
+    }).then(normalizeWebhookStorageRow);
   }
 
   async updateClaimedWebhookDelivery(
@@ -521,16 +581,23 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     claimToken: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery | null> {
+    const model = this.models.webhookDeliveries;
+    const where: WhereClause[] = [
+      { field: 'id', operator: 'eq', value: id },
+      { field: 'status', operator: 'eq', value: 'running' },
+      { field: 'claimToken', operator: 'eq', value: claimToken },
+      { field: 'workflowScoped', operator: 'eq', value: null },
+    ];
+    const data = webhookRetryUpdates(updates);
+    if (Object.keys(data).length === 0) {
+      return this.database.findOne<PlugFnWebhookDelivery>({ model, where }).then(normalizeWebhookStorageRow);
+    }
     try {
       return await this.database.update<PlugFnWebhookDelivery>({
-        model: this.models.webhookDeliveries,
-        where: [
-          { field: 'id', operator: 'eq', value: id },
-          { field: 'status', operator: 'eq', value: 'running' },
-          { field: 'claimToken', operator: 'eq', value: claimToken },
-        ],
-        data: cloneRecord(updates),
-      });
+        model,
+        where,
+        data: cloneRecord(data),
+      }).then(normalizeWebhookStorageRow);
     } catch (error) {
       if (error instanceof NotFoundError) {
         return null;
@@ -544,7 +611,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       model: this.models.webhookDeliveries,
       where: [{ field: 'receiptId', operator: 'eq', value: receiptId }],
       orderBy: [{ field: 'createdAt', direction: 'desc' }],
-    });
+    }).then((rows) => rows.map(normalizeWebhookStorageRow));
   }
 
   async listWebhookDeliveriesForRetry(
@@ -554,7 +621,12 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
   ): Promise<PlugFnWebhookDelivery[]> {
     const pending = await this.database.findMany<PlugFnWebhookDelivery>({
       model: this.models.webhookDeliveries,
-      where: [{ field: 'status', operator: 'eq', value: 'pending' }],
+      // Legacy rows have no scope marker. Scoped attempts can only be retried
+      // through verified ingress, so exclude them before applying the limit.
+      where: [
+        { field: 'status', operator: 'eq', value: 'pending' },
+        { field: 'workflowScoped', operator: 'eq', value: null },
+      ],
       orderBy: [{ field: 'createdAt', direction: 'asc' }],
       limit,
     });
@@ -563,6 +635,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       model: this.models.webhookDeliveries,
       where: [
         { field: 'status', operator: 'eq', value: 'failed' },
+        { field: 'workflowScoped', operator: 'eq', value: null },
         { field: 'nextAttemptAt', operator: 'lte', value: now },
       ],
       orderBy: [{ field: 'updatedAt', direction: 'asc' }],
@@ -574,6 +647,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       model: this.models.webhookDeliveries,
       where: [
         { field: 'status', operator: 'eq', value: 'running' },
+        { field: 'workflowScoped', operator: 'eq', value: null },
         { field: 'updatedAt', operator: 'lte', value: staleBefore },
       ],
       orderBy: [{ field: 'updatedAt', direction: 'asc' }],
@@ -587,7 +661,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
         const rightTime = toTime(right.nextAttemptAt ?? right.createdAt);
         return leftTime - rightTime;
       })
-      .slice(0, limit);
+      .slice(0, limit)
+      .map(normalizeWebhookStorageRow);
   }
 
   async claimWebhookDeliveriesForRetry(
@@ -604,6 +679,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       const where: WhereClause[] = [
         { field: 'id', operator: 'eq', value: delivery.id },
         { field: 'status', operator: 'eq', value: delivery.status },
+        { field: 'workflowScoped', operator: 'eq', value: null },
       ];
       if (delivery.nextAttemptAt) {
         where.push({ field: 'nextAttemptAt', operator: 'lte', value: now });
@@ -630,7 +706,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
           }),
         });
         if (updated?.status === 'running') {
-          claimed.push(updated);
+          claimed.push(normalizeWebhookStorageRow(updated));
         }
       } catch {
         // Another worker claimed or updated the delivery first.

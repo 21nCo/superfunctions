@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
 import { addProviderCommand } from './commands/add-provider.js';
 import { testCommand } from './commands/test.js';
@@ -13,12 +14,14 @@ import {
   webhooksReplayCommand,
 } from './commands/runtime.js';
 
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 const program = new Command();
 
 program
   .name('plugfn')
   .description('CLI tool for PlugFn SDK')
-  .version('0.0.4');
+  .version(version);
 
 // Init command
 program

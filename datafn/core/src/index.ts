@@ -109,6 +109,14 @@ export { unwrapEnvelope } from "./envelope.js";
 
 export * from "./dfql.js";
 
+// DATA-41: per-record revisions
+export {
+  DATAFN_REVISION_FIELD,
+  readRowRevision,
+  withoutRowRevision,
+} from "./revisions.js";
+export type { DatafnPushRevision, DatafnServerCapabilities } from "./revisions.js";
+
 export {
   DATAFN_REQUEST_ACTIONS,
   DATAFN_REQUEST_PROTOCOL_VERSION,
@@ -154,6 +162,7 @@ export {
   getRelationName,
   getRelationKeyName,
   enumerateJoinStoreKeys,
+  resolveJoinStoreResources,
 } from "./joins.js";
 
 export {

@@ -15,7 +15,9 @@
 import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
-import { ensureInternalTable } from "../internal-tables.js";
+import { adapterIdentity, ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
+import { assignWriteRevisions, ensureRevisionsTable, issuesRevisions, revisionsEnabled } from "../revisions.js";
+import type { DatafnSchema } from "../../core-types.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
@@ -23,10 +25,41 @@ import { withAdapterNamespaceLock } from "./namespace-lock.js";
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
+ * FIX-REL-002: runs one change-tracking step with up to `maxRetries` retries
+ * (50ms/100ms backoff), and throws the last failure so the caller treats the
+ * mutation as failed.
+ *
+ * DATA-41: only outside a database transaction. A service recording inside
+ * the write's transaction makes one attempt: a failed statement may have
+ * aborted that transaction (PostgreSQL), so the failure propagates, the whole
+ * write rolls back, and the mutation stays retryable under its id. Outside a
+ * transaction the write has committed and is never replayed: the same entries
+ * are assigned and recorded again, keeping the revisions already raised.
+ */
+async function withChangeRetry(
+  changeTracking: ChangeTrackingService,
+  step: () => Promise<void>,
+  maxRetries: number,
+  logger: DatafnLogger | undefined,
+  message: string,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  const retries = changeTracking.inTransaction ? 0 : maxRetries;
+  for (let i = 0; ; i++) {
+    try {
+      await step();
+      return;
+    } catch (e) {
+      if (i >= retries) throw e;
+      logger?.warn(message, { attempt: i + 1, maxRetries, ...context, error: String(e) });
+      await sleep(50 * (i + 1)); // 50ms, 100ms
+    }
+  }
+}
+
+/**
  * FIX-REL-002: Shared retry helper for change-tracking writes.
- * Retries up to `maxRetries` times with 50ms/100ms backoff.
  * Used by both execute-mutation and push paths for parity.
- * On final failure, throws so the caller can treat the mutation as failed.
  */
 export async function recordChangeWithRetry(
   changeTracking: ChangeTrackingService,
@@ -34,21 +67,11 @@ export async function recordChangeWithRetry(
   maxRetries = 2,
   logger?: DatafnLogger,
 ): Promise<void> {
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      await changeTracking.recordChange(params);
-      return;
-    } catch (e) {
-      if (i === maxRetries) throw e;
-      logger?.warn("Change tracking retry", { attempt: i + 1, maxRetries, error: String(e) });
-      await sleep(50 * (i + 1)); // 50ms, 100ms
-    }
-  }
+  await withChangeRetry(changeTracking, () => changeTracking.recordChange(params), maxRetries, logger, "Change tracking retry");
 }
 
 /**
  * FIX-REL-002: Shared retry helper for bulk change-tracking writes.
- * Retries up to `maxRetries` times with 50ms/100ms backoff.
  */
 export async function recordChangesWithRetry(
   changeTracking: ChangeTrackingService,
@@ -57,23 +80,62 @@ export async function recordChangesWithRetry(
   logger?: DatafnLogger,
 ): Promise<void> {
   if (entries.length === 0) return;
-
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      await changeTracking.recordChanges(entries);
-      return;
-    } catch (e) {
-      if (i === maxRetries) throw e;
-      logger?.warn("Change tracking retry (bulk)", {
-        attempt: i + 1,
-        maxRetries,
-        entryCount: entries.length,
-        error: String(e),
-      });
-      await sleep(50 * (i + 1)); // 50ms, 100ms
-    }
-  }
+  await withChangeRetry(
+    changeTracking,
+    () => changeTracking.recordChanges(entries),
+    maxRetries,
+    logger,
+    "Change tracking retry (bulk)",
+    { entryCount: entries.length },
+  );
 }
+
+/**
+ * DATA-41: records one write's change entries one by one, after raising the
+ * revisions of the records they change (on the evidence `writeDb` recorded).
+ * Assignment has its own retries (a retry raises no record twice), then each
+ * entry, in serverSeq order as base recorded them, has its own (a retry
+ * records no entry twice; see recordChanges), so a failing entry never
+ * spends another entry's retries (see withChangeRetry). Outside a
+ * transaction every entry is attempted before the first failure is thrown,
+ * and `onRecorded` names each entry stored. Only the entries in `record` are
+ * recorded when it is given: the others (changes left without a sequence)
+ * still raise their records' revisions.
+ */
+export async function recordWriteChangesWithRetry(
+  changeTracking: ChangeTrackingService,
+  entries: ChangeEntryInput[],
+  /** The write's evidence adapter; the service's own adapter when undefined. */
+  writeDb: Adapter | undefined,
+  maxRetries = 2,
+  logger?: DatafnLogger,
+  options: { record?: ReadonlySet<ChangeEntryInput>; onRecorded?: (entry: ChangeEntryInput) => void } = {},
+): Promise<void> {
+  await withChangeRetry(
+    changeTracking,
+    () => changeTracking.assignRevisions(entries, writeDb),
+    maxRetries,
+    logger,
+    "Revision assignment retry",
+    { entryCount: entries.length },
+  );
+  let failure: { error: unknown } | undefined;
+  for (const entry of entries) {
+    if (options.record && !options.record.has(entry)) continue;
+    try {
+      await recordChangeWithRetry(changeTracking, entry, maxRetries, logger);
+    } catch (error) {
+      if (changeTracking.inTransaction) throw error;
+      failure ??= { error };
+      continue;
+    }
+    options.onRecorded?.(entry);
+  }
+  if (failure) throw failure.error;
+}
+
+/** DATA-41: change entries whose insert was sent (see unstoredChanges). */
+const sentChanges = new WeakSet<ChangeEntryInput>();
 
 /**
  * Change entry representing a mutation effect
@@ -85,6 +147,21 @@ export interface ChangeEntry {
   id: string;
   op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
+  /** DATA-41: the record's revision after this change; absent on rows written without one. */
+  rev?: number;
+  /**
+   * DATA-41: set when the writer committed this change together with `rev`
+   * (in one database transaction), so `record` is the stored state at `rev`.
+   * Absent on rows written without that guarantee or before it was recorded.
+   */
+  certified?: true;
+}
+
+/** DATA-41: a change row's revision and its write-time provenance, when it recorded one. */
+function storedRev(row: Record<string, unknown>): { rev?: number; certified?: true } {
+  const rev = row.rev === null || row.rev === undefined ? Number.NaN : Number(row.rev);
+  if (!Number.isInteger(rev) || rev <= 0) return {};
+  return Number(row.rev_certified) === 1 ? { rev, certified: true } : { rev };
 }
 
 /**
@@ -96,6 +173,14 @@ export interface ChangeEntryInput {
   id: string;
   op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
+  /**
+   * DATA-41: set by `recordChanges` on a record's last entry of a write to
+   * the record's revision after that write. A retry of the same entries
+   * reuses it instead of bumping again.
+   */
+  rev?: number;
+  /** DATA-41: the revision was raised from a possibly stale view; the change row is not certified. */
+  revUncertified?: boolean;
 }
 
 /**
@@ -118,6 +203,34 @@ export class ChangeTrackingService {
   private metaEnsured = false;
   private changesEnsured = false;
   private namespaceMetaEnsured = false;
+  private revisionsEnsured = false;
+  private revColumnReady = false;
+  private transactionBound = false;
+  /**
+   * DATA-41: this service records changes inside a database transaction that
+   * also commits the write and its revisions (set by `withDb`), so the rows it
+   * records are certified as the state at their revision.
+   */
+  private writesCertified = false;
+
+  /** DATA-41: whether this service records inside the write's database transaction. */
+  get inTransaction(): boolean {
+    return this.writesCertified;
+  }
+  /**
+   * DATA-41: record each change's revision on its change row. Set from the
+   * server's `revisions.enabled` option; revisions are bumped either way.
+   */
+  issueRevisions = false;
+  /** DATA-41: the schema whose resources get revisions issued (see useRevisionsOf). */
+  private revisionSchema?: DatafnSchema;
+
+  /** DATA-41: issues revisions as `schema`'s server option says. */
+  useRevisionsOf(schema: DatafnSchema): this {
+    this.revisionSchema = schema;
+    this.issueRevisions = revisionsEnabled(schema);
+    return this;
+  }
 
   constructor(
     private db: Adapter,
@@ -151,6 +264,32 @@ export class ChangeTrackingService {
       this.metaEnsured = true;
     }
     await this.ensureNamespaceMeta();
+    if (this.issueRevisions && !this.revColumnReady) {
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
+  }
+
+  /**
+   * DATA-41: creates `__datafn_revisions` before an enclosing transaction
+   * begins (some databases implicitly commit DDL). Write paths call this next
+   * to `ensureReady`; a service that is not transaction-bound also creates
+   * the table on its first recorded change.
+   */
+  async ensureRevisionsReady(): Promise<void> {
+    if (!this.revisionsEnsured) {
+      await ensureRevisionsTable(this.db);
+      this.revisionsEnsured = true;
+    }
+    // Change rows record revisions only once their column exists, which
+    // needs the changes table first (D1 and SQLite reject an ALTER of a
+    // missing table). Services bound with `withDb` inherit both.
+    if (this.issueRevisions && !this.revColumnReady && !this.transactionBound) {
+      if (!this.changesEnsured) {
+        await ensureInternalTable(this.db, "__datafn_changes");
+        this.changesEnsured = true;
+      }
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
   }
 
   /**
@@ -168,10 +307,10 @@ export class ChangeTrackingService {
     if (this.namespaceMetaEnsured) {
       return;
     }
-    let prepared = preparedNamespaces.get(this.db);
+    let prepared = preparedNamespaces.get(adapterIdentity(this.db));
     if (!prepared) {
       prepared = new Set<string>();
-      preparedNamespaces.set(this.db, prepared);
+      preparedNamespaces.set(adapterIdentity(this.db), prepared);
     }
     if (prepared.has(this.namespace)) {
       this.namespaceMetaEnsured = true;
@@ -199,10 +338,13 @@ export class ChangeTrackingService {
    * REL-011: Create a new ChangeTrackingService with a different db adapter.
    * Used to run change tracking within a transaction (pass tx db here).
    * The namespace and sequenceStore are inherited from the original instance.
+   * DATA-41: pass `inTransaction` only when `txDb` is a database transaction
+   * that commits the write, its revisions and its change rows together; only
+   * then do change rows certify their row as the state at their revision.
    */
-  withDb(txDb: Adapter, emitChanges = true): ChangeTrackingService {
+  withDb(txDb: Adapter, emitChanges = true, inTransaction = false): ChangeTrackingService {
     const sequenceStore = this.sequenceStore?.withDb?.(txDb) ?? this.sequenceStore;
-    return new ChangeTrackingService(
+    const bound = new ChangeTrackingService(
       txDb,
       this.namespace,
       sequenceStore,
@@ -212,6 +354,13 @@ export class ChangeTrackingService {
       this.changesEnsured,
       true,
     );
+    bound.issueRevisions = this.issueRevisions;
+    bound.revisionSchema = this.revisionSchema;
+    bound.transactionBound = true;
+    bound.writesCertified = inTransaction;
+    bound.revisionsEnsured = this.revisionsEnsured;
+    bound.revColumnReady = this.revColumnReady;
+    return bound;
   }
 
   /**
@@ -324,6 +473,57 @@ export class ChangeTrackingService {
   }
 
   /**
+   * DATA-41: raises the revision of each record the entries of one write
+   * change, once per record, and sets it on the record's last entry (see
+   * assignWriteRevisions). Recording entries already assigned does not bump
+   * again, so a caller recording one write's entries one by one assigns them
+   * first.
+   */
+  async assignRevisions(entries: ChangeEntryInput[], writeDb: Adapter = this.db): Promise<void> {
+    // Inside a transaction the table and column are only used when they were
+    // ensured before the transaction began; change rows then record no
+    // revision.
+    if (!this.transactionBound) await this.ensureRevisionsReady();
+    const recordRev = this.issueRevisions && this.revColumnReady;
+    const schema = this.revisionSchema;
+    // A change row carrying a revision records the stored row of a resource
+    // the schema issues revisions for, but only when the write commits
+    // together with its revision: otherwise another write may land before
+    // the row is read, so the change keeps its own payload.
+    const certified = this.writesCertified;
+    await assignWriteRevisions(
+      writeDb,
+      this.namespace,
+      entries,
+      (resource) => certified && recordRev && schema !== undefined && issuesRevisions(schema, resource),
+      schema,
+      certified,
+    );
+  }
+
+  /** A change entry's row id, derived from the entry alone. */
+  private changeRowId(params: ChangeEntryInput): string {
+    return `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`;
+  }
+
+  /**
+   * DATA-41: the entries whose rows are not stored yet. Outside a
+   * transaction an insert that failed may have stored its rows before the
+   * adapter failed (a lost acknowledgement), so an entry sent before is
+   * looked up by its row id and never inserted twice.
+   */
+  private async unstoredChanges(entries: ChangeEntryInput[]): Promise<ChangeEntryInput[]> {
+    if (this.writesCertified) return entries;
+    const unstored: ChangeEntryInput[] = [];
+    for (const entry of entries) {
+      const stored = sentChanges.has(entry) &&
+        (await this.db.internal.findOne("__datafn_changes", [{ field: "id", op: "eq", value: this.changeRowId(entry) }]));
+      if (!stored) unstored.push(entry);
+    }
+    return unstored;
+  }
+
+  /**
    * Record a change entry for a mutation (delegates to recordChanges)
    */
   async recordChange(params: ChangeEntryInput): Promise<void> {
@@ -345,9 +545,25 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
 
+    // DATA-41: unless the caller assigned them for a larger write, the
+    // entries are one committed write (when this adapter's transaction
+    // commits), which raises each changed record's revision once.
+    await this.assignRevisions(entries);
+    const recordRev = this.issueRevisions && this.revColumnReady;
+    const schema = this.revisionSchema;
+    // A change row records a revision only when the resource issued
+    // revisions when it was written, and records whether the write committed
+    // together with it (`rev_certified`): only then is the record the stored
+    // row read in the write (or a patch or delete whose revision alone is
+    // sent). A resource with its own `$rev` field records
+    // none, so its payloads are never read as certified rows later.
+    const certifiesRecord = (resource: string): boolean =>
+      recordRev && schema !== undefined && issuesRevisions(schema, resource);
+
+    const unstored = await this.unstoredChanges(entries);
     const now = new Date().toISOString();
-    const rows = entries.map((params) => ({
-      id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
+    const rows = unstored.map((params) => ({
+      id: this.changeRowId(params),
       namespace: this.namespace,
       server_seq: params.serverSeq,
       resource: params.resource,
@@ -355,18 +571,23 @@ export class ChangeTrackingService {
       op: params.op,
       record: params.record ? JSON.stringify(params.record) : null,
       created_at: now,
+      ...(params.rev !== undefined && certifiesRecord(params.resource)
+        ? { rev: params.rev, rev_certified: this.writesCertified && !params.revUncertified ? 1 : 0 }
+        : {}),
     }));
 
     // EXE-018: Batch capability detection — use createMany when available
     const hasBatchCapability = typeof this.db.internal.createMany === "function";
 
-    if (hasBatchCapability) {
+    for (const entry of unstored) sentChanges.add(entry);
+    // With no rows left, every row was stored by an earlier attempt.
+    if (rows.length > 0 && hasBatchCapability) {
       this.logger?.debug("recordChanges: using batch insert path", {
         operation: "recordChanges",
         entryCount: entries.length,
       });
       await this.db.internal.createMany!("__datafn_changes", rows);
-    } else {
+    } else if (rows.length > 0) {
       this.logger?.debug("recordChanges: batch insert unavailable, using sequential path", {
         operation: "recordChanges",
         entryCount: entries.length,
@@ -458,6 +679,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       }));
     } catch (error) {
       // Propagate error — returning empty would make client believe it's fully synced
@@ -507,6 +729,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       }));
     } catch (error) {
       // Propagate error instead of returning empty (which would imply "no changes")
@@ -557,6 +780,7 @@ export class ChangeTrackingService {
           id: change.record_id as string,
           op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
           record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
         }));
     } catch (error) {
       this.logger?.error("Failed to get resource-filtered changes", {
@@ -609,6 +833,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       };
     } catch (error) {
       this.logger?.error("Failed to get latest change for record", {

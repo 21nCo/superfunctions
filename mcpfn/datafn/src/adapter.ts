@@ -13,9 +13,11 @@ import {
   type McpFnToolDefinition,
 } from "@mcpfn/core";
 
+import { ScopeGate, validateNeededScopes } from "./scopes.js";
 import type {
   CreateDatafnMcpRegistryOptions,
   DatafnListToolOptions,
+  DatafnMcpAdapter,
   DatafnReadToolOptions,
   DatafnResourceExposure,
   DatafnWriteToolOptions,
@@ -266,16 +268,86 @@ function assertUniqueToolNames<TMcpContext>(
   }
 }
 
-export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
+/** Locale-independent string order, so tool registration order never varies by host. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/**
+ * Resolves the scopes each exposed resource's read and write tools need,
+ * before any tool is registered. Without `sessionScopes` no resource may
+ * declare scopes; with it, every enabled operation must.
+ */
+function resolveResourceScopes<TMcpContext, TDatafnContext>(
   options: CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext>,
-): McpFnRegistry<TMcpContext> {
+): Map<string, { read?: string[]; write?: string[] }> {
+  const scopes = new Map<string, { read?: string[]; write?: string[] }>();
+  if (options.sessionScopes !== undefined && typeof options.sessionScopes !== "function") {
+    throw new McpFnValidationError("DataFn sessionScopes must be a function");
+  }
+  for (const resourceName of Object.keys(options.expose).sort(compareCodeUnits)) {
+    const exposure = options.expose[resourceName]!;
+    const declared = exposure.scopes;
+    if (!options.sessionScopes) {
+      if (declared !== undefined) {
+        throw new McpFnValidationError(
+          `DataFn resource ${resourceName} declares scopes, which need a sessionScopes resolver`,
+        );
+      }
+      continue;
+    }
+    const reads = Boolean(
+      operationOptions<DatafnListToolOptions>(exposure.list, true) ||
+      operationOptions<DatafnReadToolOptions>(exposure.get, true),
+    );
+    const writes = Boolean(
+      exposure.create ||
+      exposure.update ||
+      operationOptions<Omit<DatafnWriteToolOptions, "fields">>(exposure.delete, false),
+    );
+    const label = `DataFn resource ${resourceName} scopes`;
+    const read = reads || declared?.read !== undefined
+      ? validateNeededScopes(`${label}.read`, declared?.read)
+      : undefined;
+    const write = writes || declared?.write !== undefined
+      ? validateNeededScopes(`${label}.write`, declared?.write)
+      : undefined;
+    scopes.set(resourceName, { read, write });
+  }
+  return scopes;
+}
+
+/**
+ * Builds the DataFn tools and the scope gate that goes with them. Pass
+ * `toolVisibility` to `createMcpFnServer` so tools the session's scopes do
+ * not allow are hidden from `tools/list`; their handlers answer
+ * `insufficient_scope` whether or not the hook is installed.
+ */
+export function createDatafnMcpAdapter<TMcpContext, TDatafnContext>(
+  options: CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext>,
+): DatafnMcpAdapter<TMcpContext> {
   const registry = options.registry ?? new McpFnRegistry<TMcpContext>();
+  const gate = new ScopeGate<TMcpContext>(options.sessionScopes);
+  const register = (
+    definition: McpFnToolDefinition<TMcpContext>,
+    scopes: readonly string[] | undefined,
+  ) => {
+    if (!scopes) {
+      registry.register(definition);
+      return;
+    }
+    const gated = gate.wrap(definition, scopes);
+    registry.register(gated);
+    gate.record(gated.name, scopes);
+  };
   const schema = options.executor.schema;
   const prefix = safeSegment(options.toolPrefix ?? "datafn");
   if (typeof options.clientId === "string" && !options.clientId.trim()) {
     throw new McpFnValidationError("DataFn clientId must be a non-empty string");
   }
   assertUniqueToolNames(registry, options.expose, prefix);
+  const resourceScopes = resolveResourceScopes(options);
   if (
     typeof options.clientId === "string" &&
     options.allowSharedClientId !== true &&
@@ -304,7 +376,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     }
   }
 
-  for (const resourceName of Object.keys(options.expose).sort()) {
+  for (const resourceName of Object.keys(options.expose).sort(compareCodeUnits)) {
     const exposure = options.expose[resourceName]!;
     const resource = schema.resources.find((candidate) => candidate.name === resourceName);
     if (!resource) {
@@ -315,6 +387,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     validateFieldList(`DataFn resource ${resourceName} projection`, exposure.fields);
     if (list || get) validateReadFields(schema, resource, exposure.fields);
     const maps = fieldMaps(schema, resource);
+    const scopes = resourceScopes.get(resourceName);
 
     if (list) {
       const filterFields = list.filterFields ?? exposure.fields;
@@ -399,11 +472,11 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
           return structuredResult({ resource: resourceName, operation: "list", result });
         },
       };
-      registry.register(definition);
+      register(definition, scopes?.read);
     }
 
     if (get) {
-      registry.register({
+      register({
         name: get.name ?? defaultName(prefix, resourceName, "get"),
         description: get.description ?? `Get one ${resourceName} record by ID.`,
         inputSchema: {
@@ -433,7 +506,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
           );
           return structuredResult({ resource: resourceName, operation: "get", result });
         },
-      });
+      }, scopes?.read);
     }
 
     const registerWrite = (
@@ -469,7 +542,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
       const recordRequired = operation === "create"
         ? requiredCreateFields
         : [];
-      registry.register({
+      register({
         name: config.name ?? defaultName(prefix, resourceName, operation),
         description: config.description ?? `${operation === "create" ? "Create" : "Update"} one ${resourceName} record.`,
         inputSchema: {
@@ -512,7 +585,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
           );
           return structuredResult({ resource: resourceName, operation, result });
         },
-      });
+      }, scopes?.write);
     };
 
     if (exposure.create) registerWrite("create", exposure.create);
@@ -530,7 +603,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
           `DataFn resource ${resourceName} has no write policy and cannot expose delete`,
         );
       }
-      registry.register({
+      register({
         name: config.name ?? defaultName(prefix, resourceName, "delete"),
         description: config.description ?? `Delete one ${resourceName} record by ID.`,
         inputSchema: {
@@ -565,9 +638,42 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
           );
           return structuredResult({ resource: resourceName, operation: "delete", result });
         },
-      });
+      }, scopes?.write);
     }
   }
 
-  return registry;
+  const adapter: DatafnMcpAdapter<TMcpContext> = {
+    registry,
+    toolVisibility: (input) => gate.visible(input),
+    registerTool(definition, toolOptions = {}) {
+      if (toolOptions.scopes === undefined) {
+        register(definition, undefined);
+        return adapter;
+      }
+      if (!gate.enabled) {
+        throw new McpFnValidationError(
+          `Tool ${String(definition.name)} declares scopes, which need a sessionScopes resolver`,
+        );
+      }
+      register(
+        definition,
+        validateNeededScopes(`Tool ${String(definition.name)} scopes`, toolOptions.scopes),
+      );
+      return adapter;
+    },
+    requiredScopes: (toolName) => gate.requiredScopes(toolName),
+  };
+  return adapter;
+}
+
+/**
+ * Builds the DataFn tools into a registry. Scope-gated tools still answer
+ * `insufficient_scope` when called without their scopes; use
+ * `createDatafnMcpAdapter` for the visibility hook that hides them from
+ * `tools/list`.
+ */
+export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
+  options: CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext>,
+): McpFnRegistry<TMcpContext> {
+  return createDatafnMcpAdapter(options).registry;
 }

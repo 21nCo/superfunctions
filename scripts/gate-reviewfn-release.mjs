@@ -7,7 +7,7 @@ import path from "node:path";
 import { consumerSmoke } from "./reviewfn-consumer-smoke.mjs";
 
 const root = process.cwd();
-const packages = ["core", "context-composio", "harness-codex", "github", "testing", "harness-claude-code", "cli"];
+const packages = ["core", "context-composio", "harness-codex", "github", "testing", "harness-claude-code", "harness-cli", "cli"];
 const packageName = (name) => `@superfunctions/reviewfn-${name}`;
 const results = [];
 
@@ -70,6 +70,7 @@ try {
   npm("consumer-install", ["install", "--ignore-scripts", "--no-audit", "--no-fund", ...tarballs], consumer);
   run("consumer-import", process.execPath, ["--input-type=module", "-e", "const core=await import('@superfunctions/reviewfn-core'); if(typeof core.ReviewCoordinator!=='function')process.exit(1)"], consumer);
   run("consumer-import-claude-code", process.execPath, ["--input-type=module", "-e", "const claude=await import('@superfunctions/reviewfn-harness-claude-code'); if(typeof claude.ClaudeCodeHarnessAdapter!=='function')process.exit(1)"], consumer);
+  run("consumer-import-cli", process.execPath, ["--input-type=module", "-e", "const generic=await import('@superfunctions/reviewfn-harness-cli'); if(typeof generic.CliHarnessAdapter!=='function')process.exit(1)"], consumer);
   run("consumer-cli", path.join(consumer, "node_modules", ".bin", process.platform === "win32" ? "reviewfn.cmd" : "reviewfn"), ["help"], consumer);
   const smoke = await consumerSmoke(consumer);
   results.push({ name: "consumer-end-to-end", ok: true, status: 0, stdout: JSON.stringify(smoke) });

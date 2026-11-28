@@ -10,7 +10,7 @@ import { getBodyFromContext } from "../http/json.js";
 import { errorResponse } from "../http/errors.js";
 import { executeClone } from "../execution/sync/clone.js";
 import { executePull } from "../execution/sync/pull.js";
-import { executePush } from "../execution/sync/push.js";
+import { executePush, type PostWriteRowReader } from "../execution/sync/push.js";
 import { executeReconcile } from "../execution/sync/reconcile.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import { logRequest } from "../logging.js";
@@ -30,6 +30,8 @@ export interface PushHandlerOpts extends MutationValidationOpts {
   allowUnknownResources?: boolean;
   /** FIX-SEC-006: Max batch size for push mutations (default 500) */
   maxBatchSize?: number;
+  /** DATA-41: post-write read-backs in flight at once (limits.maxBatchQueryConcurrency, default 20). */
+  maxPostWriteReadConcurrency?: number;
 }
 
 /**
@@ -252,6 +254,17 @@ export function createPullHandler(
 }
 
 /**
+ * DATA-41: push's post-write reader with its concurrency bound
+ * (limits.maxBatchQueryConcurrency, default 20); none without a reader.
+ */
+function postWriteReadOf(
+  read: PostWriteRowReader | undefined,
+  concurrency = 20,
+): { read: PostWriteRowReader; concurrency: number } | undefined {
+  return read && { read, concurrency };
+}
+
+/**
  * Create push route handler
  */
 export function createPushHandler(
@@ -267,7 +280,14 @@ export function createPushHandler(
   handlerOpts?: PushHandlerOpts,
   logger?: DatafnLogger,
 ) {
-  return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
+  // DATA-41: the server's auth wrapper passes `readPostWriteRows`, the
+  // caller's own query of a written record; without it (direct handler use)
+  // no host read policy applies.
+  return async (
+    req: Request,
+    ctx?: { parsedBody?: unknown },
+    options: { readPostWriteRows?: PostWriteRowReader } = {},
+  ): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
     const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -456,6 +476,7 @@ export function createPushHandler(
         actorId,
         logger,
         getDatafnMultiRegionRuntimeConfig(plugins),
+        postWriteReadOf(options.readPostWriteRows, handlerOpts?.maxPostWriteReadConcurrency),
         );
 
         timer?.startPhase("changeLog");
