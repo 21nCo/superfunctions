@@ -55,9 +55,9 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
   // anchor is returned before any of its fields is read, and each range is read only
   // when it is applied, in order.
   const length = ranges.length;
-  let populated = false;
-  for (let index = 0; index < length && !populated; index += 1) populated = index in ranges;
-  if (!populated) return anchor;
+  let first = 0;
+  while (first < length && !(first in ranges)) first += 1;
+  if (first === length) return anchor;
   // Each field is read once, including one supplied through a prototype or getter,
   // and the result is built from those values only, so mapping edits together or
   // one call at a time gives the same anchor.
@@ -66,8 +66,8 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
   const originalTo = anchor.to;
   let from = originalFrom;
   let to = originalTo;
-  for (let index = 0; index < length; index += 1) {
-    if (!(index in ranges)) continue;
+  for (let index = first; index < length; index += 1) {
+    if (index !== first && !(index in ranges)) continue;
     const range = ranges[index]!;
     const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
     const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
@@ -96,9 +96,10 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
     return copyWith(entry, { anchor }) as unknown as T;
   };
   // A null collection is kept as read, so sidecar validation still rejects it.
+  // Each collection is mapped before the next one is read, as before reuse was added.
   const readComments = sidecar.comments;
-  const readSuggestions = sidecar.suggestions;
   const comments = readComments == null ? readComments : readComments.map(mapEntry);
+  const readSuggestions = sidecar.suggestions;
   const suggestions = readSuggestions == null ? readSuggestions : readSuggestions.map(mapEntry);
   if (reusable && !changed) return sidecar;
   // comments and suggestions come only from the values read and mapped above, so a

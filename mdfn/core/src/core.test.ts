@@ -602,6 +602,13 @@ describe("@mdfn/core", () => {
     const ordered: { from: number; to: number; insertedLength: number }[] = [first];
     Object.defineProperty(ordered, 1, { enumerable: true, get: () => { first.insertedLength = 5; return first; } });
     expect(mapAnchor({ from: 1, to: 2 }, ordered)).toEqual({ from: 7, to: 8 });
+
+    // Each slot is checked once, so a range seen as present is applied.
+    let slotChecks = 0;
+    const flaky = new Proxy([{ from: 0, to: 0, insertedLength: 1 }], {
+      has: (target, key) => (key === "0" ? ++slotChecks === 1 : Reflect.has(target, key)),
+    });
+    expect(mapAnchor({ from: 1, to: 2 }, flaky)).toEqual({ from: 2, to: 3 });
   });
 
   it("builds a mapped sidecar from the comments and suggestions it read", () => {
@@ -639,6 +646,14 @@ describe("@mdfn/core", () => {
     const entryMapped = mapSidecar({ comments: [entry] } as unknown as Parameters<typeof mapSidecar>[0], insert);
     expect(entryMapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 2, to: 3 } }]);
     expect(anchorReads).toBe(1);
+
+    // Comments are mapped before suggestions are read.
+    let position = 1;
+    const ordered = Object.defineProperties({}, {
+      comments: { enumerable: true, get: () => [{ id: "c", resolved: false, messages: [], get anchor() { return { from: position, to: position + 1 }; } }] },
+      suggestions: { enumerable: true, get: () => { position = 4; return []; } },
+    }) as unknown as Parameters<typeof mapSidecar>[0];
+    expect(mapSidecar(ordered, insert)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
 
     // A malformed null collection is kept, so sidecar validation still rejects it.
     const nullComments = mapSidecar({ comments: null } as unknown as Parameters<typeof mapSidecar>[0], insert);
