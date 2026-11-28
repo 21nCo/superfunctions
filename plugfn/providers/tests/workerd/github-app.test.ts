@@ -108,5 +108,36 @@ describe('GitHub App minter on workerd', () => {
         ['DELETE', true],
       ]);
     });
+
+    it('is still revoked when the handler returns at its own deadline, before the minter gives up on the body', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const token = fakeInstallationToken(4);
+      const body = controlledBody();
+      const events: string[] = [];
+      const ctx = createExecutionContext();
+      const minter = createGitHubAppMinter({
+        appId: 12345,
+        privateKey: keys.pkcs8Pem,
+        now: () => NOW_MS,
+        waitUntil: (task) => ctx.waitUntil(task),
+        fetch: (async (_input: unknown, init?: RequestInit) => {
+          const bearer = (init!.headers as Record<string, string>).authorization === `Bearer ${token}`;
+          events.push(`${init!.method!}${bearer ? ' with the token' : ''}`);
+          return init!.method === 'POST' ? new Response(body.stream, { status: 201 }) : new Response(null, { status: 204 });
+        }) as typeof fetch,
+      });
+      // The handler answers at its own 2-second deadline, while mint still waits for the 201 body.
+      const deadline = new Promise<Response>((resolve) => setTimeout(() => resolve(new Response('deadline', { status: 504 })), 2_000));
+      const handler = Promise.race([minter.mint({ installation: 42, scope: SCOPE, ttl: 3600 }).then(() => new Response('minted')), deadline]);
+      await body.pulled;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await (await handler).text()).toBe('deadline');
+      // The request is over: only work registered with ctx.waitUntil keeps running.
+      const requestDone = waitOnExecutionContext(ctx).then(() => events.push('waitUntil settled'));
+      await vi.advanceTimersByTimeAsync(9_000);
+      body.push(JSON.stringify(recordedAccessToken(token)));
+      await requestDone;
+      expect(events).toEqual(['POST', 'DELETE with the token', 'waitUntil settled']);
+    });
   });
 });

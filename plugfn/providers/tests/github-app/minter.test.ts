@@ -7,6 +7,7 @@ import {
   GitHubAppKeyError,
   GitHubAppRevokeHandle,
   pemToPkcs8,
+  type GitHubAppMinter,
   type GitHubAppMinterOptions,
 } from '../../src/github-app/index.js';
 import {
@@ -908,21 +909,106 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     expect(github.live.size).toBe(0);
   });
 
-  it('measures key holds on a clock wall-clock changes cannot move, even with a caller-supplied now', async () => {
+  it('measures key holds on performance.now by default, even with a caller-supplied now', async () => {
     let wall = NOW_MS;
     const github = statefulGitHub({ onPost: (token, n) => (n === 1 ? new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 }) : undefined) });
     const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: undefined });
     const lostRequest = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-clock-lost' };
     const lost = await rejection(m.mint(lostRequest));
     expect(lost.code).toBe('mint_outcome_unknown');
-    const minted = await m.mint({ ...lostRequest, idempotencyKey: 'test-operation-clock-minted' });
-    // The wall clock steps two hours forward; almost no time has elapsed.
+    const mintedRequest = { ...lostRequest, idempotencyKey: 'test-operation-clock-minted' };
+    const minted = await m.mint(mintedRequest);
+    // The wall clock steps two hours forward; almost no time has elapsed on the hold clock, so nothing has expired there.
     wall += 2 * 3600 * 1000;
     expect(await rejection(m.mint(lostRequest))).toBe(lost);
-    expect((await rejection(m.mint({ ...lostRequest, idempotencyKey: 'test-operation-clock-minted' }))).code).toBe('provider_unavailable');
+    expect(await m.mint(mintedRequest)).toBe(minted);
     expect(posts(github.calls)).toBe(2);
     await m.revoke(minted.revokeHandle);
   });
+
+  it('decides when a credential has expired on the hold clock alone, whatever the wall clock does', async () => {
+    let wall = NOW_MS;
+    let hold = 0;
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: () => hold });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-two-clocks' };
+    const first = await m.mint(request);
+    // GitHub's expires_at, converted to the hold clock when the 201 arrived.
+    const expiry = Date.parse(EXPIRES_AT) - NOW_MS;
+    hold = expiry - 1;
+    for (const step of [3, -3]) {
+      wall = NOW_MS + step * 3600 * 1000;
+      expect(await m.mint(request)).toBe(first);
+    }
+    hold = expiry;
+    for (const step of [-3, 3, -3]) {
+      // Back by hours the expired credential is still not returned; forward, the key is not freed early.
+      wall = NOW_MS + step * 3600 * 1000;
+      const refused = await rejection(m.mint(request));
+      expect([refused.code, refused.retryable, posts(github.calls)]).toEqual(['provider_unavailable', true, 1]);
+      hold = expiry + SKEW_MS - 1;
+    }
+    // The fake GitHub stamps every token with the same expires_at, so the next mint is checked at the original wall time.
+    hold = expiry + SKEW_MS;
+    wall = NOW_MS;
+    const second = await m.mint(request);
+    expect([second === first, posts(github.calls)]).toEqual([false, 2]);
+  });
+
+  // Each hold starts at hold-clock 0 and ends exactly an hour plus the skew tolerance later.
+  const heldCases: [string, () => { fetch: typeof fetch; settle: (m: GitHubAppMinter, request: object) => Promise<unknown> }][] = [
+    ['an unknown outcome', () => {
+      const github = statefulGitHub({ onPost: (token, n) => (n === 1 ? new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 }) : undefined) });
+      return { fetch: github.fetch, settle: (m, request) => rejection(m.mint(request as never)) };
+    }],
+    ['a rejected grant whose cleanup failed', () => {
+      const github = statefulGitHub({
+        onPost: (token, n) => (n === 1 ? new Response(JSON.stringify(recordedAccessToken(token, { repository_selection: 'all' })), { status: 201 }) : undefined),
+        onDelete: (n) => (n <= 3 ? new Response(JSON.stringify({ message: 'Service unavailable' }), { status: 503 }) : undefined),
+      });
+      return { fetch: github.fetch, settle: (m, request) => rejection(m.mint(request as never)) };
+    }],
+    ['a mint that never settles', () => {
+      const github = statefulGitHub();
+      const fake = ((input: string, init?: RequestInit) => {
+        const answer = github.fetch(input, init);
+        return posts(github.calls) === 1 ? new Promise<never>(() => undefined) : answer;
+      }) as typeof fetch;
+      return {
+        fetch: fake,
+        settle: async (m, request) => {
+          void m.mint(request as never);
+          await vi.waitFor(() => expect(posts(github.calls)).toBe(1));
+        },
+      };
+    }],
+  ];
+
+  for (const [name, setup] of heldCases) {
+    it(`holds the key after ${name} on the hold clock, ignoring wall-clock steps both ways`, async () => {
+      let wall = NOW_MS;
+      let hold = 0;
+      const { fetch: fake, settle } = setup();
+      const sent: string[] = [];
+      const counting = ((input: string, init?: RequestInit) => {
+        sent.push(init!.method!);
+        return fake(input, init);
+      }) as typeof fetch;
+      const { minter: m } = minter([], { fetch: counting, now: () => wall, monotonicNow: () => hold });
+      const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-held-clock' };
+      await settle(m, request);
+      for (const step of [3, -3, 30]) {
+        wall = NOW_MS + step * 3600 * 1000;
+        hold = 3600 * 1000 + SKEW_MS - 1;
+        const retried = await Promise.race([m.mint(request).then(() => 'minted', () => 'held'), new Promise((resolve) => setTimeout(() => resolve('held'), 20))]);
+        expect([retried, sent.filter((method) => method === 'POST').length]).toEqual(['held', 1]);
+      }
+      hold += 1;
+      wall = NOW_MS;
+      await m.mint(request);
+      expect(sent.filter((method) => method === 'POST')).toHaveLength(2);
+    });
+  }
 
   it('frees the key after a definite refusal (422)', async () => {
     const { minter: m, calls } = minter([

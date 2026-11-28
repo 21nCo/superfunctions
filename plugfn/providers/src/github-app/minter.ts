@@ -92,8 +92,13 @@ export interface GitHubAppMinterOptions {
   /** Current time in milliseconds; `Date.now` by default. */
   readonly now?: () => number;
   /**
-   * Milliseconds on a clock that wall-clock changes do not move, which
-   * idempotency-key holds are measured on; `performance.now` by default.
+   * Milliseconds on the clock every idempotency-key decision is measured on:
+   * key holds, and when a returned credential counts as expired (GitHub's
+   * `expires_at` is converted to this clock once, when the 201 arrives).
+   * `performance.now` by default. On Node and in browsers that does not
+   * follow wall-clock changes; on Cloudflare Workers it equals `Date.now()`,
+   * so a wall-clock step there moves the holds too. Pass a clock that never
+   * steps if you need holds independent of the wall clock.
    */
   readonly monotonicNow?: () => number;
   /** The `User-Agent` header GitHub requires. */
@@ -573,8 +578,11 @@ function permissionsProblem(granted: unknown, requested: Readonly<Record<string,
  * (on Workers, its request was cancelled) holds its key for that hour plus
  * tolerance from its POST (GitHub ends any request it takes longer than 10
  * seconds to process), then frees it; if it settles later, its token is
- * revoked, never returned. Holds run on `monotonicNow` (`performance.now()`
- * by default), which wall-clock changes cannot move. Only a definite
+ * revoked, never returned. Every key decision, including when a credential
+ * counts as expired, runs on one clock, `monotonicNow` (`performance.now()`
+ * by default: independent of the wall clock on Node, but equal to
+ * `Date.now()` on Workers, where a caller who needs independence injects a
+ * clock). Only a definite
  * non-issuance (a failure before the POST, or a 4xx) frees the key at once. Without a key, a transport
  * failure or 5xx is a retryable `provider_unavailable`: if GitHub had already
  * created a token, it is unknown to the minter and expires within the hour.
@@ -598,7 +606,12 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   const baseUrl = normalizeBaseUrl(options.baseUrl);
   const doFetch: typeof fetch = options.fetch ?? ((input, init) => fetch(input, init));
   const now = options.now ?? (() => Date.now());
-  /** The clock key holds are measured on: the injected `now`, or else one that wall-clock changes cannot move. */
+  /**
+   * The clock of record for every idempotency-key decision. The wall-clock
+   * `now` is read only for the App JWT `iat` and to convert a 201's
+   * `expires_at` to this clock when it arrives (and for a revoke handle's
+   * informational `expiresAt`).
+   */
   const elapsed = validateClock(options.monotonicNow) ?? (() => performance.now());
   const userAgent = validateUserAgent(options.userAgent);
   const cleanupRetryDelayMs = validateRetryDelay(options.cleanupRetryDelayMs);
@@ -718,11 +731,11 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   interface KeyHold {
     readonly handle: GitHubAppRevokeHandle | undefined;
     readonly untilMs: number;
-    /** For a credential: when it expires (wall clock); past it, the key returns no credential. */
-    readonly expiresAtMs?: number;
+    /** For a credential: when it expires, on the hold clock; from then on the key returns no credential. */
+    readonly expiresAtHoldMs?: number;
   }
-  /** Each credential's key hold end, on the hold clock, from the same observation that validated its expiry. */
-  const credentialHolds = new WeakMap<GitHubAppRevokeHandle, number>();
+  /** Each credential's expiry converted to the hold clock, from the same observation that validated it. */
+  const credentialExpiries = new WeakMap<GitHubAppRevokeHandle, number>();
   /** Failures after which a token may be live, and the hold they put on their idempotency key. */
   const keyHolds = new WeakMap<CredentialMinterError, KeyHold>();
 
@@ -748,17 +761,34 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     );
   }
 
+  /** Revokes, with bounded retries, a usable token in a 201 body that arrived after the minter gave up on it. */
+  function revokeLateToken(token: Promise<string | undefined>): Promise<unknown> {
+    return token.then((value) => (value === undefined ? undefined : deleteTokenWithRetry(value))).catch(() => undefined);
+  }
+
+  interface KeepAlive {
+    /** Adds work the registered task waits for; call before `end`. */
+    readonly extend: (task: Promise<unknown>) => void;
+    readonly end: () => void;
+  }
+
   /**
-   * Revokes, with bounded retries, a usable token in a 201 body that arrived
-   * after the minter gave up on it, registered with `waitUntil` when given.
+   * Registers with `waitUntil`, when given, one task that settles after `end`
+   * is called and every task passed to `extend` has settled, so a Workers
+   * request that ends first still lets that work finish.
    */
-  function revokeLateToken(token: Promise<string | undefined>): void {
-    const task = token.then((value) => (value === undefined ? undefined : deleteTokenWithRetry(value))).catch(() => undefined);
-    try {
-      waitUntil?.(task);
-    } catch {
-      // The task still runs for as long as the runtime allows.
+  function keepAlive(): KeepAlive {
+    const tasks: Promise<unknown>[] = [];
+    let end = (): void => undefined;
+    if (waitUntil !== undefined) {
+      const ended = new Promise<void>((resolve) => (end = resolve));
+      try {
+        waitUntil(ended.then(() => Promise.allSettled(tasks)));
+      } catch {
+        // The work still runs for as long as the runtime allows.
+      }
     }
+    return { extend: (task) => tasks.push(task), end: () => end() };
   }
 
   /**
@@ -826,13 +856,31 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       throw failure;
     }
 
+    // From the 201 on a token may be live: the body read, and any cleanup of a
+    // token the minter does not return, are kept alive past the request.
+    const lifetime = keepAlive();
+    try {
+      return await readGrant(response, installationId, grant, lifetime.extend);
+    } finally {
+      lifetime.end();
+    }
+  }
+
+  /** Reads and validates a 201, returning its credential or revoking a token it cannot return; late cleanup goes to `extend`. */
+  async function readGrant(
+    response: Response,
+    installationId: string,
+    grant: GrantRequest,
+    extend: (task: Promise<unknown>) => void,
+  ): Promise<MintedCredential<GitHubAppRevokeHandle>> {
+    const status = response.status;
     const body = startBodyRead(response, LATE_BODY_LIMIT_MS, MAX_GRANT_BODY_BYTES);
     const result = await within(body.result, BODY_READ_TIMEOUT_MS);
     if (result === TIMED_OUT) {
       // A token already read is revoked at once; otherwise the rest of the body is awaited.
       const early = usableToken(LEADING_TOKEN.exec(body.peek())?.[1]);
       if (early !== undefined) body.cancel();
-      revokeLateToken(early === undefined ? body.result.then(bodyToken) : Promise.resolve(early));
+      extend(revokeLateToken(early === undefined ? body.result.then(bodyToken) : Promise.resolve(early)));
       throw outcomeUnknown('GitHub reported a minted installation token but its response did not arrive in time', status);
     }
     const read = result.text === undefined ? undefined : readAccessToken(result.text, grant);
@@ -853,7 +901,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     if (problem !== undefined) throw await rejectGrant(read.token, read.expiresAtMs, problem, status, installationId);
 
     const revokeHandle = registerHandle(installationId, read.token, read.expiresAtMs);
-    credentialHolds.set(revokeHandle, observedAt + (read.expiresAtMs - at) + MAX_CLOCK_SKEW_MS);
+    // GitHub's expiry converted to the hold clock, once: no later key decision reads the wall clock.
+    credentialExpiries.set(revokeHandle, observedAt + (read.expiresAtMs - at));
     return Object.freeze({ secret: read.token, expiresAt: new Date(read.expiresAtMs), revokeHandle });
   }
 
@@ -914,8 +963,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         if (existing.request !== fingerprint) {
           throw fail('invalid_request', 'This idempotencyKey is already in use for a different mint request');
         }
-        const expiresAtMs = existing.hold?.expiresAtMs;
-        if (expiresAtMs !== undefined && now() >= expiresAtMs) {
+        const expiresAtHoldMs = existing.hold?.expiresAtHoldMs;
+        if (expiresAtHoldMs !== undefined && elapsed() >= expiresAtHoldMs) {
           // Never hand back an expired credential; GitHub's clock may still accept it, so no new POST yet either.
           throw fail('provider_unavailable', "The credential minted for this idempotencyKey has expired; the key mints again after GitHub's clock-skew tolerance", {
             retryable: true,
@@ -940,8 +989,9 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
               throw await rejectGrant(credential.secret, Number.NaN, 'The mint settled after its idempotency key expired', 201, installationId);
             }
             const handle = credential.revokeHandle;
-            // GitHub's expiry as time left on the hold clock, plus the skew tolerance.
-            entry.hold = { handle, untilMs: credentialHolds.get(handle)!, expiresAtMs: handleStates.get(handle)!.expiresAtMs };
+            // Until GitHub's expiry on the hold clock the credential is returned; the key is freed after the skew tolerance.
+            const expiresAtHoldMs = credentialExpiries.get(handle)!;
+            entry.hold = { handle, untilMs: expiresAtHoldMs + MAX_CLOCK_SKEW_MS, expiresAtHoldMs };
             return credential;
           },
           (error: unknown) => {
