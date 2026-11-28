@@ -167,26 +167,29 @@ if (decision.ok) github.classifyScope(decision.scope); // 'write'
 
 ## Credential minters
 
-A `CredentialMinter` turns a provider installation and a scope into a short-lived secret narrowed to that scope. Decide policy first with the minter's `grammar` (`grammar.isSubset(request, envelope)`), then mint the approved request:
+A `CredentialMinter` turns a provider installation and a scope into a short-lived secret narrowed to that scope. Decide policy first with the minter's `grammar` (`grammar.isSubset(request, envelope)`), then mint the frozen snapshot it returns as `scope`, never the raw request: the minter builds the grant from that snapshot alone, so a request getter that answers differently on a second read cannot widen what is minted.
 
 ```ts
 import type { CredentialMinter } from 'plugfn';
 
+const decision = minter.grammar.isSubset(request, envelope);
+if (!decision.ok) throw new Error('scope not allowed');
 // mint({ installation, scope, ttl }) -> { secret, expiresAt, revokeHandle }
-const { secret, expiresAt, revokeHandle } = await minter.mint({ installation, scope, ttl: 900 });
+const { secret, expiresAt, revokeHandle } = await minter.mint({ installation, scope: decision.scope, ttl: 900 });
 await minter.revoke(revokeHandle); // idempotent
 ```
 
-- `mint` narrows the credential to exactly the requested scope. A scope the provider cannot grant rejects with `ScopeNotGrantable`; every other failure rejects with `CredentialMinterError`, whose `code` names the failure (`invalid_request`, `invalid_configuration`, `unauthorized`, `forbidden`, `installation_not_found`, `provider_unavailable` or `provider_error`), with the provider `status` and a `retryable` flag. Errors never carry the minted secret or the minter's signing material.
-- `mint` keeps no state between calls, so a retried mint asks the provider for the same grant again. `revoke` is idempotent: a credential that is already revoked or expired resolves.
+- `mint` narrows the credential to exactly the requested scope. A scope the provider cannot grant rejects with `ScopeNotGrantable`; every other failure rejects with `CredentialMinterError`, whose `code` names the failure (`invalid_request`, `invalid_configuration`, `unauthorized`, `forbidden`, `installation_not_found`, `provider_unavailable`, `provider_error` or `rejected_credential_not_revoked`), with the provider `status` and a `retryable` flag. Errors never carry the minted secret or the minter's signing material.
+- `mint` keeps no state between calls, so a retried mint asks the provider for the same grant again. A provider without an idempotency key (GitHub has none) may have issued a credential whose response was lost: the minter cannot know it, and it stays active until it expires. `revoke` is idempotent: a credential that is already revoked or expired resolves.
 - `expiresAt` is when the provider stops accepting the secret. Each minter documents how it treats a `ttl` its provider cannot honour exactly.
 - The interface and errors are also available from `plugfn/credentials`, and the scope engine from `plugfn/scopes`, without loading the rest of PlugFn (for Workers).
 
 `@plugfn/providers/github-app` provides `createGitHubAppMinter({ appId, privateKey })`, which mints GitHub App installation tokens:
 
 - It signs the App JWT (RS256, `iat` back-dated 60 seconds, `exp` 10 minutes after `iat`) with WebCrypto only, so it runs on Node and Workers. The private key may be PKCS#1 PEM (`BEGIN RSA PRIVATE KEY`, as GitHub issues it) or PKCS#8 PEM (`BEGIN PRIVATE KEY`).
-- The scope is `{ repositories: ['app'], permissions: { contents: 'read', issues: 'write' } }`: repository names without the owner (compared case-insensitively) and each permission at `read`, `write` or `admin`. A level covers the lower ones in `isSubset`. Any `admin` level and every `administration` permission classify as `destructive`.
-- It calls `POST /app/installations/{id}/access_tokens` with exactly those repositories and permissions. The scope must name at least one repository and one permission, because GitHub widens an omitted list to the whole installation. If GitHub's response grants more than requested (other than the read-only `metadata` permission GitHub lists on every token), the minter revokes the token and fails. A 422 (a repository or permission outside the installation) rejects with `ScopeNotGrantable`.
+- The grammar's input is `{ repositories: ['app'], permissions: { contents: 'read', issues: 'write' } }`: repository names without the owner (compared case-insensitively) and each permission at `read`, `write` or `admin`. A level covers the lower ones in `isSubset`. Any `admin` level and every `administration` permission classify as `destructive`.
+- `mint` takes as `scope` the snapshot `minter.grammar.isSubset` returned, and builds the grant from it alone. It also accepts the provider-shaped input, normalised once, for a caller that checks no envelope.
+- It calls `POST /app/installations/{id}/access_tokens` with exactly those repositories and permissions. The scope must name at least one repository and one permission, because GitHub widens an omitted list to the whole installation. The 201 must say `repository_selection: "selected"` and list the granted repositories and permissions, each within the request (GitHub's read-only `metadata` permission, listed on every token, is allowed); otherwise, or when its `expires_at` is missing or past, the minter revokes the returned token and fails with `provider_error`. If that revoke fails too, it fails with `rejected_credential_not_revoked`: the rejected token may stay active until it expires. A 422 (a repository or permission outside the installation) rejects with `ScopeNotGrantable`.
 - GitHub installation tokens always live one hour: a `ttl` above 3600 seconds is `ScopeNotGrantable`, and for a shorter `ttl` `expiresAt` reports GitHub's real expiry, so revoke the token at your own deadline if it must not outlive it.
 - `revoke` calls `DELETE /installation/token` with the token. A 401 (the token no longer works) counts as revoked. The revoke handle keeps the token outside the object, so serialising or inspecting it never reveals the token, and only the minter that returned it can use it, in the same process.
 - The minter never logs the App JWT or the installation token, and redacts them (and anything shaped like a JWT or GitHub token) from provider messages in errors.

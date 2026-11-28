@@ -147,12 +147,152 @@ describe('GitHub App minter: mint (recorded responses)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('rejects a 201 without a usable token or expiry', async () => {
-    for (const body of [{ expires_at: EXPIRES_AT }, { token: fakeInstallationToken(1) }, 'not json']) {
-      const { minter: m } = minter([{ status: 201, body }]);
+  it('rejects a 201 without a usable token, making no further call', async () => {
+    for (const body of [{ expires_at: EXPIRES_AT }, { token: 'has a space', expires_at: EXPIRES_AT }, 'not json', [1]]) {
+      const { minter: m, calls } = minter([{ status: 201, body }]);
       const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
       expect(error.code).toBe('provider_error');
+      expect(calls).toHaveLength(1);
     }
+  });
+
+  it('revokes a returned token whose expires_at is missing, unparseable or already past', async () => {
+    for (const expires of [undefined, 'not a date', 42, '2026-11-28T11:00:00Z']) {
+      const token = fakeInstallationToken(3);
+      const body = recordedAccessToken(token, { expires_at: expires });
+      const { minter: m, calls } = minter([{ status: 201, body }, { status: 204 }]);
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect(error.code).toBe('provider_error');
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+      expect(calls[1]!.headers.authorization).toBe(`Bearer ${token}`);
+      expect(error.message).not.toContain(token);
+    }
+  });
+
+  it('fails closed, revoking the token, when the 201 omits or garbles the grant it made', async () => {
+    const cases: Record<string, unknown>[] = [
+      { repository_selection: undefined },
+      { repository_selection: 'SELECTED' },
+      { repositories: undefined },
+      { repositories: { name: 'app' } },
+      { repositories: ['app'] },
+      { permissions: undefined },
+      { permissions: null },
+      { permissions: ['contents:read'] },
+      { permissions: { contents: 'none' } },
+    ];
+    for (const override of cases) {
+      const token = fakeInstallationToken(8);
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, override) }, { status: 204 }]);
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect(error.code, JSON.stringify(override)).toBe('provider_error');
+      expect(error.message).toContain('was revoked');
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+    }
+  });
+
+  it('reports a rejected token whose revoke fails as possibly still active, without the token', async () => {
+    const responses: RecordedResponse[] = [
+      { status: 503, body: { message: 'Service unavailable' } },
+      { status: 403, body: { message: 'Forbidden' } },
+      { throws: new TypeError('socket hang up') },
+    ];
+    for (const deleteResponse of responses) {
+      const token = fakeInstallationToken(4);
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, { repository_selection: 'all' }) }, deleteResponse]);
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect(error.code).toBe('rejected_credential_not_revoked');
+      expect(error.retryable).toBe(false);
+      expect(error.message).toMatch(/may stay active until it expires/);
+      expect(error.cause).toBeInstanceOf(CredentialMinterError);
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+      const text = [String(error), JSON.stringify(error), inspect(error, { depth: 10, showHidden: true })].join('\n');
+      expect(text).not.toContain(token);
+    }
+  });
+
+  it('decides by status when the response body cannot be read', async () => {
+    const reset = () => new TypeError('body stream reset');
+    const unreadable422 = minter([{ status: 422, bodyThrows: reset() }]);
+    const notGrantable = await rejection(unreadable422.minter.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect(notGrantable).toBeInstanceOf(ScopeNotGrantable);
+
+    const unreadable201 = minter([{ status: 201, bodyThrows: reset() }]);
+    const lost = await rejection(unreadable201.minter.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect([lost.code, lost.status, lost.retryable]).toEqual(['provider_unavailable', 201, true]);
+
+    for (const status of [204, 401]) {
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(fakeInstallationToken(5)) }, { status, bodyThrows: reset() }]);
+      const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+      await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
+      await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+    }
+  });
+});
+
+describe('GitHub App minter: minting the approved snapshot', () => {
+  const ENVELOPE = { repositories: ['app', 'lib'], permissions: { contents: 'write', issues: 'write' } } as const;
+
+  it('mints the scope isSubset approved, passed as decision.scope', async () => {
+    const token = fakeInstallationToken(6);
+    const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token) }]);
+    const decision = m.grammar.isSubset(SCOPE, ENVELOPE);
+    expect(decision.ok).toBe(true);
+    const minted = await m.mint({ installation: 42, scope: decision.scope!, ttl: 3600 });
+    expect(minted.secret).toBe(token);
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ repositories: ['app', 'lib'], permissions: { contents: 'read', issues: 'write' } });
+  });
+
+  it('cannot be widened by a request that answers differently after isSubset', async () => {
+    let reads = 0;
+    const request = {
+      repositories: ['app'],
+      get permissions() {
+        reads++;
+        return reads === 1 ? { contents: 'read' } : { contents: 'admin', administration: 'admin' };
+      },
+    };
+    const decision = m0().grammar.isSubset(request as never, ENVELOPE);
+    expect(decision.ok).toBe(true);
+    // The request now reads as admin; the snapshot still holds what was approved.
+    expect(m0().grammar.isSubset(request as never, ENVELOPE).ok).toBe(false);
+
+    const { minter: m, calls } = minter([
+      { status: 201, body: recordedAccessToken(fakeInstallationToken(6), { permissions: { contents: 'read' }, repositories: [{ name: 'app' }] }) },
+    ]);
+    const minted = await m.mint({ installation: 42, scope: decision.scope!, ttl: 3600 });
+    expect(minted.secret).toBe(fakeInstallationToken(6));
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ repositories: ['app'], permissions: { contents: 'read' } });
+
+    function m0() {
+      return minter([]).minter;
+    }
+  });
+
+  it('reads each mint request field once', async () => {
+    const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(fakeInstallationToken(6)) }]);
+    let scopeReads = 0;
+    const request = {
+      installation: 42,
+      ttl: 3600,
+      get scope() {
+        scopeReads++;
+        return scopeReads === 1 ? SCOPE : { repositories: ['app', 'lib', 'other'], permissions: { administration: 'admin' } };
+      },
+    };
+    await m.mint(request as never);
+    expect(scopeReads).toBe(1);
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ repositories: ['app', 'lib'], permissions: { contents: 'read', issues: 'write' } });
+  });
+
+  it('treats a copy of a snapshot as unapproved input, not as a snapshot', async () => {
+    const { minter: m, calls } = minter([]);
+    const decision = m.grammar.isSubset(SCOPE, ENVELOPE);
+    const copy = { repositories: [...decision.scope!.repositories], permissions: [...decision.scope!.permissions] };
+    const error = await rejection(m.mint({ installation: 42, scope: copy as never, ttl: 3600 }));
+    expect(error).toBeInstanceOf(ScopeNotGrantable);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -410,6 +550,28 @@ describe('GitHub App minter: redaction', () => {
       const error = await rejection(m.revoke(minted.revokeHandle));
       expect(rendered(error)).not.toContain(token);
     }
+  });
+
+  it('never puts the JWT in the cause name of a failing fetch', async () => {
+    let jwt = '';
+    const failingFetch = (async (_input: unknown, init?: RequestInit) => {
+      jwt = (init!.headers as Record<string, string>).authorization!.replace(/^Bearer /, '');
+      const error = new Error('request failed');
+      error.name = `Bearer ${jwt}`;
+      throw error;
+    }) as typeof fetch;
+    const { minter: m } = minter([], { fetch: failingFetch });
+    const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect(error.code).toBe('provider_unavailable');
+    expect((error.cause as Error).name).toBe('Error');
+    expect(rendered(error)).not.toContain(jwt);
+    expect(rendered(error)).not.toContain(jwt.split('.')[2]!);
+  });
+
+  it('keeps a plain error name on the cause', async () => {
+    const { minter: m } = minter([{ throws: new TypeError('fetch failed') }]);
+    const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect((error.cause as Error).name).toBe('TypeError');
   });
 
   it('redacts token-shaped text in provider messages', async () => {

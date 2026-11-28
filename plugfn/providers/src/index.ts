@@ -33,4 +33,4 @@ export {
   githubAppScopeGrammar,
   GitHubAppRevokeHandle,
 } from './github-app/index.js';
-export type { GitHubAppMinter, GitHubAppMinterOptions, GitHubAppScope } from './github-app/index.js';
+export type { GitHubAppMinter, GitHubAppMinterOptions, GitHubAppMintScope, GitHubAppScope } from './github-app/index.js';

@@ -14,7 +14,13 @@ import type { AnyScopeCallbackGrammar } from '../scopes/types.js';
 export interface CredentialMintRequest<TInstallation = unknown, TScope = unknown> {
   /** The provider installation (account, app installation, tenant) to mint for. */
   readonly installation: TInstallation;
-  /** The scope to narrow the credential to, in the minter's grammar input shape. */
+  /**
+   * The scope to narrow the credential to. After a policy check, pass the
+   * frozen snapshot `grammar.isSubset(request, envelope)` returned as `scope`:
+   * a minter accepts its own grammar's snapshot and builds the grant from it
+   * alone, so the check and the mint read the same scope. A minter may also
+   * accept the grammar's input shape, which it normalises once.
+   */
   readonly scope: TScope;
   /**
    * Requested lifetime in whole seconds (a positive safe integer). A minter
@@ -45,6 +51,11 @@ export interface MintedCredential<THandle = unknown> {
  *   the minted secret or the minter's own signing material.
  * - `mint` keeps no state between calls, so retrying a failed or successful
  *   mint with the same request asks the provider for the same grant again.
+ *   A provider without an idempotency key may have issued a credential whose
+ *   response was lost; the minter cannot know it, and it expires on its own.
+ * - When the provider issues a credential the minter rejects, the minter
+ *   revokes it before failing; if that revoke fails, it rejects with
+ *   `rejected_credential_not_revoked`.
  * - `revoke` is idempotent: revoking a credential that is already revoked or
  *   expired resolves without error.
  */

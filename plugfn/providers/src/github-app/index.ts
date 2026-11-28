@@ -3,7 +3,7 @@ export {
   GitHubAppRevokeHandle,
   GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS,
 } from './minter.js';
-export type { GitHubAppInstallation, GitHubAppMinter, GitHubAppMinterOptions } from './minter.js';
+export type { GitHubAppInstallation, GitHubAppMinter, GitHubAppMinterOptions, GitHubAppMintScope } from './minter.js';
 export {
   githubAppScopeGrammar,
   toAccessTokenRequest,

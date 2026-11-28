@@ -16,7 +16,13 @@ export type CredentialMinterErrorCode =
   /** The provider could not be reached or failed (network error, HTTP 5xx, 429). */
   | 'provider_unavailable'
   /** Any other provider failure, including a response the minter cannot trust. */
-  | 'provider_error';
+  | 'provider_error'
+  /**
+   * The provider issued a credential the minter rejected (wider than asked,
+   * or a response it cannot trust), and revoking that credential failed too:
+   * it may stay active until it expires. The error never carries it.
+   */
+  | 'rejected_credential_not_revoked';
 
 export interface CredentialMinterErrorOptions {
   readonly status?: number;

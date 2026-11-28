@@ -5,6 +5,7 @@ import {
   githubAppScopeGrammar,
   githubPermissionLevelIndex,
   toAccessTokenRequest,
+  type GitHubAppNormalizedScope,
   type GitHubAppScope,
   type GitHubAppScopeGrammar,
 } from './grammar.js';
@@ -25,6 +26,10 @@ const IMPLICIT_PERMISSION = 'metadata';
 const JWT_SHAPE = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
 /** GitHub token prefixes (`ghs_`, `ghp_`, `gho_`, `ghu_`, `ghr_`, `github_pat_`) followed by the token body. */
 const GITHUB_TOKEN_SHAPE = /\b(?:gh[a-z]_|github_pat_)[A-Za-z0-9_]+/g;
+/** An error `name` kept on a redacted cause; anything else becomes `Error`. */
+const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+/** A token GitHub returned that can be sent back in an `Authorization` header. */
+const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,4096}$/;
 
 /** A GitHub App installation: its numeric ID, as a number or a decimal string. */
 export type GitHubAppInstallation = number | string;
@@ -81,7 +86,14 @@ export class GitHubAppRevokeHandle {
   }
 }
 
-export type GitHubAppMinter = CredentialMinter<GitHubAppInstallation, GitHubAppScope, GitHubAppRevokeHandle, GitHubAppScopeGrammar>;
+/**
+ * What `mint` accepts as `scope`: the frozen snapshot `githubAppScopeGrammar.isSubset`
+ * (or `normalize`) returned, which is what a policy-checked caller should pass,
+ * or a provider-shaped {@link GitHubAppScope}, normalised once.
+ */
+export type GitHubAppMintScope = GitHubAppNormalizedScope | GitHubAppScope;
+
+export type GitHubAppMinter = CredentialMinter<GitHubAppInstallation, GitHubAppMintScope, GitHubAppRevokeHandle, GitHubAppScopeGrammar>;
 
 function fail(code: ConstructorParameters<typeof CredentialMinterError>[1], message: string, options?: { status?: number; retryable?: boolean; cause?: unknown }): CredentialMinterError {
   return new CredentialMinterError(GITHUB_APP_PROVIDER, code, message, options);
@@ -94,10 +106,21 @@ function redact(text: string, secrets: readonly string[]): string {
   return out.replace(JWT_SHAPE, '[redacted]').replace(GITHUB_TOKEN_SHAPE, '[redacted]');
 }
 
-/** A cause that keeps the original error's name and redacted message, but none of its other fields. */
+/**
+ * A cause that keeps the original error's redacted message and, when it is a
+ * plain identifier, its name, but none of its other fields.
+ */
 function redactedCause(error: unknown, secrets: readonly string[]): Error {
-  const name = error instanceof Error ? error.name : 'Error';
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'non-Error value';
+  let name = 'Error';
+  let message = typeof error === 'string' ? error : 'non-Error value';
+  if (error instanceof Error) {
+    // Read each field once: a getter could answer differently on a second read.
+    const rawName: unknown = error.name;
+    const rawMessage: unknown = error.message;
+    const redactedName = typeof rawName === 'string' ? redact(rawName, secrets) : '';
+    if (ERROR_NAME.test(redactedName)) name = redactedName;
+    message = typeof rawMessage === 'string' ? rawMessage : '';
+  }
   const cause = new Error(redact(message, secrets).slice(0, MAX_PROVIDER_MESSAGE_LENGTH));
   cause.name = name;
   return cause;
@@ -157,8 +180,8 @@ function validateTtl(ttl: unknown): number {
 }
 
 /** Errors for a non-2xx `access_tokens` response. */
-function mintFailure(status: number, body: string, secrets: readonly string[]): CredentialMinterError {
-  const detail = providerMessage(body, secrets);
+function mintFailure(status: number, body: string | undefined, secrets: readonly string[]): CredentialMinterError {
+  const detail = providerMessage(body ?? '', secrets);
   switch (status) {
     case 401:
       return fail('unauthorized', `GitHub rejected the App JWT (401)${detail}`, { status });
@@ -174,61 +197,62 @@ function mintFailure(status: number, body: string, secrets: readonly string[]): 
   }
 }
 
-interface AccessTokenResponse {
-  readonly token: string;
+interface ReadAccessToken {
+  /** The token string GitHub returned, when it is one; revoked by the caller if `problem` is set. */
+  readonly token: string | undefined;
   readonly expiresAtMs: number;
+  readonly problem: string | undefined;
 }
 
 /**
  * Reads a 201 `access_tokens` body and checks that GitHub granted no more
- * than requested. Returns the token even when the grant is too wide, so the
- * caller can revoke it before failing.
+ * than requested. It fails closed: the grant must say `repository_selection:
+ * "selected"` and list its repositories and permissions, each within the
+ * request. Returns any usable token string even when the response is
+ * rejected, so the caller can revoke it before failing.
  */
 function readAccessToken(
   body: string,
   requested: { repositories: readonly string[]; permissions: Readonly<Record<string, string>> },
-): { token: AccessTokenResponse | undefined; problem: string | undefined } {
+): ReadAccessToken {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return { token: undefined, problem: 'GitHub returned an access token response that is not JSON' };
+    return { token: undefined, expiresAtMs: Number.NaN, problem: 'GitHub returned an access token response that is not JSON' };
   }
-  const record = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
-  const tokenValue = record.token;
+  const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  const token = typeof record.token === 'string' && HEADER_SAFE_TOKEN.test(record.token) ? record.token : undefined;
   const expiresAtMs = typeof record.expires_at === 'string' ? Date.parse(record.expires_at) : Number.NaN;
-  if (typeof tokenValue !== 'string' || !/^[\x21-\x7e]+$/.test(tokenValue) || !Number.isFinite(expiresAtMs)) {
-    return { token: undefined, problem: 'GitHub returned an access token response without a usable token or expires_at' };
+  const result = (problem: string | undefined): ReadAccessToken => ({ token, expiresAtMs, problem });
+  if (token === undefined) return result('GitHub returned an access token response without a usable token');
+  if (!Number.isFinite(expiresAtMs)) return result('GitHub returned an access token response without a usable expires_at');
+  if (record.repository_selection !== 'selected') {
+    return result('GitHub did not confirm that the token is limited to the requested repositories');
   }
-  const token = { token: tokenValue, expiresAtMs };
-  if (record.repository_selection !== undefined && record.repository_selection !== 'selected') {
-    return { token, problem: 'GitHub granted the token every repository of the installation instead of the requested ones' };
-  }
-  if (Array.isArray(record.repositories)) {
-    const allowed = new Set(requested.repositories);
-    for (const repository of record.repositories) {
-      const name = typeof repository === 'object' && repository !== null ? (repository as { name?: unknown }).name : undefined;
-      if (typeof name !== 'string' || !allowed.has(name.toLowerCase())) {
-        return { token, problem: 'GitHub granted the token a repository that was not requested' };
-      }
+  const repositories = record.repositories;
+  if (!Array.isArray(repositories)) return result('GitHub did not list the repositories granted to the token');
+  const allowed = new Set(requested.repositories);
+  for (const repository of repositories) {
+    const name = typeof repository === 'object' && repository !== null ? (repository as { name?: unknown }).name : undefined;
+    if (typeof name !== 'string' || !allowed.has(name.toLowerCase())) {
+      return result('GitHub granted the token a repository that was not requested');
     }
   }
-  if (record.permissions !== undefined) {
-    const granted = record.permissions;
-    if (typeof granted !== 'object' || granted === null || Array.isArray(granted)) {
-      return { token, problem: 'GitHub returned token permissions that cannot be checked' };
-    }
-    for (const [name, level] of Object.entries(granted)) {
-      const requestedLevel = Object.hasOwn(requested.permissions, name) ? githubPermissionLevelIndex(requested.permissions[name]) : -1;
-      const grantedLevel = githubPermissionLevelIndex(level);
-      // Every GitHub App holds read-only repository metadata, and GitHub lists it on tokens it was not asked for.
-      if (name === IMPLICIT_PERMISSION && level === 'read' && requestedLevel < 0) continue;
-      if (requestedLevel < 0 || grantedLevel < 0 || grantedLevel > requestedLevel) {
-        return { token, problem: 'GitHub granted the token a permission wider than requested' };
-      }
+  const granted = record.permissions;
+  if (typeof granted !== 'object' || granted === null || Array.isArray(granted)) {
+    return result('GitHub did not list the permissions granted to the token');
+  }
+  for (const [name, level] of Object.entries(granted)) {
+    const requestedLevel = Object.hasOwn(requested.permissions, name) ? githubPermissionLevelIndex(requested.permissions[name]) : -1;
+    const grantedLevel = githubPermissionLevelIndex(level);
+    // Every GitHub App holds read-only repository metadata, and GitHub lists it on tokens it was not asked for.
+    if (name === IMPLICIT_PERMISSION && level === 'read' && requestedLevel < 0) continue;
+    if (requestedLevel < 0 || grantedLevel < 0 || grantedLevel > requestedLevel) {
+      return result('GitHub granted the token a permission wider than requested');
     }
   }
-  return { token, problem: undefined };
+  return result(undefined);
 }
 
 /**
@@ -236,14 +260,27 @@ function readAccessToken(
  *
  * `mint({ installation, scope, ttl })` signs a 10-minute RS256 App JWT with
  * WebCrypto and calls `POST /app/installations/{installation}/access_tokens`
- * with exactly the requested `repositories` and `permissions`. The scope must
+ * with exactly the requested `repositories` and `permissions`. Pass as `scope`
+ * the frozen snapshot `grammar.isSubset(request, envelope)` returned: the
+ * minter builds the grant from that snapshot alone, so the policy check and
+ * the mint read the same scope. A provider-shaped scope is also accepted and
+ * normalised once, for a caller that checks no envelope. The scope must
  * name at least one repository and one permission, because GitHub widens an
  * omitted list to everything the installation holds. A 422 (a repository or
  * permission outside the installation), a scope that does not normalise, and
  * a `ttl` above one hour reject with `ScopeNotGrantable`. GitHub fixes the
  * token lifetime at one hour: `expiresAt` is GitHub's real expiry, which is
  * later than `now + ttl` for a shorter `ttl`; revoke the token at the end of
- * the caller's own deadline if it must not outlive it.
+ * the caller's own deadline if it must not outlive it. If GitHub's 201 grants
+ * more than requested, or lacks the fields that prove it did not, the minter
+ * revokes the token and rejects with `provider_error`; when that revoke fails
+ * it rejects with `rejected_credential_not_revoked` instead, because the
+ * rejected token may stay active until GitHub expires it.
+ *
+ * GitHub has no idempotency key for minting: when a 201 is lost (the
+ * connection drops before its body is read), the token it carried is unknown
+ * to the minter and stays active until it expires, within one hour. A retried
+ * mint asks for the same grant again and gets a new token.
  *
  * `revoke(handle)` calls `DELETE /installation/token` with the token. It is
  * idempotent: a handle already revoked, an expired token and a 401 (GitHub's
@@ -293,30 +330,88 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     };
   }
 
-  async function call(method: string, url: string, bearer: string, body: string | undefined, secrets: readonly string[]): Promise<{ status: number; text: string }> {
+  /**
+   * Sends one request. The status decides the outcome, so a body that cannot
+   * be read leaves `text` undefined instead of hiding the status.
+   */
+  async function call(
+    method: string,
+    url: string,
+    bearer: string,
+    body: string | undefined,
+    secrets: readonly string[],
+  ): Promise<{ status: number; text: string | undefined }> {
+    let response: Response;
     try {
       const init: RequestInit = { method, headers: headers(bearer), redirect: 'manual' };
       if (body !== undefined) {
         init.body = body;
         (init.headers as Record<string, string>)['content-type'] = 'application/json';
       }
-      const response = await doFetch(url, init);
-      return { status: response.status, text: await response.text() };
+      response = await doFetch(url, init);
     } catch (error) {
       throw fail('provider_unavailable', `GitHub could not be reached (${method} ${new URL(url).pathname})`, {
         retryable: true,
         cause: redactedCause(error, secrets),
       });
     }
+    const status = response.status;
+    let text: string | undefined;
+    try {
+      text = await response.text();
+    } catch {
+      text = undefined;
+    }
+    return { status, text };
   }
 
   const owner = {};
+
+  /**
+   * The normalised scope to mint: the snapshot itself when `scope` is one
+   * this grammar returned (checked by identity through `classifyScope`), or
+   * else one normalisation of the provider-shaped input.
+   */
+  function approvedScope(scope: unknown): GitHubAppNormalizedScope {
+    if (typeof scope === 'object' && scope !== null) {
+      try {
+        githubAppScopeGrammar.classifyScope(scope as GitHubAppNormalizedScope);
+        return scope as GitHubAppNormalizedScope;
+      } catch {
+        // Not a snapshot of this grammar: normalise it as provider-shaped input below.
+      }
+    }
+    const normalized = githubAppScopeGrammar.normalize(scope as GitHubAppScope);
+    if (!normalized.ok) {
+      throw new ScopeNotGrantable(GITHUB_APP_PROVIDER, 'The scope is not a valid GitHub App scope', { violations: normalized.violations });
+    }
+    return normalized.scope;
+  }
+
+  /**
+   * Fails a mint whose 201 cannot be accepted. Any token string GitHub
+   * returned is revoked first; if that revoke fails, the error says the
+   * rejected token may still be active.
+   */
+  async function rejectGrant(token: string | undefined, problem: string, status: number): Promise<CredentialMinterError> {
+    if (token === undefined) return fail('provider_error', problem, { status });
+    try {
+      await deleteToken(token);
+    } catch (error) {
+      return fail(
+        'rejected_credential_not_revoked',
+        `${problem}; revoking the rejected installation token also failed, so it may stay active until it expires`,
+        { status, retryable: false, cause: error instanceof CredentialMinterError ? error : redactedCause(error, [token]) },
+      );
+    }
+    return fail('provider_error', `${problem}; the installation token was revoked`, { status });
+  }
 
   async function deleteToken(token: string): Promise<void> {
     const { status, text } = await call('DELETE', `${baseUrl}/installation/token`, token, undefined, [token]);
     // 401: GitHub no longer accepts the token (already revoked or expired), which is the goal.
     if (status === 204 || status === 401) return;
-    const detail = providerMessage(text, [token]);
+    const detail = providerMessage(text ?? '', [token]);
     if (status === 429 || status >= 500) throw fail('provider_unavailable', `GitHub is unavailable (${status})${detail}`, { status, retryable: true });
     throw fail('provider_error', `GitHub did not revoke the installation token (${status})${detail}`, { status });
   }
@@ -325,15 +420,13 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     provider: GITHUB_APP_PROVIDER,
     grammar: githubAppScopeGrammar,
 
-    async mint(request: CredentialMintRequest<GitHubAppInstallation, GitHubAppScope>): Promise<MintedCredential<GitHubAppRevokeHandle>> {
+    async mint(request: CredentialMintRequest<GitHubAppInstallation, GitHubAppMintScope>): Promise<MintedCredential<GitHubAppRevokeHandle>> {
       if (typeof request !== 'object' || request === null) throw fail('invalid_request', 'mint needs { installation, scope, ttl }');
-      const installationId = normalizeInstallation(request.installation);
-      validateTtl(request.ttl);
-      const normalized = githubAppScopeGrammar.normalize(request.scope);
-      if (!normalized.ok) {
-        throw new ScopeNotGrantable(GITHUB_APP_PROVIDER, 'The scope is not a valid GitHub App scope', { violations: normalized.violations });
-      }
-      const grant = toAccessTokenRequest(normalized.scope);
+      // Read each request field once: a getter could answer differently on a second read.
+      const { installation, scope, ttl } = request;
+      const installationId = normalizeInstallation(installation);
+      validateTtl(ttl);
+      const grant = toAccessTokenRequest(approvedScope(scope));
       if (grant.repositories.length === 0 || Object.keys(grant.permissions).length === 0) {
         throw new ScopeNotGrantable(
           GITHUB_APP_PROVIDER,
@@ -350,20 +443,20 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         [jwt],
       );
       if (status !== 201) throw mintFailure(status, text, [jwt]);
-
-      const { token, problem } = readAccessToken(text, grant);
-      if (problem !== undefined || token === undefined) {
-        // Fail closed: a token GitHub widened is revoked before reporting the failure.
-        if (token) await deleteToken(token.token).catch(() => undefined);
-        throw fail('provider_error', problem ?? 'GitHub returned an unusable access token response', { status });
-      }
-      if (token.expiresAtMs <= now()) {
-        throw fail('provider_error', 'GitHub returned an installation token that has already expired', { status });
+      if (text === undefined) {
+        // The token in the unread body is unknown to the minter and expires on its own within the hour.
+        throw fail('provider_unavailable', 'GitHub minted an installation token but its response could not be read', { status, retryable: true });
       }
 
-      const revokeHandle = new GitHubAppRevokeHandle(HANDLE_CONSTRUCTION, installationId, token.expiresAtMs);
-      handleStates.set(revokeHandle, { owner, token: token.token, revoked: false, inflight: undefined });
-      return Object.freeze({ secret: token.token, expiresAt: new Date(token.expiresAtMs), revokeHandle });
+      const read = readAccessToken(text, grant);
+      const problem = read.problem ?? (read.expiresAtMs <= now() ? 'GitHub returned an installation token that has already expired' : undefined);
+      if (problem !== undefined || read.token === undefined) {
+        throw await rejectGrant(read.token, problem ?? 'GitHub returned an unusable access token response', status);
+      }
+
+      const revokeHandle = new GitHubAppRevokeHandle(HANDLE_CONSTRUCTION, installationId, read.expiresAtMs);
+      handleStates.set(revokeHandle, { owner, token: read.token, revoked: false, inflight: undefined });
+      return Object.freeze({ secret: read.token, expiresAt: new Date(read.expiresAtMs), revokeHandle });
     },
 
     async revoke(handle: GitHubAppRevokeHandle): Promise<void> {

@@ -102,8 +102,13 @@ export interface RecordedCall {
   readonly body: string | undefined;
 }
 
-/** A recorded GitHub response, or a thrown network error. */
-export type RecordedResponse = { readonly status: number; readonly body?: unknown } | { readonly throws: Error };
+/**
+ * A recorded GitHub response, or a thrown network error. `bodyThrows` makes
+ * reading the body fail after the status arrived (a connection reset mid-body).
+ */
+export type RecordedResponse =
+  | { readonly status: number; readonly body?: unknown; readonly bodyThrows?: Error }
+  | { readonly throws: Error };
 
 /** A `fetch` that replays recorded responses in order and records every request. */
 export function recordingFetch(responses: RecordedResponse[]): { fetch: typeof fetch; calls: RecordedCall[] } {
@@ -117,7 +122,10 @@ export function recordingFetch(responses: RecordedResponse[]): { fetch: typeof f
     if (!next) throw new Error('No recorded response left');
     if ('throws' in next) throw next.throws;
     const body = next.body === undefined ? null : typeof next.body === 'string' ? next.body : JSON.stringify(next.body);
-    return new Response(next.status === 204 ? null : body, { status: next.status, headers: { 'content-type': 'application/json' } });
+    const response = new Response(next.status === 204 ? null : body, { status: next.status, headers: { 'content-type': 'application/json' } });
+    const bodyError = next.bodyThrows;
+    if (bodyError) Object.defineProperty(response, 'text', { value: () => Promise.reject(bodyError) });
+    return response;
   };
   return { fetch: fake as typeof fetch, calls };
 }

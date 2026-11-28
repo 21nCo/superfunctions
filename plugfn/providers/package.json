@@ -64,7 +64,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
+    "test": "node scripts/test.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "test:node": "vitest run",
