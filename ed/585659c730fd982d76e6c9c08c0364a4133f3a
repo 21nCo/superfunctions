@@ -1,0 +1,19 @@
+AGENTS.md
+  s_23543f816f2bbe::t_285e7ab51abe3c 60-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed585659c730fd982d76e6c9c08c0364a4133f3a",
+  "prompts": {},
+  "sessions": {
+    "s_23543f816f2bbe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed9ed06f-6aa6-40a1-9362-189d26361de4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
