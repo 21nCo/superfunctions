@@ -550,6 +550,63 @@ describe("AuthFn token authority boundaries", () => {
     }
   });
 
+  it("refuses plain HTTP resources except loopback with the explicit opt-in", async () => {
+    const verifyAccessToken = vi.fn();
+    const authority = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken });
+    const httpsOnly = /must be an HTTPS URL/;
+    // RFC 9728 resource identifiers are HTTPS; the opt-in never covers a public host.
+    for (const allowInsecureLoopbackResource of [undefined, false, true]) {
+      for (const resource of ["http://test-public-host.example.com/mcp", "http://10.0.0.1/mcp"]) {
+        let thrown: unknown;
+        try {
+          authority.protect(handler({ count: 0 }), { resource, allowInsecureLoopbackResource });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown, resource).toBeInstanceOf(TypeError);
+        expect((thrown as Error).message).toMatch(httpsOnly);
+        expect((thrown as Error).message).not.toContain("test-public-host");
+        expect(() => authority.verifier(resource, {
+          invalidTokenError: InvalidTokenError,
+          allowInsecureLoopbackResource,
+        }), resource).toThrow(httpsOnly);
+      }
+    }
+    for (const resource of ["http://localhost:3000/mcp", "http://127.0.0.1:3000/mcp", "http://[::1]:3000/mcp"]) {
+      // Loopback HTTP is refused unless the host opts in.
+      expect(() => authority.protect(handler({ count: 0 }), { resource }), resource).toThrow(httpsOnly);
+      expect(() => authority.protect(handler({ count: 0 }), { resource, allowInsecureLoopbackResource: false }))
+        .toThrow(httpsOnly);
+      expect(() => authority.verifier(resource, { invalidTokenError: InvalidTokenError })).toThrow(httpsOnly);
+
+      const calls = { count: 0 };
+      const endpoint = authority.protect(handler(calls), { resource, allowInsecureLoopbackResource: true });
+      const metadataUrl = new URL(resource);
+      metadataUrl.pathname = `/.well-known/oauth-protected-resource${metadataUrl.pathname}`;
+      const metadata = await (await endpoint(new Request(metadataUrl))).json();
+      expect(metadata).toMatchObject({ resource, authorization_servers: [AUTH_ORIGIN] });
+      // The opt-in is not passed on as resource server metadata.
+      expect(metadata).not.toHaveProperty("allowInsecureLoopbackResource");
+      verifyAccessToken.mockResolvedValueOnce({
+        clientId: "test-client", userId: "test-user", resource, scopes: ["*"], expiresAt: later(),
+      });
+      const response = await endpoint(
+        new Request(resource, { method: "POST", headers: { authorization: "Bearer test-access-token" } }),
+      );
+      expect(response.status).toBe(200);
+      expect(calls.count).toBe(1);
+      expect(verifyAccessToken).toHaveBeenLastCalledWith("test-access-token", { resource });
+
+      verifyAccessToken.mockResolvedValueOnce({
+        clientId: "test-client", userId: "test-user", resource, scopes: ["*"], expiresAt: later(),
+      });
+      const info = await authority
+        .verifier(resource, { invalidTokenError: InvalidTokenError, allowInsecureLoopbackResource: true })
+        .verifyAccessToken("test-access-token");
+      expect(info.resource?.href).toBe(resource);
+    }
+  });
+
   it("advertises any issuer spelling AuthFn accepts exactly as configured", async () => {
     const verifyAccessToken = async () => null;
     for (const issuer of [

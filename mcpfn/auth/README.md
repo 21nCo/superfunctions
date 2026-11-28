@@ -55,6 +55,10 @@ const fetch = authority.protect(mcp, {
 });
 ```
 
+- `resource` must be an HTTPS URL, as RFC 9728 requires. For local tests,
+  `allowInsecureLoopbackResource: true` (in `protect()` or `verifier()`
+  options) also allows `http://` on `localhost`, `127.0.0.1` or `[::1]`;
+  plain HTTP on any other host is refused.
 - `resource` must be written in its normalized form (as `new URL(resource).href`
   prints it, without credentials or a fragment), the form the metadata advertises and MCP
   clients send as RFC 8707 `resource`; configure the same string as the AuthFn

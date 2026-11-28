@@ -57,14 +57,24 @@ export type AuthFnTokenAuthorityProvider =
   | AuthFnInProcessTokenProvider
   | AuthFnIntrospectionTokenProvider;
 
+/** Lets a local test protect an `http://` resource on a literal loopback host. */
+export interface AuthFnInsecureLoopbackResourceOption {
+  /**
+   * Allow `http://` for a resource on `localhost`, `127.0.0.1` or `[::1]`, in
+   * controlled local testing. RFC 9728 resource identifiers are otherwise HTTPS.
+   */
+  allowInsecureLoopbackResource?: boolean;
+}
+
 /** What `protect()` takes: the resource server options AuthFn does not supply. */
 export type AuthFnProtectedResourceOptions = Omit<
   McpFnOAuthResourceServerOptions,
   "verifier" | "authorizationServers" | "requiredScopes" | "allowTokensWithoutExpiry"
->;
+> &
+  AuthFnInsecureLoopbackResourceOption;
 
 /** What `verifier()` needs from the host's MCP SDK. */
-export interface AuthFnVerifierOptions {
+export interface AuthFnVerifierOptions extends AuthFnInsecureLoopbackResourceOption {
   /**
    * The `InvalidTokenError` class the host's bearer middleware recognizes,
    * imported from the same `@modelcontextprotocol/sdk` copy as that middleware
@@ -123,7 +133,7 @@ export type AuthFnTokenCheck = (token: string) => Promise<AuthFnActiveToken | nu
  * The resource in the form RFC 9728 metadata advertises it, which is the form
  * MCP clients send as RFC 8707 `resource` and AuthFn binds tokens to exactly.
  */
-function normalizedResource(value: string | URL): string {
+function normalizedResource(value: string | URL, allowInsecureLoopback: boolean): string {
   // Diagnostics never echo the value: a query may carry credentials.
   const serialized = value.toString();
   let url: URL;
@@ -134,6 +144,16 @@ function normalizedResource(value: string | URL): string {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new TypeError("An AuthFn protected resource must be an http or https URL");
+  }
+  // RFC 9728 resource identifiers use HTTPS, like the issuer and the
+  // introspection endpoint; plain HTTP is a local-testing opt-in for loopback.
+  const loopbackHttp =
+    allowInsecureLoopback &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+  if (url.protocol === "http:" && !loopbackHttp) {
+    throw new TypeError(
+      "An AuthFn protected resource must be an HTTPS URL (http:// only for a loopback host with allowInsecureLoopbackResource)",
+    );
   }
   if (
     url.username ||
@@ -300,7 +320,9 @@ export function createAuthFnTokenAuthority(
         "verifier() needs the invalidTokenError class of the host's MCP SDK bearer middleware",
       );
     }
-    const check = activeCheckFor(normalizedResource(resource));
+    const check = activeCheckFor(
+      normalizedResource(resource, options.allowInsecureLoopbackResource === true),
+    );
     return {
       verifyAccessToken: async (token) => {
         const info = await check(token);
@@ -314,11 +336,12 @@ export function createAuthFnTokenAuthority(
     mcpHandler: McpFnWebStandardHandler,
     options: AuthFnProtectedResourceOptions,
   ) => {
-    const resource = normalizedResource(options.resource);
+    const { allowInsecureLoopbackResource, ...serverOptions } = options;
+    const resource = normalizedResource(options.resource, allowInsecureLoopbackResource === true);
     // Scopes are passed through for tools to gate on (`*` and `<app>:*`
     // included), never matched exactly at the endpoint.
     const base = {
-      ...options,
+      ...serverOptions,
       resource,
       authorizationServers: [issuer],
       requiredScopes: undefined,
