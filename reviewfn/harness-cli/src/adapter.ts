@@ -473,8 +473,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   private async probeVersion(executable: string, key: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], until: number, signal?: AbortSignal): Promise<{ version: string } | { error: string; timedOut: boolean }> {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
-    const timeoutMs = Math.max(1, until - Date.now());
-    try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
+    const timeoutMs = until - Date.now();
+    try { result = timeoutMs > 0 ? await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }) : { code: null, signal: null, stdout: "", stderr: "", timedOut: true, canceled: false }; }
     catch (error) { return { error: redact(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
     // A result that arrives, or is checked, after the probe's bound (never past a run's deadline) is a timeout and not cached.
     if (result.timedOut || Date.now() > until) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
