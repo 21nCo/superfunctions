@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./scopes": {
+      "types": "./dist/scopes/index.d.ts",
+      "default": "./dist/scopes/index.js"
+    },
+    "./credentials": {
+      "types": "./dist/credentials/index.d.ts",
+      "default": "./dist/credentials/index.js"
     }
   },
   "scripts": {

@@ -28,3 +28,9 @@ export { googleSheetsProvider } from './google-sheets/index.js';
 export { googleCalendarProvider } from './google-calendar/index.js';
 export { jiraProvider } from './jira/index.js';
 export { onedriveProvider } from './onedrive/index.js';
+export {
+  createGitHubAppMinter,
+  githubAppScopeGrammar,
+  GitHubAppRevokeHandle,
+} from './github-app/index.js';
+export type { GitHubAppMinter, GitHubAppMinterOptions, GitHubAppMintScope, GitHubAppScope } from './github-app/index.js';

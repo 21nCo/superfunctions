@@ -38,6 +38,9 @@ export * from './policy/index.js';
 // Credential scope envelopes
 export * from './scopes/index.js';
 
+// Short-lived credential minters
+export * from './credentials/index.js';
+
 // Security exports
 export * from './security/isolation-guards.js';
 export * from './security/retention.js';
