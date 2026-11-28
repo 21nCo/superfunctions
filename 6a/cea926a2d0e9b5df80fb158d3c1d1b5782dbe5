@@ -1,0 +1,23 @@
+packages/cli/CHANGELOG.md
+  s_b7546bb15c0313::t_60788989c7d026 6
+packages/cli/src/commands/init.ts
+  s_b7546bb15c0313::t_360643ae25c977 38
+packages/superfunctions/README.md
+  s_b7546bb15c0313::t_b3accc03b6cb93 9-10,13-15,37-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6acea926a2d0e9b5df80fb158d3c1d1b5782dbe5",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
