@@ -917,7 +917,9 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     const at = now();
     const observedAt = elapsed();
     let problem = read.problem;
-    if (problem === undefined && read.expiresAtMs <= at) problem = 'GitHub returned an installation token that has already expired';
+    // Expired by GitHub's timestamp, or a lifetime after the POST on the hold clock, whatever the wall clock says.
+    const expired = read.expiresAtMs <= at || observedAt >= dispatchedAt + GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS * 1000;
+    if (problem === undefined && expired) problem = 'GitHub returned an installation token that has already expired';
     if (problem === undefined && read.expiresAtMs > at + GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS * 1000 + MAX_CLOCK_SKEW_MS) {
       problem = 'GitHub returned an expires_at later than the one-hour installation token lifetime allows';
     }

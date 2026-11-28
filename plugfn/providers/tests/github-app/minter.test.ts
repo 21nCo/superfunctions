@@ -998,6 +998,29 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     expect(posts(github.calls)).toBe(2);
   });
 
+  it('returns to no waiter a token whose 201 arrives a lifetime after its POST, whatever the wall clock says', async () => {
+    let hold = 0;
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => (release = resolve));
+    const github = statefulGitHub();
+    const fake = (async (input: string, init?: RequestInit) => {
+      const answer = github.fetch(input, init);
+      if (init!.method === 'POST') await delayed;
+      return answer;
+    }) as typeof fetch;
+    const { minter: m } = minter([], { fetch: fake, now: () => NOW_MS, monotonicNow: () => hold });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-slow-headers' };
+    const first = rejection(m.mint(request));
+    await vi.waitFor(() => expect(posts(github.calls)).toBe(1));
+    // The 201 headers arrive 61 minutes after dispatch; a retry inside the pending deadline joins the same mint.
+    hold = 61 * 60 * 1000;
+    const joined = rejection(m.mint(request));
+    release();
+    const errors = await Promise.all([first, joined]);
+    expect(errors.map((error) => error.code)).toEqual(['provider_error', 'provider_error']);
+    expect([posts(github.calls), github.live.size]).toEqual([1, 0]);
+  });
+
   // Each hold starts at hold-clock 0 and ends exactly an hour plus the skew tolerance later.
   const heldCases: [string, () => { fetch: typeof fetch; settle: (m: GitHubAppMinter, request: object) => Promise<unknown> }][] = [
     ['an unknown outcome', () => {
