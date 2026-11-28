@@ -8,8 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   CODE_REFERENCES_LIMITS, CODE_REFERENCES_SOURCE_ID, CodeReferencesContextAdapter, DEFAULT_CONFIG, DEFAULT_POLICY, GENERAL_LENS, ReviewFnError, applyRepositoryPanelPolicy,
-  authorizedPromptContext, buildSlotPrompt, changeHunksDiffArguments, codeReferencesOptions, compileGlob, conventionalTests, finalizeContextManifest, lineSymbol, parseChangeHunks,
-  panelPolicySchema, parsePanelPolicy, prepareReview, validatePanelPolicy, validateReport,
+  authorizedPromptContext, buildReviewPrompt, buildSlotPrompt, changeHunksDiffArguments, codeReferencesOptions, collectReferences, compileGlob, conventionalTests, extractSymbols, finalizeContextManifest, lineSymbol, lineSymbols, parseChangeHunks,
+  PANEL_VALIDATION_CODES, panelPolicySchema, parsePanelPolicy, prepareReview, SYMBOL_LINE_CHARACTER_LIMIT, validatePanelPolicy, validateReport,
+  type CodeReferencesGitOptions,
   type ArtifactStore, type CodeReferenceMap, type ContextManifest, type ContextRequest, type PanelPolicy, type ReviewReport, type SymbolKind, type SymbolLanguage,
 } from "../src/index.js";
 
@@ -125,7 +126,46 @@ const FORMS: FormCase[] = [
   ["rust", "impl", "impl<T: Into<String>> Display for Wrapper<T> {", "Wrapper", "    implement_display(Wrapper);"],
 ];
 
+type ManyCase = [string, SymbolLanguage, string, Array<{ name: string; kind: SymbolKind }>, string];
+const MANY: ManyCase[] = [
+  ["every declarator of an exported const", "typescript", "export const alpha = f(1, 2), beta: Map<string, number> = new Map(), gamma = 3;", [{ name: "alpha", kind: "const" }, { name: "beta", kind: "const" }, { name: "gamma", kind: "const" }], "const alpha = 1, beta = 2;"],
+  ["every name an exported object pattern binds", "typescript", "export let { a, b: renamedB, c = g(1, 2), ...rest } = source;", [{ name: "a", kind: "let" }, { name: "renamedB", kind: "let" }, { name: "c", kind: "let" }, { name: "rest", kind: "let" }], "let { a, b } = source;"],
+  ["every name an exported array pattern binds", "typescript", "export const [first, , { inner }, last = 1] = list;", [{ name: "first", kind: "const" }, { name: "inner", kind: "const" }, { name: "last", kind: "const" }], "const [first, last] = list;"],
+  ["a Rust raw identifier with its prefix", "rust", "pub fn r#type() -> Kind {", [{ name: "r#type", kind: "function" }], "    let kind = r#type();"],
+  ["a Rust impl target behind a reference and lifetime", "rust", "impl<'a> Display for &'a mut crate::model::Ledger<'a> where T: Clone {", [{ name: "Ledger", kind: "impl" }], "    // impl<'a> Display for &'a Ledger"],
+];
+
 describe("code references: symbol forms", () => {
+  it.each(MANY)("recognizes %s and ignores the negative fixture", (_label, language, positive, expected, negative) => {
+    expect(lineSymbols(language, positive)).toEqual(expected);
+    expect(lineSymbols(language, negative)).toEqual([]);
+  });
+
+  it("matches pathological lines in linear time and skips lines over the length limit", () => {
+    const spaces = " ".repeat(50_000);
+    const lines: Array<[SymbolLanguage, string]> = [
+      ["typescript", `a(): ${spaces}`], ["typescript", `a = (x): ${spaces}`], ["typescript", `function${spaces}`], ["typescript", `type A${spaces}`],
+      ["typescript", `a${spaces}x`], ["typescript", `public ${"static ".repeat(8_000)}`], ["typescript", `export const ${"{ a, ".repeat(10_000)}`],
+      ["typescript", `export const a = ${"[".repeat(50_000)}`], ["swift", "@a ".repeat(15_000)], ["rust", `impl<${"<".repeat(50_000)}`], ["rust", `impl ${"a ".repeat(20_000)}`],
+      ["go", `func (${" ".repeat(50_000)}`], ["python", `def${spaces}`],
+    ];
+    const started = performance.now();
+    for (const [language, text] of lines) lineSymbols(language, text);
+    // Each of these took seconds to minutes with backtracking patterns; together they now take milliseconds.
+    expect(performance.now() - started).toBeLessThan(2_000);
+    const skipped: number[] = [];
+    const long = `export function ${"x".repeat(SYMBOL_LINE_CHARACTER_LIMIT)}() {}`;
+    expect(extractSymbols("src/a.ts", [{ line: 1, text: long }, { line: 2, text: "export function kept() {}" }], { onLongLine: line => skipped.push(line) }).map(symbol => symbol.name)).toEqual(["kept"]);
+    expect(skipped).toEqual([1]);
+  });
+
+  it("records changed lines skipped for their length", async () => {
+    const { request } = await fixture({ "README.md": "x\n" }, { "src/long.ts": `export const wide = "${"w".repeat(SYMBOL_LINE_CHARACTER_LIMIT)}";\nexport function short() {}\n` });
+    const { map, manifest } = await fetchMap(request);
+    expect(map.symbols.map(symbol => symbol.name)).toEqual(["short"]);
+    expect(manifest.incompleteReasons).toContainEqual(`Code references: 1 changed lines are longer than ${SYMBOL_LINE_CHARACTER_LIMIT} characters and were not scanned for symbols: "src/long.ts:1".`);
+  });
+
   it.each(FORMS)("%s %s: recognizes the positive fixture and ignores the negative one", (language, kind, positive, name, negative) => {
     expect(lineSymbol(language, positive)).toEqual({ name, kind });
     expect(lineSymbol(language, negative)).toBeUndefined();
@@ -149,7 +189,32 @@ describe("code references: bounds", () => {
     expect(map.symbols).toHaveLength(CODE_REFERENCES_LIMITS.maxSymbols);
     expect(map.references).toHaveLength(CODE_REFERENCES_LIMITS.maxSymbols);
     expect(references(map, "symbol60")).toBeUndefined();
-    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/61 changed symbols exceed the limit of 60; 1 were not searched \(symbol60\)/));
+    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/61 changed symbols exceed the limit of 60; 1 were not searched: "symbol60"\.$/));
+  });
+
+  it("names at most five omitted symbols and counts the rest", async () => {
+    const functions = Array.from({ length: 500 }, (_, index) => `export function omitted${String(index).padStart(3, "0")}() {}`).join("\n");
+    const { request } = await fixture({ "README.md": "x\n" }, { "src/many.ts": `${functions}\n` });
+    const { manifest } = await fetchMap(request);
+    const reason = manifest.incompleteReasons.find(item => item.includes("changed symbols exceed"))!;
+    expect(reason).toBe('Code references: 500 changed symbols exceed the limit of 60; 440 were not searched: "omitted060", "omitted061", "omitted062", "omitted063", "omitted064" and 435 more.');
+  });
+
+  it("keeps a declaration-dense file to bounded partial context instead of failing", async () => {
+    // 150,000 declarations of one method name: spreading them into one call overflowed the stack before.
+    const { request } = await fixture({ "README.md": "x\n" }, { "src/dense.ts": "a(){}\n".repeat(150_000) });
+    const { map, manifest } = await fetchMap(request);
+    expect(map.symbols).toHaveLength(1);
+    expect(map.symbols[0]).toMatchObject({ name: "a", omittedDeclarations: 150_000 - CODE_REFERENCES_LIMITS.maxDeclarationsPerSymbol });
+    expect(map.symbols[0].declarations).toHaveLength(CODE_REFERENCES_LIMITS.maxDeclarationsPerSymbol);
+    expect(manifest.incompleteReasons).toEqual(["Code references: a has more than 30 references; only the first 30 are listed."]);
+  });
+
+  it("omits the map and records why when the byte limit cannot hold an empty one", async () => {
+    const { request } = await fixture({ "src/use.ts": "tiny();\n" }, { "src/tiny.ts": "export function tiny() {}\n" });
+    const manifest = await new CodeReferencesContextAdapter().fetch({ ...request, limits: { ...LIMITS, maxBytes: 40 } });
+    expect(manifest.sources).toEqual([]);
+    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/the 40-byte limit is smaller than an empty map \(\d+ bytes\), so no code-reference map was included/));
   });
 
   it("records the per-symbol reference limit", async () => {
@@ -162,7 +227,7 @@ describe("code references: bounds", () => {
     expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/popular has more than 30 references; only the first 30 are listed/));
   });
 
-  it("records the 400 KB byte limit and the line cut, and keeps the map within it", async () => {
+  it("records the 400 KB byte limit, marks and counts cut lines in the map only, and keeps the map within it", async () => {
     const names = Array.from({ length: CODE_REFERENCES_LIMITS.maxSymbols }, (_, index) => `wide${String(index).padStart(2, "0")}`);
     const line = `// ${names.join(" ")} ${"x".repeat(400)}`;
     const { request } = await fixture(
@@ -175,9 +240,12 @@ describe("code references: bounds", () => {
     const map = JSON.parse(content) as CodeReferenceMap;
     expect(map.references.length).toBeLessThan(names.length);
     expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(new RegExp(`the ${CODE_REFERENCES_LIMITS.maxBytes}-byte limit omitted \\d+ of 60 symbol reference lists`)));
-    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/reference lines were cut to 240 characters/));
+    // A cut line shortens a listed entry, never what is listed, so it is not an incompleteness reason.
+    expect(manifest.incompleteReasons.filter(reason => /cut|240/u.test(reason))).toEqual([]);
     expect(map.references[0].matches[1]).toMatchObject({ path: "src/usage.ts", textTruncated: true });
     expect([...map.references[0].matches[1].text]).toHaveLength(CODE_REFERENCES_LIMITS.maxLineCharacters);
+    expect(map.referenceLinesCut).toBe(map.references.flatMap(list => list.matches).filter(match => match.textTruncated).length);
+    expect(map.referenceLinesCut).toBeGreaterThan(0);
   });
 
   it("produces the same manifest digest on every fetch, whatever order the searches finish in", async () => {
@@ -273,6 +341,59 @@ describe("code references: exclusions, pairs, tests and documents", () => {
     const { map } = await fetchMap(request);
     expect(map.documents).toEqual([{ path: "README.md", mentions: ["parseInvoice"] }, { path: "docs/guide.md", mentions: ["src/invoice.ts"] }]);
   });
+
+  it("gives an exclusion glob the same meaning for references, documents, tests and pairs", async () => {
+    const { request } = await fixture(
+      { "lib/use.ts": "settle();\n", "lib/notes.md": "settle is documented here.\n", "lib/settle.test.ts": "settle();\n", "lib/pair.ts": "export {};\n" },
+      { "lib/settle.ts": "export function settle() {}\n" },
+    );
+    const pairs = [{ when: "lib/settle.ts", include: ["lib/pair.ts"] }];
+    // A literal directory is that path only, never its descendants (Git's pathspecs would also take its files).
+    const literal = (await fetchMap(request, new CodeReferencesContextAdapter({ pairs, excludeGlobs: ["lib"] }))).map;
+    expect(references(literal, "settle")!.matches.map(match => match.path)).toEqual(["lib/notes.md", "lib/settle.test.ts", "lib/settle.ts", "lib/use.ts"]);
+    expect(literal.documents.map(document => document.path)).toEqual(["lib/notes.md"]);
+    expect(literal.testFiles.map(test => test.path)).toEqual(["lib/settle.test.ts"]);
+    expect(literal.pairedFiles.map(file => file.path)).toEqual(["lib/pair.ts"]);
+    const descendants = (await fetchMap(request, new CodeReferencesContextAdapter({ pairs, excludeGlobs: ["lib/*.md", "lib/use.ts", "lib/*.test.ts", "lib/pair.ts"] }))).map;
+    expect(references(descendants, "settle")!.matches.map(match => match.path)).toEqual(["lib/settle.ts"]);
+    expect(descendants.documents).toEqual([]);
+    expect(descendants.testFiles).toEqual([]);
+    expect(descendants.pairedFiles).toEqual([]);
+  });
+
+  it("keeps tracked paths that hold a line feed and records changed ones it cannot search for", async () => {
+    const { request } = await fixture(
+      { "src/odd\nname.ts": "linefeed();\n", "docs/odd\nnotes.md": "linefeed is described here.\n" },
+      { "src/linefeed.ts": "export function linefeed() {}\n", "src/new\nfile.txt": "x\n" },
+    );
+    const { map, manifest } = await fetchMap(request);
+    expect(references(map, "linefeed")!.matches.map(match => match.path)).toEqual(["docs/odd\nnotes.md", "src/linefeed.ts", "src/odd\nname.ts"]);
+    expect(map.documents).toEqual([{ path: "docs/odd\nnotes.md", mentions: ["linefeed"] }]);
+    expect(manifest.incompleteReasons).toEqual(['Code references: 1 changed paths contain a line feed, so Markdown mentions of them were not searched: "src/new\\nfile.txt".']);
+  });
+});
+
+describe("code references: reference search failure", () => {
+  it("starts no search after one fails and settles every running search before rejecting", async () => {
+    const names = Array.from({ length: 12 }, (_, index) => `name${index}`);
+    const started: string[] = [];
+    let active = 0;
+    let activeAtRejection = -1;
+    const fake = (args: string[], options: CodeReferencesGitOptions = {}) => new Promise<string>((resolve, reject) => {
+      const name = args[args.indexOf("-e") + 1];
+      started.push(name);
+      active += 1;
+      const settle = (fn: () => void) => { active -= 1; fn(); };
+      if (name === "name1") { setTimeout(() => settle(() => reject(new Error("git grep failed for name1"))), 5); return; }
+      // The others run until stopped; each must be aborted by the failure.
+      options.signal?.addEventListener("abort", () => setTimeout(() => settle(() => reject(new Error("aborted"))), 20), { once: true });
+    });
+    await expect(collectReferences(fake, "a".repeat(40), names, () => false).catch(error => { activeAtRejection = active; throw error; })).rejects.toThrow("git grep failed for name1");
+    expect(activeAtRejection).toBe(0);
+    expect(started).toEqual(["name0", "name1", "name2", "name3"]);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(started).toHaveLength(4);
+  });
 });
 
 describe("code references: glob grammar", () => {
@@ -303,6 +424,12 @@ describe("code references: glob grammar", () => {
     expect(() => parsePanelPolicy(invalid)).toThrow(expect.objectContaining({ code: "REVIEWFN_CONFIG_INVALID", details: { issues: expect.arrayContaining([expect.objectContaining({ code: "REVIEWFN_GLOB_UNSUPPORTED" })]) } }));
     expect(validatePanelPolicy({ ...PANEL_POLICY, contextPairs: [{ when: "migrations/**", include: ["src/db/**"] }], contextExcludeGlobs: ["dist/**"] }).valid).toBe(true);
     expect(validatePanelPolicy({ ...PANEL_POLICY, contextPairs: [{ when: "migrations/**", include: [] }] }).valid).toBe(false);
+  });
+
+  it("lists REVIEWFN_GLOB_UNSUPPORTED in the closed set of panel validation codes", () => {
+    const issues = validatePanelPolicy({ ...PANEL_POLICY, contextExcludeGlobs: ["{a,b}"] }).issues;
+    expect(issues.map(issue => issue.code)).toEqual(["REVIEWFN_GLOB_UNSUPPORTED"]);
+    for (const issue of issues) expect(PANEL_VALIDATION_CODES).toContain(issue.code);
   });
 
   it("keeps the JSON Schema and the structural validator in agreement on the new policy fields", () => {
@@ -371,14 +498,32 @@ describe("code references: authority and delivery", () => {
     const context = finalizeContextManifest(await new CodeReferencesContextAdapter().fetch(request));
     const change = { ...requirementsReport(headCommit, context.digest).change };
     const input = { slot: PANEL_POLICY.slots[0], lens: GENERAL_LENS, change, context, config: DEFAULT_CONFIG, policy: DEFAULT_POLICY, tests: [], scope: { mode: "full" as const } };
+    const payloads = (prompt: string) => prompt.split(/\n(?=\{\n)/u).slice(1).map(part => JSON.parse(part.slice(0, part.lastIndexOf("}") + 1)) as { codeReferences?: CodeReferenceMap[]; context?: ContextManifest });
     for (const requirements of [false, true]) {
       const prompt = buildSlotPrompt({ ...input, requirements }).prompt;
-      expect(prompt).toContain("codeReferences maps the changed symbols");
-      const payload = JSON.parse(prompt.slice(prompt.lastIndexOf("\n{\n") + 1)) as { codeReferences: CodeReferenceMap[]; context?: ContextManifest };
-      expect(payload.codeReferences[0].references[0]).toMatchObject({ symbol: "renamed" });
-      if (payload.context) expect(payload.context.sources).toEqual([]);
+      // Exactly once: a requirements slot gets the map and its rule from its single-harness base prompt.
+      expect(prompt.split('"codeReferences":')).toHaveLength(2);
+      const withMap = payloads(prompt).filter(payload => payload.codeReferences);
+      expect(withMap).toHaveLength(1);
+      expect(withMap[0].codeReferences![0].references[0]).toMatchObject({ symbol: "renamed" });
+      for (const payload of payloads(prompt)) if (payload.context) expect(payload.context.sources).toEqual([]);
     }
     const without = buildSlotPrompt({ ...input, context: { ...context, sources: [] }, requirements: false }).prompt;
+    expect(without).not.toContain("codeReferences");
+  });
+
+  it("gives the single-harness review prompt the map, and leaves a prompt without one unchanged", async () => {
+    const { request, headCommit } = await fixture({ "src/use.ts": "renamed();\n" }, { "src/a.ts": "export function renamed() {}\n" });
+    const context = finalizeContextManifest(await new CodeReferencesContextAdapter().fetch(request));
+    const change = { ...requirementsReport(headCommit, context.digest).change };
+    const input = { change, context, config: DEFAULT_CONFIG, policy: DEFAULT_POLICY, tests: [] };
+    const prompt = buildReviewPrompt(input).prompt;
+    expect(prompt).toContain("codeReferences maps the changed symbols");
+    const payload = JSON.parse(prompt.slice(prompt.indexOf("\n{\n") + 1)) as { codeReferences: CodeReferenceMap[]; context: ContextManifest; authoritativeSourceIds: string[] };
+    expect(payload.codeReferences[0].references[0]).toMatchObject({ symbol: "renamed" });
+    expect(payload.context.sources).toEqual([]);
+    expect(payload.authoritativeSourceIds).toEqual([]);
+    const without = buildReviewPrompt({ ...input, context: { ...context, sources: [] } }).prompt;
     expect(without).not.toContain("codeReferences");
   });
 

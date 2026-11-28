@@ -84,6 +84,7 @@ The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, cha
 | `REVIEWFN_PANEL_VERIFICATION_INVALID` | The verifier is not a verifier slot with a `completed` or `collapsed` run, shares an origin slot's identity, or cites missing or unknown evidence. |
 | `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a verifiable waiver-authority reference, a `suppressionReference` on a finding that is not suppressed, or dropped or suppressed without a reason. |
 | `REVIEWFN_PANEL_VERDICT_MISMATCH` | `verdict` differs from the derived verdict. |
+| `REVIEWFN_GLOB_UNSUPPORTED` | A `contextPairs` or `contextExcludeGlobs` glob of the panel policy is outside the closed glob grammar (`validatePanelPolicy` only). |
 
 Errors from the 0.1 checks keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMATCH` and `REVIEWFN_SINCE_NOT_ANCESTOR` keep their codes, and every other 0.1 error, including a requirements report for a different change, change detail or context, is `REVIEWFN_REPORT_INVALID`. Calendar validity of timestamps is a validator check beyond the JSON Schema pattern. `panelStructureIssues(kind, value)` is the structural TypeScript mirror of each JSON Schema. The tests check that it agrees with Ajv on every fixture and on systematic structural variants of each fixture.
 
