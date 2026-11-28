@@ -12,7 +12,7 @@
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
@@ -86,7 +86,7 @@ function npmCommand() {
 
 // Has npm fetch the CLI at this version and report the PATH it would run it with; the CLI's bin is in the first
 // node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr. Returns
-// { error } when npm could not run or fetch it, and undefined when npm ran but no such folder is on that PATH.
+// { error } when npm could not run or fetch it, and { PATH } alone when no such folder is on that PATH.
 function npmLocate(command, prefix) {
   const args = [...prefix, 'exec', '--yes', `--package=${spec}`, '--', 'node', '-p', 'process.env.PATH'];
   const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
@@ -99,20 +99,55 @@ function npmLocate(command, prefix) {
     // The CLI and the commands it starts see the PATH they would have under npx.
     if (file) return { file, PATH: reported };
   }
+  return { PATH: reported };
+}
+
+// A copy of the CLI at this version installed anywhere in the project: npm reuses one nested under another package
+// (or installed under an alias) without putting it on the PATH it reports. Searches, nearest first, the node_modules
+// folders of the working directory and each folder above it (which covers a workspace root), at any depth and
+// whatever name a package is installed under, reading each package once.
+function projectBin() {
+  const queue = [];
+  for (let folder = process.cwd(); ; folder = path.dirname(folder)) {
+    queue.push(path.join(folder, 'node_modules'));
+    if (path.dirname(folder) === folder) break;
+  }
+  const seen = new Set();
+  const list = (folder) => {
+    try {
+      return readdirSync(folder).filter((name) => !name.startsWith('.')).map((name) => path.join(folder, name));
+    } catch {
+      return [];
+    }
+  };
+  while (queue.length > 0) {
+    for (const entry of list(queue.shift())) {
+      for (const dir of path.basename(entry).startsWith('@') ? list(entry) : [entry]) {
+        let real;
+        try {
+          real = realpathSync(dir);
+        } catch {
+          continue;
+        }
+        if (seen.has(real)) continue;
+        seen.add(real);
+        const file = binIn(dir);
+        if (file) return file;
+        queue.push(path.join(dir, 'node_modules'));
+      }
+    }
+  }
   return undefined;
 }
 
-// npm fetches the CLI at this version into its cache and reports a PATH reaching it. When npm instead reuses a copy
-// nested somewhere in the project's tree, no reported PATH reaches it (so `npx` could not run that copy either), and
-// this command stops rather than run another version.
 function fetchedBin() {
   const [command, prefix] = npmCommand();
   const found = npmLocate(command, prefix);
-  if (found === undefined) {
-    fail(`npm found ${spec} but no runnable ${own.name} command for it; it may be nested in this project's node_modules. Install ${spec} in the project, or run this command from another folder.`);
-  }
   if (found.error) fail(found.error);
-  return found;
+  if (found.file) return found;
+  const file = projectBin();
+  if (file === undefined) fail(`npm found ${spec} but no runnable ${own.name} command for it. Install ${spec} in this project, or run this command from another folder.`);
+  return { file, PATH: found.PATH };
 }
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');

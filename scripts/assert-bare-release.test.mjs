@@ -151,12 +151,17 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   await expectProblem({ overrides: { exports: { '.': { require: './index.cjs' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   // Node.js takes the first matching condition in key order, so a blocking "node" ahead of "import" wins.
   await expectProblem({ overrides: { exports: { '.': { node: null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  await expectProblem({ overrides: { exports: { '.': { 'node-addons': null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
   // Installing the core must not install the CLI.
   const coreDependsOnCli = product(t);
   writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', dependencies: { 'the-cli': 'NPM:@fixture/cli@1.2.3' } });
   assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /its core @fixture\/core must not depend on its CLI \(dependencies\["the-cli"\]\)/.test(problem)));
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' } });
+  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /must not depend on its CLI \(peerDependencies\["@fixture\/cli"\]\)/.test(problem)));
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' }, peerDependenciesMeta: { '@fixture/cli': { optional: true } } });
+  assert.deepEqual(await problemsOf(coreDependsOnCli), []);
   await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
   // Root exports in their other forms pass.
@@ -283,8 +288,10 @@ test('tarball reader: regular files, links and long (pax) paths', t => {
   // An entry that claims more bytes than the archive holds is refused.
   const whole = gunzipSync(readFileSync(path.join(dir, packed.filename)));
   const firstSize = Number.parseInt(whole.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim(), 8);
-  const truncated = whole.subarray(0, 512 + firstSize - 1);
-  assert.throws(() => readTarball(gzipSync(truncated)), /runs past the end/);
+  assert.throws(() => readTarball(gzipSync(whole.subarray(0, 512 + firstSize - 1))), /runs past the end/);
+  // The body is complete but its block padding is missing.
+  assert.notEqual(firstSize % 512, 0);
+  assert.throws(() => readTarball(gzipSync(whole.subarray(0, 512 + firstSize))), /runs past the end/);
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {
@@ -395,14 +402,32 @@ test('shim: fetches the CLI at exactly its version when no matching copy is inst
   assert.deepEqual(npm.args(), ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH']);
 });
 
-test('shim: stops, without running another version, when npm reports no PATH reaching the CLI', t => {
-  const { shim } = installedProduct(t, { installedCli: '1.2.2' });
+test('shim: runs a copy npm reused from deep in the project tree, nested or aliased, with npm\'s PATH', t => {
+  const { root, shim } = installedProduct(t, { installedCli: '1.2.2' });
   const npm = fakeNpm(t, { reportsBin: false });
-  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
-  assert.equal(run.status, 1);
-  assert.equal(run.output, null);
-  assert.match(run.stderr, /npm found @fixture\/cli@1\.2\.3 but no runnable fixture command for it/);
+  const nested = path.join(root, 'node_modules/other/node_modules/@fixture/cli');
+  writeCli(nested, '1.2.3', 'nested');
+  const run = runShim(shim, ['0', 'status'], { npm_execpath: npm.npmCli }, root);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.output.origin, 'nested');
+  assert.deepEqual(run.output.args, ['0', 'status']);
+  assert.equal(run.output.path.split(path.delimiter)[0], process.env.PATH.split(path.delimiter)[0]);
   assert.deepEqual(npm.calls().map(call => call.args[0]), ['exec']);
+
+  // Installed under an npm alias: found by its package.json name, from a subfolder of the project.
+  rmSync(path.join(root, 'node_modules/other'), { recursive: true });
+  writeCli(path.join(root, 'node_modules/cli-alias'), '1.2.3', 'aliased');
+  mkdirSync(path.join(root, 'src'));
+  const aliased = runShim(shim, ['0'], { npm_execpath: npm.npmCli }, path.join(root, 'src'));
+  assert.equal(aliased.status, 0, aliased.stderr);
+  assert.equal(aliased.output.origin, 'aliased');
+
+  // No copy at this version anywhere: it stops rather than run 1.2.2.
+  rmSync(path.join(root, 'node_modules/cli-alias'), { recursive: true });
+  const none = runShim(shim, [], { npm_execpath: npm.npmCli }, root);
+  assert.equal(none.status, 1);
+  assert.equal(none.output, null);
+  assert.match(none.stderr, /npm found @fixture\/cli@1\.2\.3 but no runnable fixture command for it/);
 });
 
 test('shim: a CLI bin that resolves outside its package is never run', t => {

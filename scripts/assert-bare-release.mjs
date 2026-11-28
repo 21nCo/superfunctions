@@ -164,11 +164,15 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   return { version, packages: Object.values(linked) };
 }
 
-/** The dependency entries of a manifest that install `name` for its importers, directly or through an npm alias. */
+/**
+ * The dependency entries of a manifest that install `name` for its importers, directly or through an npm alias:
+ * dependencies, optionalDependencies, and peerDependencies not marked optional (npm installs required peers).
+ */
 function installedDependencies(manifest, name) {
   const found = [];
-  for (const field of ['dependencies', 'optionalDependencies']) {
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
     for (const [key, spec] of Object.entries(manifest?.[field] ?? {})) {
+      if (field === 'peerDependencies' && manifest.peerDependenciesMeta?.[key]?.optional === true) continue;
       if (key === name || aliasTarget(spec) === name) found.push(`${field}["${key}"]`);
     }
   }
@@ -181,8 +185,8 @@ function aliasTarget(spec) {
   return match ? match[1] : null;
 }
 
-// The conditions Node.js matches for `import "<bare>"`; a require-only root cannot be imported.
-const IMPORT_CONDITIONS = ['import', 'node', 'default'];
+// The conditions Node.js 22 and later match for `import "<bare>"` by default; a require-only root cannot be imported.
+const IMPORT_CONDITIONS = ['import', 'node', 'node-addons', 'module-sync', 'default'];
 
 /**
  * The target Node.js selects for an ESM import from an exports value: the first key, in order, that is a matching
@@ -244,7 +248,8 @@ export function readTarball(gzipped) {
     if (stored !== sum) throw new Error(`invalid tar header checksum at byte ${offset}`);
     const size = Number.parseInt(text(header.subarray(124, 136)).trim() || '0', 8);
     if (!Number.isSafeInteger(size) || size < 0) throw new Error(`unreadable tar entry size at byte ${offset}`);
-    if (offset + 512 + size > data.length) throw new Error(`tar entry at byte ${offset} runs past the end of the archive`);
+    // The entry's body is padded to whole 512-byte blocks, which must all be present.
+    if (offset + 512 + Math.ceil(size / 512) * 512 > data.length) throw new Error(`tar entry at byte ${offset} runs past the end of the archive`);
     const type = header[156] === 0 ? '0' : String.fromCharCode(header[156]);
     const prefix = text(header.subarray(257, 262)) === 'ustar' ? text(header.subarray(345, 500)) : '';
     const name = prefix ? `${prefix}/${text(header.subarray(0, 100))}` : text(header.subarray(0, 100));
