@@ -28,10 +28,14 @@ export const CODE_REFERENCES_LIMITS = Object.freeze({
   maxFileBytes: 1024 * 1024,
   /** Declarations listed for one symbol; the map counts the rest. */
   maxDeclarationsPerSymbol: 20,
+  /** Changed paths listed for one paired or test file; the map counts the rest. */
+  maxChangedPathsPerFile: 20,
 });
 
 /** Names or paths quoted in one incompleteness reason; the reason counts the rest. */
 const MAX_REASON_ITEMS = 5;
+/** Characters of one quoted name, path or error in a reason; a longer one is cut and marked. */
+const MAX_REASON_ITEM_CHARACTERS = 120;
 /** Bytes of one Git grep line kept for a reference's text: enough for `maxLineCharacters` of any UTF-8 text. */
 const MAX_REFERENCE_TEXT_BYTES = CODE_REFERENCES_LIMITS.maxLineCharacters * 4;
 /** Bytes of one Git grep line kept when looking for Markdown mentions; a longer line is checked on its start. */
@@ -87,10 +91,16 @@ export interface CodeReferenceMap {
   symbols: Array<{ name: string; declarations: Array<Omit<DeclaredSymbol, "name">>; omittedDeclarations?: number }>;
   /** Textual whole-word matches of each symbol at head, in path and line order; `truncated` past the per-symbol bound. */
   references: Array<{ symbol: string; matches: CodeReferenceMatch[]; truncated?: true }>;
-  /** Tracked files at the conventional test paths of changed files. */
-  testFiles: Array<{ path: string; covers: string[] }>;
-  /** Tracked files a `contextPairs` rule pairs with changed files; `rules` are indexes into `contextPairs`. */
-  pairedFiles: Array<{ path: string; pairedWith: string[]; rules: number[] }>;
+  /**
+   * Tracked files at the conventional test paths of changed files, each with at most `maxChangedPathsPerFile` of the
+   * changed paths it covers (the first in order); `omittedCovers` counts the rest.
+   */
+  testFiles: Array<{ path: string; covers: string[]; omittedCovers?: number }>;
+  /**
+   * Tracked files a `contextPairs` rule pairs with changed files; `rules` are indexes into `contextPairs`. Each lists at
+   * most `maxChangedPathsPerFile` of the changed paths it is paired with; `omittedPairedWith` counts the rest.
+   */
+  pairedFiles: Array<{ path: string; pairedWith: string[]; rules: number[]; omittedPairedWith?: number }>;
   /** Markdown files that mention a changed symbol (as a whole word) or a changed path. */
   documents: Array<{ path: string; mentions: string[] }>;
   /**
@@ -132,9 +142,13 @@ function cutLine(text: string, cut: boolean): { text: string; truncated: boolean
   return characters.length > CODE_REFERENCES_LIMITS.maxLineCharacters || cut ? { text: characters.slice(0, CODE_REFERENCES_LIMITS.maxLineCharacters).join(""), truncated: true } : { text: characters.join(""), truncated: false };
 }
 
-/** `items` for a reason: the first few, then how many more. */
+/** `items` for a reason: the first few, each cut to a bounded length, then how many more. */
 function quoteItems(items: readonly string[]): string {
-  const shown = items.slice(0, MAX_REASON_ITEMS).map(item => JSON.stringify(item)).join(", ");
+  const quote = (item: string) => {
+    const characters = [...item];
+    return JSON.stringify(characters.length > MAX_REASON_ITEM_CHARACTERS ? `${characters.slice(0, MAX_REASON_ITEM_CHARACTERS).join("")}…` : item);
+  };
+  const shown = items.slice(0, MAX_REASON_ITEMS).map(quote).join(", ");
   return items.length > MAX_REASON_ITEMS ? `${shown} and ${items.length - MAX_REASON_ITEMS} more` : shown;
 }
 
@@ -299,39 +313,55 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     const names = symbols.map(symbol => symbol.name);
 
     const references = await collectReferences(git, head, names, excluded, request.signal);
-    // Reasons follow symbol order, not completion order, so the manifest and its digest are deterministic.
-    for (const result of references) if (result.truncated) reasons.push(`Code references: ${result.symbol} has more than ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} references; only the first ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} are listed.`);
+    // One reason for every cut list, naming symbols in symbol order (not completion order), so the manifest and its
+    // digest are deterministic and the reason stays bounded however many lists were cut.
+    const cutLists = references.filter(result => result.truncated).map(result => result.symbol);
+    if (cutLists.length) reasons.push(`Code references: ${cutLists.length} symbols have more than ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} references; only the first ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} of each are listed: ${quoteItems(cutLists)}.`);
     const tracked = (await git(["ls-tree", "-r", "-z", "--name-only", "--full-tree", head])).split("\0").filter(file => file && !excluded(file));
     const testFiles = conventionalTests(changedPaths, tracked);
     const pairedFiles = this.pairedFiles(changedPaths, tracked);
     const documents = await this.documents(git, head, names, changedPaths, excluded, reasons, request.signal);
 
+    // The byte limit holds the map and the incompleteness reasons together. Every reason is bounded (a count and a few
+    // quoted items), and when the sections do not all fit, the longest omission reason each section could add is
+    // reserved before any item is taken.
     const budget = Math.min(CODE_REFERENCES_LIMITS.maxBytes, request.limits.maxBytes);
     const map: CodeReferenceMap = { version: 1, headCommit: head, changedPaths: [], symbols: [], references: [], testFiles: [], pairedFiles: [], documents: [] };
-    // The envelope is sized with the largest cut count, so setting the real one later stays within the budget.
-    let used = Buffer.byteLength(JSON.stringify({ ...map, referenceLinesCut: Number.MAX_SAFE_INTEGER }));
-    if (used > budget) {
-      reasons.push(`Code references: the ${budget}-byte limit is smaller than an empty map (${used} bytes), so no code-reference map was included.`);
+    const cutBound = references.reduce((count, list) => count + list.matches.filter(match => match.textTruncated).length, 0);
+    // The envelope holds the largest cut count the taken lists can have, so setting the real one later stays within it.
+    const envelope = Buffer.byteLength(JSON.stringify(cutBound ? { ...map, referenceLinesCut: cutBound } : map));
+    const sections = [
+      { section: map.changedPaths, items: changedPaths, label: "changed paths" },
+      { section: map.symbols, items: symbols, label: "symbols" },
+      { section: map.references, items: references, label: "symbol reference lists" },
+      { section: map.testFiles, items: testFiles, label: "test files" },
+      { section: map.pairedFiles, items: pairedFiles, label: "paired files" },
+      { section: map.documents, items: documents, label: "documents" },
+    ] as Array<{ section: unknown[]; items: readonly unknown[]; label: string }>;
+    const omission = (omitted: number, total: number, label: string) => `Code references: the ${budget}-byte limit omitted ${omitted} of ${total} ${label}.`;
+    // Each item adds its own bytes and, after a section's first item, one separating comma. Items are sized only until
+    // the limit is reached, so a long section costs no more than the bytes the map can hold.
+    const size = (item: unknown, index: number) => Buffer.byteLength(JSON.stringify(item)) + (index ? 1 : 0);
+    const fixed = envelope + reasons.reduce((total, reason) => total + Buffer.byteLength(reason), 0);
+    let all = fixed;
+    for (const { items } of sections) for (let index = 0; index < items.length && all <= budget; index += 1) all += size(items[index], index);
+    const reserve = all <= budget ? 0 : sections.reduce((total, { items, label }) => total + Buffer.byteLength(omission(items.length, items.length, label)), 0);
+    if (fixed + reserve > budget) {
+      reasons.push(`Code references: the ${budget}-byte limit is smaller than an empty map with its incompleteness reasons (${fixed + reserve} bytes), so no code-reference map was included.`);
       return empty("code references: over the byte limit");
     }
-    const take = <T>(section: T[], items: readonly T[], label: string): void => {
+    let used = fixed;
+    for (const { section, items, label } of sections) {
       let taken = 0;
       for (const item of items) {
-        // Each item adds its own bytes and at most one separating comma.
-        const size = Buffer.byteLength(JSON.stringify(item)) + 1;
-        if (used + size > budget) break;
+        const bytes = size(item, taken);
+        if (used + bytes + reserve > budget) break;
         section.push(item);
-        used += size;
+        used += bytes;
         taken += 1;
       }
-      if (taken < items.length) reasons.push(`Code references: the ${budget}-byte limit omitted ${items.length - taken} of ${items.length} ${label}.`);
-    };
-    take(map.changedPaths, changedPaths, "changed paths");
-    take(map.symbols, symbols, "symbols");
-    take(map.references, references, "symbol reference lists");
-    take(map.testFiles, testFiles, "test files");
-    take(map.pairedFiles, pairedFiles, "paired files");
-    take(map.documents, documents, "documents");
+      if (taken < items.length) reasons.push(omission(items.length - taken, items.length, label));
+    }
     const linesCut = map.references.reduce((count, list) => count + list.matches.filter(match => match.textTruncated).length, 0);
     if (linesCut) map.referenceLinesCut = linesCut;
 
@@ -375,7 +405,10 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
       const lines = text.split("\n");
       function* changedLines(): Generator<{ line: number; text: string }> {
         for (const hunk of ranges) {
-          for (let line = Math.max(1, hunk.newStart); line < hunk.newStart + hunk.newLines && line <= lines.length; line += 1) yield { line, text: lines[line - 1].replace(/\r$/u, "") };
+          for (let line = Math.max(1, hunk.newStart); line < hunk.newStart + hunk.newLines && line <= lines.length; line += 1) {
+            // The head line after a changed one, changed or not, completes a Rust impl header rustfmt split.
+            yield { line, text: lines[line - 1].replace(/\r$/u, ""), ...(line < lines.length ? { next: lines[line].replace(/\r$/u, "") } : {}) };
+          }
         }
       }
       for (const { name, ...declaration } of symbolDeclarations(file.path, changedLines(), { onLongLine: line => longLines.push(`${file.path}:${line}`) })) {
@@ -394,20 +427,29 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     return [...kept.values()];
   }
 
+  /**
+   * Tracked files a pair rule includes, with the changed paths that trigger it. Each rule's triggers are found once and
+   * a paired file only names its rules, so the work is linear in tracked files times rules; the listed changed paths
+   * of a file are bounded and shared by every file paired by the same rules.
+   */
   private pairedFiles(changedPaths: readonly string[], tracked: readonly string[]): CodeReferenceMap["pairedFiles"] {
-    const paired = new Map<string, { pairedWith: Set<string>; rules: Set<number> }>();
-    this.pairs.forEach((pair, index) => {
-      const triggers = changedPaths.filter(file => pair.when.matches(file));
-      if (!triggers.length) return;
-      for (const file of tracked) {
-        if (!matchesAnyGlob(pair.include, file)) continue;
-        const entry = paired.get(file) ?? { pairedWith: new Set<string>(), rules: new Set<number>() };
-        for (const trigger of triggers) entry.pairedWith.add(trigger);
-        entry.rules.add(index);
-        paired.set(file, entry);
+    const active = this.pairs.map((pair, index) => ({ include: pair.include, index, triggers: changedPaths.filter(file => pair.when.matches(file)) })).filter(rule => rule.triggers.length);
+    if (!active.length) return [];
+    const unions = new Map<string, { listed: string[]; omitted: number }>();
+    const paired: CodeReferenceMap["pairedFiles"] = [];
+    for (const file of tracked) {
+      const rules = active.filter(rule => matchesAnyGlob(rule.include, file));
+      if (!rules.length) continue;
+      const key = rules.map(rule => rule.index).join(",");
+      let union = unions.get(key);
+      if (!union) {
+        const all = sorted(rules.flatMap(rule => rule.triggers));
+        union = { listed: all.slice(0, CODE_REFERENCES_LIMITS.maxChangedPathsPerFile), omitted: Math.max(0, all.length - CODE_REFERENCES_LIMITS.maxChangedPathsPerFile) };
+        unions.set(key, union);
       }
-    });
-    return sorted(paired.keys()).map(file => ({ path: file, pairedWith: sorted(paired.get(file)!.pairedWith), rules: [...paired.get(file)!.rules].sort((a, b) => a - b) }));
+      paired.push({ path: file, pairedWith: union.listed, rules: rules.map(rule => rule.index), ...(union.omitted ? { omittedPairedWith: union.omitted } : {}) });
+    }
+    return paired.sort((a, b) => compareCodePoints(a.path, b.path));
   }
 
   private async documents(git: CodeReferencesGit, head: string, names: readonly string[], changedPaths: readonly string[], excluded: (file: string) => boolean, reasons: string[], signal?: AbortSignal): Promise<CodeReferenceMap["documents"]> {
@@ -417,18 +459,14 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     const terms = [...names.map(term => ({ term, word: true })), ...changedPaths.filter(term => !term.includes("\n")).map(term => ({ term, word: false }))];
     if (!terms.length) return [];
     const mentions = new Map<string, Set<string>>();
-    let unattributed = 0;
+    let cutLines = 0;
     const records = grepRecords(head, MAX_DOCUMENT_TEXT_BYTES, record => {
       if (excluded(record.path) || !MARKDOWN_PATH.test(record.path)) return true;
-      let found = false;
       for (const { term, word } of terms) {
-        if (word ? containsWord(record.text, term) : record.text.includes(term)) {
-          mentions.set(record.path, (mentions.get(record.path) ?? new Set()).add(term));
-          found = true;
-        }
+        if (word ? containsWord(record.text, term) : record.text.includes(term)) mentions.set(record.path, (mentions.get(record.path) ?? new Set()).add(term));
       }
-      // Git matched the whole line; only a mention past the kept start of a very long line goes unattributed.
-      if (!found && record.textCut) unattributed += 1;
+      // Only the kept start of a very long line is checked, so any mention past it, of any term, may be missing.
+      if (record.textCut) cutLines += 1;
       return true;
     });
     // Patterns go through a file, so any number of changed paths fits on the command line.
@@ -438,44 +476,69 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
       await writeFile(patterns, terms.map(({ term }) => term).join("\n") + "\n", { mode: 0o600 });
       await git(["grep", "-n", "-z", "-I", "-F", "--no-color", "--no-recurse-submodules", "-f", patterns, head, "--", ...MARKDOWN_PATHSPECS], { onOutput: chunk => void records.push(chunk), successExitCodes: [1], signal });
     } finally { await rm(directory, { recursive: true, force: true }); }
-    if (unattributed) reasons.push(`Code references: ${unattributed} Markdown lines longer than ${MAX_DOCUMENT_TEXT_BYTES} bytes match a changed symbol or path only past their first ${MAX_DOCUMENT_TEXT_BYTES} bytes, so those mentions are not listed.`);
+    if (cutLines) reasons.push(`Code references: ${cutLines} matching Markdown lines are longer than ${MAX_DOCUMENT_TEXT_BYTES} bytes and were checked for mentions on their first ${MAX_DOCUMENT_TEXT_BYTES} bytes only, so mentions past that point are not listed.`);
     return sorted(mentions.keys()).map(file => ({ path: file, mentions: sorted(mentions.get(file)!) }));
   }
 }
+
+const TEST_FOLDERS = ["test/", "tests/", "Tests/"] as const;
 
 /**
  * Tracked files at the conventional test paths of each changed `<dir>/<name>.<ext>`: `<dir>/<name>.test.<ext>`,
  * `<dir>/<name>.spec.<ext>`, `<dir>/__tests__/<name>.<ext>`, `test/**\/<name>.test.<ext>`, for Python
  * `tests/**\/test_<name>.py` and for Swift `Tests/**\/<Name>Tests.swift` (`<Name>` with its first letter upper-cased).
  * The `test/`, `tests/` and `Tests/` directories are looked for at the repository root and in every ancestor directory
- * of the changed file, so a package's own test directory counts in a monorepo.
+ * of the changed file, so a package's own test directory counts in a monorepo. Only tracked files with a wanted
+ * basename are indexed, by each test directory above them, so the work is linear in tracked files plus the matches.
+ * Each test file lists at most `maxChangedPathsPerFile` covered paths (the first in order) and counts the rest.
  */
 export function conventionalTests(changedPaths: readonly string[], tracked: readonly string[]): CodeReferenceMap["testFiles"] {
-  const trackedSet = new Set(tracked);
-  const byBasename = new Map<string, string[]>();
-  for (const file of tracked) {
-    const basename = file.slice(file.lastIndexOf("/") + 1);
-    byBasename.set(basename, [...(byBasename.get(basename) ?? []), file]);
-  }
-  const covers = new Map<string, Set<string>>();
-  const add = (test: string, changed: string) => { if (test !== changed) covers.set(test, (covers.get(test) ?? new Set()).add(changed)); };
-  for (const changed of changedPaths) {
+  const parsed = sorted(changedPaths).flatMap(changed => {
     const slash = changed.lastIndexOf("/");
-    const directory = slash === -1 ? "" : changed.slice(0, slash + 1);
     const base = changed.slice(slash + 1);
     const dot = base.lastIndexOf(".");
-    if (dot <= 0) continue;
+    if (dot <= 0) return [];
     const name = base.slice(0, dot);
     const extension = base.slice(dot + 1);
-    for (const candidate of [`${directory}${name}.test.${extension}`, `${directory}${name}.spec.${extension}`, `${directory}__tests__/${name}.${extension}`]) if (trackedSet.has(candidate)) add(candidate, changed);
-    const ancestors = [""];
-    for (let index = changed.indexOf("/"); index !== -1; index = changed.indexOf("/", index + 1)) ancestors.push(changed.slice(0, index + 1));
     const nested: Array<{ folder: string; file: string }> = [{ folder: "test/", file: `${name}.test.${extension}` }];
     if (extension === "py") nested.push({ folder: "tests/", file: `test_${name}.py` });
     if (extension === "swift") nested.push({ folder: "Tests/", file: `${name.charAt(0).toUpperCase()}${name.slice(1)}Tests.swift` });
-    for (const { folder, file: basename } of nested) {
-      for (const file of byBasename.get(basename) ?? []) if (ancestors.some(ancestor => file.startsWith(`${ancestor}${folder}`))) add(file, changed);
+    return [{ changed, directory: slash === -1 ? "" : changed.slice(0, slash + 1), name, extension, nested }];
+  });
+  const wanted = new Set(parsed.flatMap(entry => entry.nested.map(item => item.file)));
+  // `<test folder path>\0<basename>` -> tracked files below that folder with that basename.
+  const nestedIndex = new Map<string, string[]>();
+  for (const file of tracked) {
+    const basename = file.slice(file.lastIndexOf("/") + 1);
+    if (!wanted.has(basename)) continue;
+    for (let start = 0; start < file.length - basename.length; start = file.indexOf("/", start) + 1) {
+      const folder = TEST_FOLDERS.find(item => file.startsWith(item, start));
+      if (folder) {
+        const key = `${file.slice(0, start)}${folder}\0${basename}`;
+        const list = nestedIndex.get(key);
+        if (list) list.push(file); else nestedIndex.set(key, [file]);
+      }
+      if (file.indexOf("/", start) === -1) break;
     }
   }
-  return sorted(covers.keys()).map(file => ({ path: file, covers: sorted(covers.get(file)!) }));
+  const trackedSet = new Set(tracked);
+  const covers = new Map<string, { covers: string[]; omitted: number }>();
+  for (const { changed, directory, name, extension, nested } of parsed) {
+    const found = new Set<string>();
+    for (const candidate of [`${directory}${name}.test.${extension}`, `${directory}${name}.spec.${extension}`, `${directory}__tests__/${name}.${extension}`]) if (trackedSet.has(candidate)) found.add(candidate);
+    const ancestors = [""];
+    for (let index = changed.indexOf("/"); index !== -1; index = changed.indexOf("/", index + 1)) ancestors.push(changed.slice(0, index + 1));
+    for (const { folder, file } of nested) for (const ancestor of ancestors) for (const test of nestedIndex.get(`${ancestor}${folder}\0${file}`) ?? []) found.add(test);
+    found.delete(changed);
+    // Changed paths arrive in order, so each test file lists the first ones it covers.
+    for (const test of found) {
+      const entry = covers.get(test) ?? { covers: [], omitted: 0 };
+      if (entry.covers.length < CODE_REFERENCES_LIMITS.maxChangedPathsPerFile) entry.covers.push(changed); else entry.omitted += 1;
+      covers.set(test, entry);
+    }
+  }
+  return sorted(covers.keys()).map(file => {
+    const entry = covers.get(file)!;
+    return { path: file, covers: entry.covers, ...(entry.omitted ? { omittedCovers: entry.omitted } : {}) };
+  });
 }

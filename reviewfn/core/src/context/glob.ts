@@ -62,11 +62,3 @@ export function compileGlobs(patterns: readonly string[]): CompiledGlob[] {
 export function matchesAnyGlob(globs: readonly CompiledGlob[], path: string): boolean {
   return globs.some(glob => glob.matches(path));
 }
-
-/**
- * The Git pathspec equivalent of a supported glob, anchored at the repository top. Git's `glob` magic treats `*`, `?`
- * and whole-segment `**` the same way, and the grammar excludes the characters Git would read differently.
- */
-export function globPathspec(glob: CompiledGlob, exclude = false): string {
-  return `:(top,${exclude ? "exclude," : ""}glob)${glob.pattern}`;
-}

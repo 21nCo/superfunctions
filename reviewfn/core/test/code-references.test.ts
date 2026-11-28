@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,6 +13,7 @@ import {
   type CodeReferencesGitOptions,
   type ArtifactStore, type CodeReferenceMap, type ContextManifest, type ContextRequest, type PanelPolicy, type ReviewReport, type SymbolKind, type SymbolLanguage,
 } from "../src/index.js";
+import { runGit } from "../src/panel/git.js";
 
 const LIMITS: ContextManifest["limits"] = { maxSources: 10, maxBytes: 2_000_000, maxDepth: 4 };
 const roots: string[] = [];
@@ -51,6 +52,11 @@ async function fixture(base: Record<string, string>, head: Record<string, string
   const hunks = parseChangeHunks(git(root, "diff", ...changeHunksDiffArguments(baseCommit, headCommit)), baseCommit, headCommit);
   const changedPaths = git(root, "diff", "--name-only", "--no-renames", baseCommit, headCommit).split("\n").filter(Boolean);
   return { root, baseCommit, headCommit, request: { root, limits: LIMITS, change: { headCommit, changedPaths, hunks } } };
+}
+
+/** Bytes of a manifest's map and incompleteness reasons together, which the byte limit holds. */
+function outputBytes(manifest: Pick<ContextManifest, "sources" | "incompleteReasons">): number {
+  return manifest.sources.reduce((total, source) => total + Buffer.byteLength(source.content ?? ""), 0) + manifest.incompleteReasons.reduce((total, reason) => total + Buffer.byteLength(reason), 0);
 }
 
 async function fetchMap(request: ContextRequest, adapter = new CodeReferencesContextAdapter()): Promise<{ map: CodeReferenceMap; manifest: Omit<ContextManifest, "digest"> }> {
@@ -133,6 +139,21 @@ const MANY: ManyCase[] = [
   ["every name an exported array pattern binds", "typescript", "export const [first, , { inner }, last = 1] = list;", [{ name: "first", kind: "const" }, { name: "inner", kind: "const" }, { name: "last", kind: "const" }], "const [first, last] = list;"],
   ["a Rust raw identifier with its prefix", "rust", "pub fn r#type() -> Kind {", [{ name: "r#type", kind: "function" }], "    let kind = r#type();"],
   ["a Rust impl target behind a reference and lifetime", "rust", "impl<'a> Display for &'a mut crate::model::Ledger<'a> where T: Clone {", [{ name: "Ledger", kind: "impl" }], "    // impl<'a> Display for &'a Ledger"],
+  ["a Rust impl target path with spaced separators", "rust", "impl Trait for crate :: model :: Ledger {}", [{ name: "Ledger", kind: "impl" }], "    // impl Trait for crate :: Ledger {}"],
+  ["a whole non-ASCII TypeScript class name", "typescript", "export class Café {}", [{ name: "Café", kind: "class" }], "const café = new Café();"],
+  ["a non-ASCII TypeScript function name", "typescript", "export function café() {}", [{ name: "café", kind: "function" }], "café();"],
+  ["a whole non-ASCII Swift function name", "swift", "func café() -> Int {", [{ name: "café", kind: "function" }], "let value = café()"],
+  ["a non-ASCII Python function name", "python", "def café():", [{ name: "café", kind: "function" }], "café()"],
+  ["a whole Go type name before a receive-only channel", "go", "type Recv <-chan int", [{ name: "Recv", kind: "type" }], "\tvar recv <-chan int"],
+  ["a named default class, and no keyword for an anonymous one", "typescript", "export default class Named extends Base {", [{ name: "Named", kind: "class" }], "export default class extends Base {"],
+  ["an implementing class, and no keyword for an anonymous one", "typescript", "export class Store implements Repo {", [{ name: "Store", kind: "class" }], "export default class implements Repo {"],
+  ["a Swift class, and no keyword for a class member", "swift", "final class Cache {", [{ name: "Cache", kind: "class" }], "    final class var shared: Cache {"],
+  ["every declarator after call type arguments", "typescript", "export const first = make<string, number>(), second = 2;", [{ name: "first", kind: "const" }, { name: "second", kind: "const" }], "const first = make<string, number>(), second = 2;"],
+  ["every declarator after a regular expression literal", "typescript", "export const first = /a,b/g, second = 2;", [{ name: "first", kind: "const" }, { name: "second", kind: "const" }], "const first = /a,b/g, second = 2;"],
+  ["every declarator after a comparison", "typescript", "export const less = a < b, other = c<d, last = 1;", [{ name: "less", kind: "const" }, { name: "other", kind: "const" }, { name: "last", kind: "const" }], "const less = a < b, other = 1;"],
+  ["every declarator after a division", "typescript", "export const half = total / 2, rest = total/3, more = 1;", [{ name: "half", kind: "const" }, { name: "rest", kind: "const" }, { name: "more", kind: "const" }], "const half = total / 2;"],
+  ["a PEP 695 generic function", "python", "def identity[T](x: T) -> T:", [{ name: "identity", kind: "function" }], "value = identity[int](x)"],
+  ["a PEP 695 generic class", "python", "class Box[T]:", [{ name: "Box", kind: "class" }], "boxes = Box[int]()"],
 ];
 
 describe("code references: symbol forms", () => {
@@ -148,6 +169,9 @@ describe("code references: symbol forms", () => {
       ["typescript", `a${spaces}x`], ["typescript", `public ${"static ".repeat(8_000)}`], ["typescript", `export const ${"{ a, ".repeat(10_000)}`],
       ["typescript", `export const a = ${"[".repeat(50_000)}`], ["swift", "@a ".repeat(15_000)], ["rust", `impl<${"<".repeat(50_000)}`], ["rust", `impl ${"a ".repeat(20_000)}`],
       ["go", `func (${" ".repeat(50_000)}`], ["python", `def${spaces}`],
+      ["typescript", `export const a = ${"a<".repeat(25_000)}`], ["typescript", `export const a = ${"/".repeat(50_000)}`], ["typescript", `export const a = ${"x / ".repeat(12_000)}`],
+      ["typescript", `export const a = ${"f<(".repeat(15_000)}`], ["typescript", `export class ${"é".repeat(50_000)}!`], ["go", `type ${"a".repeat(50_000)}!`],
+      ["rust", `impl ${"Trait<".repeat(10_000)}`], ["rust", `impl X for ${"a :: ".repeat(10_000)}!`], ["rust", `impl ${"( ".repeat(20_000)}`],
     ];
     const started = performance.now();
     for (const [language, text] of lines) lineSymbols(language, text);
@@ -157,6 +181,21 @@ describe("code references: symbol forms", () => {
     const long = `export function ${"x".repeat(SYMBOL_LINE_CHARACTER_LIMIT)}() {}`;
     expect(extractSymbols("src/a.ts", [{ line: 1, text: long }, { line: 2, text: "export function kept() {}" }], { onLongLine: line => skipped.push(line) }).map(symbol => symbol.name)).toEqual(["kept"]);
     expect(skipped).toEqual([1]);
+  });
+
+  it("reads a Rust impl header rustfmt split from the next head line, and never reports its trait", () => {
+    expect(lineSymbols("rust", "impl<'a, T: Bound> SomeLongTrait<T>", "    for SomeLongType<'a, T>")).toEqual([{ name: "SomeLongType", kind: "impl" }]);
+    expect(lineSymbols("rust", "impl Display for", "    Ledger {")).toEqual([{ name: "Ledger", kind: "impl" }]);
+    expect(lineSymbols("rust", "impl<T> Inherent<T>", "where")).toEqual([{ name: "Inherent", kind: "impl" }]);
+    expect(lineSymbols("rust", "impl<T> Inherent<T>", "{")).toEqual([{ name: "Inherent", kind: "impl" }]);
+    expect(lineSymbols("rust", "impl<'a, T: Bound> SomeLongTrait<T>")).toEqual([]);
+    expect(lineSymbols("rust", "impl<'a, T: Bound> SomeLongTrait<T>", "    // continued below")).toEqual([]);
+  });
+
+  it("gives a split Rust impl header the type on the next line of the head file", async () => {
+    const { request } = await fixture({ "README.md": "x\n" }, { "src/lib.rs": "impl<'a, T: Bound> SomeLongTrait<T>\n    for SomeLongType<'a, T>\n{\n}\n" });
+    const { map } = await fetchMap(request);
+    expect(map.symbols).toEqual([{ name: "SomeLongType", declarations: [{ kind: "impl", language: "rust", path: "src/lib.rs", line: 1 }] }]);
   });
 
   it("records changed lines skipped for their length", async () => {
@@ -207,14 +246,14 @@ describe("code references: bounds", () => {
     expect(map.symbols).toHaveLength(1);
     expect(map.symbols[0]).toMatchObject({ name: "a", omittedDeclarations: 150_000 - CODE_REFERENCES_LIMITS.maxDeclarationsPerSymbol });
     expect(map.symbols[0].declarations).toHaveLength(CODE_REFERENCES_LIMITS.maxDeclarationsPerSymbol);
-    expect(manifest.incompleteReasons).toEqual(["Code references: a has more than 30 references; only the first 30 are listed."]);
+    expect(manifest.incompleteReasons).toEqual(['Code references: 1 symbols have more than 30 references; only the first 30 of each are listed: "a".']);
   });
 
   it("omits the map and records why when the byte limit cannot hold an empty one", async () => {
     const { request } = await fixture({ "src/use.ts": "tiny();\n" }, { "src/tiny.ts": "export function tiny() {}\n" });
     const manifest = await new CodeReferencesContextAdapter().fetch({ ...request, limits: { ...LIMITS, maxBytes: 40 } });
     expect(manifest.sources).toEqual([]);
-    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/the 40-byte limit is smaller than an empty map \(\d+ bytes\), so no code-reference map was included/));
+    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/the 40-byte limit is smaller than an empty map with its incompleteness reasons \(\d+ bytes\), so no code-reference map was included/));
   });
 
   it("records the per-symbol reference limit", async () => {
@@ -224,7 +263,7 @@ describe("code references: bounds", () => {
     const found = references(map, "popular")!;
     expect(found.matches).toHaveLength(CODE_REFERENCES_LIMITS.maxReferencesPerSymbol);
     expect(found.truncated).toBe(true);
-    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/popular has more than 30 references; only the first 30 are listed/));
+    expect(manifest.incompleteReasons).toContainEqual('Code references: 1 symbols have more than 30 references; only the first 30 of each are listed: "popular".');
   });
 
   it("records the 400 KB byte limit, marks and counts cut lines in the map only, and keeps the map within it", async () => {
@@ -255,17 +294,67 @@ describe("code references: bounds", () => {
     const digests = new Set<string>();
     for (let run = 0; run < 3; run += 1) {
       const manifest = await new CodeReferencesContextAdapter().fetch(request);
-      expect(manifest.incompleteReasons.map(reason => /: (\w+) has more than/.exec(reason)?.[1])).toEqual(names);
+      expect(manifest.incompleteReasons).toEqual(['Code references: 6 symbols have more than 30 references; only the first 30 of each are listed: "alpha", "beta", "gamma", "delta", "epsilon" and 1 more.']);
       digests.add(finalizeContextManifest(manifest).digest);
     }
     expect(digests.size).toBe(1);
   });
 
-  it("lowers the byte limit to the context's maxBytes", async () => {
-    const { request } = await fixture({ "src/use.ts": "tiny();\n" }, { "src/tiny.ts": "export function tiny() {}\n" });
-    const manifest = await new CodeReferencesContextAdapter().fetch({ ...request, limits: { ...LIMITS, maxBytes: 200 } });
-    expect(Buffer.byteLength(manifest.sources[0].content!)).toBeLessThanOrEqual(200);
-    expect(manifest.incompleteReasons).toContainEqual(expect.stringMatching(/the 200-byte limit omitted/));
+  it("lowers the byte limit to the context's maxBytes, which holds the map and its reasons together", async () => {
+    const { request } = await fixture({ "src/use.ts": "tiny();\n".repeat(20) }, { "src/tiny.ts": "export function tiny() {}\n" });
+    const manifest = await new CodeReferencesContextAdapter().fetch({ ...request, limits: { ...LIMITS, maxBytes: 900 } });
+    expect(manifest.sources).toHaveLength(1);
+    expect(outputBytes(manifest)).toBeLessThanOrEqual(900);
+    expect(manifest.incompleteReasons).toContainEqual("Code references: the 900-byte limit omitted 1 of 1 symbol reference lists.");
+  });
+
+  it("bounds the changed paths each paired file lists and counts the rest", async () => {
+    const changed = Object.fromEntries(Array.from({ length: 300 }, (_, index) => [`src/f${String(index).padStart(3, "0")}.txt`, "x\n"]));
+    const paired = Object.fromEntries(Array.from({ length: 300 }, (_, index) => [`spec/p${String(index).padStart(3, "0")}.txt`, "x\n"]));
+    const { request } = await fixture(paired, changed);
+    const { map } = await fetchMap(request, new CodeReferencesContextAdapter({ pairs: [{ when: "src/**", include: ["spec/**"] }] }));
+    expect(map.pairedFiles).toHaveLength(300);
+    for (const file of map.pairedFiles) {
+      expect(file.pairedWith).toEqual(Object.keys(changed).slice(0, CODE_REFERENCES_LIMITS.maxChangedPathsPerFile));
+      expect(file.omittedPairedWith).toBe(300 - CODE_REFERENCES_LIMITS.maxChangedPathsPerFile);
+    }
+  });
+
+  it("finds conventional tests in time linear in tracked files and bounds what each lists", () => {
+    // 30,000 packages that each change index.ts and track test/index.test.ts, plus one root test that covers them all.
+    const changed = Array.from({ length: 30_000 }, (_, index) => `pkg${index}/index.ts`);
+    const tracked = [...changed.map(file => file.replace("index.ts", "test/index.test.ts")), "test/index.test.ts"];
+    const started = performance.now();
+    const tests = conventionalTests(changed, tracked);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(tests).toHaveLength(30_001);
+    expect(tests.find(test => test.path === "pkg7/test/index.test.ts")).toEqual({ path: "pkg7/test/index.test.ts", covers: ["pkg7/index.ts"] });
+    const root = tests.find(test => test.path === "test/index.test.ts")!;
+    expect(root.covers).toHaveLength(CODE_REFERENCES_LIMITS.maxChangedPathsPerFile);
+    expect(root.omittedCovers).toBe(30_000 - CODE_REFERENCES_LIMITS.maxChangedPathsPerFile);
+  });
+
+  it("keeps the map and its reasons within the byte limit, with one bounded reason for every cut reference list", async () => {
+    const names = Array.from({ length: CODE_REFERENCES_LIMITS.maxSymbols }, (_, index) => `long${String(index).padStart(2, "0")}_${"n".repeat(800)}`);
+    const { request } = await fixture(
+      Object.fromEntries(names.map((name, index) => [`src/use${index}.ts`, `${name}();\n`.repeat(CODE_REFERENCES_LIMITS.maxReferencesPerSymbol + 1)])),
+      { "src/long.ts": `${names.map(name => `export const ${name} = 1;`).join("\n")}\n` },
+    );
+    const manifest = await new CodeReferencesContextAdapter().fetch(request);
+    expect(outputBytes(manifest)).toBeLessThanOrEqual(CODE_REFERENCES_LIMITS.maxBytes);
+    const cut = manifest.incompleteReasons.filter(reason => reason.includes("references; only the first"));
+    expect(cut).toHaveLength(1);
+    expect(cut[0]).toMatch(/^Code references: 60 symbols have more than 30 references; only the first 30 of each are listed: "long00_n{113}…", .* and 55 more\.$/u);
+    expect(Buffer.byteLength(cut[0])).toBeLessThan(1_000);
+  });
+
+  it("includes a map that exactly fits the byte limit", async () => {
+    const { request } = await fixture({ "README.md": "x\n" }, { "x.txt": "x\n" });
+    const full = await new CodeReferencesContextAdapter().fetch(request);
+    const exact = Buffer.byteLength(full.sources[0].content!);
+    const manifest = await new CodeReferencesContextAdapter().fetch({ ...request, limits: { ...LIMITS, maxBytes: exact } });
+    expect(manifest.sources[0].content).toBe(full.sources[0].content);
+    expect(manifest.incompleteReasons).toEqual([]);
   });
 
   it("records a run without captured hunks instead of reporting an empty symbol map as complete", async () => {
@@ -371,6 +460,17 @@ describe("code references: exclusions, pairs, tests and documents", () => {
     expect(map.documents).toEqual([{ path: "docs/odd\nnotes.md", mentions: ["linefeed"] }]);
     expect(manifest.incompleteReasons).toEqual(['Code references: 1 changed paths contain a line feed, so Markdown mentions of them were not searched: "src/new\\nfile.txt".']);
   });
+
+  it("records a cut Markdown line even when a mention in its kept start was found", async () => {
+    const { request } = await fixture(
+      { "docs/long.md": `alpha ${"x".repeat(70_000)} beta\n` },
+      { "src/both.ts": "export function alpha() {}\nexport function beta() {}\n" },
+    );
+    const { map, manifest } = await fetchMap(request);
+    // beta lies past the kept 64 KiB, so it is not listed; the cut is recorded although alpha was found.
+    expect(map.documents).toEqual([{ path: "docs/long.md", mentions: ["alpha"] }]);
+    expect(manifest.incompleteReasons).toContainEqual("Code references: 1 matching Markdown lines are longer than 65536 bytes and were checked for mentions on their first 65536 bytes only, so mentions past that point are not listed.");
+  });
 });
 
 describe("code references: reference search failure", () => {
@@ -393,6 +493,64 @@ describe("code references: reference search failure", () => {
     expect(started).toEqual(["name0", "name1", "name2", "name3"]);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(started).toHaveLength(4);
+  });
+});
+
+describe("code references: Git processes end before their callers settle", () => {
+  // A stand-in Git that, when stopped, takes a while to exit and only then writes `closed-<name>`. A caller that
+  // settled before its Git exited would find the marker missing.
+  const FAKE_GIT = [
+    "#!/bin/sh",
+    'name=""; previous=""',
+    'for arg in "$@"; do if [ "$previous" = "-e" ]; then name="$arg"; fi; previous="$arg"; done',
+    "trap 'sleep 0.3; echo closed > \"$FAKE_GIT_DIR/closed-$name\"; exit 143' TERM",
+    'echo started > "$FAKE_GIT_DIR/started-$name"',
+    'case "$name" in',
+    '  fail) sleep 0.2; echo "fatal: stand-in failure" >&2; exit 2 ;;',
+    '  many) i=1; while [ $i -le 40 ]; do printf "%s:src/a.ts\\000%d\\000many();\\n" "$FAKE_HEAD" $i; i=$((i+1)); done ;;',
+    "esac",
+    "while :; do sleep 0.05; done",
+  ].join("\n");
+  const head = "a".repeat(40);
+
+  async function standIn(): Promise<{ git: (args: string[], options?: CodeReferencesGitOptions) => Promise<string>; markers: () => Promise<{ started: string[]; closed: string[] }> }> {
+    const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-fake-git-"));
+    roots.push(directory);
+    const executable = path.join(directory, "git");
+    await writeFile(executable, `${FAKE_GIT}\n`, { mode: 0o755 });
+    const markerDirectory = path.join(directory, "markers");
+    await mkdir(markerDirectory);
+    return {
+      git: (args, options = {}) => runGit(executable, args, { cwd: directory, env: { PATH: process.env.PATH, FAKE_GIT_DIR: markerDirectory, FAKE_HEAD: head }, ...options }),
+      markers: async () => {
+        const files = await readdir(markerDirectory);
+        const named = (prefix: string) => files.filter(file => file.startsWith(prefix)).map(file => file.slice(prefix.length)).sort();
+        return { started: named("started-"), closed: named("closed-") };
+      },
+    };
+  }
+
+  it.skipIf(process.platform === "win32")("rejects on a sibling failure only after every stopped Git has exited", async () => {
+    const { git, markers } = await standIn();
+    await expect(collectReferences(git, head, ["s0", "fail", "s2", "s3", "s4"], () => false)).rejects.toThrow(/stand-in failure/);
+    // Checked as soon as the call settles: every Git it stopped has already exited, and none started after the failure.
+    expect(await markers()).toEqual({ started: ["fail", "s0", "s2", "s3"], closed: ["s0", "s2", "s3"] });
+  });
+
+  it.skipIf(process.platform === "win32")("rejects on the caller's abort only after every stopped Git has exited", async () => {
+    const { git, markers } = await standIn();
+    const caller = new AbortController();
+    setTimeout(() => caller.abort(), 150);
+    await expect(collectReferences(git, head, ["c0", "c1"], () => false, caller.signal)).rejects.toThrow();
+    expect(await markers()).toEqual({ started: ["c0", "c1"], closed: ["c0", "c1"] });
+  });
+
+  it.skipIf(process.platform === "win32")("returns a list cut at the per-symbol bound only after its stopped Git has exited", async () => {
+    const { git, markers } = await standIn();
+    const [list] = await collectReferences(git, head, ["many"], () => false);
+    expect(list.matches).toHaveLength(CODE_REFERENCES_LIMITS.maxReferencesPerSymbol);
+    expect(list.truncated).toBe(true);
+    expect(await markers()).toEqual({ started: ["many"], closed: ["many"] });
   });
 });
 

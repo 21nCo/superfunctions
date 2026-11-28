@@ -5,6 +5,8 @@ import { isolatedGitEnvironment } from "../git-environment.js";
 const DEFAULT_MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 /** Git's diagnostics kept for an error message; the rest is drained and never limits or fails a command. */
 const MAX_GIT_STDERR_CHARS = 4096;
+/** How long a stopped Git may take to exit after its termination signal before it is killed. */
+const GIT_STOP_GRACE_MS = 5_000;
 
 /** Git printed more than the run lets it buffer: a limit of the run, not something the slot did. */
 export class GitOutputLimitError extends Error {}
@@ -25,6 +27,9 @@ export interface GitRunOptions {
  * Run `executable` (an absolute, trusted Git) with the isolated Git environment and return its standard output. Only
  * standard output counts toward the limit; standard error, which a checkout's contents can make arbitrarily long, is
  * drained and only its start is kept for the error of a failed command. Rejects when Git fails or `signal` aborts.
+ * Once Git has started, the promise settles only after its process has exited and its output streams have closed,
+ * also when `signal` aborts it, so a caller that awaits it never outlives the Git it ran. A Git that does not exit
+ * within a few seconds of the abort is killed.
  */
 export function runGit(executable: string, args: string[], options: GitRunOptions): Promise<string> {
   const limit = options.maxOutputBytes ?? DEFAULT_MAX_GIT_OUTPUT_BYTES;
@@ -43,9 +48,21 @@ export function runGit(executable: string, args: string[], options: GitRunOption
       chunks.push(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < MAX_GIT_STDERR_CHARS) stderr += chunk.toString("utf8").slice(0, MAX_GIT_STDERR_CHARS - stderr.length); });
-    child.once("error", reject);
+    let failure: { error: unknown } | undefined;
+    let grace: NodeJS.Timeout | undefined;
+    child.once("error", error => {
+      // Without a process ID Git never started, so no close follows; otherwise wait for it to exit and close.
+      if (child.pid === undefined) return reject(error);
+      failure ??= { error };
+      if (child.exitCode === null && child.signalCode === null) {
+        grace = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, GIT_STOP_GRACE_MS);
+        grace.unref();
+      }
+    });
     child.once("close", code => {
-      if (overflow) reject(new GitOutputLimitError(`git ${command} printed more than the run's ${limit}-byte limit for Git output.`));
+      clearTimeout(grace);
+      if (failure) reject(failure.error);
+      else if (overflow) reject(new GitOutputLimitError(`git ${command} printed more than the run's ${limit}-byte limit for Git output.`));
       else if (code === 0 || (code !== null && options.successExitCodes?.includes(code))) resolve(Buffer.concat(chunks).toString("utf8"));
       else reject(new Error(`git ${command} exited with ${String(code)}: ${stderr.trim()}`));
     });
