@@ -483,11 +483,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = versionToken(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
-    // Cached only once this caller's check accepts it, so a refusal never enters the cache or replaces an accepted entry.
+    // Cached and returned only when this caller's check accepts it before the bound: a refusal or a late result never enters the cache.
     const observation = { ...version, output: `${result.stdout}\n${result.stderr}` };
     const checked = publishable(observation, secrets);
-    if (!("error" in checked) && Date.now() <= until) this.versions.set(key, observation);
-    return checked;
+    if (!("error" in checked) && Date.now() < until) this.versions.set(key, observation);
+    return "error" in checked || this.versions.get(key) === observation ? checked : { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
   }
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
