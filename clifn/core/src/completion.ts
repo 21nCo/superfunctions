@@ -47,7 +47,11 @@ export interface CompletionSpec {
 export type CompletionSkipKind = "command" | "alias" | "option" | "choice";
 export type CompletionSkipReason = "invalid-name" | "duplicate" | "too-deep";
 
-/** A name left out of the script. */
+/**
+ * A name left out of the script. A command left out takes its flags and subcommands with it, and each of its aliases
+ * is reported too, with the command's reason (or `invalid-name` for an alias outside the grammar). A command whose own
+ * name is outside the grammar stays in the script under its first usable alias.
+ */
 export interface CompletionSkip {
   kind: CompletionSkipKind;
   name: string;
@@ -267,24 +271,37 @@ function normalizeCommands(
     const at = `${where}[${index}]`;
     const name = specField(command, "name", at);
     if (typeof name !== "string") throw invalidSpec(`${at}.name`, "a string");
-    if (!NAME_PATTERN.test(name)) {
+    const rawAliases = specStrings(specField(command, "aliases", at), `${at}.aliases`);
+    const validName = NAME_PATTERN.test(name);
+    if (!validName) {
       skipped.push({ kind: "command", name, path: parent.path, reason: "invalid-name" });
+    }
+    const dropped: CompletionSkipReason | undefined =
+      depth > MAX_DEPTH ? "too-deep" : validName && words.has(name) ? "duplicate" : undefined;
+    if (dropped !== undefined) {
+      // The subtree is not read, so a cyclic hand-written spec stops here too. Each alias goes with its command.
+      if (validName) {
+        skipped.push({ kind: "command", name, path: parent.path, reason: dropped });
+      }
+      for (const alias of rawAliases) {
+        const reason = NAME_PATTERN.test(alias) ? dropped : "invalid-name";
+        skipped.push({ kind: "alias", name: alias, path: [...parent.path, name], reason });
+      }
       return;
     }
-    if (words.has(name)) {
-      skipped.push({ kind: "command", name, path: parent.path, reason: "duplicate" });
-      return;
-    }
-    if (depth > MAX_DEPTH) {
-      // The subtree is not read, so a cyclic hand-written spec stops here too.
-      skipped.push({ kind: "command", name, path: parent.path, reason: "too-deep" });
-      return;
-    }
-    words.add(name);
-    const path = [...parent.path, name];
+    // A command whose own name is outside the grammar is completed under its first usable alias.
+    const word = validName ? name : rawAliases.find((alias) => NAME_PATTERN.test(alias) && !words.has(alias));
+    const path = [...parent.path, word ?? name];
     const aliases: string[] = [];
-    for (const alias of specStrings(specField(command, "aliases", at), `${at}.aliases`)) {
-      if (!NAME_PATTERN.test(alias)) {
+    if (word !== undefined) {
+      words.add(word);
+    }
+    // The alias that stands in for the command is used once; a repeat of it is a duplicate like any other.
+    let standIn = validName ? undefined : word;
+    for (const alias of rawAliases) {
+      if (alias === standIn) {
+        standIn = undefined;
+      } else if (!NAME_PATTERN.test(alias)) {
         skipped.push({ kind: "alias", name: alias, path, reason: "invalid-name" });
       } else if (words.has(alias)) {
         skipped.push({ kind: "alias", name: alias, path, reason: "duplicate" });
@@ -293,9 +310,13 @@ function normalizeCommands(
         aliases.push(alias);
       }
     }
+    if (word === undefined) {
+      // No name of the command can be completed, so its flags and subcommands are not offered either.
+      return;
+    }
     const description = normalizeDescription(specOptionalString(specField(command, "description", at), `${at}.description`));
     const own = normalizeFlags(specField(command, "options", at), `${at}.options`, path, skipped);
-    const level: Level = { path, key: path.join("/"), name, aliases, description, ownFlags: own, children: [] };
+    const level: Level = { path, key: path.join("/"), name: word, aliases, description, ownFlags: own, children: [] };
     level.children = normalizeCommands(specField(command, "commands", at), `${at}.commands`, level, depth + 1, skipped);
     levels.push(level);
   });
@@ -586,7 +607,8 @@ function renderBash(root: Level): string {
 
 /**
  * Renders the completion script for one shell. Names outside the grammar, duplicates and commands below the third
- * level are left out of the script and listed in `skipped`.
+ * level are left out of the script and listed in `skipped`; a command whose name is outside the grammar is completed
+ * under its first usable alias.
  */
 export function renderCompletion(spec: CompletionSpec, shell: CompletionShell): CompletionResult {
   assertShell(shell);

@@ -292,6 +292,32 @@ describe("bash completion behaviour", () => {
     ).toEqual([["purge"], ["purge"], ["--force", "--region"], ["east"], ["east"], [], [], [], ["clear"]]);
   });
 
+  it("reaches a command whose own name is outside the grammar through its aliases", () => {
+    const { script } = renderCompletion(
+      {
+        name: "tool",
+        options: [],
+        commands: [
+          { name: "bad!", aliases: ["good", "gd"], options: [{ long: "--force", takesValue: false }] },
+          { name: "über", aliases: ["uber"], options: [], commands: [{ name: "inner", options: [{ long: "--deep", takesValue: false }] }] },
+        ],
+      },
+      "bash",
+    );
+    expect(script).not.toMatch(/bad!|über/);
+    expect(
+      completeWith(script, "tool", [
+        { words: ["tool", ""] },
+        { words: ["tool", "g"] },
+        { words: ["tool", "good", "--"] },
+        { words: ["tool", "gd", "--"] },
+        { words: ["tool", "u"] },
+        { words: ["tool", "uber", ""] },
+        { words: ["tool", "uber", "inner", "--"] },
+      ]),
+    ).toEqual([["good", "gd", "uber"], ["good", "gd"], ["--force"], ["--force"], ["uber"], ["inner"], ["--deep"]]);
+  });
+
   it("offers the nearest definition of a flag a subcommand redefines", () => {
     const spec: CompletionSpec = {
       name: "tool",
@@ -437,6 +463,62 @@ describe("completion names and descriptions", () => {
       expect(script).toContain("l3");
       expect(script).not.toMatch(/l4|bad name|bad alias|bad flag|b c|ok2|über|-dash/);
     }
+  });
+
+  it("completes a command whose own name is outside the grammar under its first usable alias", () => {
+    const spec: CompletionSpec = {
+      name: "tool",
+      options: [],
+      commands: [
+        { name: "keep", options: [] },
+        { name: "bad!", aliases: ["no way", "keep", "good", "good", "gd"], options: [{ long: "--force", takesValue: false }] },
+        { name: "über", aliases: ["uber"], options: [], commands: [{ name: "inner", options: [{ long: "--deep", takesValue: false }] }] },
+        { name: "nö", aliases: ["nein!"], options: [], commands: [{ name: "lost", options: [] }] },
+      ],
+    };
+    const { script, skipped } = renderCompletion(spec, "bash");
+    expect(skipped).toEqual([
+      { kind: "command", name: "bad!", path: [], reason: "invalid-name" },
+      { kind: "alias", name: "no way", path: ["good"], reason: "invalid-name" },
+      { kind: "alias", name: "keep", path: ["good"], reason: "duplicate" },
+      { kind: "alias", name: "good", path: ["good"], reason: "duplicate" },
+      { kind: "command", name: "über", path: [], reason: "invalid-name" },
+      { kind: "command", name: "nö", path: [], reason: "invalid-name" },
+      { kind: "alias", name: "nein!", path: ["nö"], reason: "invalid-name" },
+    ]);
+    expect(script).toContain("'') words='keep good gd uber' ;;");
+    expect(script).toContain("'|good'|'|gd') path='good' ;;");
+    expect(script).toContain("'|uber') path='uber' ;;");
+    expect(script).toContain("'uber|inner') path='uber/inner' ;;");
+    expect(script).not.toMatch(/bad!|über|nö|nein|no way|lost/);
+  });
+
+  it("reports each alias of a command left out as a duplicate or below the third level", () => {
+    const spec: CompletionSpec = {
+      name: "tool",
+      options: [],
+      commands: [
+        { name: "build", options: [] },
+        { name: "build", aliases: ["b", "b!"], options: [{ long: "--fast", takesValue: false }] },
+        {
+          name: "l1",
+          options: [],
+          commands: [{ name: "l2", options: [], commands: [{ name: "l3", options: [], commands: [{ name: "l4", aliases: ["four", "4!"], options: [] }, { name: "ü4", aliases: ["u4"], options: [] }] }] }],
+        },
+      ],
+    };
+    const { script, skipped } = renderCompletion(spec, "bash");
+    expect(skipped).toEqual([
+      { kind: "command", name: "build", path: [], reason: "duplicate" },
+      { kind: "alias", name: "b", path: ["build"], reason: "duplicate" },
+      { kind: "alias", name: "b!", path: ["build"], reason: "invalid-name" },
+      { kind: "command", name: "l4", path: ["l1", "l2", "l3"], reason: "too-deep" },
+      { kind: "alias", name: "four", path: ["l1", "l2", "l3", "l4"], reason: "too-deep" },
+      { kind: "alias", name: "4!", path: ["l1", "l2", "l3", "l4"], reason: "invalid-name" },
+      { kind: "command", name: "ü4", path: ["l1", "l2", "l3"], reason: "invalid-name" },
+      { kind: "alias", name: "u4", path: ["l1", "l2", "l3", "ü4"], reason: "too-deep" },
+    ]);
+    expect(script).not.toMatch(/'b'|--fast|l4|four|u4/);
   });
 
   it("stops at the third level of a cyclic hand-written spec", () => {
