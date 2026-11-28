@@ -1,3 +1,4 @@
+export * from "./authfn/index.js";
 export * from "./auth-response.js";
 export * from "./enterprise.js";
 export * from "./diagnostics.js";

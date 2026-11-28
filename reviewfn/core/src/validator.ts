@@ -1,5 +1,6 @@
 import { sha256 } from "./canonical.js";
 import { sinceRangeError, verifyChangeDetail, type ChangeDetailVerification } from "./change.js";
+import { isReviewContextSource } from "./context/code-references.js";
 import type { ChangeHunks, CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, TestReceipt, Verdict } from "./types.js";
 
 export interface ValidationResult {
@@ -37,7 +38,7 @@ export function sourceReferenceChecker(context: ContextManifest | undefined, pol
   const sources = new Map(context?.sources.map(source => [source.id, source]) ?? []);
   return (ref: SourceReference): boolean => {
     const source = sources.get(ref.sourceId);
-    if (!source || source.status !== "available" || !source.content || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) return false;
+    if (!source || isReviewContextSource(source) || source.status !== "available" || !source.content || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) return false;
     // Explicit literal excerpts or one-based line ranges are verifiable; arbitrary labels are not.
     if (ref.excerpt) return source.content.includes(ref.excerpt) && ref.excerpt.trim().length > 0;
     const match = /^L(\d+)(?:-L?(\d+))?$/.exec(ref.anchor);
@@ -116,7 +117,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     for (const changed of deltaPaths) if (!report.inspectedPaths.includes(changed) && !report.uninspected.some(item => item.scope === changed && item.reason.trim().length > 0)) errors.push(`Delta path ${changed} has no inspected or explicitly uninspected scope.`);
     for (const category of new Set([...policy.requiredCategories, ...(report.configuration.reviewCategories ?? [])])) if (!report.requirements.some(requirement => requirement.category === category)) errors.push(`Extraction coverage for required category ${category} is unverified.`);
     for (const source of context?.sources ?? []) {
-      if (source.status !== "available" || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) continue;
+      if (isReviewContextSource(source) || source.status !== "available" || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) continue;
       if (typeof source.content !== "string") {
         errors.push(`Available source ${source.id} has no content.`);
         continue;

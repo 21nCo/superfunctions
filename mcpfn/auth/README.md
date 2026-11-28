@@ -22,6 +22,95 @@ refused unless `allowTokensWithoutExpiry: true` is set.
 
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
+## AuthFn token authority
+
+`createAuthFnTokenAuthority(provider)` lets an MCP endpoint accept access
+tokens issued by an AuthFn OAuth provider (`@authfn/oauth-provider`). Its
+`protect(mcpHandler, options)` serves RFC 9728 protected-resource metadata
+naming the AuthFn issuer at the resource's well-known URL, so MCP hosts
+discover, register and authorize against AuthFn, and passes requests whose
+Bearer token AuthFn reports active for this resource to the MCP handler with
+`authInfo` (`clientId`, the granted `scopes`, `resource`, `expiresAt` and
+`extra.subject`, the AuthFn user ID).
+
+```ts
+import { verifyOAuthAccessToken } from "@authfn/oauth-provider";
+import { createAuthFnTokenAuthority } from "@mcpfn/auth";
+
+// In the AuthFn server's process, against its database:
+const authority = createAuthFnTokenAuthority({
+  issuer: "https://auth.example.com",
+  verifyAccessToken: (token, { resource }) =>
+    verifyOAuthAccessToken({ database, namespace: "authfn" }, token, { resource }),
+});
+// Or remotely, through RFC 7662 introspection with the resource's secret:
+// createAuthFnTokenAuthority({
+//   issuer: "https://auth.example.com",
+//   introspection: { endpoint: "https://auth.example.com/auth/oauth/introspect", secret: env.MEMOTRON_INTROSPECTION_SECRET },
+// });
+
+const fetch = authority.protect(mcp, {
+  resource: "https://memotron.example.com/mcp",
+  scopesSupported: ["memotron:read", "memotron:write"],
+});
+```
+
+- `resource` must be an HTTPS URL, as RFC 9728 requires. For local tests,
+  `allowInsecureLoopbackResource: true` (in `protect()` or `verifier()`
+  options) also allows `http://` on `localhost`, `127.0.0.1` or `[::1]`;
+  plain HTTP on any other host is refused.
+- `resource` must be written in its normalized form (as `new URL(resource).href`
+  prints it, without credentials or a fragment), the form the metadata advertises and MCP
+  clients send as RFC 8707 `resource`; configure the same string as the AuthFn
+  resource. Any other spelling throws, with a message that does not repeat
+  the URL.
+- Every request asks AuthFn; nothing is cached, so a revoked grant or token
+  stops working on the next request. A token is accepted only when AuthFn
+  reports it active for exactly this resource and its `expiresAt` (or `exp`) is
+  in the future (by the `clock` option in `protect()`); a token for another audience, an expired token and a token of
+  a revoked grant are answered 401 `invalid_token`.
+- When AuthFn cannot be asked (`verifyAccessToken` throws; introspection fails,
+  times out after `timeoutMs` (a whole number of milliseconds, default 5000,
+  covering the request and the body even when a custom `fetch` ignores the
+  abort signal; an answer, active or not, whose reading completes later, by a
+  monotonic clock, is discarded), redirects, answers other than 200
+  or with a body that is not a JSON object), the endpoint answers 503
+  `temporarily_unavailable` without calling the MCP handler, so clients keep
+  their tokens. Introspection never follows redirects. Its endpoint must use
+  HTTPS (`allowInsecureLoopback` allows `http://` loopback for local tests) and
+  its secret must be an RFC 6750 `b64token`.
+- Scopes are passed through, not enforced at the endpoint: gate tools on
+  `extra.authInfo.scopes`, for example with `@mcpfn/datafn`'s `sessionScopes`,
+  which understands `<app>:*` and `*`.
+- Give the issuer exactly as AuthFn publishes it (`environment.issuer`, or a
+  region's `issuer`), for example `https://auth.example.com` or
+  `https://auth.example.com/`. It is advertised verbatim in
+  `authority.issuer` and the metadata's `authorization_servers`, because
+  RFC 8414 clients compare it exactly with AuthFn's metadata. It must be an
+  HTTPS URL (or `http://` loopback with
+  `allowInsecureLoopbackAuthorizationServers`) spelled in full: `https://` or
+  `http://`, a host and an optional path, without credentials, a query or a
+  fragment. Spellings that URL parsing would repair, such as
+  `https:auth.example.com` or `https://@auth.example.com/`, are refused.
+- `authority.verifier(resource, { invalidTokenError })` returns the MCP SDK
+  `OAuthTokenVerifier` for hosts that use the SDK's `requireBearerAuth`. Pass
+  `InvalidTokenError` from the same `@modelcontextprotocol/sdk` copy as that
+  middleware: it recognizes only its own class, and `@mcpfn/auth` inlines a
+  separate SDK copy. An inactive, other-audience, expired or revoked token
+  rejects with that class (401 `invalid_token`); a provider that cannot be
+  asked rejects with its own error.
+
+  ```ts
+  import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+  import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+
+  app.use("/mcp", requireBearerAuth({
+    verifier: authority.verifier("https://memotron.example.com/mcp", {
+      invalidTokenError: InvalidTokenError,
+    }),
+  }));
+  ```
+
 ## Client provider
 
 `createMcpFnOAuthClientProvider()` implements the official

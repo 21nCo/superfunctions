@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/auth",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "description": "Web Standard OAuth protected-resource middleware and enterprise-managed authorization helpers for MCP",
   "type": "module",
   "main": "dist/index.cjs",
@@ -34,9 +34,12 @@
     }
   },
   "devDependencies": {
+    "@authfn/oauth-provider": "0.3.8",
     "@hono/node-server": "2.1.11",
     "@superfunctions/auth": "0.2.1",
+    "@superfunctions/db": "0.3.4",
     "@types/node": "^20.0.0",
+    "authfn": "0.10.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",

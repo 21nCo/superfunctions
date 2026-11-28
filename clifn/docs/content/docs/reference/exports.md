@@ -19,6 +19,7 @@ description: Map CliFn subpaths to their public functions, types, and errors.
 | `/paths` | `resolveAppPaths`, `ensureAppDir`, `AppPaths`, `AppPathsOptions`, `InvalidAppNameError`, `InvalidHomeDirectoryError` | Per-app config, state and cache directories |
 | `/terminal` | `resolveTerminal`, `resolveRunnerOptions`, `TerminalState`, `RunnerFlags`, `ResolvedRunnerOptions` | Colour, interactivity and CI rules; global flags to runner options |
 | `/update-check` | `startUpdateCheck`, `UpdateCheck`, `UpdateCheckOptions`, `UpdateCheckFetch` | Cached, non-blocking npm `latest` check with a stderr notice |
+| `/completion` | `renderCompletion`, `completionInstructions`, `CompletionSpec`, `CompletionResult`, `CompletionError` | bash completion scripts from a hand-written spec |
 | `/client` | `createApiClient`, `ApiClient`, `ApiClientConfig`, `ApiRequestOptions`, `ApiResponse`, HTTP errors | Authenticated HTTP requests |
 | `/ui` | `ui`, `Spinner` | Compatibility terminal helpers |
 | `/stdio` | `readJsonStdin`, `writeJsonStdout`, `InvalidJsonStdinError` | One-document JSON pipes |
