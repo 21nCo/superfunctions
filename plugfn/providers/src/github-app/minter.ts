@@ -338,14 +338,16 @@ function usableToken(value: unknown): string | undefined {
   return typeof value === 'string' && HEADER_SAFE_TOKEN.test(value) ? value : undefined;
 }
 
-/** The usable token a 201 body carries, if any: from the parsed body, or from the start of one that could not be read whole. */
+/** The usable token a 201 body carries, if any: from the parsed body, or from the start of one that cannot be read or parsed whole. */
 function bodyToken(body: BodyRead): string | undefined {
-  if (body.text === undefined) return usableToken(LEADING_TOKEN.exec(body.head)?.[1]);
+  const text = body.text ?? body.head;
   try {
-    return usableToken((JSON.parse(body.text) as { token?: unknown } | null)?.token);
+    const token = usableToken((JSON.parse(text) as { token?: unknown } | null)?.token);
+    if (token !== undefined) return token;
   } catch {
-    return undefined;
+    // Not whole JSON: look for the leading token below.
   }
+  return usableToken(LEADING_TOKEN.exec(text.slice(0, BODY_HEAD_CHARS))?.[1]);
 }
 
 /** Releases a body the minter will not read. */
@@ -547,7 +549,9 @@ function permissionsProblem(granted: unknown, requested: Readonly<Record<string,
  * the tolerance), and a credential until it is revoked or the tolerance after
  * its `expires_at`. A mint that never settles (on Workers, its request was
  * cancelled) holds its key for that hour plus tolerance from its POST, then
- * frees it. Only a definite non-issuance (a failure before the POST, or a
+ * frees it; if it settles later, its token is revoked, never returned. Holds
+ * run on the injected `now`, or else on `performance.now()`, which wall-clock
+ * changes cannot move. Only a definite non-issuance (a failure before the POST, or a
  * 4xx) frees the key at once. Without a key, a transport
  * failure or 5xx is a retryable `provider_unavailable`: if GitHub had already
  * created a token, it is unknown to the minter and expires within the hour.
@@ -570,7 +574,9 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   const privateKeyPem = options.privateKey;
   const baseUrl = normalizeBaseUrl(options.baseUrl);
   const doFetch: typeof fetch = options.fetch ?? ((input, init) => fetch(input, init));
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => Date.now());
+  /** The clock key holds are measured on: the injected `now`, or else one that wall-clock changes cannot move. */
+  const elapsed = options.now ?? (() => performance.now());
   const userAgent = validateUserAgent(options.userAgent);
   const cleanupRetryDelayMs = validateRetryDelay(options.cleanupRetryDelayMs);
   const waitUntil = validateWaitUntil(options.waitUntil);
@@ -711,7 +717,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         retryable: false,
         cause,
       }),
-      { handle: undefined, untilMs: now() + KEY_HOLD_MS },
+      { handle: undefined, untilMs: elapsed() + KEY_HOLD_MS },
     );
   }
 
@@ -758,7 +764,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
             revokeHandle,
           },
         ),
-        { handle: revokeHandle, untilMs: lifetimeEnd + MAX_CLOCK_SKEW_MS },
+        { handle: revokeHandle, untilMs: elapsed() + KEY_HOLD_MS },
       );
     }
     return fail('provider_error', `${problem}; the installation token was revoked`, { status });
@@ -770,16 +776,19 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
    * mint (`keyed`), a transport failure or a response other than 201 or 4xx
    * is `mint_outcome_unknown`, because GitHub may have issued a token before
    * it failed; without a key they stay retryable. `onDispatch` runs just
-   * before the POST is handed to `fetch`.
+   * before the POST is handed to `fetch`; when it returns `false` (the key
+   * was freed and may be in use by another mint), nothing is sent.
    */
   async function mintGrant(
     installationId: string,
     grant: GrantRequest,
     keyed: boolean,
-    onDispatch?: () => void,
+    onDispatch?: () => boolean,
   ): Promise<MintedCredential<GitHubAppRevokeHandle>> {
     const jwt = await appJwt();
-    onDispatch?.();
+    if (onDispatch?.() === false) {
+      throw fail('provider_unavailable', 'The mint was not sent: its idempotency key expired while it waited', { retryable: true });
+    }
     let response: Response;
     try {
       response = await send('POST', `${baseUrl}/app/installations/${installationId}/access_tokens`, jwt, JSON.stringify(grant), [jwt]);
@@ -801,15 +810,14 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       revokeLateToken(body);
       throw outcomeUnknown('GitHub reported a minted installation token but its response did not arrive in time', status);
     }
-    if (result.text === undefined) {
-      const problem = 'GitHub reported a minted installation token but its response could not be read';
+    const read = result.text === undefined ? undefined : readAccessToken(result.text, grant);
+    if (read?.token === undefined) {
+      const problem = `GitHub reported a minted installation token but its response ${read ? 'carried no usable token' : 'could not be read'}`;
+      // A token at the start of a body that cannot be read or parsed whole is still revoked.
       const token = bodyToken(result);
       if (token === undefined) throw outcomeUnknown(problem, status);
       throw await rejectGrant(token, Number.NaN, problem, status, installationId);
     }
-
-    const read = readAccessToken(result.text, grant);
-    if (read.token === undefined) throw outcomeUnknown('GitHub reported a minted installation token but its response carried no usable token', status);
     const at = now();
     let problem = read.problem;
     if (problem === undefined && read.expiresAtMs <= at) problem = 'GitHub returned an installation token that has already expired';
@@ -837,7 +845,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
 
   /** Frees keys whose hold has ended: its token confirmed revoked, or past its private expiry, or a pending mint past its deadline. */
   function pruneKeyedMints(): void {
-    const at = now();
+    const at = elapsed();
     for (const [key, entry] of keyedMints) {
       const hold = entry.hold;
       if (hold === undefined) {
@@ -887,11 +895,19 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       const entry: KeyedMint = {
         request: fingerprint,
         promise: mintGrant(installationId, grant, true, () => {
-          entry.pendingUntilMs = now() + KEY_HOLD_MS;
+          // A mint whose key was freed while it waited must not send a POST another mint may duplicate.
+          if (keyedMints.get(key) !== entry) return false;
+          entry.pendingUntilMs = elapsed() + KEY_HOLD_MS;
+          return true;
         }).then(
-          (credential) => {
+          async (credential) => {
+            if (keyedMints.get(key) !== entry) {
+              // Settled after its key was freed: another mint may hold the key now, so this token is revoked, never returned.
+              throw await rejectGrant(credential.secret, Number.NaN, 'The mint settled after its idempotency key expired', 201, installationId);
+            }
             const handle = credential.revokeHandle;
-            entry.hold = { handle, untilMs: handleStates.get(handle)!.expiresAtMs + MAX_CLOCK_SKEW_MS };
+            // GitHub's expiry, as time left on the hold clock, plus the skew tolerance.
+            entry.hold = { handle, untilMs: elapsed() + (handleStates.get(handle)!.expiresAtMs - now()) + MAX_CLOCK_SKEW_MS };
             return credential;
           },
           (error: unknown) => {
@@ -902,7 +918,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
           },
         ),
         hold: undefined,
-        pendingUntilMs: now() + KEY_HOLD_MS,
+        pendingUntilMs: elapsed() + KEY_HOLD_MS,
       };
       keyedMints.set(key, entry);
       return entry.promise;

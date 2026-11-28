@@ -183,6 +183,17 @@ describe('GitHub App minter: mint (recorded responses)', () => {
     expect(error.message).not.toContain(token);
   });
 
+  it('revokes the leading token of a 201 body cut short', async () => {
+    const token = fakeInstallationToken(8);
+    const { minter: m, calls } = minter([{ status: 201, body: `{"token":"${token}","expires_at":"${EXPIRES_AT}","permis` }, { status: 204 }]);
+    const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect([error.code, error.message.includes(token)]).toEqual(['provider_error', false]);
+    expect(calls.map((call) => [call.method, call.headers.authorization === `Bearer ${token}`])).toEqual([
+      ['POST', false],
+      ['DELETE', true],
+    ]);
+  });
+
   it('reports a 201 without a usable token as an unknown outcome, making no further call', async () => {
     for (const body of [{ expires_at: EXPIRES_AT }, { token: 'has a space', expires_at: EXPIRES_AT }, 'not json', [1], '']) {
       const { minter: m, calls } = minter([{ status: 201, body }]);
@@ -851,14 +862,16 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     expect(github.live.size).toBe(0);
   });
 
-  it('holds a key whose first mint never settles until any token from its POST has expired', async () => {
+  it('holds a key whose first mint does not settle until any token from its POST has expired, and revokes it if it settles later', async () => {
     let now = NOW_MS;
-    // The first invocation's POST reaches GitHub, which issues a token, but its request is cancelled and fetch never settles.
+    // The first invocation's POST reaches GitHub, which issues a token, but its request is cancelled and fetch does not settle.
     const later = (token: string) => new Response(JSON.stringify(recordedAccessToken(token, { expires_at: '2026-11-28T14:00:00Z' })), { status: 201 });
-    const github = statefulGitHub({ onPost: (token, n) => (n === 2 ? later(token) : undefined) });
+    const github = statefulGitHub({ onPost: (token) => later(token) });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
     const fake = ((input: string, init?: RequestInit) => {
       const answer = github.fetch(input, init);
-      return posts(github.calls) === 1 ? new Promise<Response>(() => undefined) : answer;
+      return posts(github.calls) === 1 ? held.then(() => answer) : answer;
     }) as typeof fetch;
     const { minter: m } = minter([], { fetch: fake, now: () => now });
     const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-stuck' };
@@ -873,9 +886,45 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     now += 1;
     const minted = await m.mint(request);
     expect(posts(github.calls)).toBe(2);
+    // The first mint settling now cannot add a second live token for the key: its token is revoked.
+    release();
+    expect((await rejection(stuck)).code).toBe('provider_error');
+    expect([...github.live]).toEqual([minted.secret]);
     await m.revoke(minted.revokeHandle);
-    expect(github.live.size).toBe(1);
-    void stuck;
+    expect(github.live.size).toBe(0);
+  });
+
+  it('does not send the POST of a mint whose key was freed before it was dispatched', async () => {
+    let now = NOW_MS;
+    const github = statefulGitHub({
+      onPost: (token) => new Response(JSON.stringify(recordedAccessToken(token, { expires_at: '2026-11-28T14:00:00Z' })), { status: 201 }),
+    });
+    const { minter: m } = minter([], { fetch: github.fetch, now: () => now });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-superseded' };
+    const first = rejection(m.mint(request));
+    // Still signing its App JWT when the key's deadline passes and another mint takes the key.
+    now += 3600 * 1000 + SKEW_MS;
+    const second = await m.mint(request);
+    expect((await first).code).toBe('provider_unavailable');
+    expect(posts(github.calls)).toBe(1);
+    await m.revoke(second.revokeHandle);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('measures key holds on a clock wall-clock changes cannot move', async () => {
+    const wall = vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+    try {
+      const github = statefulGitHub({ onPost: () => new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 }) });
+      const { minter: m } = minter([], { fetch: github.fetch, now: undefined });
+      const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-clock' };
+      const lost = await rejection(m.mint(request));
+      expect(lost.code).toBe('mint_outcome_unknown');
+      wall.mockReturnValue(NOW_MS + 2 * 3600 * 1000);
+      expect(await rejection(m.mint(request))).toBe(lost);
+      expect(posts(github.calls)).toBe(1);
+    } finally {
+      wall.mockRestore();
+    }
   });
 
   it('frees the key after a definite refusal (422)', async () => {
