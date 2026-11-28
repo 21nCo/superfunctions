@@ -1,0 +1,22 @@
+scripts/assert-bare-release.test.mjs
+  s_b7546bb15c0313::t_861ae990993184 3,626-644
+  s_b7546bb15c0313::t_abdb81827c147b 645
+scripts/pack-release-package.mjs
+  s_b7546bb15c0313::t_ac9fce8935f4ff 2,67-69,71,75,77-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b36335a830031770e42558e79be0aace55191736",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

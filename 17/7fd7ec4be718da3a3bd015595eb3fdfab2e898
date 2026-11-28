@@ -1,0 +1,25 @@
+README.md
+  s_b7546bb15c0313::t_37393529542f33 242-245
+scripts/assert-bare-release.test.mjs
+  s_b7546bb15c0313::t_583839e9e15191 615-625
+scripts/pack-release-package.mjs
+  s_b7546bb15c0313::t_37393529542f33 59-60,63-77
+scripts/bare-cli-shim.mjs
+  s_b7546bb15c0313::t_37393529542f33 91-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "177fd7ec4be718da3a3bd015595eb3fdfab2e898",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

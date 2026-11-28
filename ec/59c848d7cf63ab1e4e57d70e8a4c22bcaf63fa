@@ -1,0 +1,19 @@
+reviewfn/bare/bin/cli.mjs
+  s_72e360086c34c6::t_19f42ab293a43d 9-11,14,17,48-49,88-105,108-112,115-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec59c848d7cf63ab1e4e57d70e8a4c22bcaf63fa",
+  "prompts": {},
+  "sessions": {
+    "s_72e360086c34c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7e558fde-10d0-4f9f-8adc-7e1de8fe0262",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
