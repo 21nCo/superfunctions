@@ -52,6 +52,15 @@ Repository: <repo>, base branch <branch>
 
 For example `Repository: 21nCo/superfunctions, base branch dev` or `Repository: 21nCo/super-functions.next, base branch next`. Work in the checkout and branch it names. An issue that creates a new `next`-owned entry registers it in `superfunctions.owners.next.json` on `next`, because an unregistered path there is public-owned. A change to an existing public-owned path lands on `dev` first, never on `next`. If the issue would change a path the other repository owns in any other way, stop and say so instead of editing it.
 
+## Bare npm package names
+
+- Every product's unscoped (bare) npm package is its front door. `superfunctions` (bare) is the Superfunctions CLI (`@superfunctions/cli`, bins `superfunctions` and `sfs`), never a barrel of all packages.
+  - With a CLI, the bare package's `bin` maps the product name to the CLI executable, so `npx <name>` runs it. With a core SDK, `exports["."]` is that core (a re-export of `@<scope>/core` is fine), so `import … from "<name>"` gives the core.
+  - A product with a CLI but no SDK ships only the bin. An SDK with no CLI ships only the core export, and adds the bin later (adding it doesn't break importers). A product with neither gets no bare package.
+- `publish-tag.yml` builds each bare package in the same release, at the same version as whichever of `@<scope>/core` and `@<scope>/cli` the product has, through OIDC trusted publishing (one trusted publisher per bare name; never npm tokens).
+- Keep the CLI's heavy dependencies out of the bare package's default install graph, direct or through `@<scope>/cli`, and load them lazily (dynamic `import()` from the bin only), so SDK importers don't install, load or bundle them.
+- Scoped packages stay canonical for granular imports. Names npm refused as "too similar" use their scopes only. No placeholder bare packages: each one is the CLI and/or the core.
+
 ## Codex hooks (Entire)
 
 - Entire's Codex hooks live in the global Codex config (`~/.codex/hooks.json`). Do not add or commit a repo-level `.codex/hooks.json`.
