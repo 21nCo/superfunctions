@@ -611,6 +611,69 @@ describe("@mdfn/core", () => {
     expect(mapAnchor({ from: 1, to: 2 }, flaky)).toEqual({ from: 2, to: 3 });
   });
 
+  it("visits ranges as native reduce does when anchor getters change the ranges array", () => {
+    type Range = { from: number; to: number; insertedLength: number };
+    // The first range is read before the anchor getters run, so deleting it there neither throws nor skips it.
+    const deleting: Range[] = [{ from: 0, to: 0, insertedLength: 1 }];
+    const deletes = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
+      enumerable: true,
+      get: () => { delete deleting[0]; return undefined; },
+    }) as unknown as Parameters<typeof mapAnchor>[0];
+    expect(mapAnchor(deletes, deleting)).toMatchObject({ from: 4, to: 4 });
+
+    // A later slot deleted by a getter is skipped.
+    const later: Range[] = [{ from: 0, to: 0, insertedLength: 1 }, { from: 0, to: 0, insertedLength: 5 }];
+    const deletesLater = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
+      enumerable: true,
+      get: () => { delete later[1]; return undefined; },
+    }) as unknown as Parameters<typeof mapAnchor>[0];
+    expect(mapAnchor(deletesLater, later)).toMatchObject({ from: 4, to: 4 });
+
+    // A range appended after the length was taken is not visited.
+    const appending: Range[] = [{ from: 0, to: 0, insertedLength: 1 }];
+    const appends = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
+      enumerable: true,
+      get: () => { appending.push({ from: 0, to: 0, insertedLength: 5 }); return undefined; },
+    }) as unknown as Parameters<typeof mapAnchor>[0];
+    expect(mapAnchor(appends, appending)).toMatchObject({ from: 4, to: 4 });
+
+    // A fractional length is truncated, so exactly one range applies.
+    const fractional = new Proxy([{ from: 0, to: 0, insertedLength: 1 }, { from: 0, to: 0, insertedLength: 5 }], {
+      get: (target, key, receiver) => (key === "length" ? 1.5 : Reflect.get(target, key, receiver)),
+    });
+    expect(mapAnchor({ from: 3, to: 3 }, fractional)).toEqual({ from: 4, to: 4 });
+    expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 3, to: 3 }, resolved: false, messages: [] }] }, fractional)?.comments?.[0]?.anchor).toEqual({ from: 4, to: 4 });
+  });
+
+  it("returns a sidecar unread when every range is a hole and keeps an inherited affinity", () => {
+    const anchor = Object.assign(Object.create({ affinity: "before" }), { from: 2, to: 2 }) as Parameters<typeof mapAnchor>[0];
+    const sidecar = { comments: [{ id: "c", anchor, resolved: false, messages: [] }] } as unknown as Parameters<typeof mapSidecar>[0];
+    expect(mapSidecar(sidecar, new Array(1))).toBe(sidecar);
+    const inserted = mapSidecar(mapSidecar(sidecar, new Array(1)), [{ from: 2, to: 2, insertedLength: 3 }]);
+    expect(inserted?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
+
+    const throwing = Object.defineProperties({}, {
+      comments: { get: () => { throw new Error("comments read"); }, enumerable: true },
+      suggestions: { get: () => { throw new Error("suggestions read"); }, enumerable: true },
+    }) as unknown as Parameters<typeof mapSidecar>[0];
+    expect(mapSidecar(throwing, new Array(3))).toBe(throwing);
+
+    // A getter that empties the ranges mid-sidecar still leaves later caller-owned anchors with their affinity.
+    const ranges: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
+    const emptying = Object.defineProperty({ from: 5, to: 5 }, "affinity", {
+      enumerable: true,
+      get: () => { delete ranges[0]; return "after"; },
+    });
+    const mixed = mapSidecar({
+      comments: [
+        { id: "a", anchor: emptying, resolved: false, messages: [] },
+        { id: "b", anchor, resolved: false, messages: [] },
+      ],
+    } as unknown as Parameters<typeof mapSidecar>[0], ranges);
+    expect(mixed?.comments?.[0]?.anchor).toEqual({ from: 6, to: 6, affinity: "after" });
+    expect(mixed?.comments?.[1]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
+  });
+
   it("builds a mapped sidecar from the comments and suggestions it read", () => {
     const reads = { comments: 0, suggestions: 0 };
     const comments = [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
