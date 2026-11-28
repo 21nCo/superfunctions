@@ -112,7 +112,8 @@ export function createAuthFnClient(
       http.requestJson({
         method: 'POST',
         path: '/social/handoff/exchange',
-        body: input
+        body: input,
+        sensitiveBody: true
       }),
     startNativeHandoff: () =>
       http.requestJson({

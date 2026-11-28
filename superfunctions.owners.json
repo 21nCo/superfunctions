@@ -76,6 +76,7 @@
     "authfn-multi-region": "public",
     "authfn-native-handoff": "public",
     "authfn-oauth-provider": "public",
+    "authfn-oidc-issuer": "public",
     "authfn-password": "public",
     "authfn-schema-plugin": "public",
     "authfn-social-oauth": "public",
