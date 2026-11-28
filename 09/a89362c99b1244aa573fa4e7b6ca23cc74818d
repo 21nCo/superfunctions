@@ -1,0 +1,55 @@
+clifn/core/CHANGELOG.md
+  s_ebc526c2f5a155::t_65c7bdb0393b23 3-8
+clifn/core/README.md
+  s_ebc526c2f5a155::t_660b5ceaea53bc 295-324,435
+clifn/core/package.json
+  s_ebc526c2f5a155::t_7019a6c9daa4d6 3,76-79,110-111
+clifn/core/src/completion.ts
+  s_ebc526c2f5a155::t_8d4c90be24ee9a 1-617
+clifn/core/src/index.ts
+  s_ebc526c2f5a155::t_ff08e3262bb5fb 119-133
+clifn/core/tests/completion.test.ts
+  s_ebc526c2f5a155::t_3e976ef801aab5 1-521
+clifn/core/tests/fixtures/completion/demo.bash.golden
+  s_ebc526c2f5a155::t_ca9aca69bb27dc 1-206
+clifn/core/tests/parser-canaries.test.ts
+  s_ebc526c2f5a155::t_948fc69de4285a 90
+clifn/docs/content/docs/cli-builder.md
+  s_ebc526c2f5a155::t_8c37f72c65f8b0 36-37
+clifn/docs/content/docs/reference/core-readme.md
+  s_ebc526c2f5a155::t_8fa640491d8feb 298-327,438
+clifn/docs/content/docs/reference/exports.md
+  s_ebc526c2f5a155::t_6e8d1a7ae7fba2 22
+clifn/docs/static/llms-full.txt
+  s_ebc526c2f5a155::t_8684a35c3ff463 82-83,629-658,769,818
+devfn/cli/package.json
+  s_ebc526c2f5a155::t_1ed0cc88d72c19 17
+devfn/config/package.json
+  s_ebc526c2f5a155::t_32bb7172e2555a 22
+extfn/cli/__tests__/dev.test.ts
+  s_ebc526c2f5a155::t_490cc9aa563a2e 97
+extfn/cli/package.json
+  s_ebc526c2f5a155::t_a619042ea64ab0 38
+mailfn/cli/package.json
+  s_ebc526c2f5a155::t_e37f1f7fd4639a 17
+package-lock.json
+  s_ebc526c2f5a155::t_51a1de1d08afaa 8364,10445,10521,11121,15499,59625
+plugfn/cli/package.json
+  s_ebc526c2f5a155::t_af400431ba6a66 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09a89362c99b1244aa573fa4e7b6ca23cc74818d",
+  "prompts": {},
+  "sessions": {
+    "s_ebc526c2f5a155": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a5b9da9-e1cb-49e9-a23b-d0b3e06b1276",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
