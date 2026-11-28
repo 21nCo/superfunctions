@@ -1,0 +1,21 @@
+packages/cli/CHANGELOG.md
+  s_b7546bb15c0313::t_7167c628e7df5c 5
+packages/superfunctions/README.md
+  s_b7546bb15c0313::t_4d61e2753ded9b 5-6,11,14-15,20-21,28-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7de46d4bfb3208a0ab78cf81effcd85cf21da3d9",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
