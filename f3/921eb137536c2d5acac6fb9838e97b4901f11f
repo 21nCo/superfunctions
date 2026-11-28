@@ -1,0 +1,83 @@
+apifn/mock/package.json
+  s_5a86c214ff9c75::t_5bc71885e199b8 3,23
+apifn/svelte/package.json
+  s_5a86c214ff9c75::t_7820fce76ab24b 50
+package-lock.json
+  s_5a86c214ff9c75::t_e8f1522dc5bd15 93,96,99,110,113-118,137,140,263,266,305,395,429,432,446,809,812,846,849,863
+apifn/contracts/__tests__/failure-event.test.ts
+  s_5a86c214ff9c75::t_ce1102acd9c30e 6,43,45,200
+apifn/cli/package.json
+  s_5a86c214ff9c75::t_fd9a94270a235b 3,26-31
+apifn/contracts/__tests__/helpers.ts
+  s_5a86c214ff9c75::t_be23dab1651d2d 9-17
+apifn/collections/src/types.ts
+  s_5a86c214ff9c75::t_b79f266d723cde 122-137
+apifn/core/src/integrations/logfn.ts
+  s_5a86c214ff9c75::t_2f6d1bea203838 1,48-49,66,70-71
+apifn/collections/src/runner/reporters/json.ts
+  s_5a86c214ff9c75::t_0b8f7f95670288 6,22
+apifn/collections/src/runner/runner.ts
+  s_5a86c214ff9c75::t_d2382ec9979749 1,8-9,154-168,170,172-190,192-206,208-209,211-231,245,262-274,299,301,307-309,314-317,320,329-333,337-347,350-351,353-354,356-366,368-370,373,375,379-380,382,403,406-407,410-413,416,418,420-424,428-434,436-441,443,446,449-450,457-458,565-573,594,609,628,634,649,668
+apifn/core/src/index.ts
+  s_5a86c214ff9c75::t_c05aa05ae63caa 150-165
+apifn/core/package.json
+  s_5a86c214ff9c75::t_49fa452d73fa65 3
+apifn/contracts/__tests__/catalog.test.ts
+  s_5a86c214ff9c75::t_5ed1ba83f17a5e 19,456,578,1218
+apifn/core/src/redact.ts
+  s_5a86c214ff9c75::t_59ab0c3e209486 1-1146
+apifn/collections/__tests__/redaction.test.ts
+  s_5a86c214ff9c75::t_126e6e411e7f58 1-623
+apifn/contracts/__tests__/credentials.test.ts
+  s_5a86c214ff9c75::t_d64a1fc350078a 13,19-20,70,74,103,1191
+apifn/collections/src/runner/http-client.ts
+  s_5a86c214ff9c75::t_ebcf7ed2cb5fe7 20-28,318,328-332
+apifn/admin/package.json
+  s_5a86c214ff9c75::t_b12f65bf780a8b 3,41,47
+apifn/collections/src/runner/reporters/console.ts
+  s_5a86c214ff9c75::t_dc554fd7b19d67 5,60-61
+apifn/collections/src/runner/reporters/junit.ts
+  s_5a86c214ff9c75::t_aba2717ca24138 1,20-21
+apifn/collections/package.json
+  s_5a86c214ff9c75::t_77dc7d1b8fd5ef 3,23
+apifn/collections/src/index.ts
+  s_5a86c214ff9c75::t_697132795e6976 15-16
+apifn/sdk/src/version.ts
+  s_5a86c214ff9c75::t_4fd72052ceecac 3
+apifn/docsfn/package.json
+  s_5a86c214ff9c75::t_f30697862b1940 32
+apifn/contracts/package.json
+  s_5a86c214ff9c75::t_439b7041a18eb9 3,43
+apifn/contracts/__tests__/schemas.test.ts
+  s_5a86c214ff9c75::t_18611bcb286f92 24,382
+apifn/contracts/__tests__/release.test.ts
+  s_5a86c214ff9c75::t_377782e0b4495b 12,205,212-214
+apifn/snippets/package.json
+  s_5a86c214ff9c75::t_53fc5e47d8ecdf 3,23
+apifn/collections/README.md
+  s_5a86c214ff9c75::t_fbd36866e459d1 138-144
+apifn/react/package.json
+  s_5a86c214ff9c75::t_15a31ab2085edc 22
+apifn/collections/__tests__/fixtures/redaction-vectors.json
+  s_5a86c214ff9c75::t_a210a2027c5ab1 1-1138
+apifn/README.md
+  s_5a86c214ff9c75::t_50b6802244b9f7 24-32,34,39
+apifn/sdk/package.json
+  s_5a86c214ff9c75::t_1e8d77354575c8 3,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3921eb137536c2d5acac6fb9838e97b4901f11f",
+  "prompts": {},
+  "sessions": {
+    "s_5a86c214ff9c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09e8e09e-cce6-4cce-a9a1-c340ea0ab8c5",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
