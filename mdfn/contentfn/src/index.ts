@@ -167,6 +167,16 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
     .replace(/\t/g, "&#9;")
     .replace(/^ +/, (spaces) => "&#32;".repeat(spaces.length))
     .replace(/ +$/, (spaces) => "&#32;".repeat(spaces.length));
+  const escapeQuotedLine = (line: string): string => {
+    let start = 0;
+    while (start < line.length && line[start] === " ") start += 1;
+    let end = line.length;
+    while (end > start && line[end - 1] === " ") end -= 1;
+    if (start === end) return start <= 1 ? "&#32;".repeat(start) : `&#32;${" ".repeat(start - 2)}&#32;`;
+    const leading = start > 0 ? `&#32;${" ".repeat(start - 1)}` : "";
+    const trailing = end < line.length ? `${" ".repeat(line.length - end - 1)}&#32;` : "";
+    return `${leading}${escapeText(line.slice(start, end))}${trailing}`;
+  };
   const codeFence = (text: string): string => {
     let longest = 0;
     let current = 0;
@@ -206,7 +216,21 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       return withOpaque(escapeText(projected.text));
     }
     if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${escapeText(projected.text)}`);
-    if (type === "blockquote") return withOpaque(escapeText(projected.text).split("\n").map((line) => `> ${line}`).join("\n"));
+    if (type === "blockquote") {
+      // A line break between two non-empty lines becomes a quoted soft break, which
+      // reparses as the same "\n". Blank lines and leading or trailing breaks would
+      // change the quote's structure, so those stay escaped and the text survives.
+      // A parser strips leading spaces and drops or hard-breaks trailing spaces of
+      // each line, so only the outermost space on each side is written as "&#32;";
+      // inner spaces stay literal and the output does not grow with long runs.
+      // Escaped edge spaces on many short lines can still cost more than one
+      // "&#10;" per break, so the quoted lines are used only when they are no
+      // longer than the single-line form: a quote never exceeds that form's
+      // document size or line length, and so stays within the parser limits.
+      const singleLine = `> ${escapeText(projected.text)}`;
+      const quotedLines = projected.text.split(/(?<=[^\n])\n(?=[^\n])/).map((line) => `> ${escapeQuotedLine(line)}`).join("\n");
+      return withOpaque(quotedLines.length <= singleLine.length ? quotedLines : singleLine);
+    }
     if (type === "code") {
       const fence = codeFence(projected.text);
       const rawLanguage = typeof block.language === "string" ? block.language : "";
