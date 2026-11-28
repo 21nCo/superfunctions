@@ -1,0 +1,21 @@
+packages/cli/CHANGELOG.md
+  s_b7546bb15c0313::t_e8d1509eeee0a1 6
+packages/cli/src/commands/init.ts
+  s_b7546bb15c0313::t_57986b7146653b 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2c27e69ce516fa825c3dfae55c78631b1cb34f08",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
