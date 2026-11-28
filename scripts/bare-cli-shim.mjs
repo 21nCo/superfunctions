@@ -85,11 +85,12 @@ function npmCommand() {
 }
 
 // Runs the command with this terminal and exits as it did: with its exit code, or by the signal that ended it (with
-// 128 + its number should this process survive it). Signals sent to this process alone are passed on to it.
-function runAndExit(command, args, startFailure) {
-  const child = spawn(command, args, { stdio: 'inherit' });
+// 128 + its number should this process survive it). SIGINT, SIGTERM and SIGHUP sent to this process alone are passed
+// on; through npm, which relays only SIGINT and SIGTERM to the command it runs, a SIGHUP is passed on as SIGTERM.
+function runAndExit(command, args, startFailure, { viaNpm = false, env = process.env } = {}) {
+  const child = spawn(command, args, { stdio: 'inherit', env });
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-  const forward = (signal) => child.kill(signal);
+  const forward = (signal) => child.kill(viaNpm && signal === 'SIGHUP' ? 'SIGTERM' : signal);
   for (const signal of signals) process.on(signal, forward);
   child.on('error', (error) => fail(`${startFailure}: ${error.message}`));
   child.on('exit', (code, signal) => {
@@ -103,12 +104,22 @@ function runAndExit(command, args, startFailure) {
   });
 }
 
+// Set for the npm exec child: if npm resolves the command name back to this package's own bin (it reused a copy of
+// the CLI whose bin folder is not on its PATH), the second start of this command stops instead of looping.
+const LAUNCHED = 'SUPERFUNCTIONS_BARE_CLI_LAUNCHED';
+
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');
+if (process.env[LAUNCHED] === spec) {
+  fail(`npm ran this command again instead of ${spec}'s ${own.name} bin. Install ${spec} in this project, or run npx ${spec} from another folder.`);
+}
 const args = process.argv.slice(2);
 const installed = installedBin();
 if (installed !== undefined) {
   runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`);
 } else {
   const [command, prefix] = npmCommand();
-  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm');
+  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', {
+    viaNpm: true,
+    env: { ...process.env, [LAUNCHED]: spec },
+  });
 }

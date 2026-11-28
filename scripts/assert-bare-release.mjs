@@ -195,8 +195,8 @@ const INVALID = Symbol('invalid package target');
 /**
  * The target Node.js selects for an ESM import from an exports value (its PACKAGE_TARGET_RESOLVE): the first key, in
  * order, that is a matching condition decides, and a nested object that matches nothing lets the next key try; null
- * blocks; an array takes its first entry that resolves to a target or null, skipping invalid entries and entries that
- * match nothing, and an empty array blocks. Returns the target, null (blocked), INVALID (Node throws), or undefined
+ * blocks; an array takes its first entry that resolves to a target, skipping null, invalid and unmatched entries
+ * (it ends with the last null or invalid one when none resolves), and an empty array blocks. Returns the target, null (blocked), INVALID (Node throws), or undefined
  * (no condition matched).
  */
 function resolveImport(value) {
@@ -207,8 +207,9 @@ function resolveImport(value) {
     let last;
     for (const candidate of value) {
       const target = resolveImport(candidate);
-      if (target === INVALID) last = INVALID;
-      else if (target !== undefined) return target;
+      if (typeof target === 'string') return target;
+      // Node.js keeps trying after a null or invalid entry, and ends with the last one if nothing resolves.
+      if (target !== undefined) last = target;
     }
     return last;
   }

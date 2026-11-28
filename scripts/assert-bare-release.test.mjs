@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -141,11 +141,12 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }], import: './index.js' } } } })), []);
   await expectProblem({ overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }, null], import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ overrides: { exports: { '.': { import: [], default: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  // Node refuses targets with ".", "..", empty or node_modules segments, and stops at a null array entry.
-  for (const exports of ['./dist/../index.js', './a//index.js', './node_modules/x/index.js', './%2e%2e/index.js', { '.': [null, './index.js'] }]) {
+  // Node refuses targets with ".", "..", empty or node_modules segments, and an array with nothing that resolves.
+  for (const exports of ['./dist/../index.js', './a//index.js', './node_modules/x/index.js', './%2e%2e/index.js', { '.': ['bad', null] }]) {
     await expectProblem({ overrides: { exports } }, /exports must have a "\." entry that an ESM import resolves/);
   }
-  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': ['index.js', './index.js'] } } })), []);
+  // Node keeps trying past null and invalid entries (checked against Node 22's resolver).
+  for (const exports of [{ '.': ['index.js', './index.js'] }, { '.': [null, './index.js'] }]) assert.deepEqual(await problemsOf(product(t, { overrides: { exports } })), []);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
   // Installing the core must not install the CLI.
@@ -391,6 +392,40 @@ test('shim: an installed bin that resolves outside its package is never run; npm
   const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.origin, 'fetched');
+});
+
+test('shim: stops instead of looping when npm runs the bare command again', t => {
+  const { shim } = installedProduct(t, { installedCli: null });
+  // An npm that resolves the command name back to the bare package's own bin.
+  const dir = tempDir(t, 'bare-shim-loop-');
+  writeFileSync(
+    path.join(dir, 'npm-cli.js'),
+    `const { spawnSync } = require('node:child_process');\n` +
+      `const args = process.argv.slice(2);\n` +
+      `const result = spawnSync(process.execPath, [${JSON.stringify(shim)}, ...args.slice(args.indexOf('--') + 2)], { stdio: 'inherit' });\n` +
+      `process.exitCode = result.status;\n`,
+  );
+  const run = runShim(shim, ['0'], { npm_execpath: path.join(dir, 'npm-cli.js') });
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /npm ran this command again instead of @fixture\/cli@1\.2\.3's fixture bin/);
+});
+
+test('shim: a SIGHUP sent to the shim reaches npm as SIGTERM, which npm relays to the CLI', { skip: process.platform === 'win32' }, async t => {
+  const { shim } = installedProduct(t, { installedCli: null });
+  const dir = tempDir(t, 'bare-shim-hup-');
+  const record = path.join(dir, 'signal.txt');
+  writeFileSync(
+    path.join(dir, 'npm-cli.js'),
+    `const { writeFileSync } = require('node:fs');\n` +
+      `for (const signal of ['SIGTERM', 'SIGHUP']) process.on(signal, () => { writeFileSync(${JSON.stringify(record)}, signal); process.exit(0); });\n` +
+      `console.log('ready');\n` +
+      `setInterval(() => {}, 1000);\n`,
+  );
+  const child = spawn(process.execPath, [shim], { env: { ...process.env, npm_execpath: path.join(dir, 'npm-cli.js') }, stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise(resolve => child.stdout.once('data', resolve));
+  child.kill('SIGHUP');
+  await new Promise(resolve => child.once('exit', resolve));
+  assert.equal(readFileSync(record, 'utf8'), 'SIGTERM');
 });
 
 test('shim: refuses to run without a CLI named in frontDoor.cli', t => {
