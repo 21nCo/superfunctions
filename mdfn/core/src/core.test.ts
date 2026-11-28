@@ -672,6 +672,33 @@ describe("@mdfn/core", () => {
     } as unknown as Parameters<typeof mapSidecar>[0], ranges);
     expect(mixed?.comments?.[0]?.anchor).toEqual({ from: 6, to: 6, affinity: "after" });
     expect(mixed?.comments?.[1]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
+
+    // The all-hole check starts the first entry's traversal, so its first slot is checked once.
+    const flakyRanges = () => {
+      let checks = 0;
+      return new Proxy([{ from: 0, to: 0, insertedLength: 1 }], {
+        has: (target, key) => (key === "0" ? ++checks === 1 : Reflect.has(target, key)),
+      });
+    };
+    const entry = { id: "e", anchor: { from: 1, to: 2 }, resolved: false, messages: [] };
+    expect(mapSidecar({ comments: [entry] } as unknown as Parameters<typeof mapSidecar>[0], flakyRanges())?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+    expect(mapSidecar({ suggestions: [entry] } as unknown as Parameters<typeof mapSidecar>[0], flakyRanges())?.suggestions?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+
+    // Each later entry starts its own traversal, so a range added before it is reached applies to it.
+    const growing: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
+    const appendsFirst = Object.defineProperties({}, {
+      comments: { enumerable: true, get: () => [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] },
+      suggestions: {
+        enumerable: true,
+        get: () => {
+          growing.push({ from: 0, to: 0, insertedLength: 5 });
+          return [{ id: "s", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
+        },
+      },
+    }) as unknown as Parameters<typeof mapSidecar>[0];
+    const grown = mapSidecar(appendsFirst, growing);
+    expect(grown?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+    expect(grown?.suggestions?.[0]?.anchor).toEqual({ from: 7, to: 8 });
   });
 
   it("builds a mapped sidecar from the comments and suggestions it read", () => {

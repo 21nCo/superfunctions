@@ -55,30 +55,42 @@ function toLength(value: number): number {
   return Number.isNaN(length) || length <= 0 ? 0 : Math.min(length, Number.MAX_SAFE_INTEGER);
 }
 
-/** Whether any slot below `length` holds a range; checked with `in`, so nothing is read. */
-function hasRange(ranges: readonly ChangedRange[], length: number): boolean {
-  for (let index = 0; index < length; index += 1) if (index in ranges) return true;
-  return false;
-}
-
-export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  return mapAnchorIn(anchor, ranges, toLength(ranges.length), false);
+/** The start of one traversal: its length and the first populated slot, already read. */
+interface RangeStart {
+  readonly length: number;
+  readonly index: number;
+  readonly range: ChangedRange | undefined;
 }
 
 /**
- * Ranges are visited as native reduce visits them: `length` is normalized once,
- * a slot appended later is not visited, a hole or a slot deleted before its turn
- * is skipped, and each slot is checked with `in` and then read before the range
- * is applied. With no populated range the anchor is returned unread, unless
- * `detach` asks for a copy of a caller-owned anchor.
+ * Begin a traversal as native reduce does: take the normalized length, check
+ * each slot with `in` until one is populated and read that slot. With no
+ * populated slot, `index` equals `length` and nothing is read.
  */
-function mapAnchorIn(anchor: SidecarAnchor, ranges: readonly ChangedRange[], length: number, detach: boolean): SidecarAnchor {
+function startRanges(ranges: readonly ChangedRange[]): RangeStart {
+  const length = toLength(ranges.length);
   let index = 0;
   while (index < length && !(index in ranges)) index += 1;
+  return { length, index, range: index < length ? ranges[index] : undefined };
+}
+
+export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
+  return mapAnchorIn(anchor, ranges, startRanges(ranges), false);
+}
+
+/**
+ * Ranges are visited as native reduce visits them from `start`: the length is
+ * taken once, a slot appended later is not visited, a hole or a slot deleted
+ * before its turn is skipped, and each slot is checked with `in` once and then
+ * read before the range is applied. With no populated range the anchor is
+ * returned unread, unless `detach` asks for a copy of a caller-owned anchor.
+ */
+function mapAnchorIn(anchor: SidecarAnchor, ranges: readonly ChangedRange[], start: RangeStart, detach: boolean): SidecarAnchor {
+  const { length, range: firstRange } = start;
+  let index = start.index;
   if (index === length && !detach) return anchor;
-  // The first range is read before any anchor field, as reduce reads a slot before
+  // The first range was read before any anchor field, as reduce reads a slot before
   // its callback runs, so an anchor getter that changes the array cannot affect it.
-  const firstRange = index < length ? ranges[index] : undefined;
   // Each field is read once, including one supplied through a prototype or getter,
   // and the result is built from those values only, so mapping edits together or
   // one call at a time gives the same anchor.
@@ -105,8 +117,11 @@ function mapAnchorIn(anchor: SidecarAnchor, ranges: readonly ChangedRange[], len
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
   if (!sidecar) return sidecar;
   // With no populated range the sidecar is returned unread, as for empty ranges.
-  const length = toLength(ranges.length);
-  if (!hasRange(ranges, length)) return sidecar;
+  // Otherwise this check is the start of the first entry's traversal, so its first
+  // slot is checked once; every later entry starts its own traversal and so sees
+  // a range a getter added before that entry was reached.
+  let pending: RangeStart | undefined = startRanges(ranges);
+  if (pending.index === pending.length) return sidecar;
   // Unchanged parts are reused only from a sidecar this module already detached.
   // Any other input is copied field by field, so values supplied through getters
   // or a prototype are kept, as they were before reuse was added.
@@ -116,7 +131,9 @@ export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly Ch
     const current = entry.anchor;
     // A caller-owned anchor is always copied with its fields read, so an inherited
     // affinity is kept even if a getter has emptied the ranges by now.
-    const anchor = mapAnchorIn(current, ranges, length, !reusable);
+    const start = pending ?? startRanges(ranges);
+    pending = undefined;
+    const anchor = mapAnchorIn(current, ranges, start, !reusable);
     if (reusable && anchor === current) return entry;
     changed = true;
     return copyWith(entry, { anchor }) as unknown as T;
