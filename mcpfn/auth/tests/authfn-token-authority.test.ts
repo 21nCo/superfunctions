@@ -533,7 +533,7 @@ describe("AuthFn token authority boundaries", () => {
       // Answers at once, but the body never finishes.
       async () => hangingBody(),
       // Ignores the signal and answers active after the deadline.
-      () => new Promise<Response>((done) => setTimeout(() => done(Response.json(active)), 150)),
+      () => new Promise<Response>((done) => setTimeout(() => done(Response.json(active)), 400)),
     ];
     for (const fetch of fetches) {
       const calls = { count: 0 };
@@ -544,7 +544,8 @@ describe("AuthFn token authority boundaries", () => {
       const started = Date.now();
       const response = await authority.protect(handler(calls), { resource: MEMOTRON })(bearer());
       expect(response.status).toBe(503);
-      expect(Date.now() - started).toBeLessThan(140);
+      // The 400 ms late answer must not be awaited; the margin absorbs a loaded machine.
+      expect(Date.now() - started).toBeLessThan(300);
       expect(calls.count).toBe(0);
       const verification = authority.verifier(MEMOTRON, { invalidTokenError: InvalidTokenError })
         .verifyAccessToken("test-access-token");
@@ -553,7 +554,46 @@ describe("AuthFn token authority boundaries", () => {
     }
     expect(cancelled).toBeGreaterThan(0);
     // Let the late answers arrive; they must not surface anywhere.
-    await new Promise((done) => setTimeout(done, 200));
+    await new Promise((done) => setTimeout(done, 450));
+  });
+
+  it("refuses an introspection answer that settles after the deadline while synchronous work held the timer back", async () => {
+    const exp = Math.floor(Date.now() / 1_000) + 60;
+    const active = JSON.stringify({ active: true, aud: MEMOTRON, client_id: "test-client", sub: "test-user", scope: "memotron:read", exp });
+    // Blocks the event loop, so the deadline timer cannot fire before the answer settles.
+    const busyWait = (ms: number) => {
+      const until = performance.now() + ms;
+      while (performance.now() < until) { /* hold the thread */ }
+    };
+    const fetches: Array<typeof fetch> = [
+      // Synchronous work inside fetch, then an active answer in a microtask.
+      async () => {
+        busyWait(40);
+        return new Response(active, { status: 200 });
+      },
+      // The response arrives at once; pulling the body blocks past the deadline.
+      async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          busyWait(40);
+          controller.enqueue(new TextEncoder().encode(active));
+          controller.close();
+        },
+      }), { status: 200 }),
+    ];
+    for (const fetch of fetches) {
+      const calls = { count: 0 };
+      const authority = createAuthFnTokenAuthority({
+        issuer: AUTH_ORIGIN,
+        introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch, timeoutMs: 5 },
+      });
+      const response = await authority.protect(handler(calls), { resource: MEMOTRON })(bearer());
+      expect(response.status).toBe(503);
+      expect(calls.count).toBe(0);
+      const verification = authority.verifier(MEMOTRON, { invalidTokenError: InvalidTokenError })
+        .verifyAccessToken("test-access-token");
+      await expect(verification).rejects.toThrow(/timed out/);
+      await expect(verification).rejects.not.toBeInstanceOf(InvalidTokenError);
+    }
   });
 
   it("checks expiry to the millisecond, against protect()'s configured clock", async () => {

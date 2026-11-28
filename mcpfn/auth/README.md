@@ -68,7 +68,8 @@ const fetch = authority.protect(mcp, {
 - When AuthFn cannot be asked (`verifyAccessToken` throws; introspection fails,
   times out after `timeoutMs` (a whole number of milliseconds, default 5000,
   covering the request and the body even when a custom `fetch` ignores the
-  abort signal; a later answer is discarded), redirects, answers other than 200
+  abort signal; an answer that completes later, by a monotonic clock, is
+  discarded), redirects, answers other than 200
   or with a body that is not a JSON object), the endpoint answers 503
   `temporarily_unavailable` without calling the MCP handler, so clients keep
   their tokens. Introspection never follows redirects. Its endpoint must use

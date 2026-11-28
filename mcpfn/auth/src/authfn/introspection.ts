@@ -60,7 +60,8 @@ function readScopes(value: unknown): string[] | undefined {
  * for exactly this resource, with a client, subject and finite `exp`, is
  * `null` (not active). A failed request, a redirect, a non-200 status, a
  * body that is not a JSON object, or no complete answer within `timeoutMs`
- * (enforced here, not left to the fetch's handling of the abort signal)
+ * (enforced here on a monotonic clock, not left to the fetch's handling of
+ * the abort signal)
  * throws: the provider could not be asked.
  */
 export function createIntrospectionVerifier(
@@ -86,15 +87,20 @@ export function createIntrospectionVerifier(
   return (resource) => async (token) => {
     // One deadline covers the request and the body, whether or not the
     // configured fetch honours the abort signal; an answer after it is dropped.
+    // The timer ends a hang; the monotonic elapsed check refuses an answer that
+    // settled late while synchronous work kept the timer from firing.
+    const started = performance.now();
     const controller = new AbortController();
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = () => {
+      controller.abort();
+      void reader?.cancel().catch(() => undefined);
+      return new IntrospectionUnavailableError("AuthFn introspection timed out");
+    };
+    const pastDeadline = () => performance.now() - started >= timeoutMs;
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        void reader?.cancel().catch(() => undefined);
-        reject(new IntrospectionUnavailableError("AuthFn introspection timed out"));
-      }, timeoutMs);
+      timer = setTimeout(() => reject(timedOut()), timeoutMs);
     });
     const exchange = (async () => {
       const response = await fetchFn(endpoint.toString(), {
@@ -122,6 +128,7 @@ export function createIntrospectionVerifier(
       let text = "";
       for (;;) {
         const { done, value } = await reader.read();
+        if (pastDeadline()) throw timedOut();
         if (done) break;
         text += decoder.decode(value, { stream: true });
       }
@@ -138,6 +145,7 @@ export function createIntrospectionVerifier(
     } finally {
       clearTimeout(timer);
     }
+    if (pastDeadline()) throw timedOut();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new IntrospectionUnavailableError("AuthFn introspection answered a non-object");
     }
