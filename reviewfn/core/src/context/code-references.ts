@@ -239,7 +239,7 @@ export async function collectReferences(git: CodeReferencesGit, head: string, na
     });
     try {
       signal?.throwIfAborted();
-      await git(["grep", "-n", "-z", "-I", "-w", "-F", "--no-color", "--no-recurse-submodules", "-e", name, head, "--", ":(top)"], {
+      await git(["grep", "-n", "-z", "-I", "-w", "-F", "--no-color", "--no-column", "--no-recurse-submodules", "-e", name, head, "--", ":(top)"], {
         onOutput: chunk => { if (!records.push(chunk)) stop.abort(); }, successExitCodes: [1], signal: stop.signal,
       });
     } catch (error) {
@@ -422,7 +422,7 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     }
     if (tooLarge.length) reasons.push(`Code references: ${tooLarge.length} changed files exceed ${CODE_REFERENCES_LIMITS.maxFileBytes} bytes, so their changed symbols were not extracted: ${quoteItems(tooLarge)}.`);
     if (unreadable.length) reasons.push(`Code references: ${unreadable.length} changed files could not be read at head, so their changed symbols were not extracted: ${quoteItems(unreadable)}.`);
-    if (longLines.length) reasons.push(`Code references: ${longLines.length} changed lines are longer than ${SYMBOL_LINE_CHARACTER_LIMIT} characters and were not scanned for symbols: ${quoteItems(longLines)}.`);
+    if (longLines.length) reasons.push(`Code references: ${longLines.length} head lines are longer than ${SYMBOL_LINE_CHARACTER_LIMIT} characters and were not scanned for symbols: ${quoteItems(longLines)}.`);
     if (omitted.size) reasons.push(`Code references: ${kept.size + omitted.size} changed symbols exceed the limit of ${CODE_REFERENCES_LIMITS.maxSymbols}; ${omitted.size} were not searched: ${quoteItems([...omitted])}.`);
     return [...kept.values()];
   }
@@ -474,7 +474,7 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     try {
       const patterns = path.join(directory, "patterns");
       await writeFile(patterns, terms.map(({ term }) => term).join("\n") + "\n", { mode: 0o600 });
-      await git(["grep", "-n", "-z", "-I", "-F", "--no-color", "--no-recurse-submodules", "-f", patterns, head, "--", ...MARKDOWN_PATHSPECS], { onOutput: chunk => void records.push(chunk), successExitCodes: [1], signal });
+      await git(["grep", "-n", "-z", "-I", "-F", "--no-color", "--no-column", "--no-recurse-submodules", "-f", patterns, head, "--", ...MARKDOWN_PATHSPECS], { onOutput: chunk => void records.push(chunk), successExitCodes: [1], signal });
     } finally { await rm(directory, { recursive: true, force: true }); }
     if (cutLines) reasons.push(`Code references: ${cutLines} matching Markdown lines are longer than ${MAX_DOCUMENT_TEXT_BYTES} bytes and were checked for mentions on their first ${MAX_DOCUMENT_TEXT_BYTES} bytes only, so mentions past that point are not listed.`);
     return sorted(mentions.keys()).map(file => ({ path: file, mentions: sorted(mentions.get(file)!) }));

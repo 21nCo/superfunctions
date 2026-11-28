@@ -28,29 +28,61 @@ export function globGrammarIssue(pattern: unknown): string | undefined {
   return undefined;
 }
 
-function segmentExpression(segment: string): string {
-  let expression = "";
-  for (const character of segment) {
-    if (character === "*") expression += "[^/]*";
-    else if (character === "?") expression += "[^/]";
-    else expression += character.replace(/[.+^$()|]/gu, "\\$&");
+/**
+ * One pattern segment: a run of zero or more whole path segments (`**` inside a pattern), any one nonempty segment
+ * (with the run after it, a trailing `**`), or the code points of a segment pattern, where `*` and `?` are wildcards.
+ */
+type GlobSegment = { kind: "run" } | { kind: "nonempty" } | { kind: "segment"; units: readonly string[] };
+const RUN: GlobSegment = Object.freeze({ kind: "run" });
+const NONEMPTY: GlobSegment = Object.freeze({ kind: "nonempty" });
+
+/**
+ * Whether `pattern` matches `items`, where a `wildcard` item matches any run of items and every other item matches one
+ * item when `matchesOne` says so. The greedy scan restarts after the last wildcard on a mismatch and never backtracks
+ * further, so it makes at most `items × pattern` calls of `matchesOne` whatever the pattern holds.
+ */
+function wildcardMatch<P, T>(pattern: readonly P[], items: readonly T[], wildcard: (item: P) => boolean, matchesOne: (item: P, value: T) => boolean): boolean {
+  let at = 0;
+  let item = 0;
+  let star = -1;
+  let restart = 0;
+  while (item < items.length) {
+    if (at < pattern.length && wildcard(pattern[at])) {
+      star = at;
+      restart = item;
+      at += 1;
+    } else if (at < pattern.length && matchesOne(pattern[at], items[item])) {
+      at += 1;
+      item += 1;
+    } else if (star !== -1) {
+      at = star + 1;
+      restart += 1;
+      item = restart;
+    } else return false;
   }
-  return expression;
+  while (at < pattern.length && wildcard(pattern[at])) at += 1;
+  return at === pattern.length;
+}
+
+function segmentMatches(segment: GlobSegment, value: readonly string[]): boolean {
+  if (segment.kind === "nonempty") return value.length > 0;
+  if (segment.kind === "run") return false;
+  return wildcardMatch(segment.units, value, unit => unit === "*", (unit, character) => unit === "?" || unit === character);
 }
 
 /** Compile a policy glob; a pattern outside the grammar is `REVIEWFN_GLOB_UNSUPPORTED`. */
 export function compileGlob(pattern: string): CompiledGlob {
   const issue = globGrammarIssue(pattern);
   if (issue) throw new ReviewFnError("REVIEWFN_GLOB_UNSUPPORTED", issue, { pattern });
-  const segments = pattern.split("/");
-  let expression = "";
-  segments.forEach((segment, index) => {
-    const last = index === segments.length - 1;
-    if (segment === "**") expression += last ? "[^]+" : "(?:[^/]+/)*";
-    else expression += segmentExpression(segment) + (last ? "" : "/");
+  const parts = pattern.split("/");
+  const segments: GlobSegment[] = parts.flatMap((part, index): GlobSegment[] => {
+    if (part !== "**") return [{ kind: "segment", units: Array.from(part) }];
+    // A trailing `**` is one or more segments, so `dir/**` is everything inside `dir` but not `dir` itself.
+    return index === parts.length - 1 ? [NONEMPTY, RUN] : [RUN];
   });
-  const compiled = new RegExp(`^${expression}$`, "u");
-  return Object.freeze({ pattern, matches: (path: string) => compiled.test(path) });
+  // Matching needs no regular expression: a backtracking one costs a power of the path length per `*` in a segment.
+  const matches = (path: string) => wildcardMatch(segments, path.split("/").map(part => Array.from(part)), segment => segment.kind === "run", segmentMatches);
+  return Object.freeze({ pattern, matches });
 }
 
 /** Compile every glob of a list, reporting the first unsupported one as `REVIEWFN_GLOB_UNSUPPORTED`. */
