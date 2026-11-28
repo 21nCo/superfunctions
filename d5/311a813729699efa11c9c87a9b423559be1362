@@ -1,0 +1,21 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_3825521bfb7b52::t_6695d47fe67a86 19,26
+datafn/docs/public/llms-full.txt
+  s_3825521bfb7b52::t_e6bb1b7fc9615d 19153,19160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5311a813729699efa11c9c87a9b423559be1362",
+  "prompts": {},
+  "sessions": {
+    "s_3825521bfb7b52": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21ffc-426e-79b0-9e13-555b8cd849b9",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

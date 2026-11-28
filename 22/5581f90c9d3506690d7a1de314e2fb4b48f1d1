@@ -1,0 +1,21 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_e38367cafdc8f1::t_2fb613a3c1d109 19
+datafn/docs/public/llms-full.txt
+  s_e38367cafdc8f1::t_87578df4071b5a 19153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "225581f90c9d3506690d7a1de314e2fb4b48f1d1",
+  "prompts": {},
+  "sessions": {
+    "s_e38367cafdc8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2200d-d5d7-7ac1-b0a0-5a1a7f2291ab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
