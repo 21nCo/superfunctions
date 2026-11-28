@@ -1,11 +1,12 @@
 import { sha256 } from "../canonical.js";
 import { changeHunkPaths } from "../change.js";
-import { authorizedPromptContext, buildReviewPrompt } from "../prompt.js";
+import { codeReferenceMaps } from "../context/code-references.js";
+import { authorizedPromptContext, buildReviewPrompt, CODE_REFERENCES_RULE } from "../prompt.js";
 import type { ChangeHunks, ChangeSnapshot, CodeAnchor, ContextManifest, FindingSeverity, ReviewFnConfig, ReviewPolicy, TestReceipt } from "../types.js";
 import type { Lens } from "./lenses.js";
 import type { PanelSlot } from "./types.js";
 
-export const PANEL_PROMPT_VERSION = "reviewfn-panel-v2";
+export const PANEL_PROMPT_VERSION = "reviewfn-panel-v3";
 
 /** A finding an earlier stage reported, as a stage-2 slot sees it. */
 export interface PriorStageFinding {
@@ -70,6 +71,12 @@ function priorSection(input: SlotPromptInput): { stage1Findings?: PriorStageFind
   return input.slot.stage === 2 ? { stage1Findings: input.priorFindings ?? [] } : {};
 }
 
+/** The run's code-reference maps, when its context has any. */
+function codeReferencesSection(input: SlotPromptInput): { codeReferences?: ReturnType<typeof codeReferenceMaps> } {
+  const maps = codeReferenceMaps(input.context);
+  return maps.length ? { codeReferences: maps } : {};
+}
+
 function slotDescription(input: SlotPromptInput) {
   return { id: input.slot.id, stage: input.slot.stage, lens: { id: input.lens.id, version: input.lens.version } };
 }
@@ -80,6 +87,7 @@ function slotDescription(input: SlotPromptInput) {
  */
 export function buildSlotPrompt(input: SlotPromptInput): { prompt: string; digest: string } {
   const delta = input.scope.delta !== undefined && input.scope.since !== undefined;
+  const codeReferences = codeReferencesSection(input);
   if (input.requirements) {
     const base = buildReviewPrompt({ change: input.change, context: input.context, config: input.config, policy: input.policy, tests: input.tests });
     const panel = {
@@ -91,12 +99,13 @@ export function buildSlotPrompt(input: SlotPromptInput): { prompt: string; diges
       ...(delta ? { delta: { since: input.scope.since, paths: changeHunkPaths(input.scope.delta!), hunks: input.scope.delta } } : {}),
       ...priorSection(input),
     };
+    // The requirements prompt's base already carries the code-reference map and its rule.
     const extra = [REQUIREMENTS_PANEL_RULE, ...(delta ? [REQUIREMENTS_DELTA_RULE] : []), ...(input.slot.stage === 2 ? [STAGE_TWO_RULE] : [])].join("\n");
     const prompt = `${base.prompt}\n\n${extra}\n\nPanel slot input:\n${JSON.stringify(panel, null, 2)}`;
     return { prompt, digest: sha256(prompt) };
   }
   const lensDelta = input.scope.mode === "delta" && delta;
-  const instructions = [...LENS_RULES, lensDelta ? DELTA_RULE : FULL_RULE, ...(input.slot.stage === 2 ? [STAGE_TWO_RULE] : []), `Lens ${input.lens.id} v${input.lens.version}:`, input.lens.instructions].join("\n");
+  const instructions = [...LENS_RULES, lensDelta ? DELTA_RULE : FULL_RULE, ...(codeReferences.codeReferences ? [CODE_REFERENCES_RULE] : []), ...(input.slot.stage === 2 ? [STAGE_TWO_RULE] : []), `Lens ${input.lens.id} v${input.lens.version}:`, input.lens.instructions].join("\n");
   const authorized = authorizedPromptContext(input.context, input.policy);
   const scope = lensDelta
     ? { mode: "delta", since: input.scope.since, primary: input.scope.delta, reference: { change: input.change, hunks: input.scope.hunks ?? null } }
@@ -108,6 +117,7 @@ export function buildSlotPrompt(input: SlotPromptInput): { prompt: string; diges
     categories: input.config.review.categories,
     scope,
     context: authorized.context,
+    ...codeReferences,
     testReceipts: input.tests,
     policy: { blockingSeverities: input.policy.blockingSeverities, mode: input.policy.mode },
     ...priorSection(input),

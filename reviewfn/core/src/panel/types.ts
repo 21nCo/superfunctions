@@ -48,6 +48,15 @@ export interface HarnessProfile {
   versionArgv?: string[];
 }
 
+/**
+ * A paired-file rule of the code-references context: when a changed path matches `when`, the files tracked at head
+ * that match any `include` glob are review context. Globs use the closed `**`, `*`, `?` grammar.
+ */
+export interface ContextPair {
+  when: string;
+  include: string[];
+}
+
 /** Panel policy v1 (`.reviewfn/panel.json`). Loading and repository tightening belong to the panel orchestrator. */
 export interface PanelPolicy {
   version: 1;
@@ -61,6 +70,10 @@ export interface PanelPolicy {
   incremental: "full" | "delta";
   /** Harness profiles by name, for slots whose `harness.profile` names one. */
   profiles?: Record<string, HarnessProfile>;
+  /** Paired-file rules for the code-references context; none ship by default. Only the trusted copy sets them. */
+  contextPairs?: ContextPair[];
+  /** Globs the code-references context never reads or reports; `DEFAULT_CONTEXT_EXCLUDE_GLOBS` when absent. Only the trusted copy sets them. */
+  contextExcludeGlobs?: string[];
 }
 
 export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
@@ -226,7 +239,8 @@ export type PanelValidationCode =
   | "REVIEWFN_PANEL_ORIGIN_UNKNOWN"
   | "REVIEWFN_PANEL_VERIFICATION_INVALID"
   | "REVIEWFN_PANEL_DISPOSITION_INVALID"
-  | "REVIEWFN_PANEL_VERDICT_MISMATCH";
+  | "REVIEWFN_PANEL_VERDICT_MISMATCH"
+  | "REVIEWFN_GLOB_UNSUPPORTED";
 
 /** Errors from validating the embedded requirements report keep their 0.1 code, `REVIEWFN_REPORT_INVALID` unless 0.1 prefixes another. */
 export type PanelReportIssueCode = PanelValidationCode | "REVIEWFN_REPORT_INVALID" | "REVIEWFN_CHANGE_DETAIL_MISMATCH" | "REVIEWFN_SINCE_NOT_ANCESTOR";

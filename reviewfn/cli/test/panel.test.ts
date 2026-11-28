@@ -546,3 +546,24 @@ describe("reviewfn init --panel and report --panel", () => {
     await expect(renderStoredReport(parseArguments(["report", "--panel", "other.json"]).flags, root)).rejects.toThrow("--panel takes no value; use --input other.json to choose the report.");
   });
 });
+
+describe("reviewfn panel code references", () => {
+  it("gives every slot the code-reference map, with the pairs of the panel policy", async () => {
+    const policy = panel([slot("one", 1), slot("two", 1)], { contextPairs: [{ when: "src/**", include: ["README.md"] }] });
+    await repository(policy);
+    // A local run reads the working-tree configuration, which now asks for code references.
+    await writeFile(path.join(root, ".reviewfn", "config.json"), JSON.stringify({ ...config, context: [{ adapter: "code-references" }] }));
+    const harness = codex();
+    const result = await invoke(["--base", base, "--head", head], harness);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(PANEL_EXIT_CODES.complete);
+    expect(harness.calls.map(call => call.context.sources.map(source => [source.id, source.type]))).toEqual([[["code-references:map", "other"]], [["code-references:map", "other"]]]);
+    for (const call of harness.calls) {
+      const payload = JSON.parse(call.prompt.slice(call.prompt.indexOf("\n{\n") + 1)) as { codeReferences: Array<{ symbols: Array<{ name: string }>; references: Array<{ symbol: string; matches: Array<{ path: string }> }>; pairedFiles: Array<{ path: string }> }> };
+      expect(payload.codeReferences).toHaveLength(1);
+      expect(payload.codeReferences[0].symbols.map(symbol => symbol.name)).toEqual(["value"]);
+      expect(payload.codeReferences[0].references[0].matches.map(match => match.path)).toEqual(["src/value.ts"]);
+      expect(payload.codeReferences[0].pairedFiles.map(file => file.path)).toEqual(["README.md"]);
+    }
+  });
+});

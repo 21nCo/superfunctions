@@ -1,5 +1,6 @@
 import { digestJson, sha256, stableStringify } from "../canonical.js";
 import { verifyChangeDetail, type ChangeDetailVerification } from "../change.js";
+import { globGrammarIssue } from "../context/glob.js";
 import { ReviewFnError } from "../errors.js";
 import { harnessOutputSchema } from "../schema.js";
 import type { ArtifactStore, CodeAnchor, ContextManifest, Evidence, ReviewPolicy, ReviewReport, SourceControlAdapter, SourceReference, Verdict } from "../types.js";
@@ -12,7 +13,7 @@ import type { HarnessProfile, PanelFinding, PanelFindingOrigin, PanelPolicy, Pan
 export const PANEL_VALIDATION_CODES: readonly PanelValidationCode[] = Object.freeze([
   "REVIEWFN_PANEL_SCHEMA", "REVIEWFN_PANEL_SLOT_DUPLICATE", "REVIEWFN_PANEL_SLOT_UNKNOWN",
   "REVIEWFN_PANEL_FINDING_INVALID", "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "REVIEWFN_PANEL_VERIFICATION_INVALID",
-  "REVIEWFN_PANEL_DISPOSITION_INVALID", "REVIEWFN_PANEL_VERDICT_MISMATCH",
+  "REVIEWFN_PANEL_DISPOSITION_INVALID", "REVIEWFN_PANEL_VERDICT_MISMATCH", "REVIEWFN_GLOB_UNSUPPORTED",
 ]);
 
 type Issues = PanelValidationIssue<PanelReportIssueCode>[];
@@ -164,6 +165,7 @@ const panelPolicy = object({
   version: oneOf([1]), slots: array(panelSlot, { min: 1 }), quorum: object({ stage1: count, stage2: count }, ["stage1", "stage2"]),
   requirementsSlot: nullable(slotId), maxConcurrentSlots: numeric(true, 1, 8), incremental: oneOf(defs.panelPolicy.properties.incremental.enum),
   profiles: record(PANEL_PROFILE_NAME_PATTERN, harnessProfile),
+  contextPairs: array(object({ when: nonblank, include: array(nonblank, { min: 1 }) }, ["when", "include"])), contextExcludeGlobs: array(nonblank),
 }, defs.panelPolicy.required);
 const slotIdentity = object({
   harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: string(PANEL_CREDENTIAL_FINGERPRINT_PATTERN),
@@ -359,6 +361,14 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
     const { profile } = slot.harness;
     if (profile !== undefined && (!Object.hasOwn(profiles, profile) || profiles[profile] === undefined)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
   });
+  const globs: Array<[string, string]> = [
+    ...(policy.contextPairs ?? []).flatMap((pair, index): Array<[string, string]> => [[`/contextPairs/${index}/when`, pair.when], ...pair.include.map((glob, item): [string, string] => [`/contextPairs/${index}/include/${item}`, glob])]),
+    ...(policy.contextExcludeGlobs ?? []).map((glob, index): [string, string] => [`/contextExcludeGlobs/${index}`, glob]),
+  ];
+  for (const [path, glob] of globs) {
+    const issue = globGrammarIssue(glob);
+    if (issue) add(issues, "REVIEWFN_GLOB_UNSUPPORTED", path, issue);
+  }
   return result(issues as PanelValidationIssue<PanelValidationCode>[]);
 }
 

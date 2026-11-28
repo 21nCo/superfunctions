@@ -159,11 +159,12 @@ export async function prepareReview(dependencies: SharedRunDependencies, request
   const changeDetail = await captureChangeDetail(dependencies, request, change, retention.reportDays);
   const limits = contextLimits(request.policy);
   const contextById = new Map(dependencies.contexts.map((adapter) => [adapter.id, adapter]));
+  const contextChange = { headCommit: change.headCommit, changedPaths: [...change.changedPaths], ...(changeDetail.hunks ? { hunks: changeDetail.hunks } : {}) };
   const manifests: Array<Omit<ContextManifest, "digest">> = [];
   for (const item of request.config.context) {
     const adapter = contextById.get(item.adapter) as ContextAdapter;
     try {
-      manifests.push(await adapter.fetch({ root: request.root, issue: item.issue ?? request.issue, account: item.account, expectedWorkspace: item.expectedWorkspace, paths: item.paths, sourceAuthority: request.policy.sourceAuthority, limits, signal: request.signal }));
+      manifests.push(await adapter.fetch({ root: request.root, issue: item.issue ?? request.issue, account: item.account, expectedWorkspace: item.expectedWorkspace, paths: item.paths, sourceAuthority: request.policy.sourceAuthority, change: contextChange, limits, signal: request.signal }));
     } catch (error) {
       manifests.push(failedContext(adapter, error, limits, now()));
     }

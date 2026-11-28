@@ -96,6 +96,8 @@ export const panelSchemaDefs = {
       quorum: { type: "object", additionalProperties: false, required: ["stage1", "stage2"], properties: { stage1: count, stage2: count } },
       requirementsSlot: { anyOf: [slotId, { type: "null" }] }, maxConcurrentSlots: { type: "integer", minimum: 1, maximum: 8 }, incremental: { enum: ["full", "delta"] },
       profiles: { type: "object", propertyNames: profileName, additionalProperties: { $ref: "#/$defs/harnessProfile" } },
+      contextPairs: { type: "array", items: { type: "object", additionalProperties: false, required: ["when", "include"], properties: { when: nonblank, include: { type: "array", minItems: 1, items: nonblank } } } },
+      contextExcludeGlobs: { type: "array", items: nonblank },
     },
   },
   harnessProfile: {

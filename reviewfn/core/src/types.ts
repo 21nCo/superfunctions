@@ -310,8 +310,17 @@ export interface HarnessOutput {
   error?: string;
 }
 
+/** The captured change a context adapter may scope its sources to; fetched contexts receive it, preflight does not. */
+export interface ContextChange {
+  headCommit: string;
+  changedPaths: string[];
+  /** Hunks of `mergeBase..head`, when they were captured. */
+  hunks?: ChangeHunks;
+}
+
 export interface ContextRequest {
   sourceAuthority?: ReviewPolicy["sourceAuthority"];
+  change?: ContextChange;
   root: string;
   issue?: string;
   account?: string;
