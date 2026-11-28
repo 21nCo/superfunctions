@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
+import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
 import { ReleaseTargetError, loadReleaseTargets } from './resolve-release-tag.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -31,14 +31,16 @@ function product(t, { overrides = {}, entry = {}, cliVersion = '1.2.3', coreVers
   writeJson(path.join(root, 'bare/package.json'), {
     name: 'fixture',
     version: '1.2.3',
-    exports: { '.': './index.js' },
-    bin: { fixture: './bin/cli.mjs', fx: 'bin/cli.mjs' },
-    files: ['bin', 'index.js'],
+    type: 'module',
+    exports: TEMPLATE.exports,
+    bin: { fixture: './bin/cli.mjs', fx: './bin/cli.mjs' },
+    files: ['bin', 'index.js', 'index.d.ts'],
     frontDoor: { cli: '@fixture/cli' },
     dependencies: { '@fixture/core': '1.2.3' },
     ...overrides,
   });
   mkdirSync(path.join(root, 'bare/bin'));
+  for (const [file, content] of Object.entries(TEMPLATE.reexportFiles)) writeFileSync(path.join(root, 'bare', file), content('@fixture/core'));
   cpSync(SHIM_TEMPLATE, path.join(root, 'bare', SHIM_FILE));
   writeJson(path.join(root, 'release-packages.json'), [
     { slug: 'fixture-core', path: 'core', name: '@fixture/core' },
@@ -108,60 +110,39 @@ test('manifests: core, CLI and bare package at one version, pinned exactly, with
   });
 });
 
-test('manifests: each way a bare package can drift from its core and CLI is refused', async t => {
+test('manifests: anything but the template shape, or drift from the core and CLI, is refused', async t => {
   const expectProblem = async (options, pattern) => {
     const problems = await problemsOf(product(t, options));
     assert.ok(problems.some(problem => pattern.test(problem)), `expected ${pattern} in ${JSON.stringify(problems)}`);
   };
   await expectProblem({ coreVersion: '1.2.2' }, /core @fixture\/core is at 1\.2\.2, not 1\.2\.3/);
   await expectProblem({ cliVersion: '1.3.0' }, /cli @fixture\/cli is at 1\.3\.0, not 1\.2\.3/);
-  await expectProblem({ overrides: { dependencies: { '@fixture/core': '^1.2.3' } } }, /dependencies\["@fixture\/core"\] must be exactly 1\.2\.3/);
-  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', '@fixture/cli': '1.2.3' } } }, /dependencies must not list @fixture\/cli/);
-  await expectProblem({ overrides: { optionalDependencies: { '@fixture/cli': '1.2.3' } } }, /optionalDependencies must not list @fixture\/cli/);
-  await expectProblem({ overrides: { peerDependencies: { '@fixture/cli': '1.2.3' } } }, /only as an optional peer/);
-  await expectProblem({ overrides: { frontDoor: { cli: '@fixture/other' } } }, /frontDoor\.cli must be "@fixture\/cli"/);
+  // Dependencies: exactly the pinned core.
+  await expectProblem({ overrides: { dependencies: { '@fixture/core': '^1.2.3' } } }, /dependencies must be \{"@fixture\/core":"1\.2\.3"\}/);
+  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', '@fixture/cli': '1.2.3' } } }, /dependencies must be \{"@fixture\/core":"1\.2\.3"\}/);
+  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'npm:@fixture/cli@1.2.3' } } }, /dependencies must be/);
+  for (const field of ['optionalDependencies', 'peerDependencies']) {
+    await expectProblem({ overrides: { [field]: { '@fixture/core': '1.2.2' } } }, new RegExp(`${field} must be nothing`));
+  }
+  // Module entry: exactly the template's exports, type module, no main or imports.
+  for (const exports of [{ '.': './index.js' }, { '.': './index.js', types: './index.d.ts' }, { '.': { import: './index.js' } }, undefined]) {
+    await expectProblem({ overrides: { exports } }, /exports must be \{"\.":\{"types":"\.\/index\.d\.ts","import":"\.\/index\.js","default":"\.\/index\.js"\}\}/);
+  }
+  await expectProblem({ overrides: { main: './bin/cli.mjs' } }, /main must be nothing \(the template resolves only through exports\)/);
+  await expectProblem({ overrides: { type: 'commonjs' } }, /type must be "module"/);
+  await expectProblem({ overrides: { imports: { '#x': './x.js' } } }, /imports must be nothing/);
+  // Bins: exactly the template's path, named after the package, aliases of the CLI's own bin.
+  await expectProblem({ overrides: { frontDoor: { cli: '@fixture/other' } } }, /frontDoor must be \{"cli":"@fixture\/cli"\}/);
   await expectProblem({ overrides: { bin: { fx: './bin/cli.mjs' } } }, /bin must map "fixture"/);
   await expectProblem({ overrides: { bin: { fixture: './bin/cli.mjs', fixturectl: './bin/cli.mjs' } } }, /"fixturectl" bin with the same file/);
-  await expectProblem({ overrides: { bin: { fixture: './dist/cli.js' } } }, /bin "fixture" must be bin\/cli\.mjs/);
+  await expectProblem({ overrides: { bin: { fixture: 'bin/cli.mjs' } } }, /bin "fixture" must be "\.\/bin\/cli\.mjs"/);
   await expectProblem({ overrides: { files: ['index.js'] } }, /files must include bin\/cli\.mjs/);
-  await expectProblem({ overrides: { exports: { '.': './index.js', './cli': './bin/cli.mjs' } } }, /exports must not reach the bin folder/);
-  await expectProblem({ overrides: { optionalDependencies: { '@fixture/core': '1.2.2' } } }, /optionalDependencies must not list @fixture\/core/);
-  await expectProblem({ overrides: { peerDependencies: { '@fixture/core': '^1.2.0' } } }, /peerDependencies must not list @fixture\/core/);
-  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'npm:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli through an npm alias/);
-  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'NPM:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli/);
-  await expectProblem({ overrides: { peerDependencies: { 'cli-alias': 'npm:@fixture/cli' } } }, /peerDependencies\["cli-alias"\] installs @fixture\/cli/);
-  await expectProblem({ overrides: { exports: { '.': null } } }, /exports must have a "\." entry that an ESM import resolves/);
-  await expectProblem({ overrides: { exports: { '.': { types: './index.d.ts' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  await expectProblem({ entry: { core: 'fixture' }, overrides: { dependencies: {}, exports: { './sub': './sub.js' } } }, /exports must have a "\." entry/);
-  await expectProblem({ overrides: { exports: { '.': { require: './index.cjs' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  // Node.js takes the first matching condition in key order, so a blocking "node" ahead of "import" wins.
-  await expectProblem({ overrides: { exports: { '.': { node: null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  await expectProblem({ overrides: { exports: { '.': { 'node-addons': null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  // An array matching no condition lets the next condition try; a blocked entry in it blocks.
-  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }], import: './index.js' } } } })), []);
-  await expectProblem({ overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }, null], import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  await expectProblem({ overrides: { exports: { '.': { import: [], default: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
-  // Node refuses targets with ".", "..", empty or node_modules segments, and an array with nothing that resolves.
-  for (const exports of ['./dist/../index.js', './a//index.js', './node_modules/x/index.js', './%2e%2e/index.js', { '.': ['bad', null] }]) {
-    await expectProblem({ overrides: { exports } }, /exports must have a "\." entry that an ESM import resolves/);
-  }
-  // Node keeps trying past null and invalid entries (checked against Node 22's resolver).
-  for (const exports of [{ '.': ['index.js', './index.js'] }, { '.': [null, './index.js'] }]) assert.deepEqual(await problemsOf(product(t, { overrides: { exports } })), []);
-  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
-  // Installing the core must not install the CLI.
-  const coreDependsOnCli = product(t);
-  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', dependencies: { 'the-cli': 'NPM:@fixture/cli@1.2.3' } });
-  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /its core @fixture\/core must not depend on its CLI \(dependencies\["the-cli"\]\)/.test(problem)));
-  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' } });
-  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /must not depend on its CLI \(peerDependencies\["@fixture\/cli"\]\)/.test(problem)));
-  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' }, peerDependenciesMeta: { '@fixture/cli': { optional: true } } });
-  assert.deepEqual(await problemsOf(coreDependsOnCli), []);
-  await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
-  await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
-  // Root exports in their other forms pass.
-  for (const exports of ['./index.js', { import: './index.js' }, { '.': { import: './index.js' } }]) assert.deepEqual(await problemsOf(product(t, { overrides: { exports } })), []);
-  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: undefined, main: './index.js' } })), []);
+  const reexport = product(t);
+  writeFileSync(path.join(reexport, 'bare/index.js'), "export * from '@fixture/core';\nexport const extra = 1;\n");
+  assert.ok((await problemsOf(reexport)).some(problem => /index\.js must be exactly/.test(problem)));
+  rmSync(path.join(reexport, 'bare/index.d.ts'));
+  assert.ok((await problemsOf(reexport)).some(problem => /index\.d\.ts must be exactly/.test(problem)));
 
   const unchecked = product(t);
   writeJson(path.join(unchecked, 'cli/package.json'), { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } });
@@ -174,30 +155,51 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   rmSync(path.join(missing, 'bare', SHIM_FILE));
   assert.ok((await problemsOf(missing)).some(problem => /bin\/cli\.mjs is missing/.test(problem)));
 
-  // An optional peer at exactly the version is allowed.
-  const peer = product(t, { overrides: { peerDependencies: { '@fixture/cli': '1.2.3' }, peerDependenciesMeta: { '@fixture/cli': { optional: true } } } });
-  assert.deepEqual(await problemsOf(peer), []);
+  // Installing the core must not install the CLI.
+  const coreDependsOnCli = product(t);
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', dependencies: { 'the-cli': 'NPM:@fixture/cli@1.2.3' } });
+  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /its core @fixture\/core must not depend on its CLI \(dependencies\["the-cli"\]\)/.test(problem)));
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' } });
+  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /must not depend on its CLI \(peerDependencies\["@fixture\/cli"\]\)/.test(problem)));
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', peerDependencies: { '@fixture/cli': '1.2.3' }, peerDependenciesMeta: { '@fixture/cli': { optional: true } } });
+  assert.deepEqual(await problemsOf(coreDependsOnCli), []);
 });
 
-test('manifests: a CLI-only bare package depends on exactly its CLI; a bare core only matches its CLI', async t => {
+test('manifests: a CLI-only bare package has no module entry and depends on exactly its CLI', async t => {
   const cliOnly = { core: undefined };
-  const exact = product(t, { entry: cliOnly, overrides: { exports: undefined, dependencies: { '@fixture/cli': '1.2.3' } } });
-  assert.deepEqual(await problemsOf(exact), []);
-  const ranged = product(t, { entry: cliOnly, overrides: { exports: undefined, dependencies: { '@fixture/cli': '~1.2.3' } } });
-  assert.ok((await problemsOf(ranged)).some(problem => /dependencies\["@fixture\/cli"\] must be exactly 1\.2\.3/.test(problem)));
-  const overridden = product(t, { entry: cliOnly, overrides: { exports: undefined, dependencies: { '@fixture/cli': '1.2.3' }, optionalDependencies: { '@fixture/cli': '1.2.2' } } });
-  assert.ok((await problemsOf(overridden)).some(problem => /optionalDependencies must not list @fixture\/cli/.test(problem)));
+  const shape = { exports: undefined, files: ['bin'], dependencies: { '@fixture/cli': '1.2.3' } };
+  assert.deepEqual(await problemsOf(product(t, { entry: cliOnly, overrides: shape })), []);
+  const ranged = await problemsOf(product(t, { entry: cliOnly, overrides: { ...shape, dependencies: { '@fixture/cli': '~1.2.3' } } }));
+  assert.ok(ranged.some(problem => /dependencies must be \{"@fixture\/cli":"1\.2\.3"\}/.test(problem)));
+  const withExports = await problemsOf(product(t, { entry: cliOnly, overrides: { ...shape, exports: TEMPLATE.exports } }));
+  assert.ok(withExports.some(problem => /exports must be nothing \(a CLI-only bare package exports no modules\)/.test(problem)));
+  const withMain = await problemsOf(product(t, { entry: cliOnly, overrides: { ...shape, main: './bin/cli.mjs' } }));
+  assert.ok(withMain.some(problem => /main must be nothing/.test(problem)));
+  const overridden = await problemsOf(product(t, { entry: cliOnly, overrides: { ...shape, optionalDependencies: { '@fixture/cli': '1.2.2' } } }));
+  assert.ok(overridden.some(problem => /optionalDependencies must be nothing/.test(problem)));
+});
 
-  // plugfn's shape: the bare package is the core itself and adds the CLI's bin.
-  const selfCore = product(t, { entry: { core: 'fixture' }, overrides: { dependencies: {} } });
-  const { target, targets } = await bareTarget(selfCore);
-  assert.deepEqual((await checkBareManifests({ root: selfCore, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] }]);
+test('manifests: a bare package that is the core itself keeps its own entry points, away from the bin folder', async t => {
+  // plugfn's shape: the bare package is the core and adds the CLI's bin.
+  const selfCore = { core: 'fixture' };
+  const own = { dependencies: { zod: '^3.0.0' }, exports: { '.': { import: './dist/index.js' }, './extra': './dist/extra.js' }, type: undefined, main: './dist/index.js' };
+  const root = product(t, { entry: selfCore, overrides: own });
+  assert.deepEqual(await problemsOf(root), []);
+  const { target, targets } = await bareTarget(root);
+  assert.deepEqual((await checkBareManifests({ root, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] }]);
+  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, main: './bin/cli.mjs' } }))).some(problem => /exports and main must not reach the bin folder/.test(problem)));
+  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, exports: { '.': './dist/index.js', './cli': './bin/cli.mjs' } } }))).some(problem => /must not reach the bin folder/.test(problem)));
+  for (const dependencies of [{ '@fixture/cli': '1.2.3' }, { alias: 'npm:@fixture/cli@1.2.3' }]) {
+    assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, dependencies } }))).some(problem => /would install @fixture\/cli for importers of the core/.test(problem)));
+  }
 
   // Core only: no bin, no frontDoor.
-  const coreOnly = product(t, { entry: { cli: undefined }, overrides: { bin: undefined, frontDoor: undefined } });
+  const coreOnly = product(t, { entry: { cli: undefined }, overrides: { bin: undefined, frontDoor: undefined, files: ['index.js', 'index.d.ts'] } });
   assert.deepEqual(await problemsOf(coreOnly), []);
   const strayFrontDoor = product(t, { entry: { cli: undefined }, overrides: { bin: undefined } });
   assert.ok((await problemsOf(strayFrontDoor)).some(problem => /frontDoor applies only/.test(problem)));
+  const strayBin = product(t, { entry: { cli: undefined }, overrides: { frontDoor: undefined } });
+  assert.ok((await problemsOf(strayBin)).some(problem => /bin applies only/.test(problem)));
 });
 
 test('registry: the core and CLI must already be on npm at the version', async () => {
@@ -238,23 +240,24 @@ test('registry: the core and CLI must already be on npm at the version', async (
   }
 });
 
-test('packed tarball: keeps the checked manifest fields and the shared shim', async t => {
+test('packed tarball: keeps the checked manifest fields, re-export files and the shared shim', async t => {
   const root = product(t);
   const dir = path.join(root, 'bare');
-  writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
   const pack = () => path.join(root, JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', root], { cwd: dir, encoding: 'utf8' }))[0].filename);
   const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  const core = '@fixture/core';
   const tarball = pack();
-  await checkPackedBare({ tarball, manifest });
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } } }), /changed dependencies/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } } }), /changed bin/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, type: 'commonjs' } }), /changed type/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, imports: { '#x': './x.js' } } }), /changed imports/);
-  rmSync(path.join(dir, 'index.js'));
-  await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /lacks \.\/index\.js, which import "fixture" resolves to/);
+  await checkPackedBare({ tarball, manifest, core });
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } }, core }), /changed dependencies/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } }, core }), /changed bin/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, type: 'commonjs' }, core }), /changed type/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, imports: { '#x': './x.js' } }, core }), /changed imports/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, main: './bin/cli.mjs' }, core }), /changed main/);
   writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, core }), /has no index\.js re-exporting @fixture\/core/);
+  writeFileSync(path.join(dir, 'index.js'), TEMPLATE.reexportFiles['index.js'](core));
   writeFileSync(path.join(dir, SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// changed\n`);
-  await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /differs from the shared shim template/);
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, core }), /differs from the shared shim template/);
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {
@@ -465,7 +468,6 @@ test('shim: refuses to run without a CLI named in frontDoor.cli', t => {
 
 test('pack: a bare tarball is checked against the committed release entry, manifest and shim', t => {
   const root = product(t, { overrides: { scripts: { build: 'node -e 0', test: 'node -e 0' } } });
-  writeFileSync(path.join(root, 'bare/index.js'), 'export {};\n');
   mkdirSync(path.join(root, 'scripts'));
   for (const file of ['pack-release-package.mjs', 'resolve-release-tag.mjs', 'owners.mjs', 'assert-bare-release.mjs', 'bare-cli-shim.mjs']) {
     cpSync(path.join(import.meta.dirname, file), path.join(root, 'scripts', file));

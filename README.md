@@ -182,17 +182,28 @@ A product's bare (unscoped) npm package is its front door (see AGENTS.md,
 
 Its slug is listed in `superfunctions.owners.json` like any other, and
 `scripts/verify-owners.mjs` requires the core and CLI slugs to have the same
-owner. A bare package with a CLI copies `scripts/bare-cli-shim.mjs` byte for byte
-to `bin/cli.mjs`, maps each of its bins to that file, and names the CLI package in
-`"frontDoor": { "cli": "<scoped CLI>" }`. The shim imports only Node.js
-built-ins and runs the CLI's bin named after the bare package at exactly the bare
-package's version, as a child process that keeps the terminal and passes its exit
-code back: a copy at that version that Node.js finds from the bare package runs
-with Node.js; otherwise `npm exec --yes --package=<cli>@<version> -- <bin>` fetches
-and runs it, as npx would. A bare package that also exports a core depends on the
-core at exactly its version and never on the CLI (at most an optional peer at that
-version), so importers install none of the CLI; a CLI-only bare package depends
-on the CLI at exactly its version.
+owner. The release gate accepts only the bare template's exact shape
+(`TEMPLATE` in `scripts/assert-bare-release.mjs`):
+
+- every bin is `"./bin/cli.mjs"`, a byte-for-byte copy of
+  `scripts/bare-cli-shim.mjs`, and `"frontDoor": { "cli": "<scoped CLI>" }`
+  names the CLI (a bare package without a CLI has neither);
+- a bare package re-exporting a separate core has `"type": "module"`, no `main`
+  or `imports`, `"exports": { ".": { "types": "./index.d.ts", "import": "./index.js", "default": "./index.js" } }`,
+  `index.js` and `index.d.ts` each exactly `export * from '<core>';`, and exactly
+  `{ "<core>": "<version>" }` as its dependencies; it never depends on the CLI, so
+  importers install none of it;
+- a CLI-only bare package has `"type": "module"`, no `exports`, `main` or
+  `imports`, and exactly `{ "<cli>": "<version>" }` as its dependencies;
+- a bare package that is the core itself keeps its own entry points, which must
+  not reach `bin/`, and must not depend on the CLI.
+
+The shim imports only Node.js built-ins and runs the CLI's bin named after the
+bare package at exactly the bare package's version, as a child process that keeps
+the terminal and passes its exit code back: a copy at that version that Node.js
+finds from the bare package runs with Node.js; otherwise
+`npm exec --yes --package=<cli>@<version> -- <bin>` fetches and runs it, as npx
+would.
 
 The shim sets `BARE_EXPECTED_CLI=<cli>@<version>` for the CLI it starts. Like
 `npx <cli>@<version>`, `npm exec` may reuse a copy of the CLI nested under another

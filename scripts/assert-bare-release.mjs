@@ -8,11 +8,12 @@
 //
 // It refuses the release unless, at the tag commit:
 //   - the bare package, its scoped core and its scoped CLI all have the tagged version;
-//   - the bare package depends on exactly that version of the core (when the core is another package);
-//   - the bare package's bins run the CLI through the shared shim (bare-cli-shim.mjs, copied byte for byte to
-//     bin/cli.mjs), which runs exactly that version of the CLI named in "frontDoor": { "cli" }. A bare package that
-//     also exports a core keeps the CLI out of its dependencies (at most an optional peer at that version); a CLI-only
-//     bare package depends on exactly that version of it;
+//   - the bare package has exactly the template's shape (TEMPLATE): type "module", no main or imports, and either the
+//     template's exports and re-export files with exactly the core as its only dependency, or (CLI-only) no exports
+//     and exactly the CLI as its only dependency. A bare package that is the core itself keeps its own entry points,
+//     which must not reach the bin folder, and must not depend on the CLI;
+//   - every bin is "./bin/cli.mjs", the shared shim (bare-cli-shim.mjs, copied byte for byte), which runs exactly that
+//     version of the CLI named in "frontDoor": { "cli" };
 //   - the CLI declares that it checks BARE_EXPECTED_CLI, which the shim sets to "<cli>@<version>", and refuses to run as
 //     any other version (npm exec can reach another installed version under the bin name);
 //   - the core and the CLI are already on npm at that version, so the bare package never points at a missing release.
@@ -65,8 +66,26 @@ function exportTargets(value) {
 }
 
 /**
- * Checks a bare target's manifests (and its shim copy) against its scoped core and CLI, without the registry.
- * Returns the scoped packages the release depends on ({ slug, name, version }), for the registry check.
+ * The exact shape of a bare package made from the template (README, "Bare packages"). A bare package re-exporting a
+ * separate core has `exports` and the two re-export files below and nothing else to resolve; a CLI-only bare package
+ * has no module entry at all. Every bin is the shim. A bare package that is the core itself keeps the core's own
+ * entry points, which must not reach the bin folder.
+ */
+export const TEMPLATE = Object.freeze({
+  type: 'module',
+  bin: './bin/cli.mjs',
+  exports: Object.freeze({ '.': Object.freeze({ types: './index.d.ts', import: './index.js', default: './index.js' }) }),
+  /** The files the exports name, by path, as a function of the core's package name. */
+  reexportFiles: Object.freeze({ 'index.js': core => `export * from '${core}';\n`, 'index.d.ts': core => `export * from '${core}';\n` }),
+});
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const show = value => (value === undefined ? 'nothing' : JSON.stringify(value));
+
+/**
+ * Checks a bare target's manifests (and its template files) against the template and its scoped core and CLI, without
+ * the registry. Returns the scoped packages the release depends on ({ slug, name, version, bins?, forbid? }), for the
+ * registry check.
  * @param {{ root?: string, target: { slug: string, name: string, path: string, bare: { core: string | null, cli: string | null } }, targets?: Awaited<ReturnType<typeof loadReleaseTargets>>, shimTemplate?: string }} input
  */
 export async function checkBareManifests({ root = repoRoot, target, targets, shimTemplate = SHIM_TEMPLATE }) {
@@ -78,7 +97,6 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   const where = `${target.name} (${target.path})`;
   const linked = {};
   const scopedManifests = {};
-  let cliBinNames = [];
   for (const field of ['core', 'cli']) {
     const slug = target.bare[field];
     if (slug === null || slug === target.slug) continue;
@@ -91,26 +109,44 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
       problems.push(`its ${field} ${scoped.name} is at ${scopedManifest.version}, not ${version}; release the bare package at the same version as ${scoped.name}`);
     }
   }
-  const dependencies = manifest.dependencies ?? {};
-  // An exact pin lives in dependencies alone: npm lets an optionalDependencies entry of the same name override it, and
-  // a peer entry would add a second range for the same package.
-  const pinnedOnlyInDependencies = name => {
-    if (dependencies[name] !== version) problems.push(`dependencies["${name}"] must be exactly ${version}, not ${JSON.stringify(dependencies[name] ?? null)}`);
-    for (const field of ['optionalDependencies', 'peerDependencies']) {
-      if (manifest[field]?.[name] !== undefined) problems.push(`${field} must not list ${name}; its exact pin belongs in dependencies alone`);
-    }
+  const selfCore = target.bare.core === target.slug;
+  const cliName = target.bare.cli === null ? null : bySlug.get(target.bare.cli).name;
+  const expect = (field, wanted, why) => {
+    if (!same(manifest[field], wanted)) problems.push(`${field} must be ${show(wanted)}${why ? ` (${why})` : ''}, not ${show(manifest[field])}`);
   };
-  if (linked.core) pinnedOnlyInDependencies(linked.core.name);
-  if (target.bare.core !== null && !hasRootExport(manifest)) {
-    problems.push(`exports must have a "." entry that an ESM import resolves (a string, or an import, node or default condition), so import "${target.name}" gives the core`);
+
+  // Module entry points: the template's exactly, or (for the core itself) its own, kept away from the bin folder.
+  if (selfCore) {
+    if ([...exportTargets(manifest.exports), manifest.main].some(file => typeof file === 'string' && normalizeBin(file).startsWith('bin/'))) {
+      problems.push('exports and main must not reach the bin folder');
+    }
+  } else {
+    expect('type', TEMPLATE.type);
+    expect('main', undefined, 'the template resolves only through exports');
+    expect('imports', undefined);
+    expect('exports', linked.core ? TEMPLATE.exports : undefined, linked.core ? `the template's re-export of ${linked.core.name}` : 'a CLI-only bare package exports no modules');
+    if (linked.core) {
+      for (const [file, content] of Object.entries(TEMPLATE.reexportFiles)) {
+        let actual = null;
+        try {
+          actual = await readFile(path.join(root, target.path, file), 'utf8');
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+        if (actual !== content(linked.core.name)) problems.push(`${file} must be exactly ${JSON.stringify(content(linked.core.name))}`);
+      }
+    }
+    // Dependencies: exactly the pinned core, or for a CLI-only bare package exactly the pinned CLI.
+    const pinned = linked.core ? linked.core.name : cliName;
+    if (pinned !== null) expect('dependencies', { [pinned]: version }, `exactly ${pinned} at ${version}`);
+    for (const field of ['optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'bundleDependencies', 'bundledDependencies']) expect(field, undefined);
   }
-  const hasCore = target.bare.core !== null;
-  if (target.bare.cli !== null) {
-    const cliName = bySlug.get(target.bare.cli).name;
-    const cliManifest = await readManifest(root, bySlug.get(target.bare.cli));
-    if (manifest.frontDoor?.cli !== cliName) problems.push(`frontDoor.cli must be "${cliName}", not ${JSON.stringify(manifest.frontDoor?.cli ?? null)}`);
-    const bins = manifest.bin !== null && typeof manifest.bin === 'object' ? manifest.bin : {};
-    if (!Object.hasOwn(bins, target.name)) problems.push(`bin must map "${target.name}" to ${SHIM_FILE}`);
+
+  if (cliName !== null) {
+    const cliManifest = scopedManifests.cli;
+    if (!same(manifest.frontDoor, { cli: cliName })) problems.push(`frontDoor must be ${JSON.stringify({ cli: cliName })}, not ${show(manifest.frontDoor)}`);
+    const bins = manifest.bin !== null && typeof manifest.bin === 'object' && !Array.isArray(manifest.bin) ? manifest.bin : {};
+    if (!Object.hasOwn(bins, target.name)) problems.push(`bin must map "${target.name}" to ${TEMPLATE.bin}`);
     const cliBins = cliManifest.bin !== null && typeof cliManifest.bin === 'object' ? cliManifest.bin : {};
     if (!Object.hasOwn(cliBins, target.name)) problems.push(`its CLI ${cliName} has no "${target.name}" bin for ${SHIM_FILE} to run`);
     // npm exec can run another installed version of the CLI under the bin name; the CLI then refuses, because the
@@ -119,7 +155,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
       problems.push(`its CLI ${cliName} must check BARE_EXPECTED_CLI at startup and declare it with "frontDoorCli": { "checksExpectedVersion": true }`);
     }
     for (const [name, file] of Object.entries(bins)) {
-      if (normalizeBin(file) !== SHIM_FILE) problems.push(`bin "${name}" must be ${SHIM_FILE}, not ${JSON.stringify(file)}`);
+      if (file !== TEMPLATE.bin) problems.push(`bin "${name}" must be ${JSON.stringify(TEMPLATE.bin)}, not ${JSON.stringify(file)}`);
       else if (name !== target.name && normalizeBin(cliBins[name]) !== normalizeBin(cliBins[target.name])) {
         problems.push(`bin "${name}" runs the CLI's "${target.name}" bin, so ${cliName} must have a "${name}" bin with the same file`);
       }
@@ -135,38 +171,23 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
     if (Array.isArray(manifest.files) && !manifest.files.some(entry => ['bin', 'bin/', SHIM_FILE].includes(normalizeBin(entry)))) {
       problems.push(`files must include ${SHIM_FILE}`);
     }
-    if (exportTargets(manifest.exports).some(file => normalizeBin(file).startsWith('bin/'))) problems.push('exports must not reach the bin folder');
-    cliBinNames = Object.keys(bins);
-    const peer = manifest.peerDependencies?.[cliName];
-    // An npm alias ("x": "npm:@scope/cli@1.2.3"; npm reads the scheme in any case) installs the CLI under another name.
-    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-      for (const [alias, spec] of Object.entries(manifest[field] ?? {})) {
-        if (alias !== cliName && aliasTarget(spec) === cliName) problems.push(`${field}["${alias}"] installs ${cliName} through an npm alias`);
-      }
+    if (selfCore) {
+      // The core's own dependencies stay as they are, but never install the CLI (directly or through an npm alias).
+      for (const dependency of installedDependencies(manifest, cliName)) problems.push(`${dependency} would install ${cliName} for importers of the core; ${SHIM_FILE} makes it available when it runs`);
     }
-    if (hasCore) {
-      for (const field of ['dependencies', 'optionalDependencies']) {
-        if (manifest[field]?.[cliName] !== undefined) problems.push(`${field} must not list ${cliName}: importers of the core would install the CLI; ${SHIM_FILE} makes it available when it runs`);
-      }
-      if (peer !== undefined && (peer !== version || manifest.peerDependenciesMeta?.[cliName]?.optional !== true)) {
-        problems.push(`peerDependencies may list ${cliName} only as an optional peer at exactly ${version}`);
-      }
-    } else {
-      pinnedOnlyInDependencies(cliName);
-    }
-  } else if (manifest.frontDoor !== undefined) {
-    problems.push('frontDoor applies only to a bare target with a "cli" slug');
+  } else {
+    if (manifest.frontDoor !== undefined) problems.push('frontDoor applies only to a bare target with a "cli" slug');
+    if (!selfCore && manifest.bin !== undefined) problems.push('bin applies only to a bare target with a "cli" slug');
   }
-  if (linked.core && target.bare.cli !== null) {
-    const cliName = bySlug.get(target.bare.cli).name;
+  if (linked.core && cliName !== null) {
     for (const dependency of installedDependencies(scopedManifests.core, cliName)) problems.push(`its core ${linked.core.name} must not depend on its CLI (${dependency})`);
   }
   if (problems.length > 0) {
-    throw new BareReleaseError('misaligned', `Bare package ${where} at ${version} does not match its core and CLI:\n  - ${problems.join('\n  - ')}`, { slug: target.slug, problems });
+    throw new BareReleaseError('misaligned', `Bare package ${where} at ${version} does not match the bare template, its core and its CLI:\n  - ${problems.join('\n  - ')}`, { slug: target.slug, problems });
   }
-  if (linked.cli) linked.cli.bins = cliBinNames;
+  if (linked.cli) linked.cli.bins = Object.keys(manifest.bin);
   // Installing the core must not install the CLI either.
-  if (linked.core && target.bare.cli !== null) linked.core.forbid = [bySlug.get(target.bare.cli).name];
+  if (linked.core && cliName !== null) linked.core.forbid = [cliName];
   return { version, packages: Object.values(linked) };
 }
 
@@ -191,56 +212,6 @@ function aliasTarget(spec) {
   return match ? match[1] : null;
 }
 
-// The conditions Node.js 22 and later match for `import "<bare>"` by default; a require-only root cannot be imported.
-const IMPORT_CONDITIONS = ['import', 'node', 'node-addons', 'module-sync', 'default'];
-
-// Node.js refuses a target with an empty, ".", ".." or "node_modules" segment after its leading "./", percent-encoded
-// spellings included (ERR_INVALID_PACKAGE_TARGET); this is the pattern its resolver applies.
-const INVALID_SEGMENT = /(^|\\|\/)((\.|%2e)(\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))?(\\|\/|$)/i;
-const INVALID = Symbol('invalid package target');
-
-/**
- * The target Node.js selects for an ESM import from an exports value (its PACKAGE_TARGET_RESOLVE): the first key, in
- * order, that is a matching condition decides, and a nested object that matches nothing lets the next key try; null
- * blocks; an array takes its first entry that resolves to a target, skipping null, invalid and unmatched entries
- * (it ends with the last null or invalid one when none resolves), and an empty array blocks. Returns the target, null (blocked), INVALID (Node throws), or undefined
- * (no condition matched).
- */
-function resolveImport(value) {
-  if (typeof value === 'string') return value.startsWith('./') && !INVALID_SEGMENT.test(value.slice(2)) ? value : INVALID;
-  if (value === null) return null;
-  if (Array.isArray(value)) {
-    if (value.length === 0) return null;
-    let last;
-    for (const candidate of value) {
-      const target = resolveImport(candidate);
-      if (typeof target === 'string') return target;
-      // Node.js keeps trying after a null or invalid entry, and ends with the last one if nothing resolves.
-      if (target !== undefined) last = target;
-    }
-    return last;
-  }
-  if (typeof value !== 'object') return INVALID;
-  for (const [key, candidate] of Object.entries(value)) {
-    if (!IMPORT_CONDITIONS.includes(key)) continue;
-    const target = resolveImport(candidate);
-    if (target !== undefined) return target;
-  }
-  return undefined;
-}
-
-/** The file `import "<bare>"` resolves to: the root of `exports`, or (with no exports) the main file; null if none. */
-function rootImportTarget(manifest) {
-  const { exports } = manifest;
-  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '' ? manifest.main : null;
-  let root = exports;
-  if (exports !== null && typeof exports === 'object' && !Array.isArray(exports) && Object.keys(exports).some(key => key.startsWith('.'))) root = exports['.'];
-  // Otherwise a string, an array or a conditions-only object is the "." entry itself.
-  const target = resolveImport(root);
-  return typeof target === 'string' ? target : null;
-}
-
-const hasRootExport = manifest => rootImportTarget(manifest) !== null;
 
 /**
  * Requires every scoped package to be on the registry at its version. Any answer but the version itself refuses.
@@ -288,9 +259,10 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
  * is the shared template, so an install, build or pack lifecycle script cannot change what the gate approved. The
  * release passes the manifest and template as committed at the tag (gitFile), not as they are on disk after those
  * scripts ran.
- * @param {{ tarball: string, manifest: Record<string, unknown>, shim?: string }} input  `shim` is the template's text
+ * @param {{ tarball: string, manifest: Record<string, unknown>, shim?: string, core?: string }} input  `shim` is the shim
+ *   template's text; `core` is the core's package name when the bare package re-exports a separate core
  */
-export async function checkPackedBare({ tarball, manifest, shim: template }) {
+export async function checkPackedBare({ tarball, manifest, shim: template, core }) {
   template ??= await readFile(SHIM_TEMPLATE, 'utf8');
   const tar = args => execFileSync('tar', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   const files = new Set(tar(['-tzf', tarball]).split(/\r?\n/).filter(Boolean).map(entry => entry.replace(/^\.\//, '')));
@@ -308,9 +280,12 @@ export async function checkPackedBare({ tarball, manifest, shim: template }) {
     if (shim === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
     if (shim !== template) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
   }
-  // The file `import "<bare>"` resolves to ships in the tarball.
-  const root = rootImportTarget(manifest);
-  if (root !== null && !files.has(`package/${normalizeBin(root)}`)) throw new BareReleaseError('misaligned', `The packed ${manifest.name} lacks ${root}, which import "${manifest.name}" resolves to`);
+  // A bare package re-exporting its core ships the template's re-export files, as checked.
+  if (core !== undefined) {
+    for (const [file, content] of Object.entries(TEMPLATE.reexportFiles)) {
+      if (read(file) !== content(core)) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${file} re-exporting ${core}`);
+    }
+  }
 }
 
 /**

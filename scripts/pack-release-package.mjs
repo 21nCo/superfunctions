@@ -66,6 +66,7 @@ if (committed.kind === 'bare') {
     tarball,
     manifest: JSON.parse(gitFile(root, path.posix.join(committed.path, 'package.json'))),
     shim: gitFile(root, 'scripts/bare-cli-shim.mjs'),
+    core: committed.core !== undefined && committed.core !== committed.slug ? committedReleaseEntry(committed.core).name : undefined,
   });
 }
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `tarball=${tarball}\n`);
