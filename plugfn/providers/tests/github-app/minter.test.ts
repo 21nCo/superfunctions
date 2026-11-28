@@ -965,12 +965,37 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: () => hold });
     const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-slow-wall' };
     const first = await m.mint(request);
-    // Corrected, the wall clock reaches GitHub's expires_at while the hold clock still says four minutes remain.
-    hold = Date.parse(EXPIRES_AT) - NOW_MS;
+    // Corrected, the wall clock reaches GitHub's expires_at just before an hour has passed on the hold clock.
+    hold = Date.parse(EXPIRES_AT) - NOW_MS - 1;
     wall = Date.parse(EXPIRES_AT);
     const refused = await rejection(m.mint(request));
     expect([refused.code, refused.retryable, posts(github.calls)]).toEqual(['provider_unavailable', true, 1]);
     await m.revoke(first.revokeHandle);
+  });
+
+  it('keeps returning a still-valid credential, and holds its key past its real expiry, after a fast wall clock at mint', async () => {
+    // The wall clock runs ten minutes fast when the 201 arrives: the token looks like it has 50 minutes left, but has 60.
+    let wall = NOW_MS + 10 * 60 * 1000;
+    let hold = 0;
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: () => hold });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-fast-wall' };
+    const first = await m.mint(request);
+    // Corrected, 57 minutes on, the token is still valid and is returned again.
+    hold = 57 * 60 * 1000;
+    wall = NOW_MS + hold;
+    expect(await m.mint(request)).toBe(first);
+    // Up to its real expiry plus the tolerance, the key is held: no second POST.
+    for (const at of [55 * 60 * 1000 + SKEW_MS, 3600 * 1000 + SKEW_MS - 1]) {
+      hold = at;
+      wall = NOW_MS + at;
+      expect((await rejection(m.mint(request))).code).toBe('provider_unavailable');
+    }
+    expect(posts(github.calls)).toBe(1);
+    hold = 3600 * 1000 + SKEW_MS;
+    wall = NOW_MS;
+    await m.mint(request);
+    expect(posts(github.calls)).toBe(2);
   });
 
   // Each hold starts at hold-clock 0 and ends exactly an hour plus the skew tolerance later.
@@ -1163,6 +1188,43 @@ describe('GitHub App minter: slow response bodies', () => {
       ['POST', expect.any(String)],
       ['DELETE', `Bearer ${token}`],
     ]);
+  });
+});
+
+describe('GitHub App minter: a superseded mint settling late', () => {
+  it('keeps its waitUntil task pending until the superseded token is revoked', async () => {
+    let hold = 0;
+    const firstToken = fakeInstallationToken(11);
+    const body = controlledBody();
+    let releaseDelete!: () => void;
+    const deleteReleased = new Promise<void>((resolve) => (releaseDelete = resolve));
+    const calls: { method: string; authorization: string | undefined }[] = [];
+    const fake = (async (_input: unknown, init?: RequestInit) => {
+      calls.push({ method: init!.method!, authorization: (init!.headers as Record<string, string>).authorization });
+      if (init!.method === 'DELETE') {
+        await deleteReleased;
+        return new Response(null, { status: 204 });
+      }
+      return calls.length === 1 ? new Response(body.stream, { status: 201 }) : new Response(JSON.stringify(recordedAccessToken(fakeInstallationToken(12))), { status: 201 });
+    }) as typeof fetch;
+    const tasks: Promise<unknown>[] = [];
+    const { minter: m } = minter([], { fetch: fake, monotonicNow: () => hold, waitUntil: (task) => tasks.push(task) });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-superseded-late' };
+    const first = rejection(m.mint(request));
+    await body.pulled;
+    // Past the pending deadline another mint takes the key, then the first 201 body arrives.
+    hold = 3600 * 1000 + SKEW_MS;
+    const second = await m.mint(request);
+    body.push(JSON.stringify(recordedAccessToken(firstToken)));
+    await vi.waitFor(() => expect(calls.map((c) => c.method)).toEqual(['POST', 'POST', 'DELETE']));
+    let settled = false;
+    void tasks[0]!.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect([settled, calls[2]!.authorization]).toEqual([false, `Bearer ${firstToken}`]);
+    releaseDelete();
+    await tasks[0];
+    expect((await first).code).toBe('provider_error');
+    expect(second.secret).toBe(fakeInstallationToken(12));
   });
 });
 
