@@ -145,13 +145,12 @@ export function createIntrospectionVerifier(
     } finally {
       clearTimeout(timer);
     }
-    if (pastDeadline()) throw timedOut();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new IntrospectionUnavailableError("AuthFn introspection answered a non-object");
     }
     const answer = body as Record<string, unknown>;
     const scopes = readScopes(answer.scope);
-    if (
+    const result: Awaited<ReturnType<AuthFnTokenCheck>> =
       answer.active !== true ||
       answer.aud !== resource ||
       typeof answer.client_id !== "string" ||
@@ -161,19 +160,21 @@ export function createIntrospectionVerifier(
       scopes === undefined ||
       (answer.token_type !== undefined &&
         (typeof answer.token_type !== "string" || answer.token_type.toLowerCase() !== "bearer"))
-    ) {
-      return null;
-    }
-    return {
-      expiresAtMs: answer.exp * 1_000,
-      info: {
-        token,
-        clientId: answer.client_id,
-        scopes,
-        expiresAt: answer.exp,
-        resource: new URL(resource),
-        extra: { subject: answer.sub },
-      },
-    };
+        ? null
+        : {
+            expiresAtMs: answer.exp * 1_000,
+            info: {
+              token,
+              clientId: answer.client_id,
+              scopes,
+              expiresAt: answer.exp,
+              resource: new URL(resource),
+              extra: { subject: answer.sub },
+            },
+          };
+    // The last word on the deadline comes after the answer is read, so neither
+    // an active nor an inactive verdict is given once it has passed.
+    if (pastDeadline()) throw timedOut();
+    return result;
   };
 }

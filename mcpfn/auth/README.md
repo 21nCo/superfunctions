@@ -68,8 +68,8 @@ const fetch = authority.protect(mcp, {
 - When AuthFn cannot be asked (`verifyAccessToken` throws; introspection fails,
   times out after `timeoutMs` (a whole number of milliseconds, default 5000,
   covering the request and the body even when a custom `fetch` ignores the
-  abort signal; an answer that completes later, by a monotonic clock, is
-  discarded), redirects, answers other than 200
+  abort signal; an answer, active or not, whose reading completes later, by a
+  monotonic clock, is discarded), redirects, answers other than 200
   or with a body that is not a JSON object), the endpoint answers 503
   `temporarily_unavailable` without calling the MCP handler, so clients keep
   their tokens. Introspection never follows redirects. Its endpoint must use
@@ -84,8 +84,10 @@ const fetch = authority.protect(mcp, {
   `authority.issuer` and the metadata's `authorization_servers`, because
   RFC 8414 clients compare it exactly with AuthFn's metadata. It must be an
   HTTPS URL (or `http://` loopback with
-  `allowInsecureLoopbackAuthorizationServers`) without credentials, a query or
-  a fragment.
+  `allowInsecureLoopbackAuthorizationServers`) spelled in full: `https://` or
+  `http://`, a host and an optional path, without credentials, a query or a
+  fragment. Spellings that URL parsing would repair, such as
+  `https:auth.example.com` or `https://@auth.example.com/`, are refused.
 - `authority.verifier(resource, { invalidTokenError })` returns the MCP SDK
   `OAuthTokenVerifier` for hosts that use the SDK's `requireBearerAuth`. Pass
   `InvalidTokenError` from the same `@modelcontextprotocol/sdk` copy as that

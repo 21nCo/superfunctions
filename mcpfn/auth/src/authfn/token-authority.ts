@@ -157,6 +157,11 @@ function normalizedResource(value: string | URL): string {
  * scheme is checked with the shared RFC 9728 rules when `protect()` builds
  * its metadata.
  */
+// Scheme, `//`, a non-empty authority without userinfo, then an optional path;
+// no whitespace, control characters, backslashes, query or fragment.
+// eslint-disable-next-line no-control-regex
+const ISSUER_SPELLING = /^https?:\/\/[^\x00-\x20\x7f/?#@\\]+(?:\/[^\x00-\x20\x7f?#\\]*)?$/i;
+
 function exactIssuer(value: string | URL): string {
   const serialized = value.toString();
   let url: URL;
@@ -171,7 +176,14 @@ function exactIssuer(value: string | URL): string {
     );
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new TypeError("An AuthFn provider issuer must be an HTTPS URL");
+    throw new TypeError("An AuthFn provider issuer must be an http or https URL");
+  }
+  // URL parsing repairs spellings such as `https:host` or `https://@host`;
+  // the verbatim string must already be a well-formed URL itself.
+  if (!ISSUER_SPELLING.test(serialized)) {
+    throw new TypeError(
+      "An AuthFn provider issuer must be spelled as http:// or https://, a host and an optional path",
+    );
   }
   return serialized;
 }

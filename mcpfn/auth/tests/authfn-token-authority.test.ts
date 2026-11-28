@@ -569,7 +569,19 @@ describe("AuthFn token authority boundaries", () => {
       expect(metadata).toMatchObject({ resource: MEMOTRON, bearer_methods_supported: ["header"] });
       expect(metadata.authorization_servers).toEqual([issuer.toString()]);
     }
-    expect(() => createAuthFnTokenAuthority({ issuer: "ftp://auth.example.com", verifyAccessToken })).toThrow(/HTTPS URL/);
+    expect(() => createAuthFnTokenAuthority({ issuer: "ftp://auth.example.com", verifyAccessToken })).toThrow(/http or https URL/);
+    // URL parsing repairs these, so advertising them verbatim would publish a malformed issuer.
+    for (const issuer of [
+      "https:auth.example.com",
+      "https://@auth.example.com/",
+      "https:/auth.example.com",
+      "https:\\\\auth.example.com",
+      " https://auth.example.com",
+      "https://auth.exa\tmple.com",
+    ]) {
+      expect(() => createAuthFnTokenAuthority({ issuer, verifyAccessToken }), JSON.stringify(issuer))
+        .toThrow(/must be spelled as http:\/\/ or https:\/\//);
+    }
   });
 
   it("holds one introspection deadline over the request and the body, whatever fetch does with the signal", async () => {
@@ -650,6 +662,45 @@ describe("AuthFn token authority boundaries", () => {
         .verifyAccessToken("test-access-token");
       await expect(verification).rejects.toThrow(/timed out/);
       await expect(verification).rejects.not.toBeInstanceOf(InvalidTokenError);
+    }
+  });
+
+  it("gives no verdict, active or inactive, once the deadline passes while the answer is read", async () => {
+    const exp = Math.floor(Date.now() / 1_000) + 60;
+    // Neither answer has a `scope` member, so reading it during claim
+    // processing (after the body is fully read) reaches this getter, which
+    // moves the monotonic clock past the deadline.
+    let clock = 0;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    Object.defineProperty(Object.prototype, "scope", {
+      configurable: true,
+      get() {
+        clock += 1_000;
+        return undefined;
+      },
+    });
+    try {
+      for (const answer of [
+        { active: true, aud: MEMOTRON, client_id: "test-client", sub: "test-user", exp },
+        { active: false },
+      ]) {
+        const fetch = async () => new Response(JSON.stringify(answer), { status: 200 });
+        const calls = { count: 0 };
+        const authority = createAuthFnTokenAuthority({
+          issuer: AUTH_ORIGIN,
+          introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch, timeoutMs: 1_000 },
+        });
+        const response = await authority.protect(handler(calls), { resource: MEMOTRON })(bearer());
+        expect(response.status, JSON.stringify(answer)).toBe(503);
+        expect(calls.count).toBe(0);
+        const verification = authority.verifier(MEMOTRON, { invalidTokenError: InvalidTokenError })
+          .verifyAccessToken("test-access-token");
+        await expect(verification).rejects.toThrow(/timed out/);
+        await expect(verification).rejects.not.toBeInstanceOf(InvalidTokenError);
+      }
+    } finally {
+      delete (Object.prototype as { scope?: unknown }).scope;
+      now.mockRestore();
     }
   });
 
