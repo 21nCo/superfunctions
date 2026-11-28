@@ -141,7 +141,7 @@ const RULES: Readonly<Record<SymbolLanguage, readonly SymbolRule[]>> = Object.fr
     { kind: "enum", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}enum\\s+(${SWIFT_ID})`, "u") },
     { kind: "protocol", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}protocol\\s+(${SWIFT_ID})`, "u") },
     // The extended type is the last component of a qualified name: `extension Outer.Inner`, `extension Swift.Array where`.
-    { kind: "extension", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}extension\\s+(${SWIFT_ID}(?:\\s*\\.\\s*${SWIFT_ID})*)`, "u"), name: swiftExtendedType },
+    { kind: "extension", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}extension(?!${SWIFT_ID_PART})`, "u"), name: swiftExtendedType },
   ],
   go: [
     // Functions and methods: `func Name(` or `func (receiver) Name(`, with optional type parameters. Go declares
@@ -272,6 +272,7 @@ const JS_IDENTIFIER = new RegExp(JS_ID, "uy");
 const JS_PROPERTY_KEY = new RegExp(`${JS_ID_PART}+`, "uy");
 const JS_IDENTIFIER_UNIT = new RegExp(`^${JS_ID_PART}$`, "u");
 const RUST_IDENTIFIER = new RegExp(RUST_ID, "uy");
+const SWIFT_IDENTIFIER = new RegExp(SWIFT_ID, "uy");
 /** A JSX tag or attribute name: identifiers joined by `.`, `-` or `:`. */
 const JSX_NAME = new RegExp(`[\\p{ID_Start}$_][\\p{ID_Continue}$\\u200C\\u200D.:-]*`, "uy");
 const CLOSERS: Readonly<Record<string, string>> = Object.freeze({ "(": ")", "[": "]", "{": "}", "<": ">" });
@@ -738,25 +739,69 @@ function jsArrowPropertyName(text: string, _next: () => string | undefined, dial
 
 /**
  * The type a Swift `extension` extends: the last component of its qualified name (`Outer.Inner` gives `Inner`), never a
- * module or outer-type qualifier. A name whose generic arguments a further `.` follows (`Outer<T>.Inner`) gives nothing.
+ * module or outer-type qualifier. Whitespace and comments (which nest, as in Rust) are trivia between the keyword, the
+ * path components, a generic clause and what follows. The name is reported only when a proven follower ends the path:
+ * `{`, `:`, `where`, or the end of the line (a line comment included). A name whose generic arguments a further `.`
+ * follows (`Outer<T>.Inner`), a path continued on the next line (`extension Outer.`) and anything else give nothing.
  */
 function swiftExtendedType(text: string, _next: () => string | undefined, _dialect: Dialect, match: RegExpExecArray): string | undefined {
-  const path = match[1];
   let at = match.index + match[0].length;
-  while (at < text.length && /\s/u.test(text[at])) at += 1;
-  // A name continued on the next line (`extension Outer.`) is not proved.
-  if (text[at] === ".") return undefined;
-  if (text[at] === "<") {
-    let depth = 0;
-    for (; at < text.length; at += 1) {
-      if (text[at] === "<") depth += 1;
-      else if (text[at] === ">" && !(depth -= 1)) break;
-    }
+  if (at < text.length && !/\s|\//u.test(text[at])) return undefined;
+  let name: string | undefined;
+  for (;;) {
+    const start = swiftTrivia(text, at);
+    const component = start === undefined ? undefined : readWith(SWIFT_IDENTIFIER, text, start);
+    if (!component) return undefined;
+    name = component.name;
+    const after = swiftTrivia(text, component.end);
+    if (after === undefined) return undefined;
+    at = after;
+    if (text[at] !== ".") break;
     at += 1;
-    while (at < text.length && /\s/u.test(text[at])) at += 1;
-    if (at > text.length || text[at] === ".") return undefined;
   }
-  return path.slice(path.lastIndexOf(".") + 1).trim();
+  if (text[at] === "<") {
+    const end = swiftGenericEnd(text, at);
+    const after = end === undefined ? undefined : swiftTrivia(text, end);
+    if (after === undefined) return undefined;
+    at = after;
+  }
+  const follower = at >= text.length || text[at] === "{" || text[at] === ":" || readWith(SWIFT_IDENTIFIER, text, at)?.name === "where";
+  return follower ? name : undefined;
+}
+
+/**
+ * The index of the next Swift token at or after `index`, skipping whitespace and block comments (which nest); the line's
+ * end for a line comment; `undefined` for a block comment that does not close on the line, as the next line may go on.
+ */
+function swiftTrivia(text: string, index: number): number | undefined {
+  let at = index;
+  for (;;) {
+    while (at < text.length && /\s/u.test(text[at])) at += 1;
+    if (text[at] !== "/") return at;
+    if (text[at + 1] === "/") return text.length;
+    if (text[at + 1] !== "*") return at;
+    const close = skipNestedComment(text, at);
+    if (close === -1) return undefined;
+    at = close + 2;
+  }
+}
+
+/** The index just past the generic clause whose `<` is at `index`, skipping comments; `undefined` when the line ends first. */
+function swiftGenericEnd(text: string, index: number): number | undefined {
+  let depth = 0;
+  for (let at = index; at < text.length;) {
+    const char = text[at];
+    if (char === "/" && (text[at + 1] === "*" || text[at + 1] === "/")) {
+      const after = swiftTrivia(text, at);
+      if (after === undefined || after >= text.length) return undefined;
+      at = after;
+      continue;
+    }
+    if (char === "<") depth += 1;
+    else if (char === ">" && !(depth -= 1)) return at + 1;
+    at += 1;
+  }
+  return undefined;
 }
 
 const RUST_TYPE_PREFIXES: ReadonlySet<string> = new Set(["mut", "dyn", "const"]);

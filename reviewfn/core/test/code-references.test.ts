@@ -175,6 +175,8 @@ const MANY: ManyCase[] = [
   ["an arrow property, and nothing on a JSDoc continuation line", "typescript", "  handler: (event) => {", [{ name: "handler", kind: "method" }], " *   handler: (event) => {"],
   ["a qualified Swift extension's own type", "swift", "extension Outer.Inner {", [{ name: "Inner", kind: "extension" }], "let inner = Outer.Inner()"],
   ["a module-qualified Swift extension with a where clause", "swift", "extension Swift.Array where Element == Int {", [{ name: "Array", kind: "extension" }], "    let values: Swift.Array<Int> = []"],
+  ["a Swift extension path with a comment before its dot", "swift", "extension Outer /* c */ . Inner {", [{ name: "Inner", kind: "extension" }], "extension Outer /* c */ . {"],
+  ["a Swift extension path after a comment", "swift", "extension /* c */ Outer.Inner {", [{ name: "Inner", kind: "extension" }], "extension /* c */ Outer /* d */ Inner {"],
 ];
 
 describe("code references: symbol forms", () => {
@@ -198,6 +200,7 @@ describe("code references: symbol forms", () => {
       ["typescript", `export const a = ${"/*".repeat(25_000)}`], ["typescript", `export const a = ${"factory <".repeat(5_000)}`], ["typescript", `  a = ${"async ".repeat(8_000)}x =>`],
       ["typescript", `  a(): ${"{ x: ".repeat(10_000)}`], ["typescript", `export const ${"a = 1, ".repeat(6_000)}`], ["typescript", `export const a = ${"<T,>".repeat(10_000)}`],
       ["typescript", `export const a = ${"a < ".repeat(12_000)}= 1`], ["typescript", `export const a = ${"f<{ x; ".repeat(6_000)}`], ["typescript", `export const a = ${"1 << ".repeat(10_000)}`],
+      ["swift", `extension ${"A /* c */ . ".repeat(5_000)}B {`], ["swift", `extension ${"/* ".repeat(15_000)}`], ["swift", `extension A<${"/* c */ <".repeat(5_000)}`],
       ["typescript", `export const a = ${"g</* c */".repeat(5_000)}`], ["swift", `extension ${"A.".repeat(15_000)}B<${"<".repeat(10_000)}`],
       ["rust", `impl ${"/*".repeat(25_000)}`], ["rust", `impl<${"'a, ".repeat(12_000)}`], ["rust", `impl X for ${"&'a mut ".repeat(6_000)}`],
     ];
@@ -246,6 +249,20 @@ describe("code references: symbol forms", () => {
     // A qualifier is never reported, even when the line does not prove the extended type.
     expect(swift("extension Outer<T>.Inner {")).toEqual([]);
     expect(swift("extension Outer.")).toEqual([]);
+    // Comments are trivia between path components, around a generic clause and before the follower.
+    expect(swift("extension Outer /* c */ . Inner {")).toEqual(["Inner"]);
+    expect(swift("extension Outer./* c */Inner /* d */ : P {")).toEqual(["Inner"]);
+    expect(swift("extension /* a /* nested */ b */ Outer . /* c */ Inner<T> /* d */ where T: P {")).toEqual(["Inner"]);
+    expect(swift("extension Outer // . Inner")).toEqual(["Outer"]);
+    expect(swift("extension Array</* c */ Int> {")).toEqual(["Array"]);
+    // Without a proven follower ({, :, where, the line's end or a line comment) nothing is reported, never a qualifier.
+    expect(swift("extension Outer /* c */")).toEqual(["Outer"]);
+    expect(swift("extension Outer /* the path goes on")).toEqual([]);
+    expect(swift("extension Outer /* c */ Inner {")).toEqual([]);
+    expect(swift("extension Outer<T> /* c */ . Inner {")).toEqual([]);
+    expect(swift("extension Outer = {")).toEqual([]);
+    expect(swift("extension Array</* > */ Int> {")).toEqual(["Array"]);
+    expect(swift("extension Array<Int /* unclosed")).toEqual([]);
     expect(names("export const first = <div>a, b = 1</div>, second = 2;", true)).toEqual(["first", "second"]);
     expect(names("export const a = f(<p>don't, x = 1</p>), b = 2;", true)).toEqual(["a", "b"]);
     expect(names("export const a = <Comp prop={x} label=\"y, z = 1\" {...rest} />, b = 2;", true)).toEqual(["a", "b"]);
@@ -642,6 +659,43 @@ describe("code references: Git processes end before their callers settle", () =>
     expect(list.matches).toHaveLength(CODE_REFERENCES_LIMITS.maxReferencesPerSymbol);
     expect(list.truncated).toBe(true);
     expect(await markers()).toEqual({ started: ["many"], closed: ["many"] });
+  });
+});
+
+describe("code references: an abort stops the fetch", () => {
+  /** An adapter whose Git records each call, by subcommand and object, and runs `during` while a call is in flight. */
+  class RecordingAdapter extends CodeReferencesContextAdapter {
+    public readonly calls: string[] = [];
+    public constructor(private readonly during: (args: readonly string[], running: Promise<string>) => void) { super(); }
+    protected override async session(request: ContextRequest): Promise<(args: string[], options?: CodeReferencesGitOptions) => Promise<string>> {
+      const real = await super.session(request);
+      return async (args, options) => {
+        this.calls.push(`${args[0]} ${args.at(-1)}`);
+        const running = real(args, options);
+        this.during(args, running);
+        return running;
+      };
+    }
+  }
+
+  it("rejects with the abort during the first changed-file read and starts no further Git", async () => {
+    const files = Object.fromEntries(["a", "b", "c"].map(name => [`src/${name}.ts`, `export function ${name}Fn() {}\n`]));
+    const { request, headCommit } = await fixture({ "src/keep.ts": "x\n" }, files);
+    const controller = new AbortController();
+    const adapter = new RecordingAdapter(args => { if (args[0] === "cat-file") controller.abort(new Error("caller stopped the review")); });
+    await expect(adapter.fetch({ ...request, signal: controller.signal })).rejects.toThrow("caller stopped the review");
+    // The first blob read is the last Git call: no later blob, ls-tree or grep, and no unreadable-file reason.
+    expect(adapter.calls).toEqual([`cat-file ${headCommit}:src/a.ts`]);
+  });
+
+  it("starts no file listing when the abort lands between stages", async () => {
+    // No changed symbol, so no reference search would check the signal before the file listing.
+    const { request, headCommit } = await fixture({ "src/keep.ts": "x\n" }, { "src/a.ts": "value = 1;\n" });
+    const controller = new AbortController();
+    // The read completes, then the abort lands before the next stage starts.
+    const adapter = new RecordingAdapter((args, running) => { if (args[0] === "cat-file") void running.then(() => controller.abort(new Error("stopped after the read"))); });
+    await expect(adapter.fetch({ ...request, signal: controller.signal })).rejects.toThrow("stopped after the read");
+    expect(adapter.calls).toEqual([`cat-file ${headCommit}:src/a.ts`]);
   });
 });
 

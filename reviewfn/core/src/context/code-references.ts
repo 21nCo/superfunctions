@@ -307,16 +307,18 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     const hunks = change.hunks;
     const changedPaths = sorted([...change.changedPaths, ...(hunks ? changeHunkPaths(hunks) : [])]);
 
-    const symbols = hunks && hunks.headCommit === head ? await this.declaredSymbols(git, head, hunks.files, excluded, reasons) : [];
+    const symbols = hunks && hunks.headCommit === head ? await this.declaredSymbols(git, head, hunks.files, excluded, reasons, request.signal) : [];
     if (!hunks) reasons.push("Code references: change hunks were not captured, so no changed symbols were extracted; tests, pairs and documents cover changed paths only.");
     else if (hunks.headCommit !== head) reasons.push(`Code references: the change hunks end at ${hunks.headCommit}, not the head ${head}, so no changed symbols were extracted.`);
     const names = symbols.map(symbol => symbol.name);
 
+    request.signal?.throwIfAborted();
     const references = await collectReferences(git, head, names, excluded, request.signal);
     // One reason for every cut list, naming symbols in symbol order (not completion order), so the manifest and its
     // digest are deterministic and the reason stays bounded however many lists were cut.
     const cutLists = references.filter(result => result.truncated).map(result => result.symbol);
     if (cutLists.length) reasons.push(`Code references: ${cutLists.length} symbols have more than ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} references; only the first ${CODE_REFERENCES_LIMITS.maxReferencesPerSymbol} of each are listed: ${quoteItems(cutLists)}.`);
+    request.signal?.throwIfAborted();
     const tracked = (await git(["ls-tree", "-r", "-z", "--name-only", "--full-tree", head])).split("\0").filter(file => file && !excluded(file));
     const testFiles = conventionalTests(changedPaths, tracked);
     const pairedFiles = this.pairedFiles(changedPaths, tracked);
@@ -370,11 +372,17 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
     return { version: 1, sources: [source], selection: { candidates: [source.id], selected: [source.id], rule: "code references: changed symbols, textual references, conventional tests, policy pairs and Markdown mentions at head" }, limits: request.limits, incompleteReasons: reasons };
   }
 
-  /** One trusted Git, run at the top of the work tree that holds `request.root`, with hooks and external config disabled. */
-  private async session(request: ContextRequest): Promise<CodeReferencesGit> {
+  /**
+   * One trusted Git, run at the top of the work tree that holds `request.root`, with hooks and external config disabled.
+   * Once `request.signal` aborts, no further Git starts: every later call rejects with the abort reason.
+   */
+  protected async session(request: ContextRequest): Promise<CodeReferencesGit> {
     const executable = await resolveTrustedExecutable("git");
     const root = await realpath(request.root);
-    const at = (cwd: string): CodeReferencesGit => (args, options = {}) => runGit(executable, ["-c", `core.hooksPath=${devNull}`, "-c", "core.quotePath=false", ...args], { cwd, ...options, signal: options.signal ?? request.signal });
+    const at = (cwd: string): CodeReferencesGit => async (args, options = {}) => {
+      request.signal?.throwIfAborted();
+      return runGit(executable, ["-c", `core.hooksPath=${devNull}`, "-c", "core.quotePath=false", ...args], { cwd, ...options, signal: options.signal ?? request.signal });
+    };
     const top = (await at(root)(["rev-parse", "--show-toplevel"])).replace(/\r?\n$/u, "");
     if (!top) throw new Error(`${request.root} is not inside a Git work tree.`);
     return at(top);
@@ -385,7 +393,7 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
    * `maxDeclarationsPerSymbol` declarations each. Declarations are read one at a time, so a declaration-dense file
    * costs no more than its lines; every omission is recorded in `reasons`.
    */
-  private async declaredSymbols(git: CodeReferencesGit, head: string, files: readonly ChangeHunkFile[], excluded: (file: string) => boolean, reasons: string[]): Promise<CodeReferenceMap["symbols"]> {
+  private async declaredSymbols(git: CodeReferencesGit, head: string, files: readonly ChangeHunkFile[], excluded: (file: string) => boolean, reasons: string[], signal?: AbortSignal): Promise<CodeReferenceMap["symbols"]> {
     const kept = new Map<string, CodeReferenceMap["symbols"][number]>();
     const omitted = new Set<string>();
     const tooLarge: string[] = [];
@@ -396,8 +404,14 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
       const ranges = file.hunks.filter(hunk => hunk.newLines > 0);
       if (!ranges.length) continue;
       let text: string;
+      // An abort stops the whole fetch: it is never an unreadable file, and no later file is read.
+      signal?.throwIfAborted();
       try { text = await git(["cat-file", "blob", `${head}:${file.path}`], { maxOutputBytes: CODE_REFERENCES_LIMITS.maxFileBytes }); }
       catch (error) {
+        if (signal?.aborted || isAbortError(error)) {
+          signal?.throwIfAborted();
+          throw error;
+        }
         if (error instanceof GitOutputLimitError) tooLarge.push(file.path);
         else unreadable.push(`${file.path} (${error instanceof Error ? error.message : String(error)})`);
         continue;
@@ -454,6 +468,7 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
 
   private async documents(git: CodeReferencesGit, head: string, names: readonly string[], changedPaths: readonly string[], excluded: (file: string) => boolean, reasons: string[], signal?: AbortSignal): Promise<CodeReferenceMap["documents"]> {
     // Git reads one fixed-string pattern per line of the pattern file, so a path holding a line feed cannot be one.
+    signal?.throwIfAborted();
     const unsearchable = changedPaths.filter(term => term.includes("\n"));
     if (unsearchable.length) reasons.push(`Code references: ${unsearchable.length} changed paths contain a line feed, so Markdown mentions of them were not searched: ${quoteItems(unsearchable)}.`);
     const terms = [...names.map(term => ({ term, word: true })), ...changedPaths.filter(term => !term.includes("\n")).map(term => ({ term, word: false }))];
@@ -470,6 +485,7 @@ export class CodeReferencesContextAdapter implements ContextAdapter {
       return true;
     });
     // Patterns go through a file, so any number of changed paths fits on the command line.
+    signal?.throwIfAborted();
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-code-references-"));
     try {
       const patterns = path.join(directory, "patterns");
@@ -541,4 +557,9 @@ export function conventionalTests(changedPaths: readonly string[], tracked: read
     const entry = covers.get(file)!;
     return { path: file, covers: entry.covers, ...(entry.omitted ? { omittedCovers: entry.omitted } : {}) };
   });
+}
+
+/** Whether `error` is an abort, as `AbortSignal` and Node's child processes raise it. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
