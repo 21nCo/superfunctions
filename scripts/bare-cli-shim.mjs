@@ -102,29 +102,17 @@ function npmLocate(command, prefix) {
   return undefined;
 }
 
-// The copy of the CLI npm reused from the project's own tree, which may be nested where no reported PATH reaches it:
-// `npm ls` (with the project's npm settings, across every workspace) lists each installed copy's folder.
-function projectTreeBin(command, prefix) {
-  const args = [...prefix, 'ls', cli, '--all', '--parseable', '--workspaces=false'];
-  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
-  // npm ls exits non-zero for an imperfect tree (extraneous or missing packages) but still lists what it found.
-  for (const folder of (result.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
-    const file = binIn(folder.trim());
-    if (file) return file;
-  }
-  return undefined;
-}
-
-// npm fetches the CLI at this version into its cache, or reuses a copy in the project's tree, which the first
-// node_modules/.bin folder on its reported PATH may not reach; projectTreeBin then finds that copy.
+// npm fetches the CLI at this version into its cache and reports a PATH reaching it. When npm instead reuses a copy
+// nested somewhere in the project's tree, no reported PATH reaches it (so `npx` could not run that copy either), and
+// this command stops rather than run another version.
 function fetchedBin() {
   const [command, prefix] = npmCommand();
   const found = npmLocate(command, prefix);
-  if (found?.error) fail(found.error);
-  if (found) return found;
-  const file = projectTreeBin(command, prefix);
-  if (file === undefined) fail(`npm fetched ${spec}, but its ${own.name} command was not found. Run npx ${spec} instead.`);
-  return { file, PATH: process.env.PATH ?? '' };
+  if (found === undefined) {
+    fail(`npm found ${spec} but no runnable ${own.name} command for it; it may be nested in this project's node_modules. Install ${spec} in the project, or run this command from another folder.`);
+  }
+  if (found.error) fail(found.error);
+  return found;
 }
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');

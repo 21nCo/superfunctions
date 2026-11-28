@@ -4,6 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare, readTarball } from './assert-bare-release.mjs';
 import { ReleaseTargetError, loadReleaseTargets } from './resolve-release-tag.mjs';
 
@@ -116,7 +117,7 @@ test('manifests: core, CLI and bare package at one version, pinned exactly, with
   assert.deepEqual(await checkBareManifests({ root, target, targets }), {
     version: '1.2.3',
     packages: [
-      { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3' },
+      { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3', forbid: ['@fixture/cli'] },
       { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] },
     ],
   });
@@ -148,6 +149,14 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   await expectProblem({ overrides: { exports: { '.': { types: './index.d.ts' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ entry: { core: 'fixture' }, overrides: { dependencies: {}, exports: { './sub': './sub.js' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: { '.': { require: './index.cjs' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  // Node.js takes the first matching condition in key order, so a blocking "node" ahead of "import" wins.
+  await expectProblem({ overrides: { exports: { '.': { node: null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
+
+  // Installing the core must not install the CLI.
+  const coreDependsOnCli = product(t);
+  writeJson(path.join(coreDependsOnCli, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', dependencies: { 'the-cli': 'NPM:@fixture/cli@1.2.3' } });
+  assert.ok((await problemsOf(coreDependsOnCli)).some(problem => /its core @fixture\/core must not depend on its CLI \(dependencies\["the-cli"\]\)/.test(problem)));
   await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
   // Root exports in their other forms pass.
@@ -189,7 +198,7 @@ test('manifests: a CLI-only bare package depends on exactly its CLI; a bare core
 
 test('registry: the core and CLI must already be on npm at the version', async t => {
   const packages = [
-    { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3' },
+    { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3', forbid: ['@fixture/cli'] },
     { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] },
   ];
   const registry = 'https://registry.example.test/';
@@ -217,6 +226,8 @@ test('registry: the core and CLI must already be on npm at the version', async t
   execFileSync('tar', ['-czf', path.join(linkDir, 'cli.tgz'), '-C', linkDir, 'package']);
   const linked = { ...published, [CLI_TARBALL]: readFileSync(path.join(linkDir, 'cli.tgz')) };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(linked) }), /has no dist\/cli\.js for its fixture bin/);
+  const coreWithCli = { ...published, 'https://registry.example.test/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3', optionalDependencies: { '@fixture/cli': '1.2.3' } } };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(coreWithCli) }), /@fixture\/core@1\.2\.3 on npm depends on @fixture\/cli \(optionalDependencies\["@fixture\/cli"\]\)/);
   const noTarball = { ...published, [CLI_TARBALL]: undefined };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(noTarball) }), error => error.code === 'registry-unavailable' && /tarball/.test(error.message));
 
@@ -264,6 +275,16 @@ test('tarball reader: regular files, links and long (pax) paths', t => {
   assert.equal(entries.get(`package/${long}`)?.type, '0');
   assert.equal(entries.get(`package/${long}`).data.toString('utf8'), 'long\n');
   assert.equal(JSON.parse(entries.get('package/package.json').data.toString('utf8')).name, '@fixture/long');
+
+  // A header whose checksum does not match is refused, as npm's tar reader refuses it.
+  const raw = gunzipSync(readFileSync(path.join(dir, packed.filename)));
+  raw[0] ^= 0x01;
+  assert.throws(() => readTarball(gzipSync(raw)), /invalid tar header checksum/);
+  // An entry that claims more bytes than the archive holds is refused.
+  const whole = gunzipSync(readFileSync(path.join(dir, packed.filename)));
+  const firstSize = Number.parseInt(whole.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim(), 8);
+  const truncated = whole.subarray(0, 512 + firstSize - 1);
+  assert.throws(() => readTarball(gzipSync(truncated)), /runs past the end/);
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {
@@ -374,24 +395,14 @@ test('shim: fetches the CLI at exactly its version when no matching copy is inst
   assert.deepEqual(npm.args(), ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH']);
 });
 
-test('shim: finds the copy npm reused from the project tree when no reported PATH reaches it', t => {
-  const { root, shim } = installedProduct(t, { installedCli: '1.2.2' });
-  const nested = path.join(root, 'node_modules/other/node_modules/@fixture/cli');
-  writeCli(nested, '1.2.3', 'nested');
-  const npm = fakeNpm(t, { reportsBin: false, listed: [path.join(root, 'node_modules/@fixture/cli'), nested] });
-  const run = runShim(shim, ['0', 'status'], { npm_execpath: npm.npmCli });
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.output.origin, 'nested');
-  assert.deepEqual(run.output.args, ['0', 'status']);
-  assert.deepEqual(npm.calls().map(call => call.args), [
-    ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH'],
-    ['ls', '@fixture/cli', '--all', '--parseable', '--workspaces=false'],
-  ]);
-
-  const nothing = fakeNpm(t, { reportsBin: false, listed: [path.join(root, 'node_modules/@fixture/cli')] });
-  const missing = runShim(shim, [], { npm_execpath: nothing.npmCli });
-  assert.equal(missing.status, 1);
-  assert.match(missing.stderr, /its fixture command was not found\. Run npx @fixture\/cli@1\.2\.3 instead\./);
+test('shim: stops, without running another version, when npm reports no PATH reaching the CLI', t => {
+  const { shim } = installedProduct(t, { installedCli: '1.2.2' });
+  const npm = fakeNpm(t, { reportsBin: false });
+  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
+  assert.equal(run.status, 1);
+  assert.equal(run.output, null);
+  assert.match(run.stderr, /npm found @fixture\/cli@1\.2\.3 but no runnable fixture command for it/);
+  assert.deepEqual(npm.calls().map(call => call.args[0]), ['exec']);
 });
 
 test('shim: a CLI bin that resolves outside its package is never run', t => {
@@ -405,7 +416,7 @@ test('shim: a CLI bin that resolves outside its package is never run', t => {
   const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
   assert.equal(run.status, 1);
   assert.equal(run.output, null);
-  assert.match(run.stderr, /its fixture command was not found/);
+  assert.match(run.stderr, /no runnable fixture command/);
 });
 
 test('shim: says what failed when npm cannot fetch the CLI or the fetched copy has no matching bin', t => {
@@ -417,7 +428,7 @@ test('shim: says what failed when npm cannot fetch the CLI or the fetched copy h
   const wrongVersion = fakeNpm(t, { fetchedCli: '9.9.9' });
   const mismatch = runShim(shim, [], { npm_execpath: wrongVersion.npmCli });
   assert.equal(mismatch.status, 1);
-  assert.match(mismatch.stderr, /npm fetched @fixture\/cli@1\.2\.3, but its fixture command was not found\./);
+  assert.match(mismatch.stderr, /npm found @fixture\/cli@1\.2\.3 but no runnable fixture command for it/);
 
   const { root, shim: unnamed } = installedProduct(t);
   const manifest = path.join(root, 'node_modules/fixture/package.json');

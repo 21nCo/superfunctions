@@ -76,6 +76,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   const problems = [];
   const where = `${target.name} (${target.path})`;
   const linked = {};
+  const scopedManifests = {};
   let cliBinNames = [];
   for (const field of ['core', 'cli']) {
     const slug = target.bare[field];
@@ -83,6 +84,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
     const scoped = bySlug.get(slug);
     const scopedManifest = await readManifest(root, scoped);
     linked[field] = { slug, name: scoped.name, version: scopedManifest.version };
+    scopedManifests[field] = scopedManifest;
     if (scopedManifest.private === true) problems.push(`its ${field} ${scoped.name} is private`);
     if (scopedManifest.version !== version) {
       problems.push(`its ${field} ${scoped.name} is at ${scopedManifest.version}, not ${version}; release the bare package at the same version as ${scoped.name}`);
@@ -149,11 +151,28 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   } else if (manifest.frontDoor !== undefined) {
     problems.push('frontDoor applies only to a bare target with a "cli" slug');
   }
+  if (linked.core && target.bare.cli !== null) {
+    const cliName = bySlug.get(target.bare.cli).name;
+    for (const dependency of installedDependencies(scopedManifests.core, cliName)) problems.push(`its core ${linked.core.name} must not depend on its CLI (${dependency})`);
+  }
   if (problems.length > 0) {
     throw new BareReleaseError('misaligned', `Bare package ${where} at ${version} does not match its core and CLI:\n  - ${problems.join('\n  - ')}`, { slug: target.slug, problems });
   }
   if (linked.cli) linked.cli.bins = cliBinNames;
+  // Installing the core must not install the CLI either.
+  if (linked.core && target.bare.cli !== null) linked.core.forbid = [bySlug.get(target.bare.cli).name];
   return { version, packages: Object.values(linked) };
+}
+
+/** The dependency entries of a manifest that install `name` for its importers, directly or through an npm alias. */
+function installedDependencies(manifest, name) {
+  const found = [];
+  for (const field of ['dependencies', 'optionalDependencies']) {
+    for (const [key, spec] of Object.entries(manifest?.[field] ?? {})) {
+      if (key === name || aliasTarget(spec) === name) found.push(`${field}["${key}"]`);
+    }
+  }
+  return found;
 }
 
 /** The package an npm alias spec ("npm:<name>" or "npm:<name>@<range>", scheme in any case) installs, or null. */
@@ -162,30 +181,45 @@ function aliasTarget(spec) {
   return match ? match[1] : null;
 }
 
-// The conditions under which `import "<bare>"` resolves in Node.js; a require-only root cannot be imported.
+// The conditions Node.js matches for `import "<bare>"`; a require-only root cannot be imported.
 const IMPORT_CONDITIONS = ['import', 'node', 'default'];
 
-/** The targets an exports value offers an ESM import: strings, directly, in an array or under an import condition. */
-function importTargets(value) {
-  if (typeof value === 'string') return value === '' ? [] : [value];
-  if (Array.isArray(value)) return value.flatMap(importTargets);
-  if (value === null || typeof value !== 'object') return [];
-  return Object.entries(value).flatMap(([key, target]) => (IMPORT_CONDITIONS.includes(key) ? importTargets(target) : []));
-}
-
-/** The files `import "<bare>"` can resolve to: the root of `exports`, or (with no exports) the main file. */
-function rootImportTargets(manifest) {
-  const { exports } = manifest;
-  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '' ? [manifest.main] : [];
-  if (exports !== null && typeof exports === 'object' && !Array.isArray(exports)) {
-    const keys = Object.keys(exports);
-    if (keys.some(key => key.startsWith('.'))) return importTargets(exports['.']);
+/**
+ * The target Node.js selects for an ESM import from an exports value: the first key, in order, that is a matching
+ * condition decides (a nested object that matches nothing lets the next key try); null blocks the import; an array
+ * takes its first valid target; a target must start with "./". Returns the target, null (blocked or invalid), or
+ * undefined (no condition matched).
+ */
+function resolveImport(value) {
+  if (typeof value === 'string') return value.startsWith('./') ? value : null;
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const target = resolveImport(candidate);
+      if (typeof target === 'string') return target;
+    }
+    return null;
   }
-  // A string, an array or a conditions-only object is the "." entry itself.
-  return importTargets(exports);
+  if (value === null || typeof value !== 'object') return null;
+  for (const [key, candidate] of Object.entries(value)) {
+    if (!IMPORT_CONDITIONS.includes(key)) continue;
+    const target = resolveImport(candidate);
+    if (target !== undefined) return target;
+  }
+  return undefined;
 }
 
-const hasRootExport = manifest => rootImportTargets(manifest).length > 0;
+/** The file `import "<bare>"` resolves to: the root of `exports`, or (with no exports) the main file; null if none. */
+function rootImportTarget(manifest) {
+  const { exports } = manifest;
+  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '' ? manifest.main : null;
+  let root = exports;
+  if (exports !== null && typeof exports === 'object' && !Array.isArray(exports) && Object.keys(exports).some(key => key.startsWith('.'))) root = exports['.'];
+  // Otherwise a string, an array or a conditions-only object is the "." entry itself.
+  const target = resolveImport(root);
+  return typeof target === 'string' ? target : null;
+}
+
+const hasRootExport = manifest => rootImportTarget(manifest) !== null;
 
 /**
  * The entries of a gzipped tar archive (an npm tarball), by path without a leading "./": { type, data }, where type is
@@ -202,8 +236,15 @@ export function readTarball(gzipped) {
   for (let offset = 0; offset + 512 <= data.length; ) {
     const header = data.subarray(offset, offset + 512);
     if (header.every(byte => byte === 0)) break;
+    // A header's checksum is the sum of its bytes with the checksum field read as spaces; tar readers (npm's
+    // included) reject an entry whose stored checksum differs.
+    const stored = Number.parseInt(text(header.subarray(148, 156)).trim(), 8);
+    let sum = 0;
+    for (let index = 0; index < 512; index += 1) sum += index >= 148 && index < 156 ? 0x20 : header[index];
+    if (stored !== sum) throw new Error(`invalid tar header checksum at byte ${offset}`);
     const size = Number.parseInt(text(header.subarray(124, 136)).trim() || '0', 8);
     if (!Number.isSafeInteger(size) || size < 0) throw new Error(`unreadable tar entry size at byte ${offset}`);
+    if (offset + 512 + size > data.length) throw new Error(`tar entry at byte ${offset} runs past the end of the archive`);
     const type = header[156] === 0 ? '0' : String.fromCharCode(header[156]);
     const prefix = text(header.subarray(257, 262)) === 'ustar' ? text(header.subarray(345, 500)) : '';
     const name = prefix ? `${prefix}/${text(header.subarray(0, 100))}` : text(header.subarray(0, 100));
@@ -237,7 +278,7 @@ const regularFile = (entries, file) => {
  */
 export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, fetch = globalThis.fetch } = {}) {
   const base = registry.replace(/\/+$/, '');
-  for (const { slug, name, version, bins = [] } of packages) {
+  for (const { slug, name, version, bins = [], forbid = [] } of packages) {
     const url = `${base}/${name.replace('/', '%2f')}/${encodeURIComponent(version)}`;
     let response;
     try {
@@ -252,6 +293,10 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
     const body = await response.json();
     if (body?.name !== name || body?.version !== version) {
       throw new BareReleaseError('registry-unavailable', `${base} returned ${body?.name}@${body?.version} for ${name}@${version}`, { name, version });
+    }
+    for (const forbidden of forbid) {
+      const dependencies = installedDependencies(body, forbidden);
+      if (dependencies.length > 0) throw new BareReleaseError('misaligned', `${name}@${version} on npm depends on ${forbidden} (${dependencies.join(', ')}), so importers of the bare package would install the CLI`, { name, version });
     }
     // The shim runs the published CLI's bin named after the bare package; every other bare bin is an alias of it.
     if (bins.length > 0) {
@@ -310,9 +355,9 @@ export async function checkPackedBare({ tarball, manifest, shim: template }) {
     if (shim === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
     if (shim.toString('utf8') !== template) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
   }
-  // Every file `import "<bare>"` can resolve to ships in the tarball (wildcard targets are left to Node.js).
-  const missing = rootImportTargets(manifest).filter(file => !file.includes('*') && regularFile(entries, file) === undefined);
-  if (missing.length > 0) throw new BareReleaseError('misaligned', `The packed ${manifest.name} lacks ${missing.join(', ')}, which import "${manifest.name}" resolves to`);
+  // The file `import "<bare>"` resolves to ships in the tarball.
+  const root = rootImportTarget(manifest);
+  if (root !== null && regularFile(entries, root) === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} lacks ${root}, which import "${manifest.name}" resolves to`);
 }
 
 /**
