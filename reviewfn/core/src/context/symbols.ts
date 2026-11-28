@@ -101,7 +101,12 @@ const KEYWORDS: Readonly<Record<SymbolLanguage, ReadonlySet<string>>> = Object.f
     "virtual", "yield", "try",
   ]),
 });
-const SWIFT_MODIFIERS = "(?:@[A-Za-z_]\\w*(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|static|class|final|override|mutating|nonmutating|convenience|required|indirect|dynamic|lazy|nonisolated|distributed|optional)(?:\\([^)]*\\))?\\s+)*";
+/**
+ * Whitespace between Swift tokens. U+FEFF is whitespace to JavaScript but an identifier character to Swift, so it never
+ * separates a keyword from a name: `func \uFEFF🐱save` declares `\uFEFF🐱save`, and `func\uFEFF🐱` is one identifier.
+ */
+const SWIFT_SPACE = "[^\\S\\uFEFF]";
+const SWIFT_MODIFIERS = `(?:@[A-Za-z_]\\w*(?:\\([^)]*\\))?${SWIFT_SPACE}+)*(?:(?:public|private|fileprivate|internal|open|package|static|class|final|override|mutating|nonmutating|convenience|required|indirect|dynamic|lazy|nonisolated|distributed|optional)(?:\\([^)]*\\))?${SWIFT_SPACE}+)*`;
 const RUST_VISIBILITY = "(?:pub(?:\\([^)]*\\))?\\s+)?";
 
 /**
@@ -145,12 +150,12 @@ const RULES: Readonly<Record<SymbolLanguage, readonly SymbolRule[]>> = Object.fr
     { kind: "class", pattern: new RegExp(`^\\s*class\\s+(${PYTHON_ID})\\s*[[(:]`, "u") },
   ],
   swift: [
-    { kind: "function", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}func\\s+(${SWIFT_ID})`, "u") },
+    { kind: "function", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}func${SWIFT_SPACE}+(${SWIFT_ID})`, "u") },
     // `class func`, `class var` and the like are class members, not classes: their keyword is never a name.
-    { kind: "class", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}class\\s+(${SWIFT_ID})`, "u") },
-    { kind: "struct", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}struct\\s+(${SWIFT_ID})`, "u") },
-    { kind: "enum", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}enum\\s+(${SWIFT_ID})`, "u") },
-    { kind: "protocol", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}protocol\\s+(${SWIFT_ID})`, "u") },
+    { kind: "class", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}class${SWIFT_SPACE}+(${SWIFT_ID})`, "u") },
+    { kind: "struct", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}struct${SWIFT_SPACE}+(${SWIFT_ID})`, "u") },
+    { kind: "enum", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}enum${SWIFT_SPACE}+(${SWIFT_ID})`, "u") },
+    { kind: "protocol", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}protocol${SWIFT_SPACE}+(${SWIFT_ID})`, "u") },
     // The extended type is the last component of a qualified name: `extension Outer.Inner`, `extension Swift.Array where`.
     { kind: "extension", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}extension(?!${SWIFT_ID_PART})`, "u"), name: swiftExtendedType },
   ],
@@ -757,7 +762,7 @@ function jsArrowPropertyName(text: string, _next: () => string | undefined, dial
  */
 function swiftExtendedType(text: string, _next: () => string | undefined, _dialect: Dialect, match: RegExpExecArray): string | undefined {
   let at = match.index + match[0].length;
-  if (at < text.length && !/\s|\//u.test(text[at])) return undefined;
+  if (at < text.length && !/[^\S\uFEFF]|\//u.test(text[at])) return undefined;
   let name: string | undefined;
   for (;;) {
     const start = swiftTrivia(text, at);
@@ -781,13 +786,14 @@ function swiftExtendedType(text: string, _next: () => string | undefined, _diale
 }
 
 /**
- * The index of the next Swift token at or after `index`, skipping whitespace and block comments (which nest); the line's
- * end for a line comment; `undefined` for a block comment that does not close on the line, as the next line may go on.
+ * The index of the next Swift token at or after `index`, skipping whitespace (never U+FEFF, an identifier character) and
+ * block comments (which nest); the line's end for a line comment; `undefined` for a block comment that does not close
+ * on the line, as the next line may go on.
  */
 function swiftTrivia(text: string, index: number): number | undefined {
   let at = index;
   for (;;) {
-    while (at < text.length && /\s/u.test(text[at])) at += 1;
+    while (at < text.length && /[^\S\uFEFF]/u.test(text[at])) at += 1;
     if (text[at] !== "/") return at;
     if (text[at + 1] === "/") return text.length;
     if (text[at + 1] !== "*") return at;

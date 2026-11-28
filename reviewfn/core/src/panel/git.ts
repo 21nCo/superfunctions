@@ -34,8 +34,9 @@ export interface GitRunOptions {
  * drained and only its start is kept for the error of a failed command. Rejects when Git fails or `signal` aborts.
  * Once Git has started, the promise settles only after its process has exited, also when `signal` aborts it, so a
  * caller that awaits it never outlives the Git it ran. A Git that does not exit within a few seconds of the abort is
- * killed; once a stopped Git has exited, the promise rejects when its output closes or a second later, whichever is
- * first, so a process Git started that keeps the output open does not hold the caller.
+ * killed. Once Git has exited after any stop (an abort, also one that arrives after Git exited, or the output limit),
+ * the promise rejects when Git's output closes or a second later, whichever is first, so a process Git started that
+ * keeps the output open does not hold the caller.
  */
 export function runGit(executable: string, args: string[], options: GitRunOptions): Promise<string> {
   const limit = options.maxOutputBytes ?? DEFAULT_MAX_GIT_OUTPUT_BYTES;
@@ -44,31 +45,25 @@ export function runGit(executable: string, args: string[], options: GitRunOption
     const child = spawn(executable, args, { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, signal: options.signal, stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let bytes = 0;
-    let overflow = false;
     let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (options.onOutput) return options.onOutput(chunk);
-      if (overflow) return;
-      bytes += chunk.length;
-      if (bytes > limit) { overflow = true; chunks.length = 0; child.kill("SIGKILL"); return; }
-      chunks.push(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < MAX_GIT_STDERR_CHARS) stderr += chunk.toString("utf8").slice(0, MAX_GIT_STDERR_CHARS - stderr.length); });
     let failure: { error: unknown } | undefined;
     let grace: NodeJS.Timeout | undefined;
     let drain: NodeJS.Timeout | undefined;
     let settled = false;
+    const exited = () => child.exitCode !== null || child.signalCode !== null;
+    // Spawn's own abort listener is removed when Git exits, so a later abort is observed here.
+    const onAbort = () => { if (exited() && options.signal) stop(abortError(options.signal)); };
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(grace);
       clearTimeout(drain);
+      options.signal?.removeEventListener("abort", onAbort);
       finish();
     };
-    const exited = () => child.exitCode !== null || child.signalCode !== null;
     // A stopped Git has exited: stop waiting for output that something else may still hold open.
     const drainAfterExit = () => {
-      if (!failure || drain) return;
+      if (!failure || drain || settled) return;
       const { error } = failure;
       drain = setTimeout(() => {
         child.stdout.destroy();
@@ -76,20 +71,43 @@ export function runGit(executable: string, args: string[], options: GitRunOption
         settle(() => reject(error));
       }, GIT_STOP_DRAIN_MS);
     };
+    // Stop Git with `error`: kill it if it does not exit within the grace period, then bound the wait for its output.
+    const stop = (error: unknown) => {
+      failure ??= { error };
+      if (exited()) return drainAfterExit();
+      if (grace) return;
+      grace = setTimeout(() => { if (!exited()) child.kill("SIGKILL"); }, GIT_STOP_GRACE_MS);
+      grace.unref();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (options.onOutput) return options.onOutput(chunk);
+      if (failure) return;
+      bytes += chunk.length;
+      if (bytes <= limit) {
+        chunks.push(chunk);
+        return;
+      }
+      chunks.length = 0;
+      child.kill("SIGKILL");
+      stop(new GitOutputLimitError(`git ${command} printed more than the run's ${limit}-byte limit for Git output.`));
+    });
+    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < MAX_GIT_STDERR_CHARS) stderr += chunk.toString("utf8").slice(0, MAX_GIT_STDERR_CHARS - stderr.length); });
     child.once("error", error => {
       // Without a process ID Git never started, so no close follows; otherwise wait for it to exit and close.
       if (child.pid === undefined) return settle(() => reject(error));
-      failure ??= { error };
-      if (exited()) return drainAfterExit();
-      grace = setTimeout(() => { if (!exited()) child.kill("SIGKILL"); }, GIT_STOP_GRACE_MS);
-      grace.unref();
+      stop(error);
     });
     child.once("exit", drainAfterExit);
     child.once("close", code => settle(() => {
       if (failure) reject(failure.error);
-      else if (overflow) reject(new GitOutputLimitError(`git ${command} printed more than the run's ${limit}-byte limit for Git output.`));
       else if (code === 0 || (code !== null && options.successExitCodes?.includes(code))) resolve(Buffer.concat(chunks).toString("utf8"));
       else reject(new Error(`git ${command} exited with ${String(code)}: ${stderr.trim()}`));
     }));
   });
+}
+
+/** The error Node gives a child process its signal aborted, for an abort that arrives after Git has exited. */
+function abortError(signal: AbortSignal): Error {
+  return Object.assign(new Error("The operation was aborted", { cause: signal.reason }), { name: "AbortError", code: "ABORT_ERR" });
 }

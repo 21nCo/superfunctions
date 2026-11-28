@@ -13,7 +13,7 @@ import {
   type CodeReferencesGitOptions,
   type ArtifactStore, type CodeReferenceMap, type ContextManifest, type ContextRequest, type PanelPolicy, type ReviewReport, type SymbolKind, type SymbolLanguage,
 } from "../src/index.js";
-import { runGit } from "../src/panel/git.js";
+import { GitOutputLimitError, runGit, type GitRunOptions } from "../src/panel/git.js";
 
 const LIMITS: ContextManifest["limits"] = { maxSources: 10, maxBytes: 2_000_000, maxDepth: 4 };
 const roots: string[] = [];
@@ -270,6 +270,13 @@ describe("code references: symbol forms", () => {
     expect(swift("func save🐱() {}")).not.toContain("save");
     expect(swift("struct Point\u0301 {")).toEqual(["Point\u0301"]);
     expect(swift("class A\u{1F600}B {")).toEqual(["A\u{1F600}B"]);
+    // U+FEFF is a Swift identifier character, never whitespace between a keyword and a name.
+    expect(swift("func \uFEFF\u{1F431}save() {}")).toEqual(["\uFEFF\u{1F431}save"]);
+    expect(swift("struct \uFEFF\u{1F431}Type {}")).toEqual(["\uFEFF\u{1F431}Type"]);
+    expect(swift("extension Outer.\uFEFF\u{1F431}Type {}")).toEqual(["\uFEFF\u{1F431}Type"]);
+    expect(swift("func\uFEFF\u{1F431}() {}")).toEqual([]);
+    expect(swift("extension\uFEFFOuter {")).toEqual([]);
+    expect(swift("public\uFEFFfunc save() {}")).toEqual([]);
     // A Rust path needs a segment after every separator, also across a turbofish.
     const rust = (...lines: string[]) => lineSymbols("rust", ...lines).map(symbol => symbol.name);
     expect(rust("impl Render for model::")).toEqual([]);
@@ -674,23 +681,51 @@ describe("code references: Git processes end before their callers settle", () =>
     expect(await markers()).toEqual({ started: ["many"], closed: ["many"] });
   });
 
-  it.skipIf(process.platform === "win32")("rejects on the caller's abort within a bound when a process Git started keeps its output open", async () => {
-    // A stand-in Git whose child holds the inherited stdout and stderr long after the stopped Git itself has exited.
+  /** A stand-in Git, run by `body`, that first starts a helper holding the inherited stdout and stderr for 20 seconds. */
+  async function heldOutput(body: string[]): Promise<{ run: (options: Partial<GitRunOptions>) => Promise<string>; stopHelper: () => Promise<void> }> {
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-fake-git-"));
     roots.push(directory);
     const executable = path.join(directory, "git");
     const pidFile = path.join(directory, "helper.pid");
-    await writeFile(executable, ["#!/bin/sh", "sleep 20 &", 'echo $! > "$HELPER_PID"', "trap 'exit 143' TERM", "while :; do sleep 0.05; done", ""].join("\n"), { mode: 0o755 });
+    await writeFile(executable, ["#!/bin/sh", "sleep 20 &", 'echo $! > "$HELPER_PID"', ...body, ""].join("\n"), { mode: 0o755 });
+    return {
+      run: options => runGit(executable, ["cat-file", "blob", "HEAD:a"], { cwd: directory, env: { PATH: process.env.PATH, HELPER_PID: pidFile }, ...options }),
+      stopHelper: async () => {
+        const helper = Number((await readFile(pidFile, "utf8").catch(() => "")).trim());
+        if (helper > 0) { try { process.kill(helper, "SIGKILL"); } catch { /* already gone */ } }
+      },
+    };
+  }
+
+  it.skipIf(process.platform === "win32")("rejects on the caller's abort within a bound when a process Git started keeps its output open", async () => {
+    const { run, stopHelper } = await heldOutput(["trap 'exit 143' TERM", "while :; do sleep 0.05; done"]);
     const caller = new AbortController();
     const started = Date.now();
     setTimeout(() => caller.abort(new Error("caller stopped the review")), 200);
     try {
-      await expect(runGit(executable, ["cat-file", "blob", "HEAD:a"], { cwd: directory, env: { PATH: process.env.PATH, HELPER_PID: pidFile }, signal: caller.signal })).rejects.toThrow();
+      await expect(run({ signal: caller.signal })).rejects.toMatchObject({ name: "AbortError" });
       expect(Date.now() - started).toBeLessThan(4_000);
-    } finally {
-      const helper = Number((await readFile(pidFile, "utf8").catch(() => "")).trim());
-      if (helper > 0) { try { process.kill(helper, "SIGKILL"); } catch { /* already gone */ } }
-    }
+    } finally { await stopHelper(); }
+  });
+
+  it.skipIf(process.platform === "win32")("rejects on an abort that arrives after Git exited while its output is still held open", async () => {
+    const { run, stopHelper } = await heldOutput(["exit 0"]);
+    const caller = new AbortController();
+    const started = Date.now();
+    setTimeout(() => caller.abort(new Error("caller stopped the review")), 300);
+    try {
+      await expect(run({ signal: caller.signal })).rejects.toMatchObject({ name: "AbortError", cause: new Error("caller stopped the review") });
+      expect(Date.now() - started).toBeLessThan(4_000);
+    } finally { await stopHelper(); }
+  });
+
+  it.skipIf(process.platform === "win32")("rejects at the output limit within a bound when a process Git started keeps its output open", async () => {
+    const { run, stopHelper } = await heldOutput(["while :; do echo output-line; done"]);
+    const started = Date.now();
+    try {
+      await expect(run({ maxOutputBytes: 64 })).rejects.toBeInstanceOf(GitOutputLimitError);
+      expect(Date.now() - started).toBeLessThan(4_000);
+    } finally { await stopHelper(); }
   });
 });
 
