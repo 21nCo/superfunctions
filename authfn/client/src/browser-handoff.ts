@@ -262,7 +262,7 @@ const CHALLENGE_ID_PATTERN = /^[a-z0-9_-]{1,255}$/;
 const SOCIAL_METHODS = new Set(['oauth-google', 'oauth-apple', 'oauth-github']);
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
-const USED_RECORD_KEYS = ['expiresAt', 'id', 'issuedAt', 'state', 'v'].join();
+const USED_RECORD_KEYS: ReadonlySet<string> = new Set(['expiresAt', 'id', 'issuedAt', 'state', 'v']);
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const MAX_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_KEY_PREFIX = 'authfn.handoff.';
@@ -986,6 +986,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Whether `record`'s own keys are exactly `keys`, compared as a set (no locale-dependent sort). */
+function hasExactlyKeys(record: Record<string, unknown>, keys: ReadonlySet<string>): boolean {
+  const own = Object.keys(record);
+  return own.length === keys.size && own.every((key) => keys.has(key));
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
@@ -1127,7 +1133,7 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
   if (record.state === 'used') {
     // A tombstone holds nothing else; one that still carries the verifier
     // (or anything more) is not one this helper wrote.
-    return Object.keys(record).sort().join() === USED_RECORD_KEYS
+    return hasExactlyKeys(record, USED_RECORD_KEYS)
       ? { v: 1, id: handoffId, state: 'used', issuedAt: record.issuedAt, expiresAt: record.expiresAt }
       : null;
   }

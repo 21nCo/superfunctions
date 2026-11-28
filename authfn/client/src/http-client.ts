@@ -131,7 +131,10 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
           method: request.method,
           headers,
           credentials,
-          body: serializeBody()
+          body: serializeBody(),
+          // A followed 307/308 would resend a sensitive body to the Location
+          // target, so such a request stops at the redirect instead.
+          ...(request.sensitiveBody === true ? { redirect: 'manual' as const } : {})
         });
       } catch (error) {
         report?.({
@@ -164,7 +167,10 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         accountRegion: response.headers.get('x-account-region') ?? undefined
       });
 
-      if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      const location = response.headers.get('location');
+      // A browser answers a redirect it did not follow with an opaque
+      // response: status 0 and no Location.
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && location)) {
         return {
           ok: false,
           error: {
@@ -173,7 +179,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
             retryable: false,
             details: {
               status: response.status,
-              redirectTo: response.headers.get('location')
+              ...(location ? { redirectTo: location } : {})
             }
           },
           requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
@@ -440,7 +446,7 @@ function isAbsoluteHttpUrl(value: string): boolean {
  * relative to the request (a path, '../', '?query' or '#fragment' with no
  * scheme and no '//' authority) that resolves against `requestUrl` to such a
  * URL. The value is kept as sent, so the host resolves it as the server meant.
- * Without an absolute request URL it is checked against a placeholder http
+ * Without an absolute request URL it is checked against a placeholder https
  * base: a reference with no scheme and no authority cannot leave whatever
  * origin the host resolves it against, nor add credentials.
  */
@@ -454,7 +460,7 @@ function isNavigationTarget(value: string, requestUrl?: string): boolean {
     return false;
   }
   try {
-    const resolved = new URL(value, requestUrl ?? 'http://authfn.invalid/');
+    const resolved = new URL(value, requestUrl ?? 'https://authfn.invalid/');
     return /^https?:$/.test(resolved.protocol) && !resolved.username && !resolved.password;
   } catch {
     return false;
@@ -480,7 +486,7 @@ function absoluteUrl(url: string): string | undefined {
 function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean {
   let url: URL;
   try {
-    url = new URL(value, 'http://authfn.invalid');
+    url = new URL(value, 'https://authfn.invalid');
   } catch {
     return true;
   }

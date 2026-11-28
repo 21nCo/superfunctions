@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -2429,5 +2430,89 @@ describe('createRegionalHandoffExchange', () => {
 
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('exchange-canceled');
     expect(selections).toEqual([]);
+  });
+});
+
+describe('sensitive exchange redirect policy', () => {
+  const input = { code: 'test-handoff-code-1', verifier: 'test-pkce-'.padEnd(43, 'v') };
+  const resolveBaseUrl = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+  const noRegionStorage = { get: async () => null, set: async () => undefined, delete: async () => undefined };
+
+  it('sends the exchange without following redirects on the direct and regional paths, and leaves other requests unchanged', async () => {
+    const inits: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const clientOptions = {
+      fetch: async (url: RequestInfo | URL, init?: RequestInit) => {
+        inits.push({ url: String(url), init });
+        return Response.json({ ok: false, error: { code: 'AUTHFN_OAUTH_STATE_INVALID', message: 'x', retryable: false } }, { status: 400 });
+      }
+    };
+    await createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).exchangeSocialHandoff(input);
+    const regionalClient = createAuthFnRegionalClient({ defaultRegionId: 'us', resolveBaseUrl, storage: noRegionStorage, clientOptions });
+    await regionalClient.exchangeSocialHandoff(input);
+    const exchange = createRegionalHandoffExchange({ regionalClient, resolveBaseUrl, clientOptions });
+    await exchange(input, { regionId: 'eu' } as Parameters<AuthFnBrowserHandoffExchange>[1]);
+    await createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).getSession();
+
+    expect(inits.map(({ url, init }) => [url, init?.redirect])).toEqual([
+      [`${APP}/auth/social/handoff/exchange`, 'manual'],
+      ['https://us.account.example.com/auth/social/handoff/exchange', 'manual'],
+      ['https://eu.account.example.com/auth/social/handoff/exchange', 'manual'],
+      [`${APP}/auth/session`, undefined]
+    ]);
+    expect(Object.hasOwn(inits[3]!.init!, 'redirect')).toBe(false);
+  });
+
+  it('maps an opaque redirect to the typed redirect error without the code or verifier', async () => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      // What a browser returns for redirect: 'manual': status 0, no headers.
+      fetch: async () => Object.defineProperty(Response.error(), 'type', { value: 'opaqueredirect' }),
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+    const envelope = await client.exchangeSocialHandoff(input) as { ok: boolean; error: { code: string; retryable: boolean; details: unknown } };
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+    expect(envelope.error.retryable).toBe(false);
+    expect(envelope.error.details).toEqual({ status: 0 });
+    const published = JSON.stringify([envelope, metrics]);
+    expect(published).not.toContain(input.code);
+    expect(published).not.toContain(input.verifier);
+  });
+
+  it('never resends the exchange body to the target of a 307 or 308', async () => {
+    const received: Array<{ path: string | undefined; body: string }> = [];
+    const http = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => { body += String(chunk); });
+      request.on('end', () => {
+        received.push({ path: request.url, body });
+        if (request.url === '/auth/social/handoff/exchange') {
+          response.writeHead(request.headers['x-test-status'] === '308' ? 308 : 307, { location: '/elsewhere' });
+        } else {
+          response.writeHead(200, { 'content-type': 'application/json' });
+        }
+        response.end(request.url === '/auth/social/handoff/exchange' ? '' : '{"ok":true,"data":{}}');
+      });
+    });
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = http.address() as { port: number };
+      for (const status of ['307', '308']) {
+        const client = createAuthFnClient({
+          baseUrl: `http://127.0.0.1:${port}/auth`,
+          fetch: (url, init) => fetch(url, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), 'x-test-status': status } })
+        });
+        const envelope = await client.exchangeSocialHandoff(input) as { error: { code: string; details: Record<string, unknown> } };
+        expect(envelope.error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+        expect(envelope.error.details).toEqual({ status: Number(status), redirectTo: '/elsewhere' });
+      }
+    } finally {
+      await new Promise((resolve) => http.close(resolve));
+    }
+
+    expect(received.map(({ path }) => path)).toEqual(['/auth/social/handoff/exchange', '/auth/social/handoff/exchange']);
+    expect(received.filter(({ body }) => body.includes(input.verifier))).toHaveLength(2);
   });
 });
