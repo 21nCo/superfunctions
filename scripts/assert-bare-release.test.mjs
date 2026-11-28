@@ -155,6 +155,7 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   // An array matching no condition lets the next condition try; a blocked entry in it blocks.
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }], import: './index.js' } } } })), []);
   await expectProblem({ overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }, null], import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  await expectProblem({ overrides: { exports: { '.': { import: [], default: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
   // Installing the core must not install the CLI.
@@ -435,6 +436,10 @@ test('shim: runs a copy npm reused from deep in the project tree, nested or alia
   const linked = runShim(shim, ['0'], { npm_execpath: npm.npmCli }, root);
   assert.equal(linked.status, 0, linked.stderr);
   assert.equal(linked.output.origin, 'linked');
+  // A copy in the project's own tree wins over one reached only through a link.
+  writeCli(path.join(root, 'node_modules/other/node_modules/@fixture/cli'), '1.2.3', 'nested');
+  assert.equal(runShim(shim, ['0'], { npm_execpath: npm.npmCli }, root).output.origin, 'nested');
+  rmSync(path.join(root, 'node_modules/other'), { recursive: true });
   rmSync(path.join(root, 'node_modules/tool'));
   writeCli(path.join(root, 'node_modules/cli-alias'), '1.2.3', 'aliased');
 
@@ -444,6 +449,19 @@ test('shim: runs a copy npm reused from deep in the project tree, nested or alia
   assert.equal(none.status, 1);
   assert.equal(none.output, null);
   assert.match(none.stderr, /npm found @fixture\/cli@1\.2\.3 but no runnable fixture command for it/);
+});
+
+test('shim: a bin path written with backslashes resolves as npm resolves it', t => {
+  const { root, shim } = installedProduct(t, { installedCli: null });
+  const cliDir = path.join(root, 'node_modules/@fixture/cli');
+  writeCli(cliDir, '1.2.3', 'installed');
+  mkdirSync(path.join(cliDir, 'dist'));
+  cpSync(path.join(cliDir, 'cli.mjs'), path.join(cliDir, 'dist/cli.mjs'));
+  rmSync(path.join(cliDir, 'cli.mjs'));
+  writeJson(path.join(cliDir, 'package.json'), { name: '@fixture/cli', version: '1.2.3', type: 'module', bin: { fixture: 'dist\\cli.mjs' } });
+  const run = runShim(shim, ['0']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.output.origin, 'installed');
 });
 
 test('shim: a CLI bin that resolves outside its package is never run', t => {

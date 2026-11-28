@@ -197,8 +197,9 @@ const IMPORT_CONDITIONS = ['import', 'node', 'node-addons', 'module-sync', 'defa
 function resolveImport(value) {
   if (typeof value === 'string') return value.startsWith('./') ? value : null;
   if (Array.isArray(value)) {
-    // The first valid target wins; an array whose entries all match no condition matches nothing (undefined), so the
-    // next condition can try; a blocked or invalid entry makes it null.
+    // The first valid target wins; a nonempty array whose entries all match no condition matches nothing (undefined),
+    // so the next condition can try; an empty array, or a blocked or invalid entry, makes it null.
+    if (value.length === 0) return null;
     let last;
     for (const candidate of value) {
       const target = resolveImport(candidate);

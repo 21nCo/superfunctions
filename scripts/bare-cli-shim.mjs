@@ -45,7 +45,8 @@ function binIn(packageDir) {
   let resolved;
   try {
     realDir = realpathSync(packageDir);
-    resolved = realpathSync(path.resolve(packageDir, file));
+    // npm treats a backslash in a bin path as a folder separator on every platform.
+    resolved = realpathSync(path.resolve(packageDir, file.replaceAll('\\', '/')));
   } catch {
     return undefined;
   }
@@ -105,23 +106,9 @@ function npmLocate(command, prefix) {
 // A copy of the CLI at this version installed anywhere in the project: npm reuses one nested under another package
 // (or installed under an alias) without putting it on the PATH it reports. Searches, nearest first, the node_modules
 // folders Node.js would look in from the working directory (it and each folder above it, which covers a workspace
-// root) and, for a linked package, from its real location; at any depth and whatever name a package is installed
-// under, reading each package once.
+// root), at any depth and whatever name a package is installed under, reading each package once. Only when that finds
+// nothing does it also search from linked packages' real locations, where they resolve their own dependencies.
 function projectBin() {
-  const queue = [];
-  const queued = new Set();
-  const enqueue = (folder) => {
-    if (!queued.has(folder)) {
-      queued.add(folder);
-      queue.push(folder);
-    }
-  };
-  const enqueueLookupPaths = (start) => {
-    for (let folder = start; ; folder = path.dirname(folder)) {
-      if (path.basename(folder) !== 'node_modules') enqueue(path.join(folder, 'node_modules'));
-      if (path.dirname(folder) === folder) break;
-    }
-  };
   const list = (folder) => {
     try {
       return readdirSync(folder).filter((name) => !name.startsWith('.')).map((name) => path.join(folder, name));
@@ -129,28 +116,52 @@ function projectBin() {
       return [];
     }
   };
-  const seen = new Set();
-  enqueueLookupPaths(process.cwd());
-  while (queue.length > 0) {
-    for (const entry of list(queue.shift())) {
-      for (const dir of path.basename(entry).startsWith('@') ? list(entry) : [entry]) {
-        let real;
-        try {
-          real = realpathSync(dir);
-        } catch {
-          continue;
+  const lookupPaths = (start) => {
+    const folders = [];
+    for (let folder = start; ; folder = path.dirname(folder)) {
+      if (path.basename(folder) !== 'node_modules') folders.push(path.join(folder, 'node_modules'));
+      if (path.dirname(folder) === folder) return folders;
+    }
+  };
+  const search = (starts, followLinks) => {
+    const queue = [];
+    const queued = new Set();
+    const enqueue = (folder) => {
+      if (!queued.has(folder)) {
+        queued.add(folder);
+        queue.push(folder);
+      }
+    };
+    starts.forEach(enqueue);
+    const seen = new Set();
+    const links = [];
+    while (queue.length > 0) {
+      for (const entry of list(queue.shift())) {
+        for (const dir of path.basename(entry).startsWith('@') ? list(entry) : [entry]) {
+          let real;
+          try {
+            real = realpathSync(dir);
+          } catch {
+            continue;
+          }
+          if (seen.has(real)) continue;
+          seen.add(real);
+          const file = binIn(dir);
+          if (file) return { file };
+          enqueue(path.join(real, 'node_modules'));
+          if (real !== path.resolve(dir)) {
+            links.push(path.dirname(real));
+            if (followLinks) lookupPaths(path.dirname(real)).forEach(enqueue);
+          }
         }
-        if (seen.has(real)) continue;
-        seen.add(real);
-        const file = binIn(dir);
-        if (file) return file;
-        enqueue(path.join(real, 'node_modules'));
-        // A linked package resolves its own dependencies from where it really is.
-        if (real !== path.resolve(dir)) enqueueLookupPaths(path.dirname(real));
       }
     }
-  }
-  return undefined;
+    return { links };
+  };
+  const project = search(lookupPaths(process.cwd()), false);
+  if (project.file) return project.file;
+  if (project.links.length === 0) return undefined;
+  return search([...lookupPaths(process.cwd()), ...project.links.flatMap(lookupPaths)], true).file;
 }
 
 function fetchedBin() {
