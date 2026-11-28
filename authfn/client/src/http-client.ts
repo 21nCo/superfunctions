@@ -171,6 +171,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       // A browser answers a redirect it did not follow with an opaque
       // response: status 0 and no Location.
       if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && location)) {
+        releaseBody(response);
         return {
           ok: false,
           error: {
@@ -486,11 +487,29 @@ function absoluteUrl(url: string): string | undefined {
 function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean {
   let url: URL;
   try {
-    url = new URL(value, 'https://authfn.invalid');
+    // An absolute value is parsed on its own, as `isAbsoluteHttpUrl` parses
+    // it: against an https base, 'https:host' would be a path, not a host.
+    url = new URL(value);
   } catch {
-    return true;
+    try {
+      url = new URL(value, 'https://authfn.invalid');
+    } catch {
+      return true;
+    }
   }
   return secrets.some((secret) => sharesText(url.href, secret) || sharesText(url.hostname, secret.toLowerCase()));
+}
+
+/**
+ * Cancels a response body that will not be read (a redirect not followed
+ * leaves one open in Node), without waiting for it or letting it fail.
+ */
+function releaseBody(response: Response): void {
+  try {
+    response.body?.cancel().catch(() => undefined);
+  } catch {
+    // A body that cannot be canceled is left to the runtime.
+  }
 }
 
 /**

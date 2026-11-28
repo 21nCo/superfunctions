@@ -1298,6 +1298,9 @@ describe('createBrowserHandoff', () => {
     // new URL lowercases and IDNA-maps the hostname, which rebuilds the secret.
     ['an authority whose host is the code in upper case', { authority: `https://${detailsInput.code.toUpperCase()}.example.test/` }],
     ['a redirect whose host is the code in upper case', { redirectTo: `https://${detailsInput.code.toUpperCase()}.example.test/` }],
+    // Without '//', 'https:host' is still a host when parsed on its own.
+    ['an authority with no slashes whose host is the code in upper case', { authority: `https:${detailsInput.code.toUpperCase()}.example.test/` }],
+    ['a redirect with no slashes whose host is the code in upper case', { redirectTo: `https:${detailsInput.code.toUpperCase()}.example.test/` }],
     ['a redirect whose host spells the code in fullwidth letters', { redirectTo: `https://${fullwidth(detailsInput.code)}.example.test/` }],
     ['an authority whose host splits a verifier run with a soft hyphen', {
       authority: `https://${detailsInput.verifier.slice(0, 6)}\u00ad${detailsInput.verifier.slice(6, 13)}.example.test/`
@@ -1406,6 +1409,7 @@ describe('createBrowserHandoff', () => {
     expect(await redirectFor(`https://app.example.test/next?c=${detailsInput.code}`)).toEqual({ status: 302 });
     expect(await redirectFor(`/next?c=${percentEncoded(detailsInput.code)}`)).toEqual({ status: 302 });
     expect(await redirectFor(`https://${detailsInput.code.toUpperCase()}.example.test/`)).toEqual({ status: 302 });
+    expect(await redirectFor(`https:${detailsInput.code.toUpperCase()}.example.test/`)).toEqual({ status: 302 });
     expect(await redirectFor('//elsewhere.example.test/next')).toEqual({ status: 302 });
     // A path- or query-relative Location is kept as sent; the host resolves it.
     expect(await redirectFor('next')).toEqual({ status: 302, redirectTo: 'next' });
@@ -2479,6 +2483,23 @@ describe('sensitive exchange redirect policy', () => {
     const published = JSON.stringify([envelope, metrics]);
     expect(published).not.toContain(input.code);
     expect(published).not.toContain(input.verifier);
+  });
+
+  it('releases the body of a redirect it does not follow without waiting for it', async () => {
+    let canceled = 0;
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => new Response(
+        // A body that never ends: reading or awaiting it would hang.
+        new ReadableStream({ pull: () => new Promise(() => undefined), cancel: () => { canceled += 1; } }),
+        { status: 307, headers: { location: '/elsewhere' } }
+      )
+    });
+    const envelope = await client.exchangeSocialHandoff(input) as { error: { code: string; details: unknown } };
+
+    expect(envelope.error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+    expect(envelope.error.details).toEqual({ status: 307, redirectTo: '/elsewhere' });
+    expect(canceled).toBe(1);
   });
 
   it('never resends the exchange body to the target of a 307 or 308', async () => {
