@@ -110,8 +110,12 @@ const server = createMcpFnServer({
 - The denial is thrown as a plain `{ code, message, details }` object
   (`DatafnInsufficientScopeError`), not an `McpFnError`, so it keeps its code
   and scope lists even when the adapter and the server load different copies
-  of `@mcpfn/core` (one ESM, one CommonJS). A direct `registry.callTool`
-  caller receives that object as the rejection.
+  of `@mcpfn/core` (one ESM, one CommonJS). Its details also carry
+  `lifecycleStage` (`handler`, or `invalid-arguments-handler` for invalid
+  arguments). With `clientProfiles`, McpFn neither adds the matched `profile`
+  to it nor reports `insufficient_scope` in profile evidence (it records
+  `MCPFN_TOOL_ERROR`), as for any error that is not its own `McpFnError`. A
+  direct `registry.callTool` caller receives that object as the rejection.
 - The session's scopes are resolved once per `tools/list` and afresh for every
   call.
 - A tool with `scopes` cannot support task execution: registering one with a

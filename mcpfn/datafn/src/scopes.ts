@@ -12,7 +12,11 @@ export const DATAFN_INSUFFICIENT_SCOPE = "insufficient_scope";
 export interface DatafnInsufficientScopeError {
   code: typeof DATAFN_INSUFFICIENT_SCOPE;
   message: string;
-  details: { requiredScopes: string[]; missingScopes: string[] };
+  details: {
+    requiredScopes: string[];
+    missingScopes: string[];
+    lifecycleStage: "handler" | "invalid-arguments-handler";
+  };
 }
 
 const ALL_SCOPES = "*";
@@ -145,6 +149,7 @@ export class ScopeGate<TContext> {
   private async assert(
     toolName: string,
     scopes: readonly string[],
+    lifecycleStage: DatafnInsufficientScopeError["details"]["lifecycleStage"],
     context: TContext,
     extra: McpFnRequestExtra,
   ): Promise<void> {
@@ -154,11 +159,13 @@ export class ScopeGate<TContext> {
       // `{ code, message, details }` object as the tool error whichever copy
       // of @mcpfn/core serves the call, while another copy's McpFnError (an
       // ESM adapter beside a CommonJS server, say) fails its instanceof check
-      // and is withheld as MCPFN_TOOL_ERROR without the scope lists.
+      // and is withheld as MCPFN_TOOL_ERROR without the scope lists. McpFn
+      // adds the lifecycle stage only to its own McpFnError, so the denial
+      // carries it; a matched client profile is not annotated on it.
       const denial: DatafnInsufficientScopeError = {
         code: DATAFN_INSUFFICIENT_SCOPE,
         message: `Tool ${toolName} needs scopes the session was not granted: ${missingScopes.join(", ")}`,
-        details: { requiredScopes: [...scopes], missingScopes },
+        details: { requiredScopes: [...scopes], missingScopes, lifecycleStage },
       };
       throw denial;
     }
@@ -216,7 +223,7 @@ export class ScopeGate<TContext> {
         context: TContext,
         extra: McpFnRequestExtra,
       ) => {
-        await this.assert(name, needed, context, extra);
+        await this.assert(name, needed, "invalid-arguments-handler", context, extra);
         if (typeof invalidArguments === "function") {
           return invalidArguments.call(definition, args, issues, context, extra);
         }
@@ -227,7 +234,7 @@ export class ScopeGate<TContext> {
         context: TContext,
         extra: McpFnRequestExtra,
       ) => {
-        await this.assert(name, needed, context, extra);
+        await this.assert(name, needed, "handler", context, extra);
         return handler.call(definition, args, context, extra);
       },
     } as McpFnToolDefinition<TContext>;

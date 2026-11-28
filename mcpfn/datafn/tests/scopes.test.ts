@@ -203,7 +203,10 @@ describe("scope-aware DataFn tools", () => {
       return errorOf(await client.callTool(name, args));
     };
     const write = { id: "note-1", mutationId: "write-1", record: { title: "First" } };
+    const stage = (lifecycleStage: string) => ({ error: { details: { lifecycleStage } } });
 
+    expect(await call([], "datafn_notes_list", {}))
+      .toMatchObject(stage("handler"));
     expect(await call([], "datafn_notes_list", {}))
       .toMatchObject(insufficientScope(["memotron:read"], ["memotron:read"]));
     expect(await call([], "datafn_notes_get", { id: "note-1" }))
@@ -212,9 +215,10 @@ describe("scope-aware DataFn tools", () => {
       .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
     expect(await call(["memotron:read"], "datafn_notes_update", write))
       .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
-    // The invalid-arguments path answers the same denial.
-    expect(await call(["memotron:read"], "datafn_notes_update", { ...write, record: { title: 7 } }))
-      .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    // The invalid-arguments path answers the same denial, at its own stage.
+    const invalid = await call(["memotron:read"], "datafn_notes_update", { ...write, record: { title: 7 } });
+    expect(invalid).toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    expect(invalid).toMatchObject(stage("invalid-arguments-handler"));
     expect(query).not.toHaveBeenCalled();
     expect(mutate).not.toHaveBeenCalled();
   });
@@ -223,9 +227,13 @@ describe("scope-aware DataFn tools", () => {
     const { adapter } = await setup();
     const invalid = { id: "note-1", mutationId: "update-1", record: { title: 7 } };
 
+    const denied = errorOf(await (await connect(adapter, ["memotron:read"]))
+      .callTool("datafn_notes_update", invalid));
+    expect(denied).toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    expect(denied).toMatchObject({ error: { details: { lifecycleStage: "invalid-arguments-handler" } } });
     expect(errorOf(await (await connect(adapter, ["memotron:read"]))
-      .callTool("datafn_notes_update", invalid)))
-      .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+      .callTool("datafn_notes_update", { ...invalid, record: { title: "Renamed" } })))
+      .toMatchObject({ error: { code: "insufficient_scope", details: { lifecycleStage: "handler" } } });
     expect(errorOf(await (await connect(adapter, ["memotron:write"]))
       .callTool("datafn_notes_update", invalid)))
       .toMatchObject({ error: { code: "MCPFN_INVALID_ARGUMENTS", details: { issues: expect.any(Array) } } });
