@@ -48,9 +48,9 @@ export type CompletionSkipKind = "command" | "alias" | "option" | "choice";
 export type CompletionSkipReason = "invalid-name" | "duplicate" | "too-deep";
 
 /**
- * A name left out of the script. A command left out takes its flags and subcommands with it, and each of its aliases
- * is reported too, with the command's reason (or `invalid-name` for an alias outside the grammar). A command whose own
- * name is outside the grammar stays in the script under its first usable alias.
+ * A name left out of the script. A command left out takes its aliases, flags and subcommands with it, and each of
+ * those names is reported too, with the command's reason (or `invalid-name` for a name outside the grammar). A command
+ * whose own name is outside the grammar stays in the script under its first usable alias.
  */
 export interface CompletionSkip {
   kind: CompletionSkipKind;
@@ -258,6 +258,48 @@ function normalizeFlags(options: unknown, where: string, path: string[], skipped
   return own;
 }
 
+/** The reason a name inside a command left out is reported with: the command's, unless the name is outside the grammar. */
+function droppedReason(name: string, reason: CompletionSkipReason): CompletionSkipReason {
+  return NAME_PATTERN.test(name) ? reason : "invalid-name";
+}
+
+/**
+ * Reports the flags and subcommands of a command left out of the script, none of which is emitted, so no grammar-valid
+ * name goes missing without a `skipped` entry. A command object already on the walk is not entered again, so a cyclic
+ * hand-written spec ends.
+ */
+function reportDropped(
+  command: unknown,
+  at: string,
+  path: string[],
+  reason: CompletionSkipReason,
+  skipped: CompletionSkip[],
+  chain: Set<unknown> = new Set(),
+): void {
+  chain.add(command);
+  for (const flag of normalizeFlags(specField(command, "options", at), `${at}.options`, path, skipped)) {
+    for (const name of flagNames(flag)) {
+      skipped.push({ kind: "option", name, path, reason });
+    }
+  }
+  specArray(specField(command, "commands", at), `${at}.commands`, true).forEach((child, index) => {
+    if (chain.has(child)) {
+      return;
+    }
+    const childAt = `${at}.commands[${index}]`;
+    const name = specField(child, "name", childAt);
+    if (typeof name !== "string") throw invalidSpec(`${childAt}.name`, "a string");
+    const aliases = specStrings(specField(child, "aliases", childAt), `${childAt}.aliases`);
+    const childPath = [...path, name];
+    skipped.push({ kind: "command", name, path, reason: droppedReason(name, reason) });
+    for (const alias of aliases) {
+      skipped.push({ kind: "alias", name: alias, path: childPath, reason: droppedReason(alias, reason) });
+    }
+    reportDropped(child, childAt, childPath, reason, skipped, chain);
+  });
+  chain.delete(command);
+}
+
 function normalizeCommands(
   commands: unknown,
   where: string,
@@ -279,14 +321,14 @@ function normalizeCommands(
     const dropped: CompletionSkipReason | undefined =
       depth > MAX_DEPTH ? "too-deep" : validName && words.has(name) ? "duplicate" : undefined;
     if (dropped !== undefined) {
-      // The subtree is not read, so a cyclic hand-written spec stops here too. Each alias goes with its command.
+      // Each alias, flag and subcommand goes with its command and is reported with it.
       if (validName) {
         skipped.push({ kind: "command", name, path: parent.path, reason: dropped });
       }
       for (const alias of rawAliases) {
-        const reason = NAME_PATTERN.test(alias) ? dropped : "invalid-name";
-        skipped.push({ kind: "alias", name: alias, path: [...parent.path, name], reason });
+        skipped.push({ kind: "alias", name: alias, path: [...parent.path, name], reason: droppedReason(alias, dropped) });
       }
+      reportDropped(command, at, [...parent.path, name], dropped, skipped);
       return;
     }
     // A command whose own name is outside the grammar is completed under its first usable alias.
@@ -311,7 +353,8 @@ function normalizeCommands(
       }
     }
     if (word === undefined) {
-      // No name of the command can be completed, so its flags and subcommands are not offered either.
+      // No name of the command can be completed, so its flags and subcommands are left out and reported with it.
+      reportDropped(command, at, path, "invalid-name", skipped);
       return;
     }
     const description = normalizeDescription(specOptionalString(specField(command, "description", at), `${at}.description`));

@@ -10,7 +10,11 @@ import {
   CompletionError,
   completionInstructions,
   renderCompletion,
+  type CompletionCommand,
+  type CompletionOption,
   type CompletionShell,
+  type CompletionSkip,
+  type CompletionSkipReason,
   type CompletionSpec,
 } from "../src/completion.js";
 
@@ -485,6 +489,7 @@ describe("completion names and descriptions", () => {
       { kind: "command", name: "über", path: [], reason: "invalid-name" },
       { kind: "command", name: "nö", path: [], reason: "invalid-name" },
       { kind: "alias", name: "nein!", path: ["nö"], reason: "invalid-name" },
+      { kind: "command", name: "lost", path: ["nö"], reason: "invalid-name" },
     ]);
     expect(script).toContain("'') words='keep good gd uber' ;;");
     expect(script).toContain("'|good'|'|gd') path='good' ;;");
@@ -512,6 +517,7 @@ describe("completion names and descriptions", () => {
       { kind: "command", name: "build", path: [], reason: "duplicate" },
       { kind: "alias", name: "b", path: ["build"], reason: "duplicate" },
       { kind: "alias", name: "b!", path: ["build"], reason: "invalid-name" },
+      { kind: "option", name: "--fast", path: ["build"], reason: "duplicate" },
       { kind: "command", name: "l4", path: ["l1", "l2", "l3"], reason: "too-deep" },
       { kind: "alias", name: "four", path: ["l1", "l2", "l3", "l4"], reason: "too-deep" },
       { kind: "alias", name: "4!", path: ["l1", "l2", "l3", "l4"], reason: "invalid-name" },
@@ -519,6 +525,81 @@ describe("completion names and descriptions", () => {
       { kind: "alias", name: "u4", path: ["l1", "l2", "l3", "ü4"], reason: "too-deep" },
     ]);
     expect(script).not.toMatch(/'b'|--fast|l4|four|u4/);
+  });
+
+  it("reports every grammar-valid name inside a command left out, without emitting any of them", () => {
+    const subtree = (): CompletionCommand[] => [
+      {
+        name: "child",
+        aliases: ["c", "c?"],
+        options: [{ long: "--deep", short: "-d", takesValue: true, choices: ["x"] }],
+        commands: [{ name: "grand", aliases: ["g"], options: [{ long: "--bad flag", takesValue: false }] }],
+      },
+    ];
+    const flags = (): CompletionOption[] => [{ long: "--force", short: "-f", takesValue: false }, { long: "--force", takesValue: false }];
+    const inside = (path: string[], reason: CompletionSkipReason): CompletionSkip[] => [
+      { kind: "option", name: "--force", path, reason: "duplicate" },
+      { kind: "option", name: "--force", path, reason },
+      { kind: "option", name: "-f", path, reason },
+      { kind: "command", name: "child", path, reason },
+      { kind: "alias", name: "c", path: [...path, "child"], reason },
+      { kind: "alias", name: "c?", path: [...path, "child"], reason: "invalid-name" },
+      { kind: "option", name: "--deep", path: [...path, "child"], reason },
+      { kind: "option", name: "-d", path: [...path, "child"], reason },
+      { kind: "command", name: "grand", path: [...path, "child"], reason },
+      { kind: "alias", name: "g", path: [...path, "child", "grand"], reason },
+      { kind: "option", name: "--bad flag", path: [...path, "child", "grand"], reason: "invalid-name" },
+    ];
+    const cases: { commands: CompletionCommand[]; expected: CompletionSkip[] }[] = [
+      {
+        // No usable alias: the command's own name is outside the grammar and so is its only alias.
+        commands: [{ name: "bad!", aliases: ["bad?"], options: flags(), commands: subtree() }],
+        expected: [
+          { kind: "command", name: "bad!", path: [], reason: "invalid-name" },
+          { kind: "alias", name: "bad?", path: ["bad!"], reason: "invalid-name" },
+          ...inside(["bad!"], "invalid-name"),
+        ],
+      },
+      {
+        commands: [{ name: "dup", options: [] }, { name: "dup", aliases: ["d2"], options: flags(), commands: subtree() }],
+        expected: [
+          { kind: "command", name: "dup", path: [], reason: "duplicate" },
+          { kind: "alias", name: "d2", path: ["dup"], reason: "duplicate" },
+          ...inside(["dup"], "duplicate"),
+        ],
+      },
+      {
+        commands: [{ name: "l1", options: [], commands: [{ name: "l2", options: [], commands: [{ name: "l3", options: [], commands: [{ name: "l4", options: flags(), commands: subtree() }] }] }] }],
+        expected: [
+          { kind: "command", name: "l4", path: ["l1", "l2", "l3"], reason: "too-deep" },
+          ...inside(["l1", "l2", "l3", "l4"], "too-deep"),
+        ],
+      },
+    ];
+    for (const { commands, expected } of cases) {
+      const { script, skipped } = renderCompletion({ name: "tool", options: [], commands }, "bash");
+      expect(skipped).toEqual(expected);
+      expect(script).not.toMatch(/--force|-f\b|child|'c'|--deep|grand|bad|d2|l4/);
+    }
+  });
+
+  it("reports a cyclic subtree inside a command left out once and stops", () => {
+    const loop: { name: string; aliases: string[]; options: CompletionOption[]; commands: unknown[] } = {
+      name: "loop",
+      aliases: ["lp!"],
+      options: [{ long: "--again", takesValue: false }],
+      commands: [],
+    };
+    const inner = { name: "inner", options: [], commands: [loop] };
+    loop.commands.push(inner);
+    const { skipped } = renderCompletion({ name: "tool", options: [], commands: [{ name: "bad!", options: [], commands: [loop] }] } as CompletionSpec, "bash");
+    expect(skipped).toEqual([
+      { kind: "command", name: "bad!", path: [], reason: "invalid-name" },
+      { kind: "command", name: "loop", path: ["bad!"], reason: "invalid-name" },
+      { kind: "alias", name: "lp!", path: ["bad!", "loop"], reason: "invalid-name" },
+      { kind: "option", name: "--again", path: ["bad!", "loop"], reason: "invalid-name" },
+      { kind: "command", name: "inner", path: ["bad!", "loop"], reason: "invalid-name" },
+    ]);
   });
 
   it("stops at the third level of a cyclic hand-written spec", () => {
