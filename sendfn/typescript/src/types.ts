@@ -40,6 +40,12 @@ export interface EmailConfig {
 }
 
 export interface AwsSesConfig {
+  /** Trusted host configuration; never accept from an untrusted send request. */
+  endpoint?: string;
+  /** Entire single SDK operation, including reading its response. Default 30 seconds. */
+  timeoutMs?: number;
+  /** Response body limit before XML deserialization. Default 1 MiB. */
+  maxResponseBytes?: number;
   accessKeyId: string;
   secretAccessKey: string;
   region: string;
