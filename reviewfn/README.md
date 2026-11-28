@@ -62,7 +62,9 @@ See [configuration](./docs/configuration.md), [security](./docs/security.md), [G
 The release gate requires Docker and the pinned test image documented in `docs/security.md`. PR inference additionally requires the trusted Codex image and a credential-isolating proxy. Publication is a separate `reviewfn publish` command/job. See `docs/github-action.md` for identity checks, concurrency, retries and permissions.
 
 Registry release order is core first, then context-composio, github,
-harness-codex, and testing, followed by the CLI. Each package runs its own
+harness-codex and testing, then harness-claude-code and harness-cli (the CLI's
+development dependencies), then the CLI, and the bare `reviewfn` package last,
+once the core and the CLI are on npm. Each package runs its own
 `npm run typecheck`, `npm run build`, `npm run lint`, and `npm test` after installing
 its declared registry dependencies in a standalone directory. No release gate
 substitutes sibling sources for published declarations. The CLI's execution tests
