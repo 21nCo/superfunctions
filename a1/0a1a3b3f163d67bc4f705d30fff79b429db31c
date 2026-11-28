@@ -1,0 +1,30 @@
+apifn/collections/src/runner/runner.ts
+  s_aedb916f2553fc::t_c21356e131d250 337-338
+  s_cd56ef25989775::t_fb274b437888ca 333
+  s_cd56ef25989775::t_75a0c461092a80 330-332
+  s_aedb916f2553fc::t_3c417f932a88b4 339-341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a10a1a3b3f163d67bc4f705d30fff79b429db31c",
+  "prompts": {},
+  "sessions": {
+    "s_aedb916f2553fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b0483067-7290-4d40-a6fc-0847fde1c583",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cd56ef25989775": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f651edee-d0de-464a-8496-37c6ad567809",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

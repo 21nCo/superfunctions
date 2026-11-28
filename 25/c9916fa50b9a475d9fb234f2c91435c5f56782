@@ -1,0 +1,67 @@
+package-lock.json
+  s_dee3ad507230b7::t_6d28c6b674a664 60716
+plugfn/core/package.json
+  s_dee3ad507230b7::t_6ef09f726d0d16 12-19
+plugfn/core/src/credentials/errors.ts
+  s_dee3ad507230b7::t_0a38653833548e 1-67
+plugfn/core/src/credentials/index.ts
+  s_dee3ad507230b7::t_39b5749e78a700 1-3
+plugfn/core/src/credentials/types.ts
+  s_dee3ad507230b7::t_ae4237f04fbee6 1-63
+plugfn/core/src/index.ts
+  s_dee3ad507230b7::t_8cd7eb26cd60eb 41-43
+plugfn/core/tests/credentials/credential-minter.test.ts
+  s_dee3ad507230b7::t_4ca133afdb18e7 1-60
+plugfn/providers/src/github-app/grammar.ts
+  s_dee3ad507230b7::t_48f0db80c009ed 1-147
+plugfn/providers/tests/github-app/grammar.test.ts
+  s_dee3ad507230b7::t_d57e38aa465564 1-70
+plugfn/providers/tests/workerd/github-app.test.ts
+  s_dee3ad507230b7::t_81d84b4e246235 1-72
+plugfn/providers/vitest.config.ts
+  s_dee3ad507230b7::t_bdfe195f9267bc 9-10
+plugfn/providers/vitest.workerd.config.ts
+  s_dee3ad507230b7::t_3454bf85b9e83b 1-23
+plugfn/core/README.md
+  s_f63befb572b012::t_718cb9f6546a18 168-193
+plugfn/providers/package.json
+  s_f63befb572b012::t_f061d71ad669d2 17-20,67,69-71,91
+plugfn/providers/src/github-app/index.ts
+  s_f63befb572b012::t_ce03d14695eb8b 1-28
+plugfn/providers/src/github-app/jwt.ts
+  s_f63befb572b012::t_75d71cfcb5bb26 1-41
+plugfn/providers/src/github-app/key.ts
+  s_f63befb572b012::t_b558f22b0f1a4a 1-102
+plugfn/providers/src/github-app/minter.ts
+  s_f63befb572b012::t_d67f97c8b02bd2 1-393
+plugfn/providers/src/index.ts
+  s_f63befb572b012::t_2f6b53595eeffc 31-36
+plugfn/providers/tests/github-app/helpers.ts
+  s_f63befb572b012::t_62060989beaa61 1-162
+plugfn/providers/tests/github-app/minter.test.ts
+  s_f63befb572b012::t_2595aababc6e44 1-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25c9916fa50b9a475d9fb234f2c91435c5f56782",
+  "prompts": {},
+  "sessions": {
+    "s_dee3ad507230b7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22147-02ab-7442-813e-e68971de9c8e",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f63befb572b012": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07737015-57f9-49b1-8001-3ded4626f630",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

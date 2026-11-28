@@ -1,0 +1,21 @@
+mdfn/core/src/anchors.ts
+  s_4df5b47f5fc1c8::t_5dfd80bc1aebd2 53-57,92
+mdfn/core/src/core.test.ts
+  s_4df5b47f5fc1c8::t_34540f7ef0f5a9 589-598,624-635
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a6b26ea5bfaf1418dbdb695c5aa98c51c96eff0",
+  "prompts": {},
+  "sessions": {
+    "s_4df5b47f5fc1c8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03d673ee-eacd-4d28-bf46-6927f4eac1ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

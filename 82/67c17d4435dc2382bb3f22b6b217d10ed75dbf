@@ -1,0 +1,29 @@
+mdfn/core/src/anchors.ts
+  s_54496d991e6064::t_0d1afe27973720 39,42,50
+mdfn/core/src/core.test.ts
+  s_6bf98e7c89b38c::t_b0d5eaffac935c 533-534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8267c17d4435dc2382bb3f22b6b217d10ed75dbf",
+  "prompts": {},
+  "sessions": {
+    "s_54496d991e6064": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21ebe-96b1-7093-9c0a-f07bc0530964",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_6bf98e7c89b38c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21ec2-75e1-7512-a2f6-ed23f0e3f6bc",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+plugfn/core/README.md
+  s_c263573cceac90::t_f701449e84289e 182-186,195-196,198
+plugfn/core/src/credentials/errors.ts
+  s_c263573cceac90::t_dabef381ba03ca 23-25,27-34,40-41,55-60,69
+plugfn/core/src/credentials/types.ts
+  s_c263573cceac90::t_b25967a722ee41 32-44,65-73,76-77
+plugfn/core/tests/credentials/credential-minter.test.ts
+  s_c263573cceac90::t_ee7132848e2220 47-55
+plugfn/providers/scripts/test.mjs
+  s_c263573cceac90::t_62e28887613a11 4-9,12-19,21-34
+plugfn/providers/src/github-app/minter.ts
+  s_c263573cceac90::t_4e92e01e228927 2,33-40,58-62,111,128-143,150-215,295-300,315,325,331-334,349-354,361-383,385-394,397-398,412,446-448,456,473-475,477,482-487,509-530,533-534,536-537,540,542,545-551,557-605,615,618,626-635,637-657,664-665
+plugfn/providers/tests/github-app/helpers.ts
+  s_c263573cceac90::t_8b1689ad67095f 171-197
+plugfn/providers/tests/github-app/minter.test.ts
+  s_c263573cceac90::t_16a7c4abb0e37d 22,43,162-163,168,175-201,224-240,242,244,250-252,255-260,264-276,285-286,296-310,513,515-519,521-535,537,591-702,780-815
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5c0936123484698848c6633836d39ddbfcad986",
+  "prompts": {},
+  "sessions": {
+    "s_c263573cceac90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8f0c3a7-34e7-451d-aa33-5dce4680b835",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

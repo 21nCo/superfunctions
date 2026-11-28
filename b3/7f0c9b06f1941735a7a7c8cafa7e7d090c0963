@@ -1,0 +1,29 @@
+mcpfn/auth/README.md
+  s_f2b9c696138d07::t_08f2f2a863a2df 68-69,78-96
+mcpfn/auth/src/authfn/index.ts
+  s_f2b9c696138d07::t_997ca485073afb 9
+mcpfn/auth/src/authfn/introspection.ts
+  s_f2b9c696138d07::t_028a4c2ec60144 14,76-80
+mcpfn/auth/src/authfn/token-authority.ts
+  s_f2b9c696138d07::t_268c53186062be 62-74,79-83,85,98-102,129-133,135,138,142-147,234-257,261,283,291,293,295,298-299
+mcpfn/auth/tests/authfn-token-authority.test.ts
+  s_f2b9c696138d07::t_b0580ff119faae 2-4,22-25,450-460,471-473,479-619
+scripts/gate-mcpfn-release.mjs
+  s_f2b9c696138d07::t_09a9a8f6eb5024 586-597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b37f0c9b06f1941735a7a7c8cafa7e7d090c0963",
+  "prompts": {},
+  "sessions": {
+    "s_f2b9c696138d07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9231b82f-c435-4763-962a-f2f9f274e0b9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

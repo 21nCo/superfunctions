@@ -1,0 +1,31 @@
+reviewfn/core/src/context/code-references.ts
+  s_123c9bb0fabfc2::t_2a49f747a4f6e2 242,425,477
+reviewfn/core/src/context/glob.ts
+  s_123c9bb0fabfc2::t_16d354a0a501f5 31-61,63-70,77-81,83-85
+reviewfn/core/src/context/symbols.ts
+  s_123c9bb0fabfc2::t_289545d619e99e 47-50,109,111,115-116,125,127,129,163-171,178-182,189,193,200-201,209-212,218,223-229,231-238,251-265,274-276,280-284,298-327,355-368,370-372,374-385,411-412,424-425,427-434,436-528,530,532,534-540,542-563,567-569,573-575,585,587,593,596-597,600-601,608-610,615-617,625,627,629,631-632,636,640-644,649-664,668-745,748-760,762-773,783-784,786-788,790-797,799-800,802-808
+reviewfn/core/test/code-references.test.ts
+  s_123c9bb0fabfc2::t_66ea265ae70cdd 157-169,188-192,195,213-255,266,633-668
+reviewfn/docs/configuration.md
+  s_123c9bb0fabfc2::t_7a7f0124cc3492 21,27
+reviewfn/docs/content/docs/reference/configuration.md
+  s_123c9bb0fabfc2::t_05b71057932e35 24,30
+reviewfn/docs/static/llms-full.txt
+  s_123c9bb0fabfc2::t_906a527775af95 127,133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04b58af5eaa7ecadd21c98d9ad1a8127e030a175",
+  "prompts": {},
+  "sessions": {
+    "s_123c9bb0fabfc2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff42f237-2551-4a02-95f2-eeefad1f68f4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+mcpfn/auth/README.md
+  s_d9abb04b8d7638::t_137226f3ecd825 71-72
+mcpfn/auth/src/authfn/introspection.ts
+  s_d9abb04b8d7638::t_3f4de1033e0114 63-64,90-92,96-101,103,131,148
+mcpfn/auth/tests/authfn-token-authority.test.ts
+  s_d9abb04b8d7638::t_2970c89613cd83 536,547-548,557-596
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e941bb230d0758453f57a364aaaf700edeec5b3d",
+  "prompts": {},
+  "sessions": {
+    "s_d9abb04b8d7638": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0a96682-2fe9-4989-8e43-edde09d17e74",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
