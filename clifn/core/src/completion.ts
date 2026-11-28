@@ -50,8 +50,9 @@ export type CompletionSkipReason = "invalid-name" | "duplicate" | "too-deep";
 /**
  * A name left out of the script. A command left out takes its aliases, flags and subcommands with it, and each of
  * those names is reported too, with the command's reason (or `invalid-name` for a name outside the grammar, and
- * `duplicate` for a flag spelling repeated at its level). A command whose own name is outside the grammar stays in the
- * script under its first usable alias, and one with no usable alias is left out the same way.
+ * `duplicate` for a flag spelling repeated at its level), at each place a reused command object appears. A command
+ * whose own name is outside the grammar stays in the script under its first usable alias, and one with no usable alias
+ * is left out the same way.
  */
 export interface CompletionSkip {
   kind: CompletionSkipKind;
@@ -89,6 +90,10 @@ const LONG_FLAG_PATTERN = /^--[A-Za-z0-9][A-Za-z0-9:_-]*$/;
 const SHORT_FLAG_PATTERN = /^-[A-Za-z0-9][A-Za-z0-9:_-]*$/;
 /** Commands below this many levels are left out. */
 const MAX_DEPTH = 3;
+/** A spec with commands nested deeper than this, counting from the program, is invalid. */
+const MAX_SPEC_DEPTH = 32;
+/** A spec whose commands left out would list more names than this in `skipped` is invalid. */
+const MAX_SKIPPED = 100_000;
 const MAX_DESCRIPTION_LENGTH = 80;
 const SHELLS: readonly CompletionShell[] = ["bash"];
 
@@ -266,9 +271,9 @@ function droppedReason(name: string, reason: CompletionSkipReason): CompletionSk
 
 /**
  * Reports the flags and subcommands of a command left out of the script, none of which is emitted, so no grammar-valid
- * name goes missing without a `skipped` entry. The walk keeps its own stack rather than the call stack, and `visited`
- * holds every command object it has entered during the render, so each is reported once: a deep, shared or cyclic
- * hand-written spec costs time and entries in proportion to its size.
+ * name goes missing without a `skipped` entry. A command object reused at several places is reported at each of them,
+ * and one that appears inside itself is cut where it repeats. A command nested more than `MAX_SPEC_DEPTH` levels deep,
+ * or more than `MAX_SKIPPED` entries in all, makes the spec invalid, so the walk's time, stack and memory stay bounded.
  */
 function reportDropped(
   command: unknown,
@@ -276,42 +281,39 @@ function reportDropped(
   path: string[],
   reason: CompletionSkipReason,
   skipped: CompletionSkip[],
-  visited: Set<unknown>,
+  ancestors: Set<unknown> = new Set(),
 ): void {
-  if (visited.has(command)) {
-    return;
+  ancestors.add(command);
+  for (const flag of normalizeFlags(specField(command, "options", at), `${at}.options`, path, skipped)) {
+    for (const name of flagNames(flag)) {
+      skipped.push({ kind: "option", name, path, reason });
+    }
   }
-  visited.add(command);
-  const pending: { command: unknown; at: string; path: string[] }[] = [{ command, at, path }];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    const { command: current, at: currentAt, path: currentPath } = next;
-    for (const flag of normalizeFlags(specField(current, "options", currentAt), `${currentAt}.options`, currentPath, skipped)) {
-      for (const name of flagNames(flag)) {
-        skipped.push({ kind: "option", name, path: currentPath, reason });
-      }
+  assertSkippedBound(skipped);
+  specArray(specField(command, "commands", at), `${at}.commands`, true).forEach((child, index) => {
+    if (ancestors.has(child)) {
+      return;
     }
-    const children = specArray(specField(current, "commands", currentAt), `${currentAt}.commands`, true);
-    const entered: { command: unknown; at: string; path: string[] }[] = [];
-    children.forEach((child, index) => {
-      if (visited.has(child)) {
-        return;
-      }
-      visited.add(child);
-      const childAt = `${currentAt}.commands[${index}]`;
-      const name = specField(child, "name", childAt);
-      if (typeof name !== "string") throw invalidSpec(`${childAt}.name`, "a string");
-      const aliases = specStrings(specField(child, "aliases", childAt), `${childAt}.aliases`);
-      const childPath = [...currentPath, name];
-      skipped.push({ kind: "command", name, path: currentPath, reason: droppedReason(name, reason) });
-      for (const alias of aliases) {
-        skipped.push({ kind: "alias", name: alias, path: childPath, reason: droppedReason(alias, reason) });
-      }
-      entered.push({ command: child, at: childAt, path: childPath });
-    });
-    // Pushed last to first, so the first child's flags and subcommands come off the stack first.
-    for (const item of entered.reverse()) {
-      pending.push(item);
+    const childAt = `${at}.commands[${index}]`;
+    const name = specField(child, "name", childAt);
+    if (typeof name !== "string") throw invalidSpec(`${childAt}.name`, "a string");
+    const aliases = specStrings(specField(child, "aliases", childAt), `${childAt}.aliases`);
+    const childPath = [...path, name];
+    if (childPath.length > MAX_SPEC_DEPTH) {
+      throw invalidSpec(childAt, `nested at most ${MAX_SPEC_DEPTH} commands deep`);
     }
+    skipped.push({ kind: "command", name, path, reason: droppedReason(name, reason) });
+    for (const alias of aliases) {
+      skipped.push({ kind: "alias", name: alias, path: childPath, reason: droppedReason(alias, reason) });
+    }
+    reportDropped(child, childAt, childPath, reason, skipped, ancestors);
+  });
+  ancestors.delete(command);
+}
+
+function assertSkippedBound(skipped: CompletionSkip[]): void {
+  if (skipped.length > MAX_SKIPPED) {
+    throw invalidSpec("the list of names left out", `at most ${MAX_SKIPPED} entries long`);
   }
 }
 
@@ -321,7 +323,6 @@ function normalizeCommands(
   parent: Level,
   depth: number,
   skipped: CompletionSkip[],
-  visited: Set<unknown>,
 ): Level[] {
   const levels: Level[] = [];
   const words = new Set<string>();
@@ -344,7 +345,7 @@ function normalizeCommands(
       for (const alias of rawAliases) {
         skipped.push({ kind: "alias", name: alias, path: [...parent.path, name], reason: droppedReason(alias, dropped) });
       }
-      reportDropped(command, at, [...parent.path, name], dropped, skipped, visited);
+      reportDropped(command, at, [...parent.path, name], dropped, skipped);
       return;
     }
     // A command whose own name is outside the grammar is completed under its first usable alias.
@@ -370,13 +371,13 @@ function normalizeCommands(
     }
     if (word === undefined) {
       // No name of the command can be completed, so its flags and subcommands are left out and reported with it.
-      reportDropped(command, at, path, "invalid-name", skipped, visited);
+      reportDropped(command, at, path, "invalid-name", skipped);
       return;
     }
     const description = normalizeDescription(specOptionalString(specField(command, "description", at), `${at}.description`));
     const own = normalizeFlags(specField(command, "options", at), `${at}.options`, path, skipped);
     const level: Level = { path, key: path.join("/"), name: word, aliases, description, ownFlags: own, children: [] };
-    level.children = normalizeCommands(specField(command, "commands", at), `${at}.commands`, level, depth + 1, skipped, visited);
+    level.children = normalizeCommands(specField(command, "commands", at), `${at}.commands`, level, depth + 1, skipped);
     levels.push(level);
   });
   return levels;
@@ -388,7 +389,8 @@ function normalizeSpec(spec: unknown): { root: Level; skipped: CompletionSkip[] 
   const skipped: CompletionSkip[] = [];
   const own = normalizeFlags(specField(spec, "options", "spec"), "spec.options", [], skipped);
   const root: Level = { path: [], key: "", name, aliases: [], description: "", ownFlags: own, children: [] };
-  root.children = normalizeCommands(specField(spec, "commands", "spec"), "spec.commands", root, 1, skipped, new Set());
+  root.children = normalizeCommands(specField(spec, "commands", "spec"), "spec.commands", root, 1, skipped);
+  assertSkippedBound(skipped);
   return { root, skipped };
 }
 

@@ -602,7 +602,7 @@ describe("completion names and descriptions", () => {
     ]);
   });
 
-  it("reports a deep chain inside a command left out without running out of stack", () => {
+  it("reports a deep chain inside a command left out and rejects one nested more than 32 commands deep", () => {
     const chain = (length: number): CompletionCommand => {
       let node: CompletionCommand = { name: `n${length - 1}`, options: [] };
       for (let index = length - 2; index >= 0; index -= 1) {
@@ -610,33 +610,77 @@ describe("completion names and descriptions", () => {
       }
       return node;
     };
-    const parents: { commands: CompletionCommand[]; reason: CompletionSkipReason; before: number }[] = [
-      { commands: [{ name: "bad!", options: [], commands: [chain(3001)] }], reason: "invalid-name", before: 1 },
-      { commands: [{ name: "dup", options: [] }, { name: "dup", options: [], commands: [chain(3001)] }], reason: "duplicate", before: 1 },
-      { commands: [{ name: "l1", options: [], commands: [{ name: "l2", options: [], commands: [chain(3002)] }] }], reason: "too-deep", before: 0 },
+    const parents = (length: number): CompletionCommand[][] => [
+      [{ name: "bad!", options: [], commands: [chain(length)] }],
+      [{ name: "dup", options: [] }, { name: "dup", options: [], commands: [chain(length)] }],
     ];
-    for (const { commands, reason, before } of parents) {
+    // `bad!` and `dup` are the first level, so a chain of 31 reaches the 32nd.
+    for (const commands of parents(31)) {
       const { script, skipped } = renderCompletion({ name: "tool", options: [], commands }, "bash");
       expect(script).toContain("-F _clifn_tool tool");
-      expect(skipped).toHaveLength(before + 3001);
-      expect(skipped.every((entry) => entry.kind === "command" && entry.reason === reason)).toBe(true);
+      expect(skipped).toHaveLength(32);
+      expect(skipped.at(-1)?.path).toHaveLength(31);
+    }
+    for (const length of [32, 3001]) {
+      for (const commands of parents(length)) {
+        expect(() => renderCompletion({ name: "tool", options: [], commands }, "bash")).toThrow(
+          expect.objectContaining({ code: "CLIFN_COMPLETION_INVALID_SPEC", message: expect.stringContaining("at most 32 commands deep") }),
+        );
+      }
     }
   });
 
-  it("reports each command object of a shared subtree once", () => {
-    // Every node lists all ten nodes, so walking each path would grow factorially; each object is reported once.
-    const nodes: { name: string; options: never[]; commands: unknown[] }[] = Array.from({ length: 10 }, (_, index) => ({
-      name: `n${index}`,
-      options: [],
-      commands: [],
-    }));
-    for (const node of nodes) node.commands.push(...nodes);
-    const spec = { name: "tool", options: [], commands: [{ name: "bad!", options: [], commands: nodes }] } as CompletionSpec;
-    const { skipped } = renderCompletion(spec, "bash");
+  it("reports a command object reused inside commands left out at each place it appears", () => {
+    const shared: CompletionCommand = {
+      name: "shared",
+      aliases: ["alt"],
+      options: [{ long: "--deep", short: "-d", takesValue: false }],
+      commands: [{ name: "inner", options: [] }],
+    };
+    const at = (path: string[], reason: CompletionSkipReason): CompletionSkip[] => [
+      { kind: "command", name: "shared", path, reason },
+      { kind: "alias", name: "alt", path: [...path, "shared"], reason },
+      { kind: "option", name: "--deep", path: [...path, "shared"], reason },
+      { kind: "option", name: "-d", path: [...path, "shared"], reason },
+      { kind: "command", name: "inner", path: [...path, "shared"], reason },
+    ];
+    const { skipped } = renderCompletion(
+      {
+        name: "tool",
+        options: [],
+        commands: [
+          { name: "bad!", options: [], commands: [shared] },
+          { name: "odd?", options: [], commands: [shared] },
+          { name: "l1", options: [], commands: [{ name: "l2", options: [], commands: [{ name: "l3", options: [], commands: [shared] }] }] },
+        ],
+      },
+      "bash",
+    );
     expect(skipped).toEqual([
       { kind: "command", name: "bad!", path: [], reason: "invalid-name" },
-      ...nodes.map((node) => ({ kind: "command", name: node.name, path: ["bad!"], reason: "invalid-name" })),
+      ...at(["bad!"], "invalid-name"),
+      { kind: "command", name: "odd?", path: [], reason: "invalid-name" },
+      ...at(["odd?"], "invalid-name"),
+      ...at(["l1", "l2", "l3"], "too-deep"),
     ]);
+  });
+
+  it("cuts a cycle inside a command left out where it repeats and rejects a spec that would list too many names", () => {
+    const graph = (size: number): { name: string; options: never[]; commands: unknown[] }[] => {
+      const nodes = Array.from({ length: size }, (_, index) => ({ name: `n${index}`, options: [] as never[], commands: [] as unknown[] }));
+      for (const node of nodes) node.commands.push(...nodes);
+      return nodes;
+    };
+    const spec = (size: number) => ({ name: "tool", options: [], commands: [{ name: "bad!", options: [], commands: graph(size) }] }) as CompletionSpec;
+    // Every node lists all three, so each path stops at the first node it would repeat: 3 + 3·2 + 3·2·1 commands.
+    const { skipped } = renderCompletion(spec(3), "bash");
+    expect(skipped).toHaveLength(1 + 15);
+    expect(skipped).toContainEqual({ kind: "command", name: "n0", path: ["bad!", "n2", "n1"], reason: "invalid-name" });
+    expect(skipped.some((entry) => new Set(entry.path).size !== entry.path.length)).toBe(false);
+    // Ten nodes would give about ten million paths, so the walk stops at the bound instead.
+    expect(() => renderCompletion(spec(10), "bash")).toThrow(
+      expect.objectContaining({ code: "CLIFN_COMPLETION_INVALID_SPEC", message: expect.stringContaining("at most 100000 entries") }),
+    );
   });
 
   it("stops at the third level of a cyclic hand-written spec", () => {
