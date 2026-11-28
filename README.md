@@ -173,8 +173,8 @@ Publish the required internal npm dependency closure before its consumers.
 
 A product's bare (unscoped) npm package is its front door (see AGENTS.md,
 "Bare npm package names"). Its `release-packages.json` entry has
-`"kind": "bare"` and names the release slugs of the product's scoped `core`
-(the bare slug itself when the bare package is the core) and `cli`:
+`"kind": "bare"` and names the release slugs of the product's scoped `core` and
+`cli`:
 
 ```json
 { "slug": "reviewfn", "path": "reviewfn/bare", "name": "reviewfn", "kind": "bare", "core": "reviewfn-core", "cli": "reviewfn-cli" }
@@ -182,21 +182,28 @@ A product's bare (unscoped) npm package is its front door (see AGENTS.md,
 
 Its slug is listed in `superfunctions.owners.json` like any other, and
 `scripts/verify-owners.mjs` requires the core and CLI slugs to have the same
-owner. The release gate accepts only the bare template's exact shape
-(`TEMPLATE` in `scripts/assert-bare-release.mjs`):
+owner. A bare entry names a separate scoped core it re-exports, a scoped CLI, or
+both; a bare package that is the core itself is not supported. The release gate
+accepts only the bare template's exact shape (`TEMPLATE` in
+`scripts/assert-bare-release.mjs`):
 
 - every bin is `"./bin/cli.mjs"`, a byte-for-byte copy of
   `scripts/bare-cli-shim.mjs`, and `"frontDoor": { "cli": "<scoped CLI>" }`
   names the CLI (a bare package without a CLI has neither);
-- a bare package re-exporting a separate core has `"type": "module"`, no `main`
-  or `imports`, `"exports": { ".": { "types": "./index.d.ts", "import": "./index.js", "default": "./index.js" } }`,
-  `index.js` and `index.d.ts` each exactly `export * from '<core>';`, and exactly
-  `{ "<core>": "<version>" }` as its dependencies; it never depends on the CLI, so
-  importers install none of it;
+- a bare package re-exporting its core has `"type": "module"`, no `main` or
+  `imports`, `"exports": { ".": { "types": "./index.d.ts", "import": "./index.js", "default": "./index.js" } }`,
+  `index.js` and `index.d.ts` each exactly `export * from '<core>';`, exactly
+  `{ "<core>": "<version>" }` as its dependencies and, with a CLI, exactly
+  `{ "<cli>": "<version>" }` as its devDependencies; it never depends on the CLI,
+  so importers install none of it;
 - a CLI-only bare package has `"type": "module"`, no `exports`, `main` or
   `imports`, and exactly `{ "<cli>": "<version>" }` as its dependencies;
-- a bare package that is the core itself keeps its own entry points, which must
-  not reach `bin/`, and must not depend on the CLI.
+- its `test` script is `node --test test/front-door.test.mjs`, a byte-for-byte
+  copy of `scripts/bare-front-door-test.mjs`. The release build runs it after
+  installing the pinned core and CLI from npm: `import "<bare>"` must give the
+  core's exports, and every bin's `--version` must print the bare package's
+  version, so a core that ESM cannot import, or a CLI without `--version`, fails
+  the release.
 
 The shim imports only Node.js built-ins and runs the CLI's bin named after the
 bare package at exactly the bare package's version, as a child process that keeps

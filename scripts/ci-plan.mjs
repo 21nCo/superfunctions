@@ -48,6 +48,7 @@ const STANDALONE_SCRIPTS = [
   "scripts/resolve-release-tag.*",
   "scripts/assert-bare-release.*",
   "scripts/bare-cli-shim.*",
+  "scripts/bare-front-door-test.*",
   "scripts/uifn-docs-cli-resolution.*",
   "scripts/assert-release-owner.*",
   "scripts/assert-release-ci.*",

@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
+import { BareReleaseError, FRONT_DOOR_TEST_TEMPLATE, SHIM_FILE, SHIM_TEMPLATE, TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
 import { ReleaseTargetError, loadReleaseTargets } from './resolve-release-tag.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -36,10 +36,14 @@ function product(t, { overrides = {}, entry = {}, cliVersion = '1.2.3', coreVers
     bin: { fixture: './bin/cli.mjs', fx: './bin/cli.mjs' },
     files: ['bin', 'index.js', 'index.d.ts'],
     frontDoor: { cli: '@fixture/cli' },
+    scripts: { test: TEMPLATE.testScript },
     dependencies: { '@fixture/core': '1.2.3' },
+    devDependencies: { '@fixture/cli': '1.2.3' },
     ...overrides,
   });
   mkdirSync(path.join(root, 'bare/bin'));
+  mkdirSync(path.join(root, 'bare/test'));
+  cpSync(FRONT_DOOR_TEST_TEMPLATE, path.join(root, 'bare', TEMPLATE.testFile));
   for (const [file, content] of Object.entries(TEMPLATE.reexportFiles)) writeFileSync(path.join(root, 'bare', file), content('@fixture/core'));
   cpSync(SHIM_TEMPLATE, path.join(root, 'bare', SHIM_FILE));
   writeJson(path.join(root, 'release-packages.json'), [
@@ -88,12 +92,13 @@ test('release targets: a bare entry names existing, non-bare core and CLI slugs'
   await rejects({ cli: 'missing-cli' }, /"missing-cli", which has no release target/);
   await rejects({ core: '' }, /"core" must be a release slug/);
   await rejects({ name: '@fixture/bare' }, /unscoped npm name/);
+  await rejects({ core: 'fixture' }, /a bare package that is the core itself is not supported/);
   const plain = tempDir(t, 'bare-release-plain-');
   writeJson(path.join(plain, 'release-packages.json'), [{ slug: 'lib', path: 'lib', name: 'lib', cli: 'lib-cli' }]);
   await assert.rejects(loadReleaseTargets({ root: plain }), /apply only to "kind": "bare"/);
   const chained = product(t);
   const entries = JSON.parse(readFileSync(path.join(chained, 'release-packages.json'), 'utf8'));
-  entries.push({ slug: 'other', path: 'bare', name: 'other', kind: 'bare', core: 'fixture' });
+  entries.push({ slug: 'other', path: 'bare', name: 'other', kind: 'bare', cli: 'fixture' });
   writeJson(path.join(chained, 'release-packages.json'), entries);
   await assert.rejects(loadReleaseTargets({ root: chained }), /"fixture", which is itself a bare release target/);
 });
@@ -137,6 +142,15 @@ test('manifests: anything but the template shape, or drift from the core and CLI
   await expectProblem({ overrides: { bin: { fixture: './bin/cli.mjs', fixturectl: './bin/cli.mjs' } } }, /"fixturectl" bin with the same file/);
   await expectProblem({ overrides: { bin: { fixture: 'bin/cli.mjs' } } }, /bin "fixture" must be "\.\/bin\/cli\.mjs"/);
   await expectProblem({ overrides: { files: ['index.js'] } }, /files must include bin\/cli\.mjs/);
+  // The front-door test: the template's script and file, and the CLI as the only devDependency.
+  await expectProblem({ overrides: { scripts: { test: 'node --test' } } }, /scripts\.test must be "node --test test\/front-door\.test\.mjs"/);
+  await expectProblem({ overrides: { devDependencies: undefined } }, /devDependencies must be \{"@fixture\/cli":"1\.2\.3"\}/);
+  await expectProblem({ overrides: { devDependencies: { '@fixture/cli': '1.2.3', vitest: '^3.0.0' } } }, /devDependencies must be/);
+  const testEdited = product(t);
+  writeFileSync(path.join(testEdited, 'bare', TEMPLATE.testFile), `${readFileSync(FRONT_DOOR_TEST_TEMPLATE, 'utf8')}// local change\n`);
+  assert.ok((await problemsOf(testEdited)).some(problem => /differs from the shared front-door test template/.test(problem)));
+  rmSync(path.join(testEdited, 'bare', TEMPLATE.testFile));
+  assert.ok((await problemsOf(testEdited)).some(problem => /test\/front-door\.test\.mjs is missing/.test(problem)));
 
   const reexport = product(t);
   writeFileSync(path.join(reexport, 'bare/index.js'), "export * from '@fixture/core';\nexport const extra = 1;\n");
@@ -167,7 +181,7 @@ test('manifests: anything but the template shape, or drift from the core and CLI
 
 test('manifests: a CLI-only bare package has no module entry and depends on exactly its CLI', async t => {
   const cliOnly = { core: undefined };
-  const shape = { exports: undefined, files: ['bin'], dependencies: { '@fixture/cli': '1.2.3' } };
+  const shape = { exports: undefined, files: ['bin'], dependencies: { '@fixture/cli': '1.2.3' }, devDependencies: undefined };
   assert.deepEqual(await problemsOf(product(t, { entry: cliOnly, overrides: shape })), []);
   const ranged = await problemsOf(product(t, { entry: cliOnly, overrides: { ...shape, dependencies: { '@fixture/cli': '~1.2.3' } } }));
   assert.ok(ranged.some(problem => /dependencies must be \{"@fixture\/cli":"1\.2\.3"\}/.test(problem)));
@@ -179,32 +193,52 @@ test('manifests: a CLI-only bare package has no module entry and depends on exac
   assert.ok(overridden.some(problem => /optionalDependencies must be nothing/.test(problem)));
 });
 
-test('manifests: a bare package that is the core itself keeps its own entry points, away from the bin folder', async t => {
-  // plugfn's shape: the bare package is the core and adds the CLI's bin.
-  const selfCore = { core: 'fixture' };
-  const own = { dependencies: { zod: '^3.0.0' }, exports: { '.': { import: './dist/index.js' }, './extra': './dist/extra.js' }, type: undefined, main: './dist/index.js' };
-  const root = product(t, { entry: selfCore, overrides: own });
-  assert.deepEqual(await problemsOf(root), []);
-  const { target, targets } = await bareTarget(root);
-  assert.deepEqual((await checkBareManifests({ root, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] }]);
-  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, main: './bin/cli.mjs' } }))).some(problem => /exports and main must not reach the bin folder/.test(problem)));
-  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, exports: { '.': './dist/index.js', './cli': './bin/cli.mjs' } } }))).some(problem => /must not reach the bin folder/.test(problem)));
-  // Node decodes percent-encoded export targets.
-  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, exports: { '.': './b%69n/cli.mjs' } } }))).some(problem => /must not reach the bin folder/.test(problem)));
-  // Without a CLI slug the core itself has no bin either.
-  const selfNoCli = await problemsOf(product(t, { entry: { core: 'fixture', cli: undefined }, overrides: { ...own, frontDoor: undefined, bin: { fixture: './old.mjs' } } }));
-  assert.ok(selfNoCli.some(problem => /bin applies only/.test(problem)));
-  for (const dependencies of [{ '@fixture/cli': '1.2.3' }, { alias: 'npm:@fixture/cli@1.2.3' }]) {
-    assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, dependencies } }))).some(problem => /would install @fixture\/cli for importers of the core/.test(problem)));
-  }
-
-  // Core only: no bin, no frontDoor.
-  const coreOnly = product(t, { entry: { cli: undefined }, overrides: { bin: undefined, frontDoor: undefined, files: ['index.js', 'index.d.ts'] } });
-  assert.deepEqual(await problemsOf(coreOnly), []);
-  const strayFrontDoor = product(t, { entry: { cli: undefined }, overrides: { bin: undefined } });
+test('manifests: a core-only bare package re-exports its core and has no bin', async t => {
+  const coreOnly = { entry: { cli: undefined }, overrides: { bin: undefined, frontDoor: undefined, devDependencies: undefined, files: ['index.js', 'index.d.ts'] } };
+  assert.deepEqual(await problemsOf(product(t, coreOnly)), []);
+  const strayFrontDoor = product(t, { entry: { cli: undefined }, overrides: { bin: undefined, devDependencies: undefined } });
   assert.ok((await problemsOf(strayFrontDoor)).some(problem => /frontDoor applies only/.test(problem)));
-  const strayBin = product(t, { entry: { cli: undefined }, overrides: { frontDoor: undefined } });
+  const strayBin = product(t, { entry: { cli: undefined }, overrides: { frontDoor: undefined, devDependencies: undefined } });
   assert.ok((await problemsOf(strayBin)).some(problem => /bin applies only/.test(problem)));
+  const strayDev = product(t, { ...coreOnly, overrides: { ...coreOnly.overrides, devDependencies: { '@fixture/cli': '1.2.3' } } });
+  assert.ok((await problemsOf(strayDev)).some(problem => /devDependencies must be nothing/.test(problem)));
+});
+
+test('front-door test template: passes against an importable core and a CLI at the version, fails otherwise', t => {
+  const root = tempDir(t, 'bare-front-door-');
+  const bare = path.join(root, 'node_modules/fixture');
+  writeJson(path.join(bare, 'package.json'), { name: 'fixture', version: '1.2.3', type: 'module', exports: TEMPLATE.exports, bin: { fixture: './bin/cli.mjs' }, frontDoor: { cli: '@fixture/cli' }, dependencies: { '@fixture/core': '1.2.3' } });
+  for (const [file, content] of Object.entries(TEMPLATE.reexportFiles)) writeFileSync(path.join(bare, file), content('@fixture/core'));
+  mkdirSync(path.join(bare, 'bin'));
+  cpSync(SHIM_TEMPLATE, path.join(bare, SHIM_FILE));
+  mkdirSync(path.join(bare, 'test'));
+  cpSync(FRONT_DOOR_TEST_TEMPLATE, path.join(bare, TEMPLATE.testFile));
+  const core = path.join(root, 'node_modules/@fixture/core');
+  const writeCore = exports => {
+    writeJson(path.join(core, 'package.json'), { name: '@fixture/core', version: '1.2.3', type: 'module', exports });
+    writeFileSync(path.join(core, 'index.js'), 'export const answer = 42;\nexport function ask() { return answer; }\n');
+    writeFileSync(path.join(core, 'index.cjs'), 'exports.answer = 42;\n');
+  };
+  // A CLI that prints its version for --version.
+  const cli = path.join(root, 'node_modules/@fixture/cli');
+  const writeVersionCli = version => {
+    writeJson(path.join(cli, 'package.json'), { name: '@fixture/cli', version, type: 'module', bin: { fixture: './cli.mjs' } });
+    writeFileSync(path.join(cli, 'cli.mjs'), `if (process.argv.includes('--version')) console.log(${JSON.stringify(version)});\n`);
+  };
+  // NODE_TEST_CONTEXT, which this runner sets, would make the inner node --test report to it instead of exiting non-zero.
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  const run = () => spawnSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd: bare, encoding: 'utf8', env: { ...env, npm_execpath: '' } });
+  writeCore({ '.': './index.js' });
+  writeVersionCli('1.2.3');
+  const passing = run();
+  assert.equal(passing.status, 0, passing.stdout + passing.stderr);
+  // A core that only a require can load.
+  writeCore({ '.': { require: './index.cjs' } });
+  assert.notEqual(run().status, 0);
+  writeCore({ '.': './index.js' });
+  // No CLI installed at the version: npm is out of reach, so the bin fails.
+  writeVersionCli('1.2.2');
+  assert.notEqual(run().status, 0);
 });
 
 test('registry: the core and CLI must already be on npm at the version', async () => {
@@ -271,16 +305,6 @@ test('packed tarball: keeps the checked manifest fields, template files and the 
   const cleanCliOnly = { ...cliOnlyManifest, files: ['bin'] };
   writeJson(path.join(dir, 'package.json'), cleanCliOnly);
   await checkPackedBare({ tarball: pack(), manifest: cleanCliOnly, kind: 'cli-only' });
-
-  // The core itself: every file its exports and main name ships.
-  const selfManifest = { ...manifest, exports: { '.': { import: './dist/index.js' }, './*': './dist/*.js' }, files: ['bin', 'index.js'] };
-  writeJson(path.join(dir, 'package.json'), selfManifest);
-  await assert.rejects(checkPackedBare({ tarball: pack(), manifest: selfManifest, kind: 'self-core' }), /lacks \.\/dist\/index\.js, which its exports or main name/);
-  mkdirSync(path.join(dir, 'dist'));
-  writeFileSync(path.join(dir, 'dist/index.js'), 'export {};\n');
-  const shipped = { ...selfManifest, files: ['bin', 'dist'] };
-  writeJson(path.join(dir, 'package.json'), shipped);
-  await checkPackedBare({ tarball: pack(), manifest: shipped, kind: 'self-core' });
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {

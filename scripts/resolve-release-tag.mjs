@@ -91,8 +91,7 @@ export async function loadReleaseTargets({ root = repoRoot } = {}) {
 
 /**
  * A bare (front-door) release target, `"kind": "bare"`, is the product's unscoped npm package. It names the release
- * slugs of the product's core (`core`, which is its own slug when the bare package is the core itself) and CLI
- * (`cli`); at least one. scripts/assert-bare-release.mjs holds the three at one version when the bare slug is released.
+ * slugs of the product's scoped core (`core`, which the bare package re-exports) and CLI (`cli`); at least one. scripts/assert-bare-release.mjs holds the three at one version when the bare slug is released.
  * Returns `{ core, cli }` (each a slug or null) for a bare entry, or null for any other entry.
  */
 function bareLinks(file, entry) {
@@ -107,15 +106,16 @@ function bareLinks(file, entry) {
   }
   if (entry.core === undefined && entry.cli === undefined) throw invalid('it needs a "core" or a "cli" release slug, or both');
   if (entry.cli === entry.slug) throw invalid('"cli" must be the slug of the scoped CLI package, not the bare package itself');
+  if (entry.core === entry.slug) throw invalid('"core" must be the slug of the scoped core package; a bare package that is the core itself is not supported');
   if (entry.name.startsWith('@')) throw invalid(`a bare package has an unscoped npm name, not ${entry.name}`);
   return { core: entry.core ?? null, cli: entry.cli ?? null };
 }
 
-/** The core and CLI of a bare target are other, non-bare release targets of the same checkout (or the core is itself). */
+/** The core and CLI of a bare target are other, non-bare release targets of the same checkout. */
 function checkBareLinks(target, bySlug) {
   for (const field of ['core', 'cli']) {
     const slug = target.bare[field];
-    if (slug === null || slug === target.slug) continue;
+    if (slug === null) continue;
     const linked = bySlug.get(slug);
     const where = `bare release target ${JSON.stringify(target.slug)} (${target.source})`;
     if (!linked) throw new ReleaseTargetError('invalid-bare-target', `${where} names ${field} slug ${JSON.stringify(slug)}, which has no release target`, { slug: target.slug, [field]: slug });
