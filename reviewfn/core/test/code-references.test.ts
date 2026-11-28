@@ -167,6 +167,14 @@ const MANY: ManyCase[] = [
   ["a Rust impl target after a block comment", "rust", "impl Display for /* note */ Ledger {}", [{ name: "Ledger", kind: "impl" }], "impl /* note */ Display for /* note */ (A, B) {}"],
   ["a Rust inherent impl after a block comment", "rust", "impl /* note */ Ledger {}", [{ name: "Ledger", kind: "impl" }], "impl /* Ledger */ {}"],
   ["a Rust impl target with a turbofish path", "rust", "impl<T> Trait for model::Vec::<T> {", [{ name: "Vec", kind: "impl" }], "impl<T> Trait for [T] {"],
+  ["no type argument of an object type literal", "typescript", "export const store = configure<{ user: User; token: string }, Action, Deps>();", [{ name: "store", kind: "const" }], "const store = configure<{ user: User; token: string }, Action, Deps>();"],
+  ["every declarator after call type arguments with a leading comment", "typescript", "export const first = make</* type */ A, B, C>(), second = 2;", [{ name: "first", kind: "const" }, { name: "second", kind: "const" }], "const first = make</* type */ A, B, C>(), second = 2;"],
+  ["no type argument after a trailing comment", "typescript", "export const first = make<A /* t */, B, C>();", [{ name: "first", kind: "const" }], "const first = make<A /* t */, B, C>();"],
+  ["every declarator after a shift", "typescript", "export const a = 1 << 2, b = 3;", [{ name: "a", kind: "const" }, { name: "b", kind: "const" }], "const a = 1 << 2, b = 3;"],
+  ["a method, and nothing on a JSDoc continuation line", "typescript", "  save(user) {", [{ name: "save", kind: "method" }], " * save(user) {"],
+  ["an arrow property, and nothing on a JSDoc continuation line", "typescript", "  handler: (event) => {", [{ name: "handler", kind: "method" }], " *   handler: (event) => {"],
+  ["a qualified Swift extension's own type", "swift", "extension Outer.Inner {", [{ name: "Inner", kind: "extension" }], "let inner = Outer.Inner()"],
+  ["a module-qualified Swift extension with a where clause", "swift", "extension Swift.Array where Element == Int {", [{ name: "Array", kind: "extension" }], "    let values: Swift.Array<Int> = []"],
 ];
 
 describe("code references: symbol forms", () => {
@@ -189,6 +197,8 @@ describe("code references: symbol forms", () => {
       ["typescript", `export const a = ${"`${".repeat(15_000)}`], ["typescript", `  m(${"(".repeat(40_000)}`], ["typescript", `  m${"<".repeat(40_000)}`],
       ["typescript", `export const a = ${"/*".repeat(25_000)}`], ["typescript", `export const a = ${"factory <".repeat(5_000)}`], ["typescript", `  a = ${"async ".repeat(8_000)}x =>`],
       ["typescript", `  a(): ${"{ x: ".repeat(10_000)}`], ["typescript", `export const ${"a = 1, ".repeat(6_000)}`], ["typescript", `export const a = ${"<T,>".repeat(10_000)}`],
+      ["typescript", `export const a = ${"a < ".repeat(12_000)}= 1`], ["typescript", `export const a = ${"f<{ x; ".repeat(6_000)}`], ["typescript", `export const a = ${"1 << ".repeat(10_000)}`],
+      ["typescript", `export const a = ${"g</* c */".repeat(5_000)}`], ["swift", `extension ${"A.".repeat(15_000)}B<${"<".repeat(10_000)}`],
       ["rust", `impl ${"/*".repeat(25_000)}`], ["rust", `impl<${"'a, ".repeat(12_000)}`], ["rust", `impl X for ${"&'a mut ".repeat(6_000)}`],
     ];
     const started = performance.now();
@@ -216,6 +226,26 @@ describe("code references: symbol forms", () => {
     expect(names("export const a = f(x, b = 2), c = [d, e = 3], g = { h: 1, i };")).toEqual(["a", "c", "g"]);
     expect(names("export const a = 1 /* , b = 2 */;")).toEqual(["a"]);
     expect(names("export const a = 1; // , b = 2")).toEqual(["a"]);
+    // A `<` the bounded look-ahead classifies neither as type arguments nor as a comparison stops at the names proved.
+    expect(names(`export const first = make<${"Payload".repeat(40)}, Second, Third>();`)).toEqual(["first"]);
+    expect(names("export const first = make<A, B,")).toEqual(["first"]);
+    expect(names("export const a = b < c")).toEqual(["a"]);
+    expect(names("export const a = make<A, B> // , c = 1")).toEqual(["a"]);
+    // A proved comparison keeps reading: `=`, `;` or a closing bracket the `<` did not open.
+    expect(names("export const a = f() < g, h = 1;")).toEqual(["a", "h"]);
+    expect(names("export const a = x <= y, b = 1;")).toEqual(["a", "b"]);
+    expect(names("export const a = x < y > z, b = 1;")).toEqual(["a", "b"]);
+    expect(names("export const a = make<{ x: string; y: number }, Opts>(), b = 2;")).toEqual(["a", "b"]);
+    expect(names("  method(value = 1 << 2) {}")).toEqual(["method"]);
+    expect(names(" *")).toEqual([]);
+    expect(names("  *gen() {")).toEqual(["gen"]);
+    const swift = (text: string) => lineSymbols("swift", text).map(symbol => symbol.name);
+    expect(swift("public extension A.B.C<T>: Q where T: R {")).toEqual(["C"]);
+    expect(swift("extension Outer . Inner: Equatable {")).toEqual(["Inner"]);
+    expect(swift("extension Array<Int> {")).toEqual(["Array"]);
+    // A qualifier is never reported, even when the line does not prove the extended type.
+    expect(swift("extension Outer<T>.Inner {")).toEqual([]);
+    expect(swift("extension Outer.")).toEqual([]);
     expect(names("export const first = <div>a, b = 1</div>, second = 2;", true)).toEqual(["first", "second"]);
     expect(names("export const a = f(<p>don't, x = 1</p>), b = 2;", true)).toEqual(["a", "b"]);
     expect(names("export const a = <Comp prop={x} label=\"y, z = 1\" {...rest} />, b = 2;", true)).toEqual(["a", "b"]);

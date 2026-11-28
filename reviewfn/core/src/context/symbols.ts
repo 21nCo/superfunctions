@@ -108,7 +108,7 @@ interface SymbolRule {
   /** Reads the declared names from the rest of the line after the pattern, for forms that declare several. */
   names?: (rest: string, dialect: Dialect) => string[];
   /** Reads the declared name from the whole line (and the head line after it), for forms a pattern cannot resolve. */
-  name?: (text: string, next: () => string | undefined, dialect: Dialect) => string | undefined;
+  name?: (text: string, next: () => string | undefined, dialect: Dialect, match: RegExpExecArray) => string | undefined;
 }
 
 // Every pattern is anchored and keeps adjacent repetitions from sharing characters (a whitespace run is always followed
@@ -140,7 +140,8 @@ const RULES: Readonly<Record<SymbolLanguage, readonly SymbolRule[]>> = Object.fr
     { kind: "struct", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}struct\\s+(${SWIFT_ID})`, "u") },
     { kind: "enum", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}enum\\s+(${SWIFT_ID})`, "u") },
     { kind: "protocol", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}protocol\\s+(${SWIFT_ID})`, "u") },
-    { kind: "extension", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}extension\\s+(${SWIFT_ID})`, "u") },
+    // The extended type is the last component of a qualified name: `extension Outer.Inner`, `extension Swift.Array where`.
+    { kind: "extension", pattern: new RegExp(`^\\s*${SWIFT_MODIFIERS}extension\\s+(${SWIFT_ID}(?:\\s*\\.\\s*${SWIFT_ID})*)`, "u"), name: swiftExtendedType },
   ],
   go: [
     // Functions and methods: `func Name(` or `func (receiver) Name(`, with optional type parameters. Go declares
@@ -190,7 +191,7 @@ function symbolsOf(language: SymbolLanguage, text: string, next: () => string | 
       if (names.length) return names.map(name => ({ name, kind }));
       continue;
     }
-    const name = rule.name ? rule.name(text, next, dialect) : match[1];
+    const name = rule.name ? rule.name(text, next, dialect, match) : match[1];
     if (name !== undefined && !keywords.has(name) && !rule.reserved?.has(name)) return [{ name, kind: rule.kind as SymbolKind }];
   }
   return [];
@@ -264,8 +265,8 @@ const RUST_DIALECT: Dialect = Object.freeze({ rust: true, jsx: false });
 
 const MAX_GROUP_DEPTH = 32;
 const MAX_PATTERN_DEPTH = 16;
-/** Characters a call's type arguments may span on one line; a longer `<...>` is read as a comparison. */
-const MAX_TYPE_ARGUMENT_CHARACTERS = 128;
+/** Characters a call's type arguments may span on one line; a `<` not classified within them stops the scan. */
+const MAX_TYPE_ARGUMENT_CHARACTERS = 256;
 const JS_IDENTIFIER = new RegExp(JS_ID, "uy");
 /** An object pattern's property key: an identifier or a numeric key. */
 const JS_PROPERTY_KEY = new RegExp(`${JS_ID_PART}+`, "uy");
@@ -277,8 +278,8 @@ const CLOSERS: Readonly<Record<string, string>> = Object.freeze({ "(": ")", "[":
 /** What can follow call type arguments, as in `make<string, number>()`; anything else makes `<` a comparison. */
 const TYPE_ARGUMENT_FOLLOWERS = "(`,;)]}";
 
-/** What the last token was: one that ends a value (so `/` divides) and whether it was a word (so `<` may open type arguments). */
-interface ScanState { value: boolean; word: boolean }
+/** What the last token was: one that ends a value, so `/` divides and `<` opens call type arguments or compares. */
+interface ScanState { value: boolean }
 
 /** The scan cannot read the line any further. */
 const STOP = undefined;
@@ -375,7 +376,7 @@ function skipGroup(text: string, start: number, dialect: Dialect, types: boolean
   if (depth > MAX_GROUP_DEPTH) return STOP;
   const closer = CLOSERS[text[start]];
   const inner = types || text[start] === "<";
-  const state: ScanState = { value: false, word: false };
+  const state: ScanState = { value: false };
   for (let at = start + 1; ;) {
     at = skipTrivia(text, at, dialect);
     if (at >= text.length) return STOP;
@@ -386,38 +387,50 @@ function skipGroup(text: string, start: number, dialect: Dialect, types: boolean
   }
 }
 
+/** `typeArguments` proved the `<` a comparison (or the first half of a shift). */
+const COMPARISON = -1;
+
 /**
- * The index after the call type arguments that start with the `<` at `index` (`make<string, number>(`), or `undefined`
- * when the `<` is a comparison: the brackets do not close within a bounded span, hold an operator no type holds, or
- * are not followed by a call, a template or the end of an expression.
+ * Classifies the `<` at `index` that follows a value. Returns the index after the call type arguments it opens
+ * (`make<string, number>(`, `make<{ a: A; b: B }, C>()`); `COMPARISON` when no type arguments can start there: an
+ * operator no type holds appears in the angle brackets (`=`, `;`, `+`, `*`, `/`, `&&`, ...), a bracket closes that
+ * the `<` did not open, or the closing `>` is followed by something a call's type arguments never are; or `STOP` when
+ * the bounded span ends (or the line does) before either is proved. Comments are trivia, strings single tokens, and
+ * (), [] and {} nest, holding any `;` or `,`.
  */
-function typeArguments(text: string, index: number): number | undefined {
+function typeArguments(text: string, index: number, dialect: Dialect): number | undefined {
   const open = [">"];
   const end = Math.min(text.length, index + MAX_TYPE_ARGUMENT_CHARACTERS);
   for (let at = index + 1; at < end; at += 1) {
     const character = text[at];
+    const angle = open[open.length - 1] === ">";
     switch (character) {
       case "\"": case "'": case "`": at = skipString(text, at) - 1; break;
-      case "=": if (text[at + 1] !== ">") return undefined; at += 1; break;
-      case ";": case "+": case "*": case "%": case "!": case "^": case "~": case "/": return undefined;
-      case "&": case "|": if (text[at + 1] === character) return undefined; break;
+      case "=": if (text[at + 1] !== ">") return COMPARISON; at += 1; break;
+      case "/":
+        if (text[at + 1] === "/" || text[at + 1] === "*") {
+          at = skipTrivia(text, at, dialect) - 1;
+          break;
+        }
+        return COMPARISON;
+      case ";": case "+": case "*": case "%": case "!": case "^": case "~": if (angle) return COMPARISON; break;
+      case "&": case "|": if (angle && text[at + 1] === character) return COMPARISON; break;
       case "<": open.push(">"); break;
       case "(": open.push(")"); break;
       case "[": open.push("]"); break;
       case "{": open.push("}"); break;
       case ">": case ")": case "]": case "}": {
-        if (open.pop() !== character) return undefined;
+        if (open.pop() !== character) return COMPARISON;
         if (!open.length) {
-          let after = at + 1;
-          while (after < text.length && /\s/u.test(text[after])) after += 1;
-          return after === text.length || TYPE_ARGUMENT_FOLLOWERS.includes(text[after]) ? at + 1 : undefined;
+          const after = skipTrivia(text, at + 1, dialect);
+          return after >= text.length || TYPE_ARGUMENT_FOLLOWERS.includes(text[after]) ? at + 1 : COMPARISON;
         }
         break;
       }
       default: break;
     }
   }
-  return undefined;
+  return STOP;
 }
 
 /**
@@ -492,14 +505,13 @@ function openingTag(text: string, index: number, dialect: Dialect, depth: number
 
 /**
  * The index after the one token at `at` (never trivia), updating `state`, or `STOP`. In `types` a `<` always opens a
- * group; in an expression it opens type parameters or JSX where a value starts, call type arguments right after a word,
- * and is a comparison otherwise.
+ * group; in an expression it opens type parameters or JSX where a value starts, and after a value it opens call type
+ * arguments or is a comparison, whichever `typeArguments` proves (the scan stops when it proves neither).
  */
 function skipToken(text: string, at: number, dialect: Dialect, types: boolean, state: ScanState, depth: number): number | undefined {
   const character = text[at];
-  const settle = (end: number | undefined, value: boolean, word = false) => {
+  const settle = (end: number | undefined, value: boolean) => {
     state.value = value;
-    state.word = word;
     return end;
   };
   if (character === "\"" || (character === "'" && !dialect.rust)) return settle(skipString(text, at), true);
@@ -527,17 +539,18 @@ function skipToken(text: string, at: number, dialect: Dialect, types: boolean, s
       }
       return settle(skipGroup(text, at, dialect, true, depth + 1), false);
     }
-    if (state.word) {
-      const end = typeArguments(text, at);
-      if (end !== undefined) return settle(end, true);
-    }
-    return settle(at + 1, false);
+    // After a value `<` opens call type arguments or is a comparison (or shift); when the bounded look-ahead proves
+    // neither, the scan stops, so commas inside unproved type arguments never separate declarators.
+    const end = typeArguments(text, at, dialect);
+    if (end === STOP) return STOP;
+    if (end !== COMPARISON) return settle(end, true);
+    return settle(text[at + 1] === "<" ? at + 2 : at + 1, false);
   }
   if (character === ")" || character === "]" || character === "}" || (types && character === ">")) return STOP;
   if (identifierUnit(text, at)) {
     let end = at + 1;
     while (end < text.length && identifierUnit(text, end)) end += 1;
-    return settle(end, true, true);
+    return settle(end, true);
   }
   return settle(at + 1, false);
 }
@@ -547,7 +560,7 @@ function skipToken(text: string, at: number, dialect: Dialect, types: boolean, s
  * or `STOP` where the scan cannot read on.
  */
 function scanUntil(text: string, index: number, dialect: Dialect, types: boolean, stop: (at: number, state: ScanState) => boolean): number | undefined {
-  const state: ScanState = { value: false, word: false };
+  const state: ScanState = { value: false };
   for (let at = index; ;) {
     at = skipTrivia(text, at, dialect);
     if (at >= text.length) return text.length;
@@ -652,6 +665,8 @@ function jsDeclaredNames(rest: string, dialect: Dialect): string[] {
  */
 function jsMemberName(text: string, dialect: Dialect): { name: string; end: number } | undefined {
   let at = skipTrivia(text, 0, dialect);
+  // A line that starts with `*` and whitespace continues a block comment (` * save(user) {` in JSDoc): it declares nothing.
+  if (text[at] === "*" && (at + 1 >= text.length || /\s/u.test(text[at + 1]))) return undefined;
   for (;;) {
     if (text[at] === "*") at = skipTrivia(text, at + 1, dialect);
     if (text[at] === "#") at += 1;
@@ -719,6 +734,29 @@ function jsArrowPropertyName(text: string, _next: () => string | undefined, dial
   const at = member.end;
   if ((text[at] !== ":" && text[at] !== "=") || text[at + 1] === "=" || text[at + 1] === ">") return undefined;
   return functionValueAt(text, skipTrivia(text, at + 1, dialect), dialect) ? member.name : undefined;
+}
+
+/**
+ * The type a Swift `extension` extends: the last component of its qualified name (`Outer.Inner` gives `Inner`), never a
+ * module or outer-type qualifier. A name whose generic arguments a further `.` follows (`Outer<T>.Inner`) gives nothing.
+ */
+function swiftExtendedType(text: string, _next: () => string | undefined, _dialect: Dialect, match: RegExpExecArray): string | undefined {
+  const path = match[1];
+  let at = match.index + match[0].length;
+  while (at < text.length && /\s/u.test(text[at])) at += 1;
+  // A name continued on the next line (`extension Outer.`) is not proved.
+  if (text[at] === ".") return undefined;
+  if (text[at] === "<") {
+    let depth = 0;
+    for (; at < text.length; at += 1) {
+      if (text[at] === "<") depth += 1;
+      else if (text[at] === ">" && !(depth -= 1)) break;
+    }
+    at += 1;
+    while (at < text.length && /\s/u.test(text[at])) at += 1;
+    if (at > text.length || text[at] === ".") return undefined;
+  }
+  return path.slice(path.lastIndexOf(".") + 1).trim();
 }
 
 const RUST_TYPE_PREFIXES: ReadonlySet<string> = new Set(["mut", "dyn", "const"]);
