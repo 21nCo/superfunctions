@@ -36,10 +36,16 @@ export interface CredentialMintRequest<TInstallation = unknown, TScope = unknown
    * is in flight, and then return the same credential while it is neither
    * revoked nor expired; after that the key mints a new credential. The same
    * key with a different request rejects with `invalid_request` while the
-   * earlier credential is live. A mint that failed with no credential frees
-   * the key. A `mint_outcome_unknown` failure keeps it: every mint with that
-   * key repeats the failure until any credential the provider may have issued
-   * has expired, so no retry issues a second one.
+   * earlier credential is live. A key never sends a second provider request
+   * while a credential from an earlier one under that key may be live: only
+   * a definite non-issuance (a failure before the request, or a provider
+   * refusal such as HTTP 4xx) frees it at once. A failure after which a
+   * credential may exist (the connection failed after the request was sent,
+   * a 5xx, or a success response that was lost or unusable) rejects with
+   * `mint_outcome_unknown`, and every mint with that key repeats the failure
+   * until any such credential has expired. A `rejected_credential_not_revoked`
+   * failure is repeated, with the same `revokeHandle`, until that handle is
+   * revoked or the credential expires.
    */
   readonly idempotencyKey?: string;
 }
@@ -65,12 +71,13 @@ export interface MintedCredential<THandle = unknown> {
  * - Without `idempotencyKey`, each `mint` asks the provider for a new
  *   credential. With one, a retried or concurrent mint of the same request
  *   returns the same credential (see {@link CredentialMintRequest.idempotencyKey}).
- *   When the provider reports success but its response is lost, `mint`
- *   rejects with the non-retryable `mint_outcome_unknown`: a credential may
- *   have been issued, and it expires on its own. A transport failure before
- *   any response is retryable `provider_unavailable`; for a provider without
- *   its own idempotency key, a request it received before the connection
- *   failed may still have issued a credential nobody can see.
+ *   When the provider reports success but its response is lost or unusable,
+ *   `mint` rejects with the non-retryable `mint_outcome_unknown`: a
+ *   credential may have been issued, and it expires on its own. Without a
+ *   key, a transport failure or a provider 5xx is a retryable
+ *   `provider_unavailable`; for a provider without its own idempotency key, a
+ *   request it received before failing may still have issued a credential
+ *   nobody can see. With a key, those failures are `mint_outcome_unknown`.
  * - When the provider issues a credential the minter rejects, the minter
  *   revokes it before failing; if that revoke fails, it rejects with
  *   `rejected_credential_not_revoked`, with a `revokeHandle` to retry the

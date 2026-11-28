@@ -121,11 +121,15 @@ export function recordingFetch(responses: RecordedResponse[]): { fetch: typeof f
     const next = queue.shift();
     if (!next) throw new Error('No recorded response left');
     if ('throws' in next) throw next.throws;
-    const body = next.body === undefined ? null : typeof next.body === 'string' ? next.body : JSON.stringify(next.body);
-    const response = new Response(next.status === 204 ? null : body, { status: next.status, headers: { 'content-type': 'application/json' } });
     const bodyError = next.bodyThrows;
-    if (bodyError) Object.defineProperty(response, 'text', { value: () => Promise.reject(bodyError) });
-    return response;
+    const body = bodyError
+      ? new ReadableStream<Uint8Array>({ pull: (controller) => controller.error(bodyError) })
+      : next.body === undefined
+        ? null
+        : typeof next.body === 'string'
+          ? next.body
+          : JSON.stringify(next.body);
+    return new Response(next.status === 204 ? null : body, { status: next.status, headers: { 'content-type': 'application/json' } });
   };
   return { fetch: fake as typeof fetch, calls };
 }
@@ -169,15 +173,26 @@ export const RECORDED_ERRORS = {
   revoked401: { message: 'Bad credentials', documentation_url: 'https://docs.github.com/rest', status: '401' },
 } as const;
 
+export interface StatefulGitHubOptions {
+  /**
+   * Answers the nth POST (from 1) after its token was issued and is live, in
+   * place of the 201; throwing makes `fetch` reject after issuing.
+   */
+  readonly onPost?: (token: string, n: number) => Response | undefined;
+  /** Answers the nth DELETE (from 1) in place of GitHub, before it takes effect. */
+  readonly onDelete?: (n: number) => Response | undefined;
+}
+
 /**
  * A stateful fake of the two GitHub endpoints: each POST issues a new fake
  * token and records it as live, and each DELETE ends the bearer's token (204)
  * or answers 401 for one that is not live, as GitHub does.
  */
-export function statefulGitHub(): { fetch: typeof fetch; calls: RecordedCall[]; live: Set<string> } {
+export function statefulGitHub(options: StatefulGitHubOptions = {}): { fetch: typeof fetch; calls: RecordedCall[]; live: Set<string> } {
   const calls: RecordedCall[] = [];
   const live = new Set<string>();
   let issued = 0;
+  let deletes = 0;
   const fake = async (input: unknown, init?: RequestInit): Promise<Response> => {
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
@@ -187,11 +202,50 @@ export function statefulGitHub(): { fetch: typeof fetch; calls: RecordedCall[]; 
       issued += 1;
       const token = fakeInstallationToken(100 + issued);
       live.add(token);
-      return new Response(JSON.stringify(recordedAccessToken(token)), { status: 201 });
+      return options.onPost?.(token, issued) ?? new Response(JSON.stringify(recordedAccessToken(token)), { status: 201 });
+    }
+    if (method === 'DELETE') {
+      deletes += 1;
+      const answer = options.onDelete?.(deletes);
+      if (answer) return answer;
     }
     const bearer = (headers.authorization ?? '').replace(/^Bearer /, '');
     if (method === 'DELETE' && live.delete(bearer)) return new Response(null, { status: 204 });
     return new Response(JSON.stringify(RECORDED_ERRORS.revoked401), { status: 401 });
   };
   return { fetch: fake as typeof fetch, calls, live };
+}
+
+/**
+ * A response body that delivers nothing until `push` is called, and records
+ * whether the reader cancelled it. `pulled` resolves on the first read.
+ */
+export function controlledBody(): { stream: ReadableStream<Uint8Array>; push(text: string): void; readonly cancelled: boolean; pulled: Promise<void> } {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let cancelled = false;
+  let onPull!: () => void;
+  const pulled = new Promise<void>((resolve) => (onPull = resolve));
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      start: (c) => {
+        controller = c;
+      },
+      pull: () => onPull(),
+      cancel: () => {
+        cancelled = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return {
+    stream,
+    push(text: string) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+    get cancelled() {
+      return cancelled;
+    },
+    pulled,
+  };
 }

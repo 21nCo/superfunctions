@@ -1,6 +1,6 @@
 import { createPrivateKey, sign as nodeSign } from 'node:crypto';
 import { inspect } from 'node:util';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CredentialMinterError, ScopeNotGrantable } from 'plugfn/credentials';
 import {
   createGitHubAppMinter,
@@ -10,6 +10,7 @@ import {
   type GitHubAppMinterOptions,
 } from '../../src/github-app/index.js';
 import {
+  controlledBody,
   EXPIRES_AT,
   fakeInstallationToken,
   generateTestAppKeys,
@@ -149,18 +150,21 @@ describe('GitHub App minter: mint (recorded responses)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('rejects a 201 without a usable token, making no further call', async () => {
-    for (const body of [{ expires_at: EXPIRES_AT }, { token: 'has a space', expires_at: EXPIRES_AT }, 'not json', [1]]) {
+  it('reports a 201 without a usable token as an unknown outcome, making no further call', async () => {
+    for (const body of [{ expires_at: EXPIRES_AT }, { token: 'has a space', expires_at: EXPIRES_AT }, 'not json', [1], '']) {
       const { minter: m, calls } = minter([{ status: 201, body }]);
       const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
-      expect(error.code).toBe('provider_error');
+      expect([error.code, error.retryable], JSON.stringify(body)).toEqual(['mint_outcome_unknown', false]);
+      expect(error.message).toMatch(/may have been issued/);
       expect(calls).toHaveLength(1);
     }
   });
 
   it('revokes a returned token whose expires_at is missing, unparseable or already past', async () => {
     const notStrictUtc = ['2050', '2026-11-28', '2026-11-28T13:00:00+00:00', '2026-11-28 13:00:00Z', '2026-02-30T13:00:00Z', 'Sat, 28 Nov 2026 13:00:00 GMT'];
-    for (const expires of [undefined, 'not a date', 42, '2026-11-28T11:00:00Z', ...notStrictUtc]) {
+    // Later than now + 1 h + the 5-minute skew tolerance: not a GitHub installation token's expiry.
+    const beyondLifetime = ['2099-01-01T00:00:00Z', '2026-11-28T13:05:00.001Z'];
+    for (const expires of [undefined, 'not a date', 42, '2026-11-28T11:00:00Z', ...notStrictUtc, ...beyondLifetime]) {
       const token = fakeInstallationToken(3);
       const body = recordedAccessToken(token, { expires_at: expires });
       const { minter: m, calls } = minter([{ status: 201, body }, { status: 204 }]);
@@ -172,11 +176,18 @@ describe('GitHub App minter: mint (recorded responses)', () => {
     }
   });
 
-  it('accepts expires_at with fractional seconds', async () => {
-    const body = recordedAccessToken(fakeInstallationToken(1), { expires_at: '2026-11-28T13:00:00.500Z' });
-    const { minter: m } = minter([{ status: 201, body }]);
-    const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
-    expect(minted.expiresAt.toISOString()).toBe('2026-11-28T13:00:00.000Z');
+  it('keeps expires_at fractional seconds to the millisecond, and tolerates five minutes of clock skew', async () => {
+    for (const [expires, iso] of [
+      ['2026-11-28T12:59:59.5Z', '2026-11-28T12:59:59.500Z'],
+      ['2026-11-28T13:00:00.123456Z', '2026-11-28T13:00:00.123Z'],
+      ['2026-11-28T13:05:00Z', '2026-11-28T13:05:00.000Z'],
+    ]) {
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(fakeInstallationToken(1), { expires_at: expires }) }]);
+      const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+      expect(minted.expiresAt.toISOString()).toBe(iso);
+      expect(minted.revokeHandle.expiresAt.toISOString()).toBe(iso);
+      expect(calls).toHaveLength(1);
+    }
   });
 
   it('fails closed, revoking the token, when the 201 grants less than requested', async () => {
@@ -659,13 +670,14 @@ describe('GitHub App minter: retried mint', () => {
     let now = NOW_MS;
     const { minter: m, calls } = minter(
       [
-        { status: 502, body: { message: 'Bad Gateway' } },
+        { status: 429, body: { message: 'API rate limit exceeded' } },
         { status: 201, body: recordedAccessToken(fakeInstallationToken(1)) },
         { status: 201, body: recordedAccessToken(fakeInstallationToken(2), { expires_at: '2026-11-28T14:00:00Z' }) },
       ],
       { now: () => now },
     );
     const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-5' };
+    // A 429 is a definite refusal: nothing was issued, so the key is free.
     expect((await rejection(m.mint(request))).code).toBe('provider_unavailable');
     const first = await m.mint(request);
     expect(await m.mint(request)).toBe(first);
@@ -699,6 +711,193 @@ describe('GitHub App minter: retried mint', () => {
       expect(error.code).toBe('invalid_request');
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('GitHub App minter: an idempotency key never issues a second live token', () => {
+  const posts = (calls: { method: string }[]) => calls.filter((c) => c.method === 'POST').length;
+
+  // Each fake issues a live token on the first POST, then loses or garbles the answer.
+  const lostAnswers: [string, (token: string) => Response][] = [
+    ['fetch rejects after GitHub issued the token', () => {
+      throw new TypeError('socket hang up');
+    }],
+    ['502 after GitHub issued the token', () => new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 })],
+    ['a 302 after GitHub issued the token', () => new Response(null, { status: 302 })],
+    ['a 201 whose body is not JSON', () => new Response('{"token": "trunc', { status: 201 })],
+    ['a 201 without a token', (token) => new Response(JSON.stringify({ ...recordedAccessToken(token), token: undefined }), { status: 201 })],
+  ];
+
+  for (const [name, answer] of lostAnswers) {
+    it(`holds the key after ${name}`, async () => {
+      let now = NOW_MS;
+      const later = (token: string) => new Response(JSON.stringify(recordedAccessToken(token, { expires_at: '2026-11-28T14:00:00Z' })), { status: 201 });
+      const github = statefulGitHub({ onPost: (token, n) => (n === 1 ? answer(token) : later(token)) });
+      const { minter: m } = minter([], { fetch: github.fetch, now: () => now });
+      const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-held' };
+      const lost = await rejection(m.mint(request));
+      expect([lost.code, lost.retryable]).toEqual(['mint_outcome_unknown', false]);
+      now += 59 * 60 * 1000;
+      expect(await rejection(m.mint(request))).toBe(lost);
+      expect(posts(github.calls)).toBe(1);
+      // The lost token is the only live one; nothing the minter returned can reach it.
+      expect(github.live.size).toBe(1);
+
+      // An hour after the failure any token from that POST has expired, and the key mints again.
+      now = NOW_MS + 3600 * 1000;
+      const minted = await m.mint(request);
+      expect(posts(github.calls)).toBe(2);
+      await m.revoke(minted.revokeHandle);
+      expect(github.live.size).toBe(1);
+    });
+  }
+
+  it('without a key, a transport failure or 5xx stays retryable', async () => {
+    for (const answer of [lostAnswers[0]![1], lostAnswers[1]![1]]) {
+      const github = statefulGitHub({ onPost: (token, n) => (n === 1 ? answer(token) : undefined) });
+      const { minter: m } = minter([], { fetch: github.fetch });
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect([error.code, error.retryable]).toEqual(['provider_unavailable', true]);
+    }
+  });
+
+  it('repeats a rejected grant whose cleanup failed, with the same handle, until that handle is revoked', async () => {
+    const github = statefulGitHub({
+      onPost: (token, n) => (n === 1 ? new Response(JSON.stringify(recordedAccessToken(token, { repository_selection: 'all' })), { status: 201 }) : undefined),
+      onDelete: (n) => (n <= 3 ? new Response(JSON.stringify({ message: 'Service unavailable' }), { status: 503 }) : undefined),
+    });
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-rejected' };
+    const rejected = await rejection(m.mint(request));
+    expect(rejected.code).toBe('rejected_credential_not_revoked');
+    const retried = await rejection(m.mint(request));
+    expect(retried).toBe(rejected);
+    expect(retried.revokeHandle).toBe(rejected.revokeHandle);
+    expect(posts(github.calls)).toBe(1);
+
+    await m.revoke(rejected.revokeHandle as GitHubAppRevokeHandle);
+    expect(github.live.size).toBe(0);
+    // Its token confirmed revoked, the key mints again; revoking that leaves nothing live.
+    const minted = await m.mint(request);
+    expect(posts(github.calls)).toBe(2);
+    await m.revoke(minted.revokeHandle);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('frees the key once a rejected grant has been revoked inside mint', async () => {
+    const github = statefulGitHub({
+      onPost: (token, n) => (n === 1 ? new Response(JSON.stringify(recordedAccessToken(token, { repository_selection: 'all' })), { status: 201 }) : undefined),
+    });
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-cleaned' };
+    expect((await rejection(m.mint(request))).code).toBe('provider_error');
+    expect(github.live.size).toBe(0);
+    const minted = await m.mint(request);
+    await m.revoke(minted.revokeHandle);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('keeps its own copy of the expiry: changing the returned Date does not free the key', async () => {
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-date' };
+    const first = await m.mint(request);
+    first.expiresAt.setTime(0);
+    expect(await m.mint(request)).toBe(first);
+    expect(posts(github.calls)).toBe(1);
+    await m.revoke(first.revokeHandle);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('frees the key after a definite refusal (422)', async () => {
+    const { minter: m, calls } = minter([
+      { status: 422, body: RECORDED_ERRORS[422] },
+      { status: 201, body: recordedAccessToken(fakeInstallationToken(1)) },
+    ]);
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-422' };
+    expect(await rejection(m.mint(request))).toBeInstanceOf(ScopeNotGrantable);
+    await expect(m.mint(request)).resolves.toMatchObject({ secret: fakeInstallationToken(1) });
+    expect(calls).toHaveLength(2);
+  });
+});
+
+describe('GitHub App minter: slow response bodies', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function bodyFetch(answers: Record<string, () => Response>) {
+    const calls: { method: string; authorization: string | undefined }[] = [];
+    const fake = (async (_input: unknown, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ method, authorization: (init?.headers as Record<string, string> | undefined)?.authorization });
+      return answers[method]!();
+    }) as typeof fetch;
+    return { fetch: fake, calls };
+  }
+
+  it('cancels a stalled error body after the read timeout and still maps the status', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const body = controlledBody();
+    const { fetch: fake } = bodyFetch({ POST: () => new Response(body.stream, { status: 422 }) });
+    const { minter: m } = minter([], { fetch: fake });
+    const pending = rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    await body.pulled;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toBeInstanceOf(ScopeNotGrantable);
+    expect(body.cancelled).toBe(true);
+  });
+
+  it('cancels a stalled revoke error body and keeps the revoke retryable', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const body = controlledBody();
+    const { fetch: fake } = bodyFetch({
+      POST: () => new Response(JSON.stringify(recordedAccessToken(fakeInstallationToken(1))), { status: 201 }),
+      DELETE: () => new Response(body.stream, { status: 503 }),
+    });
+    const { minter: m } = minter([], { fetch: fake });
+    const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+    const pending = rejection(m.revoke(minted.revokeHandle));
+    await body.pulled;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect([(await pending).code, body.cancelled]).toEqual(['provider_unavailable', true]);
+  });
+
+  it('reports a stalled 201 as an unknown outcome, then cancels the body if it never arrives', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const body = controlledBody();
+    const { fetch: fake, calls } = bodyFetch({ POST: () => new Response(body.stream, { status: 201 }) });
+    const { minter: m } = minter([], { fetch: fake });
+    const pending = rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    await body.pulled;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await pending).code).toBe('mint_outcome_unknown');
+    // Still read, so a late token can be revoked, until the late-body limit.
+    expect(body.cancelled).toBe(false);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(body.cancelled).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['POST']);
+  });
+
+  it('revokes a token from a 201 body that arrives after the read timeout, never returning it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const token = fakeInstallationToken(9);
+    const body = controlledBody();
+    const { fetch: fake, calls } = bodyFetch({
+      POST: () => new Response(body.stream, { status: 201 }),
+      DELETE: () => new Response(null, { status: 204 }),
+    });
+    const { minter: m } = minter([], { fetch: fake });
+    const pending = rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-late' }));
+    await body.pulled;
+    await vi.advanceTimersByTimeAsync(10_000);
+    const lost = await pending;
+    expect(lost.code).toBe('mint_outcome_unknown');
+    body.push(JSON.stringify(recordedAccessToken(token)));
+    for (let i = 0; i < 50 && calls.length < 2; i++) await vi.advanceTimersByTimeAsync(1);
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+    expect(calls[1]!.authorization).toBe(`Bearer ${token}`);
+    expect([String(lost), JSON.stringify(lost), inspect(lost, { depth: 10, showHidden: true })].join('\n')).not.toContain(token);
   });
 });
 

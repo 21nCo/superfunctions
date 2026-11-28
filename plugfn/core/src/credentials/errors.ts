@@ -26,10 +26,12 @@ export type CredentialMinterErrorCode =
    */
   | 'rejected_credential_not_revoked'
   /**
-   * The provider may have issued a credential whose response was lost (it
-   * reported success, but the body could not be read). The minter cannot
-   * know or revoke it and it stays active until it expires, so this is not
-   * retryable: a retry could issue a second credential.
+   * The provider may have issued a credential whose response was lost: it
+   * reported success but the body could not be read or carried no usable
+   * credential, or, for a mint with an `idempotencyKey`, the connection
+   * failed after the request was sent or the provider answered 5xx. The
+   * minter cannot know or revoke it and it stays active until it expires, so
+   * this is not retryable: a retry could issue a second credential.
    */
   | 'mint_outcome_unknown';
 
