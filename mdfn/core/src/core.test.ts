@@ -19,6 +19,7 @@ import {
   transitionReview,
   validateMdfnSidecar,
 } from "./index";
+import { immutableValue } from "./immutable";
 
 const projector: EditorProjector = {
   parse(markdown) {
@@ -511,260 +512,162 @@ describe("@mdfn/core", () => {
     expect(validateMdfnSidecar(sidecar, { maxTextLength: 8, maxAggregateTextLength: 24 })?.comments).toHaveLength(1);
   });
 
-  it("keeps sidecar collections and anchors supplied through getters when mapping", () => {
-    // Each getter returns the same value on every read, as a typical accessor would.
-    const anchor = { from: 1, to: 2 };
-    class Thread {
-      readonly id = "c";
-      readonly resolved = false;
-      readonly messages = [];
-      get anchor() { return anchor; }
-    }
-    const comments = [new Thread()];
-    const suggestions = [{ id: "s", anchor: { from: 0, to: 1 }, replacement: "x", authorId: "a", status: "pending", createdAt: "2026-08-12T00:00:00.000Z" }];
-    class Sidecar {
-      get comments() { return comments; }
-      get suggestions() { return suggestions; }
-    }
-    const mapped = mapSidecar(new Sidecar() as unknown as Parameters<typeof mapSidecar>[0], [{ from: 5, to: 5, insertedLength: 1 }]);
-    expect(mapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 1, to: 2 } }]);
-    expect(mapped?.suggestions?.[0]?.anchor).toEqual({ from: 0, to: 1 });
-    expect(Object.isFrozen(mapped)).toBe(true);
-  });
-
-  it("copies caller-owned anchors and keeps their inherited affinity across mapping calls", () => {
-    const owned = { from: 1, to: 2 };
-    const mapped = mapAnchor(owned, [{ from: 5, to: 5, insertedLength: 1 }]);
-    owned.from = 0;
-    expect(mapped).toEqual({ from: 1, to: 2 });
-
-    const anchor = Object.create({ affinity: "before" }, { from: { value: 2, enumerable: true }, to: { value: 2, enumerable: true } });
-    const sidecar = { comments: [{ id: "c", anchor, resolved: false, messages: [] }] };
-    const later = { from: 6, to: 6, insertedLength: 1 };
-    const atAnchor = { from: 2, to: 2, insertedLength: 2 };
-    const together = mapSidecar(sidecar, [later, atAnchor]);
-    const separately = mapSidecar(mapSidecar(sidecar, [later]), [atAnchor]);
-    expect(together?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
-    expect(separately?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
-  });
-
-  it("skips holes in a sparse ranges array when mapping anchors", () => {
-    const ranges: { from: number; to: number; insertedLength: number }[] = [];
-    ranges[1] = { from: 0, to: 0, insertedLength: 1 };
-    expect(mapAnchor({ from: 1, to: 2 }, ranges)).toEqual({ from: 2, to: 3 });
-    const frozen = Object.freeze({ from: 1, to: 2 });
-    expect(mapAnchor(frozen, new Array(2))).toBe(frozen);
-    expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] }, ranges)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
-  });
-
-  it("returns an anchor untouched when every range is a hole and reads each field once otherwise", () => {
-    const throwing = Object.defineProperties({}, {
-      from: { get: () => { throw new Error("from read"); }, enumerable: true },
-      to: { get: () => { throw new Error("to read"); }, enumerable: true },
-    }) as unknown as Parameters<typeof mapAnchor>[0];
-    expect(mapAnchor(throwing, new Array(2))).toBe(throwing);
-
-    const reads: Record<string, number> = { from: 0, to: 0, affinity: 0 };
-    const values: Record<string, unknown> = { from: 1, to: 2, affinity: "before" };
-    const once = (key: string) => ({
-      enumerable: true,
-      get: () => {
-        reads[key] += 1;
-        if (reads[key] > 1) throw new Error(`${key} read twice`);
-        return values[key];
-      },
-    });
-    const counted = Object.defineProperties({ note: "kept" }, { from: once("from"), to: once("to"), affinity: once("affinity") });
-    const mapped = mapAnchor(counted as unknown as Parameters<typeof mapAnchor>[0], [{ from: 0, to: 0, insertedLength: 1 }]);
-    expect(mapped).toEqual({ note: "kept", from: 2, to: 3, affinity: "before" });
-    expect(reads).toEqual({ from: 1, to: 1, affinity: 1 });
-
-    let affinityReads = 0;
-    const shifting = Object.defineProperty({ from: 2, to: 2 }, "affinity", {
-      enumerable: true,
-      get: () => (++affinityReads === 1 ? "before" : "after"),
-    }) as unknown as Parameters<typeof mapAnchor>[0];
-    expect(mapAnchor(shifting, [{ from: 2, to: 2, insertedLength: 2 }])).toEqual({ from: 2, to: 2, affinity: "before" });
-    expect(affinityReads).toBe(1);
-
-    class Ranges extends Array<{ from: number; to: number; insertedLength: number }> {
-      constructor(items: Iterable<{ from: number; to: number; insertedLength: number }>) {
-        super();
-        for (const item of items) this.push(item);
-      }
-    }
-    expect(mapAnchor({ from: 1, to: 2 }, new Ranges([{ from: 0, to: 0, insertedLength: 1 }]))).toEqual({ from: 2, to: 3 });
-    const untouched = Object.freeze({ from: 1, to: 2 });
-    expect(mapAnchor(untouched, new Ranges([]))).toBe(untouched);
-
-    // A later range slot is read only after the earlier range has been applied.
-    const first = { from: 0, to: 0, insertedLength: 1 };
-    const ordered: { from: number; to: number; insertedLength: number }[] = [first];
-    Object.defineProperty(ordered, 1, { enumerable: true, get: () => { first.insertedLength = 5; return first; } });
-    expect(mapAnchor({ from: 1, to: 2 }, ordered)).toEqual({ from: 7, to: 8 });
-
-    // Each slot is checked once, so a range seen as present is applied.
-    let slotChecks = 0;
-    const flaky = new Proxy([{ from: 0, to: 0, insertedLength: 1 }], {
-      has: (target, key) => (key === "0" ? ++slotChecks === 1 : Reflect.has(target, key)),
-    });
-    expect(mapAnchor({ from: 1, to: 2 }, flaky)).toEqual({ from: 2, to: 3 });
-  });
-
-  it("visits ranges as native reduce does when anchor getters change the ranges array", () => {
+  describe("anchor mapping matches the dev implementation", () => {
     type Range = { from: number; to: number; insertedLength: number };
-    // The first range is read before the anchor getters run, so deleting it there neither throws nor skips it.
-    const deleting: Range[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const deletes = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
-      enumerable: true,
-      get: () => { delete deleting[0]; return undefined; },
-    }) as unknown as Parameters<typeof mapAnchor>[0];
-    expect(mapAnchor(deletes, deleting)).toMatchObject({ from: 4, to: 4 });
-
-    // A later slot deleted by a getter is skipped.
-    const later: Range[] = [{ from: 0, to: 0, insertedLength: 1 }, { from: 0, to: 0, insertedLength: 5 }];
-    const deletesLater = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
-      enumerable: true,
-      get: () => { delete later[1]; return undefined; },
-    }) as unknown as Parameters<typeof mapAnchor>[0];
-    expect(mapAnchor(deletesLater, later)).toMatchObject({ from: 4, to: 4 });
-
-    // A range appended after the length was taken is not visited.
-    const appending: Range[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const appends = Object.defineProperty({ from: 3, to: 3 }, "affinity", {
-      enumerable: true,
-      get: () => { appending.push({ from: 0, to: 0, insertedLength: 5 }); return undefined; },
-    }) as unknown as Parameters<typeof mapAnchor>[0];
-    expect(mapAnchor(appends, appending)).toMatchObject({ from: 4, to: 4 });
-
-    // A fractional length is truncated, so exactly one range applies.
-    const fractional = new Proxy([{ from: 0, to: 0, insertedLength: 1 }, { from: 0, to: 0, insertedLength: 5 }], {
-      get: (target, key, receiver) => (key === "length" ? 1.5 : Reflect.get(target, key, receiver)),
+    type Anchor = Parameters<typeof mapAnchor>[0];
+    type Sidecar = NonNullable<Parameters<typeof mapSidecar>[0]>;
+    // Inline copy of mapAnchor/mapSidecar on dev before reuse was ported; the
+    // ported versions must behave the same for every input that is not reused.
+    const devMapPosition = (position: number, range: Range, affinity: "before" | "after") => {
+      const delta = range.insertedLength - (range.to - range.from);
+      if (position < range.from || (position === range.from && affinity === "before")) return position;
+      if (position > range.to || (position === range.to && affinity === "after")) return position + delta;
+      return affinity === "before" ? range.from : range.from + range.insertedLength;
+    };
+    const devMapAnchor = (anchor: Anchor, ranges: readonly Range[]): Anchor =>
+      ranges.reduce<Anchor>((current, range) => {
+        const affinity = current.affinity ?? "after";
+        const from = devMapPosition(current.from, range, affinity === "before" ? "before" : "after");
+        const to = devMapPosition(current.to, range, affinity === "after" ? "after" : "before");
+        return { ...current, from: Math.min(from, to), to: Math.max(from, to) };
+      }, anchor);
+    const devMapSidecar = (sidecar: Sidecar | undefined, ranges: readonly Range[]) => {
+      if (!sidecar || ranges.length === 0) return sidecar;
+      return immutableValue({
+        ...sidecar,
+        comments: sidecar.comments?.map((thread) => ({ ...thread, anchor: devMapAnchor(thread.anchor, ranges) })),
+        suggestions: sidecar.suggestions?.map((suggestion) => ({ ...suggestion, anchor: devMapAnchor(suggestion.anchor, ranges) })),
+      });
+    };
+    const outcome = (run: () => unknown) => {
+      try {
+        const value = run();
+        return { value, frozen: Object.isFrozen(value) };
+      } catch (error) {
+        return { error: String(error) };
+      }
+    };
+    // Each case builds fresh inputs per call, because its getters and proxies keep state.
+    const sameAsDevAnchor = (make: () => [Anchor, readonly Range[]]) => {
+      const ported = outcome(() => mapAnchor(...make()));
+      expect(ported).toEqual(outcome(() => devMapAnchor(...make())));
+      return ported;
+    };
+    const sameAsDevSidecar = (make: () => [Sidecar | undefined, readonly Range[]]) => {
+      const ported = outcome(() => mapSidecar(...make()));
+      expect(ported).toEqual(outcome(() => devMapSidecar(...make())));
+      return ported;
+    };
+    const insertAtZero = (): Range[] => [{ from: 0, to: 0, insertedLength: 1 }];
+    const thread = (anchor: Anchor) => ({ id: "c", anchor, resolved: false, messages: [] });
+    const suggestion = (anchor: Anchor) => ({ id: "s", anchor, replacement: "x", authorId: "a", status: "pending" as const, createdAt: "2026-08-12T00:00:00.000Z" });
+    // The has trap reports index 0 present on the first check only.
+    const presentOnce = () => {
+      let checks = 0;
+      return new Proxy(insertAtZero(), { has: (target, key) => (key === "0" ? ++checks === 1 : Reflect.has(target, key)) });
+    };
+    const throwingRanges = () => new Proxy(insertAtZero(), {
+      has: (target, key) => { if (key === "0") throw new Error("range checked"); return Reflect.has(target, key); },
+      get: (target, key, receiver) => { if (key === "0") throw new Error("range read"); return Reflect.get(target, key, receiver); },
     });
-    expect(mapAnchor({ from: 3, to: 3 }, fractional)).toEqual({ from: 4, to: 4 });
-    expect(mapSidecar({ comments: [{ id: "c", anchor: { from: 3, to: 3 }, resolved: false, messages: [] }] }, fractional)?.comments?.[0]?.anchor).toEqual({ from: 4, to: 4 });
-  });
-
-  it("returns a sidecar unread when every range is a hole and keeps an inherited affinity", () => {
-    const anchor = Object.assign(Object.create({ affinity: "before" }), { from: 2, to: 2 }) as Parameters<typeof mapAnchor>[0];
-    const sidecar = { comments: [{ id: "c", anchor, resolved: false, messages: [] }] } as unknown as Parameters<typeof mapSidecar>[0];
-    expect(mapSidecar(sidecar, new Array(1))).toBe(sidecar);
-    const inserted = mapSidecar(mapSidecar(sidecar, new Array(1)), [{ from: 2, to: 2, insertedLength: 3 }]);
-    expect(inserted?.comments?.[0]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
-
-    const throwing = Object.defineProperties({}, {
-      comments: { get: () => { throw new Error("comments read"); }, enumerable: true },
-      suggestions: { get: () => { throw new Error("suggestions read"); }, enumerable: true },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    expect(mapSidecar(throwing, new Array(3))).toBe(throwing);
-
-    // A getter that empties the ranges mid-sidecar still leaves later caller-owned anchors with their affinity.
-    const ranges: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const emptying = Object.defineProperty({ from: 5, to: 5 }, "affinity", {
+    const withAffinityGetter = (onRead: () => void) => Object.defineProperty({ from: 3, to: 3 }, "affinity", {
       enumerable: true,
-      get: () => { delete ranges[0]; return "after"; },
+      get: () => { onRead(); return undefined; },
+    }) as unknown as Anchor;
+
+    it("applies a range seen once by the has trap inside a one-entry sidecar", () => {
+      expect(sameAsDevAnchor(() => [{ from: 3, to: 3 }, presentOnce()]).value).toEqual({ from: 4, to: 4 });
+      expect(sameAsDevSidecar(() => [{ comments: [thread({ from: 3, to: 3 })] }, presentOnce()]).value?.comments?.[0]?.anchor).toEqual({ from: 4, to: 4 });
+      expect(sameAsDevSidecar(() => [{ suggestions: [suggestion({ from: 3, to: 3 })] }, presentOnce()]).value?.suggestions?.[0]?.anchor).toEqual({ from: 4, to: 4 });
     });
-    const mixed = mapSidecar({
-      comments: [
-        { id: "a", anchor: emptying, resolved: false, messages: [] },
-        { id: "b", anchor, resolved: false, messages: [] },
-      ],
-    } as unknown as Parameters<typeof mapSidecar>[0], ranges);
-    expect(mixed?.comments?.[0]?.anchor).toEqual({ from: 6, to: 6, affinity: "after" });
-    expect(mixed?.comments?.[1]?.anchor).toEqual({ from: 2, to: 2, affinity: "before" });
 
-    // The all-hole check reads no range value, and each entry, the first included, starts its
-    // own traversal once its collection has been read, so a range a getter changes or adds first applies.
-    const unread = Object.defineProperty([], 0, { enumerable: true, get: () => { throw new Error("range read"); } });
-    expect(mapSidecar({ comments: [], suggestions: [] }, unread)).toEqual({ comments: [], suggestions: [] });
-    expect(mapSidecar({}, unread)).toEqual({});
-    const replaced: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const replacing = Object.defineProperty({}, "comments", {
-      enumerable: true,
-      get: () => {
-        replaced[0] = { from: 0, to: 0, insertedLength: 5 };
-        return [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
-      },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    expect(mapSidecar(replacing, replaced)?.comments?.[0]?.anchor).toEqual({ from: 6, to: 7 });
-    const appended: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const appending = Object.defineProperty({}, "suggestions", {
-      enumerable: true,
-      get: () => {
-        appended.push({ from: 0, to: 0, insertedLength: 5 });
-        return [{ id: "s", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
-      },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    expect(mapSidecar(appending, appended)?.suggestions?.[0]?.anchor).toEqual({ from: 7, to: 8 });
-
-    // Each later entry starts its own traversal, so a range added before it is reached applies to it.
-    const growing: { from: number; to: number; insertedLength: number }[] = [{ from: 0, to: 0, insertedLength: 1 }];
-    const appendsFirst = Object.defineProperties({}, {
-      comments: { enumerable: true, get: () => [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }] },
-      suggestions: {
-        enumerable: true,
-        get: () => {
-          growing.push({ from: 0, to: 0, insertedLength: 5 });
-          return [{ id: "s", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
-        },
-      },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    const grown = mapSidecar(appendsFirst, growing);
-    expect(grown?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
-    expect(grown?.suggestions?.[0]?.anchor).toEqual({ from: 7, to: 8 });
-  });
-
-  it("builds a mapped sidecar from the comments and suggestions it read", () => {
-    const reads = { comments: 0, suggestions: 0 };
-    const comments = [{ id: "c", anchor: { from: 1, to: 2 }, resolved: false, messages: [] }];
-    const suggestions = [{ id: "s", anchor: { from: 1, to: 2 }, replacement: "x", authorId: "a", status: "pending", createdAt: "2026-08-12T00:00:00.000Z" }];
-    // Each getter returns undefined on its first read and an anchored array afterwards.
-    const shifting = Object.defineProperties({ version: 1 }, {
-      comments: { enumerable: true, get: () => (++reads.comments === 1 ? undefined : comments) },
-      suggestions: { enumerable: true, get: () => (++reads.suggestions === 1 ? undefined : suggestions) },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    const insert = [{ from: 0, to: 0, insertedLength: 1 }];
-    const mapped = mapSidecar(shifting, insert);
-    expect(mapped).toEqual({ version: 1, comments: undefined, suggestions: undefined });
-    expect(reads).toEqual({ comments: 1, suggestions: 1 });
-
-    // Read the other way round, the arrays read first are the ones mapped and kept.
-    const flipping = Object.defineProperties({}, {
-      comments: { enumerable: true, get: () => (++reads.comments === 2 ? comments : undefined) },
-      suggestions: { enumerable: true, get: () => (++reads.suggestions === 2 ? suggestions : undefined) },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    const kept = mapSidecar(flipping, insert);
-    expect(kept?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
-    expect(kept?.suggestions?.[0]?.anchor).toEqual({ from: 2, to: 3 });
-    expect(reads).toEqual({ comments: 2, suggestions: 2 });
-
-    let anchorReads = 0;
-    const entry = Object.defineProperty({ id: "c", resolved: false, messages: [] }, "anchor", {
-      enumerable: true,
-      get: () => {
-        if (++anchorReads > 1) throw new Error("anchor read twice");
-        return { from: 1, to: 2 };
-      },
+    it("does not probe the ranges when a sidecar has no anchors", () => {
+      expect(sameAsDevSidecar(() => [{ comments: [] }, throwingRanges()])).not.toHaveProperty("error");
+      expect(sameAsDevSidecar(() => [{ suggestions: [] }, throwingRanges()])).not.toHaveProperty("error");
+      expect(sameAsDevSidecar(() => [{}, throwingRanges()])).not.toHaveProperty("error");
     });
-    const entryMapped = mapSidecar({ comments: [entry] } as unknown as Parameters<typeof mapSidecar>[0], insert);
-    expect(entryMapped?.comments).toEqual([{ id: "c", resolved: false, messages: [], anchor: { from: 2, to: 3 } }]);
-    expect(anchorReads).toBe(1);
 
-    // Comments are mapped before suggestions are read.
-    let position = 1;
-    const ordered = Object.defineProperties({}, {
-      comments: { enumerable: true, get: () => [{ id: "c", resolved: false, messages: [], get anchor() { return { from: position, to: position + 1 }; } }] },
-      suggestions: { enumerable: true, get: () => { position = 4; return []; } },
-    }) as unknown as Parameters<typeof mapSidecar>[0];
-    expect(mapSidecar(ordered, insert)?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
+    it("handles holes, inherited fields and getters the way dev does", () => {
+      sameAsDevAnchor(() => [{ from: 1, to: 2 }, new Array(1)]);
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 1, to: 2 })] }, new Array(1)]);
+      const sparse = (): Range[] => { const ranges: Range[] = []; ranges[1] = { from: 0, to: 0, insertedLength: 1 }; return ranges; };
+      expect(sameAsDevAnchor(() => [{ from: 1, to: 2 }, sparse()]).value).toEqual({ from: 2, to: 3 });
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 1, to: 2 })] }, sparse()]);
 
-    // A malformed null collection is kept, so sidecar validation still rejects it.
-    const nullComments = mapSidecar({ comments: null } as unknown as Parameters<typeof mapSidecar>[0], insert);
-    const nullSuggestions = mapSidecar({ suggestions: null } as unknown as Parameters<typeof mapSidecar>[0], insert);
-    expect(nullComments).toEqual({ comments: null });
-    expect(nullSuggestions).toEqual({ suggestions: null });
-    expect(() => validateMdfnSidecar(nullComments)).toThrow();
-    expect(() => validateMdfnSidecar(nullSuggestions)).toThrow();
+      const inherited = () => Object.assign(Object.create({ affinity: "before" }), { from: 2, to: 2 }) as Anchor;
+      const atAnchor = (): Range[] => [{ from: 2, to: 2, insertedLength: 3 }];
+      sameAsDevAnchor(() => [inherited(), atAnchor()]);
+      sameAsDevSidecar(() => [{ comments: [thread(inherited())] }, new Array(1)]);
+      sameAsDevSidecar(() => [{ comments: [thread(inherited())] }, atAnchor()]);
+
+      class Thread {
+        readonly id = "c";
+        readonly resolved = false;
+        readonly messages = [];
+        get anchor() { return { from: 1, to: 2 }; }
+      }
+      class GetterSidecar {
+        get comments() { return [new Thread()]; }
+        get suggestions() { return [suggestion({ from: 0, to: 1 })]; }
+      }
+      sameAsDevSidecar(() => [new GetterSidecar() as unknown as Sidecar, [{ from: 5, to: 5, insertedLength: 1 }]]);
+      sameAsDevSidecar(() => [{ comments: null } as unknown as Sidecar, insertAtZero()]);
+    });
+
+    it("visits ranges as native reduce does when getters change them", () => {
+      const deletingFirst = (): [Anchor, Range[]] => { const ranges = insertAtZero(); return [withAffinityGetter(() => { delete ranges[0]; }), ranges]; };
+      expect(sameAsDevAnchor(deletingFirst).value).toMatchObject({ from: 4, to: 4 });
+      sameAsDevSidecar(() => { const [anchor, ranges] = deletingFirst(); return [{ comments: [thread(anchor)] }, ranges]; });
+
+      const appending = (): [Anchor, Range[]] => { const ranges = insertAtZero(); return [withAffinityGetter(() => { ranges.push({ from: 0, to: 0, insertedLength: 5 }); }), ranges]; };
+      expect(sameAsDevAnchor(appending).value).toMatchObject({ from: 4, to: 4 });
+
+      const fractional = () => new Proxy([...insertAtZero(), { from: 0, to: 0, insertedLength: 5 }], {
+        get: (target, key, receiver) => (key === "length" ? 1.5 : Reflect.get(target, key, receiver)),
+      });
+      expect(sameAsDevAnchor(() => [{ from: 3, to: 3 }, fractional()]).value).toEqual({ from: 4, to: 4 });
+      sameAsDevSidecar(() => [{ comments: [thread({ from: 3, to: 3 })] }, fractional()]);
+
+      // Collection getters that replace or append ranges before the entries are mapped.
+      const replacing = (): [Sidecar, Range[]] => {
+        const ranges = insertAtZero();
+        return [Object.defineProperty({}, "comments", { enumerable: true, get: () => { ranges[0] = { from: 0, to: 0, insertedLength: 5 }; return [thread({ from: 1, to: 2 })]; } }) as Sidecar, ranges];
+      };
+      expect(sameAsDevSidecar(replacing).value?.comments?.[0]?.anchor).toEqual({ from: 6, to: 7 });
+      const growing = (): [Sidecar, Range[]] => {
+        const ranges = insertAtZero();
+        return [Object.defineProperties({}, {
+          comments: { enumerable: true, get: () => [thread({ from: 1, to: 2 })] },
+          suggestions: { enumerable: true, get: () => { ranges.push({ from: 0, to: 0, insertedLength: 5 }); return [suggestion({ from: 1, to: 2 })]; } },
+        }) as Sidecar, ranges];
+      };
+      sameAsDevSidecar(growing);
+    });
+
+    it("reuses only unchanged values it already detached and never returns a caller-owned sidecar", () => {
+      const later = (): Range[] => [{ from: 9, to: 9, insertedLength: 1 }];
+      const frozenAnchor = immutableValue({ from: 1, to: 2 });
+      expect(mapAnchor(frozenAnchor, later())).toBe(frozenAnchor);
+      const owned = { from: 1, to: 2 };
+      const copied = mapAnchor(owned, later());
+      expect(copied).not.toBe(owned);
+      owned.from = 0;
+      expect(copied).toEqual({ from: 1, to: 2 });
+
+      const frozenSidecar = immutableValue({ comments: [thread({ from: 1, to: 2 })], suggestions: [suggestion({ from: 4, to: 5 })] }) as Sidecar;
+      expect(mapSidecar(frozenSidecar, later())).toBe(frozenSidecar);
+      const moved = mapSidecar(frozenSidecar, [{ from: 3, to: 3, insertedLength: 1 }])!;
+      expect(moved).not.toBe(frozenSidecar);
+      expect(Object.isFrozen(moved)).toBe(true);
+      expect(moved.comments![0]).toBe(frozenSidecar.comments![0]);
+      expect(moved.suggestions![0]!.anchor).toEqual({ from: 5, to: 6 });
+      expect(moved).toEqual(devMapSidecar(frozenSidecar, [{ from: 3, to: 3, insertedLength: 1 }]));
+
+      const callerOwned = { comments: [thread({ from: 1, to: 2 })] };
+      const mapped = sameAsDevSidecar(() => [callerOwned, later()]);
+      expect(mapped.value).not.toBe(callerOwned);
+      expect(mapped.frozen).toBe(true);
+    });
   });
 
   it("reports sidecar changes caused by source anchor mapping", () => {

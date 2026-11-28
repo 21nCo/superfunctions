@@ -29,124 +29,45 @@ export function mapSelection(selection: MdfnSelection, ranges: readonly ChangedR
   return immutableValue(ranges.reduce<TextSelection>((current, range) => mapTextSelection(current, range), selection));
 }
 
-const hasOwn = (value: object, key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, key);
-
 /**
- * Copy the own enumerable fields of `source` as a spread would, except that each
- * key in `overrides` takes its value from there and is never read from `source`.
- * An override key the source does not own is added after the copied fields.
+ * Ranges are traversed with native reduce, exactly as before reuse was added. An
+ * unchanged anchor is returned as is only when this module already detached and
+ * froze it; any other anchor is copied as before.
  */
-function copyWith(source: object, overrides: Readonly<Record<string, unknown>>): Record<PropertyKey, unknown> {
-  const copy: Record<PropertyKey, unknown> = {};
-  const define = (key: PropertyKey, value: unknown) => {
-    Object.defineProperty(copy, key, { value, enumerable: true, writable: true, configurable: true });
-  };
-  for (const key of Reflect.ownKeys(source)) {
-    if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;
-    define(key, typeof key === "string" && hasOwn(overrides, key) ? overrides[key] : (source as Record<PropertyKey, unknown>)[key]);
-  }
-  for (const key of Object.keys(overrides)) if (!hasOwn(copy, key)) define(key, overrides[key]);
-  return copy;
-}
-
-/** Normalize an array length the way native array traversal does (ToLength). */
-function toLength(value: number): number {
-  const length = Math.trunc(Number(value));
-  return Number.isNaN(length) || length <= 0 ? 0 : Math.min(length, Number.MAX_SAFE_INTEGER);
-}
-
-/** The start of one traversal: its length and the first populated slot, already read. */
-interface RangeStart {
-  readonly length: number;
-  readonly index: number;
-  readonly range: ChangedRange | undefined;
-}
-
-/**
- * Begin a traversal as native reduce does: take the normalized length, check
- * each slot with `in` until one is populated and read that slot (unless `read`
- * is false). With no populated slot, `index` equals `length` and nothing is read.
- */
-function startRanges(ranges: readonly ChangedRange[], read = true): RangeStart {
-  const length = toLength(ranges.length);
-  let index = 0;
-  while (index < length && !(index in ranges)) index += 1;
-  return { length, index, range: read && index < length ? ranges[index] : undefined };
-}
-
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
-  return mapAnchorIn(anchor, ranges, startRanges(ranges), false);
+  return ranges.reduce<SidecarAnchor>((current, range) => {
+    const affinity = current.affinity ?? "after";
+    const from = mapPosition(current.from, range, affinity === "before" ? "before" : "after");
+    const to = mapPosition(current.to, range, affinity === "after" ? "after" : "before");
+    const start = Math.min(from, to);
+    const end = Math.max(from, to);
+    if (isImmutableValue(current) && start === current.from && end === current.to) return current;
+    return { ...current, from: start, to: end };
+  }, anchor);
 }
 
 /**
- * Ranges are visited as native reduce visits them from `start`: the length is
- * taken once, a slot appended later is not visited, a hole or a slot deleted
- * before its turn is skipped, and each slot is checked with `in` once and then
- * read before the range is applied. With no populated range the anchor is
- * returned unread, unless `detach` asks for a copy of a caller-owned anchor.
+ * Unchanged entries and an unchanged sidecar are reused only from a sidecar this
+ * module already detached and froze, whose fields are plain frozen data. Any other
+ * sidecar is mapped and detached exactly as before reuse was added.
  */
-function mapAnchorIn(anchor: SidecarAnchor, ranges: readonly ChangedRange[], start: RangeStart, detach: boolean): SidecarAnchor {
-  const { length, range: firstRange } = start;
-  let index = start.index;
-  if (index === length && !detach) return anchor;
-  // The first range was read before any anchor field, as reduce reads a slot before
-  // its callback runs, so an anchor getter that changes the array cannot affect it.
-  // Each field is read once, including one supplied through a prototype or getter,
-  // and the result is built from those values only, so mapping edits together or
-  // one call at a time gives the same anchor.
-  const affinity = anchor.affinity;
-  const originalFrom = anchor.from;
-  const originalTo = anchor.to;
-  let from = originalFrom;
-  let to = originalTo;
-  const apply = (range: ChangedRange) => {
-    const mappedFrom = mapPosition(from, range, affinity === "before" ? "before" : "after");
-    const mappedTo = mapPosition(to, range, (affinity ?? "after") === "after" ? "after" : "before");
-    from = Math.min(mappedFrom, mappedTo);
-    to = Math.max(mappedFrom, mappedTo);
-  };
-  if (index < length) apply(firstRange!);
-  for (index += 1; index < length; index += 1) if (index in ranges) apply(ranges[index]!);
-  // An unchanged anchor is reused only when this module already detached it; a
-  // caller-owned anchor is copied so later changes to it cannot reach the result.
-  if (isImmutableValue(anchor) && from === originalFrom && to === originalTo) return anchor;
-  const overrides = affinity !== undefined || hasOwn(anchor, "affinity") ? { from, to, affinity } : { from, to };
-  return copyWith(anchor, overrides) as unknown as SidecarAnchor;
-}
-
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
-  if (!sidecar) return sidecar;
-  // With no populated range the sidecar is returned unread, as for empty ranges.
-  // This check reads no range value; like the base's `ranges.length === 0` check
-  // it is separate from the traversals, so each entry starts its own traversal
-  // when it is reached and sees the ranges as they are then.
-  const presence = startRanges(ranges, false);
-  if (presence.index === presence.length) return sidecar;
-  // Unchanged parts are reused only from a sidecar this module already detached.
-  // Any other input is copied field by field, so values supplied through getters
-  // or a prototype are kept, as they were before reuse was added.
-  const reusable = isImmutableValue(sidecar);
+  if (!sidecar || ranges.length === 0) return sidecar;
+  if (!isImmutableValue(sidecar)) {
+    return immutableValue({
+      ...sidecar,
+      comments: sidecar.comments?.map((thread) => ({ ...thread, anchor: mapAnchor(thread.anchor, ranges) })),
+      suggestions: sidecar.suggestions?.map((suggestion) => ({ ...suggestion, anchor: mapAnchor(suggestion.anchor, ranges) })),
+    });
+  }
   let changed = false;
   const mapEntry = <T extends { readonly anchor: SidecarAnchor }>(entry: T): T => {
-    const current = entry.anchor;
-    // A caller-owned anchor is always copied with its fields read, so an inherited
-    // affinity is kept even if a getter has emptied the ranges by now.
-    const anchor = mapAnchorIn(current, ranges, startRanges(ranges), !reusable);
-    if (reusable && anchor === current) return entry;
+    const anchor = mapAnchor(entry.anchor, ranges);
+    if (anchor === entry.anchor) return entry;
     changed = true;
-    return copyWith(entry, { anchor }) as unknown as T;
+    return { ...entry, anchor };
   };
-  // A null collection is kept as read, so sidecar validation still rejects it.
-  // Each collection is mapped before the next one is read, as before reuse was added.
-  const readComments = sidecar.comments;
-  const comments = readComments == null ? readComments : readComments.map(mapEntry);
-  const readSuggestions = sidecar.suggestions;
-  const suggestions = readSuggestions == null ? readSuggestions : readSuggestions.map(mapEntry);
-  if (reusable && !changed) return sidecar;
-  // comments and suggestions come only from the values read and mapped above, so a
-  // getter is never read twice and every kept anchor went through mapAnchor.
-  const overrides: Record<string, unknown> = {};
-  if (comments !== undefined || hasOwn(sidecar, "comments")) overrides.comments = comments;
-  if (suggestions !== undefined || hasOwn(sidecar, "suggestions")) overrides.suggestions = suggestions;
-  return immutableValue(copyWith(sidecar, overrides) as unknown as MdfnSidecar);
+  const comments = sidecar.comments?.map(mapEntry);
+  const suggestions = sidecar.suggestions?.map(mapEntry);
+  return changed ? immutableValue({ ...sidecar, comments, suggestions }) : sidecar;
 }
