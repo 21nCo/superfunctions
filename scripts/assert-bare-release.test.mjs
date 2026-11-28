@@ -612,6 +612,17 @@ test('pack: a bare release runs the committed front-door test and checks the tar
   cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
   writeCore({ '.': './index.js' });
 
+  // Staging that fails part-way (index.js is a folder) still restores the working files it replaced.
+  const workingManifest = `${committedManifest.trimEnd()}\n\n`;
+  writeFileSync(manifestPath, workingManifest);
+  rmSync(path.join(root, 'bare/index.js'));
+  mkdirSync(path.join(root, 'bare/index.js'));
+  assert.notEqual(pack().status, 0);
+  assert.equal(readFileSync(manifestPath, 'utf8'), workingManifest);
+  rmSync(path.join(root, 'bare/index.js'), { recursive: true });
+  writeFileSync(path.join(root, 'bare/index.js'), TEMPLATE.reexportFiles['index.js']('@fixture/core'));
+  writeFileSync(manifestPath, committedManifest);
+
   // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
   const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));
   writeJson(path.join(root, 'release-packages.json'), releases.map(({ kind, core, cli, ...entry }) => entry));

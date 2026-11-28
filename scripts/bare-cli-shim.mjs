@@ -88,8 +88,9 @@ function npmCommand() {
 // Runs the command with this terminal and exits as it did: with its exit code, or by the signal that ended it (with
 // 128 + its number should this process survive it). The terminal sends Ctrl+C (SIGINT) and Ctrl+\ (SIGQUIT) to the
 // whole foreground process group, the command included, so they are not passed on again (a second Ctrl+C means
-// "force quit" to many CLIs); this process only waits for the command to finish. SIGTERM and SIGHUP, which a
-// supervisor may send to this process alone, reach the command as SIGTERM (npm relays only SIGINT and SIGTERM).
+// "force quit" to many CLIs); this process only waits for the command to finish. (Through npm exec, npm itself relays
+// SIGINT to the CLI it runs, as it does under npx.) SIGTERM and SIGHUP, which a supervisor may send to this process
+// alone, reach the command as SIGTERM (npm relays only SIGINT and SIGTERM).
 function runAndExit(command, args, startFailure, { env = process.env } = {}) {
   const child = spawn(command, args, { stdio: 'inherit', env });
   const wait = () => {};

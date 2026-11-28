@@ -239,7 +239,10 @@ resolves the bin name back to the bare package. A copy of the CLI released befor
 it had this check (for example `@superfunctions/cli` 0.2.2 or earlier) ignores
 the variable: in the setup above it runs, exactly as it would under
 `npx <cli>@<version>`. The gate requires the released CLI, at source and on npm,
-to declare the check, so every CLI version a bare package pins has it.
+to declare the check, so every CLI version a bare package pins has it. Signals
+follow the same split: with an installed CLI, a Ctrl+C from the terminal reaches
+it once (the shim does not pass it on again); through `npm exec`, npm also
+relays it to the CLI, exactly as under `npx`.
 
 Before installing anything, the build job runs
 `scripts/assert-bare-release.mjs <tag>`, which refuses a bare release unless the

@@ -56,16 +56,25 @@ if (committedTarget.kind === 'bare') {
     throw new Error(`${target.name}: ${TEMPLATE.testFile} is not the front-door test template committed at the tag`);
   }
   const pinned = ['package.json', ...Object.keys(TEMPLATE.reexportFiles), SHIM_FILE, TEMPLATE.testFile];
+  // Each working file replaced so far, with its previous content (null: there was none), restored in finally even
+  // when staging fails part-way.
   const working = new Map();
-  for (const file of pinned) {
-    const content = committedFile(file);
-    if (content === null) continue;
-    const absolute = path.join(cwd, file);
-    working.set(absolute, await readFile(absolute, 'utf8').catch(() => null));
-    await mkdir(path.dirname(absolute), { recursive: true });
-    await writeFile(absolute, content);
-  }
   try {
+    for (const file of pinned) {
+      const content = committedFile(file);
+      if (content === null) continue;
+      const absolute = path.join(cwd, file);
+      let previous;
+      try {
+        previous = await readFile(absolute, 'utf8');
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        previous = null;
+      }
+      working.set(absolute, previous);
+      await mkdir(path.dirname(absolute), { recursive: true });
+      await writeFile(absolute, content);
+    }
     // NODE_TEST_CONTEXT would make node --test report to an enclosing test runner instead of exiting non-zero.
     const { NODE_TEST_CONTEXT, ...env } = process.env;
     execFileSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd, stdio: 'inherit', env: { ...env, CI: 'true', BARE_CLI_NO_NPM: '1' } });
