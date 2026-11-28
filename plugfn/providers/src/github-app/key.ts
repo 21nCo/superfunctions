@@ -36,7 +36,7 @@ function decodeBase64(body: string): Uint8Array {
     throw new GitHubAppKeyError('The GitHub App private key PEM body is not valid base64');
   }
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.codePointAt(i)!;
   return bytes;
 }
 

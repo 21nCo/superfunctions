@@ -18,16 +18,23 @@ export const GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS = 3600;
 const DEFAULT_BASE_URL = 'https://api.github.com';
 const DEFAULT_USER_AGENT = 'plugfn-github-app-minter';
 const GITHUB_API_VERSION = '2022-11-28';
-const INSTALLATION_ID = /^[1-9][0-9]{0,18}$/;
+const INSTALLATION_ID = /^[1-9]\d{0,18}$/;
 const MAX_PROVIDER_MESSAGE_LENGTH = 200;
 /** The one permission GitHub may report on a token without it being requested, at `read` only. */
 const IMPLICIT_PERMISSION = 'metadata';
-/** Three base64url segments: anything shaped like a JWT. */
-const JWT_SHAPE = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
+/** A maximal run of base64url characters and dots, checked for a JWT shape by {@link hasJwtShape} (linear time). */
+const BASE64URL_RUN = /[\w.-]+/g;
 /** GitHub token prefixes (`ghs_`, `ghp_`, `gho_`, `ghu_`, `ghr_`, `github_pat_`) followed by the token body. */
-const GITHUB_TOKEN_SHAPE = /\b(?:gh[a-z]_|github_pat_)[A-Za-z0-9_]+/g;
+const GITHUB_TOKEN_SHAPE = /\b(?:gh[a-z]_|github_pat_)\w+/g;
 /** An error `name` kept on a redacted cause; anything else becomes `Error`. */
-const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const ERROR_NAME = /^[A-Za-z]\w{0,63}$/;
+/** A `User-Agent` that can be sent as a header: printable ASCII. */
+const USER_AGENT = /^[\x20-\x7e]{1,256}$/;
+/**
+ * The token at the start of a 201 body (GitHub sends `token` first), read
+ * from a body too large or broken to parse so the token can still be revoked.
+ */
+const LEADING_TOKEN = /^\s*\{\s*"token"\s*:\s*"([^"\\]{1,4096})"/;
 /** A token GitHub returned that can be sent back in an `Authorization` header. */
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,4096}$/;
 /** `expires_at` as GitHub sends it: an ISO-8601 UTC timestamp, such as `2016-07-11T22:14:10Z`. */
@@ -48,8 +55,24 @@ const BODY_READ_TIMEOUT_MS = 10_000;
  * so a token arriving late is revoked rather than left live; then it is cancelled.
  */
 const LATE_BODY_LIMIT_MS = 60_000;
-/** Response bodies larger than this are cancelled and treated as unreadable. */
-const MAX_BODY_BYTES = 1024 * 1024;
+/** GitHub's limit on the repositories one installation token can name. */
+export const GITHUB_MAX_TOKEN_REPOSITORIES = 500;
+/** Error bodies larger than this are cancelled and treated as unreadable. */
+const MAX_ERROR_BODY_BYTES = 1024 * 1024;
+/**
+ * 201 bodies larger than this are cancelled and treated as unreadable. GitHub
+ * lists a full repository object (a few KiB) per granted repository; this
+ * leaves 16 KiB for each of {@link GITHUB_MAX_TOKEN_REPOSITORIES}.
+ */
+const MAX_GRANT_BODY_BYTES = GITHUB_MAX_TOKEN_REPOSITORIES * 16 * 1024;
+/** How much of an unreadable body is kept to look for its {@link LEADING_TOKEN}. */
+const BODY_HEAD_CHARS = 64 * 1024;
+/**
+ * How long a key stays held after its POST may have issued a token: the token
+ * lifetime plus the clock-skew tolerance, since GitHub may issue it after the
+ * minter last heard from it and its clock may run ahead of ours.
+ */
+const KEY_HOLD_MS = GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS * 1000 + MAX_CLOCK_SKEW_MS;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /** A GitHub App installation: its numeric ID, as a number or a decimal string. */
@@ -73,6 +96,14 @@ export interface GitHubAppMinterOptions {
    * third waits twice as long); 250 by default.
    */
   readonly cleanupRetryDelayMs?: number;
+  /**
+   * Keeps background work alive past the request that started it: the read
+   * of a late 201 body and the revocation of the token in it. On Cloudflare
+   * Workers pass `waitUntil` from `cloudflare:workers` (or `ctx.waitUntil`
+   * bound to the request's context); without it, Workers may stop that work
+   * when the request ends, and the late token stays active until it expires.
+   */
+  readonly waitUntil?: (task: Promise<unknown>) => void;
 }
 
 interface HandleState {
@@ -126,11 +157,21 @@ function fail(code: ConstructorParameters<typeof CredentialMinterError>[1], mess
   return new CredentialMinterError(GITHUB_APP_PROVIDER, code, message, options);
 }
 
+/** Whether a base64url-and-dots run holds three consecutive dot-separated segments of 8 or more characters (a JWT). */
+function hasJwtShape(run: string): boolean {
+  let segments = 0;
+  for (const segment of run.split('.')) {
+    segments = segment.length >= 8 ? segments + 1 : 0;
+    if (segments === 3) return true;
+  }
+  return false;
+}
+
 /** Removes the given secrets, and anything shaped like a JWT or GitHub token, from untrusted text. */
 function redact(text: string, secrets: readonly string[]): string {
   let out = text;
   for (const secret of secrets) if (secret) out = out.split(secret).join('[redacted]');
-  return out.replace(JWT_SHAPE, '[redacted]').replace(GITHUB_TOKEN_SHAPE, '[redacted]');
+  return out.replace(BASE64URL_RUN, (run) => (hasJwtShape(run) ? '[redacted]' : run)).replace(GITHUB_TOKEN_SHAPE, '[redacted]');
 }
 
 /**
@@ -197,25 +238,44 @@ function validateRetryDelay(delay: unknown): number {
   return delay;
 }
 
+function validateUserAgent(userAgent: unknown): string {
+  if (userAgent === undefined) return DEFAULT_USER_AGENT;
+  if (typeof userAgent !== 'string' || !USER_AGENT.test(userAgent)) {
+    throw new TypeError('GitHub App minter: userAgent must be 1 to 256 printable ASCII characters');
+  }
+  return userAgent;
+}
+
+function validateWaitUntil(waitUntil: unknown): ((task: Promise<unknown>) => void) | undefined {
+  if (waitUntil !== undefined && typeof waitUntil !== 'function') throw new TypeError('GitHub App minter: waitUntil must be a function');
+  return waitUntil as ((task: Promise<unknown>) => void) | undefined;
+}
+
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
+interface BodyRead {
+  /** The whole body, or `undefined` when it failed, was too large or did not finish in time. */
+  readonly text: string | undefined;
+  /** The start of what was read, kept when `text` is `undefined`. */
+  readonly head: string;
+}
+
 /**
- * Reads a response body as text, within `limitMs`. `text` resolves to the
- * body, or to `undefined` when it fails, exceeds {@link MAX_BODY_BYTES}, or
- * does not finish in time. Every outcome but a complete read cancels the
- * stream, so no stalled read stays open after the minter is done with it
- * (Cloudflare Workers limit open subrequests).
+ * Reads a response body as text, within `limitMs` and `maxBytes`. Every
+ * outcome but a complete read cancels the stream, so no stalled read stays
+ * open after the minter is done with it (Cloudflare Workers limit open
+ * subrequests).
  */
-function startBodyRead(response: Response, limitMs: number): { readonly text: Promise<string | undefined> } {
+function startBodyRead(response: Response, limitMs: number, maxBytes: number): Promise<BodyRead> {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     const stream = response.body;
-    if (stream === null) return { text: Promise.resolve('') };
+    if (stream === null) return Promise.resolve({ text: '', head: '' });
     reader = stream.getReader();
   } catch {
-    return { text: Promise.resolve(undefined) };
+    return Promise.resolve({ text: undefined, head: '' });
   }
   let finished = false;
   const finish = (cancel: boolean): void => {
@@ -226,36 +286,39 @@ function startBodyRead(response: Response, limitMs: number): { readonly text: Pr
     else reader.releaseLock();
   };
   const timer = setTimeout(() => finish(true), limitMs);
-  const text = (async (): Promise<string | undefined> => {
-    const decoder = new TextDecoder();
-    let out = '';
+  const decoder = new TextDecoder();
+  let out = '';
+  const unread = (): BodyRead => {
+    finish(true);
+    return { text: undefined, head: out.slice(0, BODY_HEAD_CHARS) };
+  };
+  return (async (): Promise<BodyRead> => {
     let size = 0;
     try {
       for (;;) {
         const chunk = await reader.read();
-        if (finished) return undefined;
+        if (finished) return unread();
         if (chunk.done) break;
         size += chunk.value.byteLength;
-        if (size > MAX_BODY_BYTES) {
-          finish(true);
-          return undefined;
+        if (size > maxBytes) {
+          // Keep the start of the body even when its first chunk is the one too large.
+          if (out.length < BODY_HEAD_CHARS) out += decoder.decode(chunk.value.subarray(0, BODY_HEAD_CHARS));
+          return unread();
         }
         out += decoder.decode(chunk.value, { stream: true });
       }
       out += decoder.decode();
     } catch {
-      finish(true);
-      return undefined;
+      return unread();
     }
     finish(false);
-    return out;
+    return { text: out, head: '' };
   })();
-  return { text };
 }
 
-/** The response body, or `undefined` when it cannot be read within {@link BODY_READ_TIMEOUT_MS} (the stream is then cancelled). */
-function readBody(response: Response): Promise<string | undefined> {
-  return startBodyRead(response, BODY_READ_TIMEOUT_MS).text;
+/** An error response body, or `undefined` when it cannot be read within {@link BODY_READ_TIMEOUT_MS} (the stream is then cancelled). */
+async function readBody(response: Response): Promise<string | undefined> {
+  return (await startBodyRead(response, BODY_READ_TIMEOUT_MS, MAX_ERROR_BODY_BYTES)).text;
 }
 
 const TIMED_OUT = Symbol('timed out');
@@ -275,10 +338,11 @@ function usableToken(value: unknown): string | undefined {
   return typeof value === 'string' && HEADER_SAFE_TOKEN.test(value) ? value : undefined;
 }
 
-/** The usable token a 201 body carries, if any. */
-function bodyToken(body: string): string | undefined {
+/** The usable token a 201 body carries, if any: from the parsed body, or from the start of one that could not be read whole. */
+function bodyToken(body: BodyRead): string | undefined {
+  if (body.text === undefined) return usableToken(LEADING_TOKEN.exec(body.head)?.[1]);
   try {
-    return usableToken((JSON.parse(body) as { token?: unknown } | null)?.token);
+    return usableToken((JSON.parse(body.text) as { token?: unknown } | null)?.token);
   } catch {
     return undefined;
   }
@@ -322,7 +386,9 @@ function normalizeBaseUrl(baseUrl: string | undefined): string {
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
     throw new TypeError('GitHub App minter: baseUrl must be an https: URL without credentials, query or fragment');
   }
-  return url.href.replace(/\/+$/, '');
+  let href = url.href;
+  while (href.endsWith('/')) href = href.slice(0, -1);
+  return href;
 }
 
 function normalizeInstallation(installation: unknown): string {
@@ -380,10 +446,7 @@ interface ReadAccessToken {
  * UTC timestamp. Returns any usable token string even when the response is
  * rejected, so the caller can revoke it before failing.
  */
-function readAccessToken(
-  body: string,
-  requested: { repositories: readonly string[]; permissions: Readonly<Record<string, string>> },
-): ReadAccessToken {
+function readAccessToken(body: string, requested: GrantRequest): ReadAccessToken {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -393,46 +456,45 @@ function readAccessToken(
   const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   const token = usableToken(record.token);
   const expiresAtMs = parseExpiresAt(record.expires_at);
-  const result = (problem: string | undefined): ReadAccessToken => ({ token, expiresAtMs, problem });
-  if (token === undefined) return result('GitHub returned an access token response without a usable token');
-  if (!Number.isFinite(expiresAtMs)) return result('GitHub returned an access token response without a usable expires_at');
-  if (record.repository_selection !== 'selected') {
-    return result('GitHub did not confirm that the token is limited to the requested repositories');
-  }
+  let problem: string | undefined;
+  if (token === undefined) problem = 'GitHub returned an access token response without a usable token';
+  else if (!Number.isFinite(expiresAtMs)) problem = 'GitHub returned an access token response without a usable expires_at';
+  else problem = repositoriesProblem(record, requested.repositories) ?? permissionsProblem(record.permissions, requested.permissions);
+  return { token, expiresAtMs, problem };
+}
+
+type GrantRequest = ReturnType<typeof toAccessTokenRequest>;
+
+/** Why a 201's repositories are not exactly the requested ones, if they are not. */
+function repositoriesProblem(record: Record<string, unknown>, requested: readonly string[]): string | undefined {
+  if (record.repository_selection !== 'selected') return 'GitHub did not confirm that the token is limited to the requested repositories';
   const repositories = record.repositories;
-  if (!Array.isArray(repositories)) return result('GitHub did not list the repositories granted to the token');
-  const allowed = new Set(requested.repositories);
-  const grantedRepositories = new Set<string>();
+  if (!Array.isArray(repositories)) return 'GitHub did not list the repositories granted to the token';
+  const allowed = new Set(requested);
+  const granted = new Set<string>();
   for (const repository of repositories) {
     const name = typeof repository === 'object' && repository !== null ? (repository as { name?: unknown }).name : undefined;
-    if (typeof name !== 'string' || !allowed.has(name.toLowerCase())) {
-      return result('GitHub granted the token a repository that was not requested');
-    }
-    grantedRepositories.add(name.toLowerCase());
+    if (typeof name !== 'string' || !allowed.has(name.toLowerCase())) return 'GitHub granted the token a repository that was not requested';
+    granted.add(name.toLowerCase());
   }
-  for (const repository of requested.repositories) {
-    if (!grantedRepositories.has(repository)) return result('GitHub did not grant the token every requested repository');
-  }
-  const granted = record.permissions;
-  if (typeof granted !== 'object' || granted === null || Array.isArray(granted)) {
-    return result('GitHub did not list the permissions granted to the token');
-  }
+  return requested.every((repository) => granted.has(repository)) ? undefined : 'GitHub did not grant the token every requested repository';
+}
+
+/** Why a 201's permissions are not exactly the requested levels (plus read-only `metadata`), if they are not. */
+function permissionsProblem(granted: unknown, requested: Readonly<Record<string, string>>): string | undefined {
+  if (typeof granted !== 'object' || granted === null || Array.isArray(granted)) return 'GitHub did not list the permissions granted to the token';
   for (const [name, level] of Object.entries(granted)) {
-    const requestedLevel = Object.hasOwn(requested.permissions, name) ? githubPermissionLevelIndex(requested.permissions[name]) : -1;
+    const requestedLevel = Object.hasOwn(requested, name) ? githubPermissionLevelIndex(requested[name]) : -1;
     const grantedLevel = githubPermissionLevelIndex(level);
     // Every GitHub App holds read-only repository metadata, and GitHub lists it on tokens it was not asked for.
     if (name === IMPLICIT_PERMISSION && level === 'read' && requestedLevel < 0) continue;
-    if (requestedLevel < 0 || grantedLevel < 0 || grantedLevel > requestedLevel) {
-      return result('GitHub granted the token a permission wider than requested');
-    }
+    if (requestedLevel < 0 || grantedLevel < 0 || grantedLevel > requestedLevel) return 'GitHub granted the token a permission wider than requested';
   }
-  for (const [name, level] of Object.entries(requested.permissions)) {
+  for (const [name, level] of Object.entries(requested)) {
     const grantedLevel = Object.hasOwn(granted, name) ? githubPermissionLevelIndex((granted as Record<string, unknown>)[name]) : -1;
-    if (grantedLevel !== githubPermissionLevelIndex(level)) {
-      return result('GitHub did not grant the token every requested permission at the requested level');
-    }
+    if (grantedLevel !== githubPermissionLevelIndex(level)) return 'GitHub did not grant the token every requested permission at the requested level';
   }
-  return result(undefined);
+  return undefined;
 }
 
 /**
@@ -452,7 +514,9 @@ function readAccessToken(
  * above one hour reject with `ScopeNotGrantable`. GitHub fixes the token
  * lifetime at one hour: `expiresAt` is GitHub's real expiry, which is later
  * than `now + ttl` for a shorter `ttl`; revoke the token at the end of the
- * caller's own deadline if it must not outlive it.
+ * caller's own deadline if it must not outlive it. GitHub names at most
+ * {@link GITHUB_MAX_TOKEN_REPOSITORIES} repositories per token; a larger scope
+ * is `ScopeNotGrantable`.
  *
  * GitHub's 201 must grant exactly the request (see `readAccessToken`), with
  * an `expires_at` in the future and no later than one hour plus a five-minute
@@ -464,7 +528,10 @@ function readAccessToken(
  * or until it expires. A 201 whose body cannot be read within 10 seconds, or
  * carries no usable token, rejects with the non-retryable
  * `mint_outcome_unknown`; a body that arrives later (within a minute) is
- * still read, and any token in it is revoked, never returned.
+ * still read, and any token in it is revoked, never returned. On Workers that
+ * late work outlives the request only through the `waitUntil` option. A 201
+ * body too large or broken to read whole is searched for its leading token,
+ * which is revoked as for a rejected grant.
  *
  * Retries: GitHub has no idempotency key, so the minter keeps one per
  * instance, in memory. Mints with the same `idempotencyKey` and request share
@@ -474,10 +541,14 @@ function readAccessToken(
  * may be live: a transport failure after the request was sent, a 5xx or any
  * other answer that is neither 201 nor 4xx, and a lost or unusable 201
  * reject with `mint_outcome_unknown`, and the key repeats that failure for one
- * hour, by when any such token has expired. A `rejected_credential_not_revoked`
- * failure is repeated, with the same `revokeHandle`, until that handle is
- * revoked or its token expires. Only a definite non-issuance (a failure before
- * the POST, or a 4xx) frees the key at once. Without a key, a transport
+ * hour plus the five-minute skew tolerance, by when any such token has
+ * expired. A `rejected_credential_not_revoked` failure is repeated, with the
+ * same `revokeHandle`, until that handle is revoked or its token expires (plus
+ * the tolerance), and a credential until it is revoked or the tolerance after
+ * its `expires_at`. A mint that never settles (on Workers, its request was
+ * cancelled) holds its key for that hour plus tolerance from its POST, then
+ * frees it. Only a definite non-issuance (a failure before the POST, or a
+ * 4xx) frees the key at once. Without a key, a transport
  * failure or 5xx is a retryable `provider_unavailable`: if GitHub had already
  * created a token, it is unknown to the minter and expires within the hour.
  *
@@ -500,8 +571,9 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   const baseUrl = normalizeBaseUrl(options.baseUrl);
   const doFetch: typeof fetch = options.fetch ?? ((input, init) => fetch(input, init));
   const now = options.now ?? Date.now;
-  const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
+  const userAgent = validateUserAgent(options.userAgent);
   const cleanupRetryDelayMs = validateRetryDelay(options.cleanupRetryDelayMs);
+  const waitUntil = validateWaitUntil(options.waitUntil);
   let signingKey: Promise<GitHubAppSigningKey> | undefined;
 
   function loadSigningKey(): Promise<GitHubAppSigningKey> {
@@ -600,7 +672,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   async function deleteTokenWithRetry(token: string): Promise<void> {
     for (let attempt = 1; ; attempt++) {
       try {
-        await deleteToken(token);
+        await deleteToken(token); // NOSONAR: cleanup attempts are sequential by design; each waits for the previous answer.
         return;
       } catch (error) {
         if (attempt >= CLEANUP_ATTEMPTS || !(error instanceof CredentialMinterError) || !error.retryable) throw error;
@@ -629,8 +701,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
 
   /**
    * `mint_outcome_unknown`: GitHub may have issued a token the minter cannot
-   * see. Measured on this clock after the response, `now + 1 h` is past the
-   * expiry of any token issued before it.
+   * see. Measured on this clock after the response, `now + 1 h + skew` is
+   * past the expiry of any token issued before it.
    */
   function outcomeUnknown(reason: string, status: number | undefined, cause?: unknown): CredentialMinterError {
     return holding(
@@ -639,18 +711,26 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         retryable: false,
         cause,
       }),
-      { handle: undefined, untilMs: now() + GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS * 1000 },
+      { handle: undefined, untilMs: now() + KEY_HOLD_MS },
     );
   }
 
-  /** Revokes, with bounded retries, a usable token in a 201 body that arrived after the minter gave up on it. */
-  function revokeLateToken(body: Promise<string | undefined>): void {
-    void body
-      .then((text) => {
-        const token = text === undefined ? undefined : bodyToken(text);
+  /**
+   * Revokes, with bounded retries, a usable token in a 201 body that arrived
+   * after the minter gave up on it, registered with `waitUntil` when given.
+   */
+  function revokeLateToken(body: Promise<BodyRead>): void {
+    const task = body
+      .then((read) => {
+        const token = bodyToken(read);
         return token === undefined ? undefined : deleteTokenWithRetry(token);
       })
       .catch(() => undefined);
+    try {
+      waitUntil?.(task);
+    } catch {
+      // The task still runs for as long as the runtime allows.
+    }
   }
 
   /**
@@ -678,7 +758,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
             revokeHandle,
           },
         ),
-        { handle: revokeHandle, untilMs: lifetimeEnd },
+        { handle: revokeHandle, untilMs: lifetimeEnd + MAX_CLOCK_SKEW_MS },
       );
     }
     return fail('provider_error', `${problem}; the installation token was revoked`, { status });
@@ -689,14 +769,17 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
    * have left a token live is registered in {@link keyHolds}. For a keyed
    * mint (`keyed`), a transport failure or a response other than 201 or 4xx
    * is `mint_outcome_unknown`, because GitHub may have issued a token before
-   * it failed; without a key they stay retryable.
+   * it failed; without a key they stay retryable. `onDispatch` runs just
+   * before the POST is handed to `fetch`.
    */
   async function mintGrant(
     installationId: string,
-    grant: ReturnType<typeof toAccessTokenRequest>,
+    grant: GrantRequest,
     keyed: boolean,
+    onDispatch?: () => void,
   ): Promise<MintedCredential<GitHubAppRevokeHandle>> {
     const jwt = await appJwt();
+    onDispatch?.();
     let response: Response;
     try {
       response = await send('POST', `${baseUrl}/app/installations/${installationId}/access_tokens`, jwt, JSON.stringify(grant), [jwt]);
@@ -712,15 +795,20 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       throw failure;
     }
 
-    const body = startBodyRead(response, LATE_BODY_LIMIT_MS);
-    const text = await within(body.text, BODY_READ_TIMEOUT_MS);
-    if (text === TIMED_OUT) {
-      revokeLateToken(body.text);
+    const body = startBodyRead(response, LATE_BODY_LIMIT_MS, MAX_GRANT_BODY_BYTES);
+    const result = await within(body, BODY_READ_TIMEOUT_MS);
+    if (result === TIMED_OUT) {
+      revokeLateToken(body);
       throw outcomeUnknown('GitHub reported a minted installation token but its response did not arrive in time', status);
     }
-    if (text === undefined) throw outcomeUnknown('GitHub reported a minted installation token but its response could not be read', status);
+    if (result.text === undefined) {
+      const problem = 'GitHub reported a minted installation token but its response could not be read';
+      const token = bodyToken(result);
+      if (token === undefined) throw outcomeUnknown(problem, status);
+      throw await rejectGrant(token, Number.NaN, problem, status, installationId);
+    }
 
-    const read = readAccessToken(text, grant);
+    const read = readAccessToken(result.text, grant);
     if (read.token === undefined) throw outcomeUnknown('GitHub reported a minted installation token but its response carried no usable token', status);
     const at = now();
     let problem = read.problem;
@@ -739,15 +827,23 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     readonly promise: Promise<MintedCredential<GitHubAppRevokeHandle>>;
     /** Set once the mint settles with a credential, or with a failure that may have left a token live. */
     hold: KeyHold | undefined;
+    /**
+     * Until the mint settles: when any token its POST may issue has expired
+     * (set again at dispatch). A mint that never settles frees its key then.
+     */
+    pendingUntilMs: number;
   }
   const keyedMints = new Map<string, KeyedMint>();
 
-  /** Frees keys whose hold has ended: its token confirmed revoked, or past its private expiry. */
+  /** Frees keys whose hold has ended: its token confirmed revoked, or past its private expiry, or a pending mint past its deadline. */
   function pruneKeyedMints(): void {
     const at = now();
     for (const [key, entry] of keyedMints) {
       const hold = entry.hold;
-      if (hold === undefined) continue;
+      if (hold === undefined) {
+        if (entry.pendingUntilMs <= at) keyedMints.delete(key);
+        continue;
+      }
       const revoked = hold.handle !== undefined && handleStates.get(hold.handle)?.revoked === true;
       if (revoked || hold.untilMs <= at) keyedMints.delete(key);
     }
@@ -771,6 +867,9 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
           'A GitHub App scope must name at least one repository and one permission: GitHub widens an empty list to the whole installation',
         );
       }
+      if (grant.repositories.length > GITHUB_MAX_TOKEN_REPOSITORIES) {
+        throw new ScopeNotGrantable(GITHUB_APP_PROVIDER, `A GitHub installation token can name at most ${GITHUB_MAX_TOKEN_REPOSITORIES} repositories`);
+      }
       if (key === undefined) return mintGrant(installationId, grant, false);
 
       pruneKeyedMints();
@@ -787,10 +886,12 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       // until a definite non-issuance (a failure before the POST, or a 4xx) frees it.
       const entry: KeyedMint = {
         request: fingerprint,
-        promise: mintGrant(installationId, grant, true).then(
+        promise: mintGrant(installationId, grant, true, () => {
+          entry.pendingUntilMs = now() + KEY_HOLD_MS;
+        }).then(
           (credential) => {
             const handle = credential.revokeHandle;
-            entry.hold = { handle, untilMs: handleStates.get(handle)!.expiresAtMs };
+            entry.hold = { handle, untilMs: handleStates.get(handle)!.expiresAtMs + MAX_CLOCK_SKEW_MS };
             return credential;
           },
           (error: unknown) => {
@@ -801,6 +902,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
           },
         ),
         hold: undefined,
+        pendingUntilMs: now() + KEY_HOLD_MS,
       };
       keyedMints.set(key, entry);
       return entry.promise;
@@ -808,22 +910,20 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
 
     async revoke(handle: GitHubAppRevokeHandle): Promise<void> {
       const state = typeof handle === 'object' && handle !== null ? handleStates.get(handle) : undefined;
-      if (!state || state.owner !== owner) throw new TypeError('revoke needs a revokeHandle this GitHub App minter returned');
+      if (state?.owner !== owner) throw new TypeError('revoke needs a revokeHandle this GitHub App minter returned');
       if (state.revoked) return;
       // Always ask GitHub, even past the local expiry: the local clock may be
       // wrong, and a 401 for an expired token already counts as revoked.
-      if (!state.inflight) {
-        state.inflight = deleteToken(state.token).then(
-          () => {
-            state.revoked = true;
-            state.inflight = undefined;
-          },
-          (error: unknown) => {
-            state.inflight = undefined;
-            throw error;
-          },
-        );
-      }
+      state.inflight ??= deleteToken(state.token).then(
+        () => {
+          state.revoked = true;
+          state.inflight = undefined;
+        },
+        (error: unknown) => {
+          state.inflight = undefined;
+          throw error;
+        },
+      );
       return state.inflight;
     },
   };

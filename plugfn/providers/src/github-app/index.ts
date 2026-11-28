@@ -2,6 +2,7 @@ export {
   createGitHubAppMinter,
   GitHubAppRevokeHandle,
   GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS,
+  GITHUB_MAX_TOKEN_REPOSITORIES,
 } from './minter.js';
 export type { GitHubAppInstallation, GitHubAppMinter, GitHubAppMinterOptions, GitHubAppMintScope } from './minter.js';
 export {

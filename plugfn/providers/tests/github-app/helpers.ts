@@ -13,7 +13,7 @@ const ALGORITHM = { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' } as const;
 
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+  for (const byte of bytes) binary += String.fromCodePoint(byte);
   return btoa(binary);
 }
 
@@ -65,10 +65,10 @@ export async function generateTestAppKeys(): Promise<TestAppKeys> {
 }
 
 function fromBase64Url(text: string): Uint8Array {
-  const base64 = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4);
+  const base64 = text.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (text.length % 4)) % 4);
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.codePointAt(i)!;
   return bytes;
 }
 
@@ -110,28 +110,43 @@ export type RecordedResponse =
   | { readonly status: number; readonly body?: unknown; readonly bodyThrows?: Error }
   | { readonly throws: Error };
 
+type FetchInput = string | URL | Request;
+
+/** Records a request as `fetch` received it. */
+function recordCall(calls: RecordedCall[], input: FetchInput, init: RequestInit | undefined): RecordedCall {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
+  const url = input instanceof Request ? input.url : input.toString();
+  const call = { url, method: init?.method ?? 'GET', headers, body: typeof init?.body === 'string' ? init.body : undefined };
+  calls.push(call);
+  return call;
+}
+
+/** A fake `fetch` from a synchronous answer: a throw becomes a rejected promise, as with a real network error. */
+function asFetch(answer: (input: FetchInput, init?: RequestInit) => Response): typeof fetch {
+  return ((input: FetchInput, init?: RequestInit) => new Promise<Response>((resolve) => resolve(answer(input, init)))) as typeof fetch;
+}
+
+function recordedBody(next: { readonly body?: unknown; readonly bodyThrows?: Error }): BodyInit | null {
+  const bodyError = next.bodyThrows;
+  if (bodyError) return new ReadableStream<Uint8Array>({ pull: (controller) => controller.error(bodyError) });
+  if (next.body === undefined) return null;
+  return typeof next.body === 'string' ? next.body : JSON.stringify(next.body);
+}
+
 /** A `fetch` that replays recorded responses in order and records every request. */
 export function recordingFetch(responses: RecordedResponse[]): { fetch: typeof fetch; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const queue = [...responses];
-  const fake = async (input: unknown, init?: RequestInit): Promise<Response> => {
-    const headers: Record<string, string> = {};
-    for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
-    calls.push({ url: String(input), method: init?.method ?? 'GET', headers, body: typeof init?.body === 'string' ? init.body : undefined });
+  const fake = asFetch((input, init) => {
+    recordCall(calls, input, init);
     const next = queue.shift();
     if (!next) throw new Error('No recorded response left');
     if ('throws' in next) throw next.throws;
-    const bodyError = next.bodyThrows;
-    const body = bodyError
-      ? new ReadableStream<Uint8Array>({ pull: (controller) => controller.error(bodyError) })
-      : next.body === undefined
-        ? null
-        : typeof next.body === 'string'
-          ? next.body
-          : JSON.stringify(next.body);
+    const body = recordedBody(next);
     return new Response(next.status === 204 ? null : body, { status: next.status, headers: { 'content-type': 'application/json' } });
-  };
-  return { fetch: fake as typeof fetch, calls };
+  });
+  return { fetch: fake, calls };
 }
 
 /** Obviously fake installation tokens, built at run time. */
@@ -193,11 +208,8 @@ export function statefulGitHub(options: StatefulGitHubOptions = {}): { fetch: ty
   const live = new Set<string>();
   let issued = 0;
   let deletes = 0;
-  const fake = async (input: unknown, init?: RequestInit): Promise<Response> => {
-    const headers: Record<string, string> = {};
-    for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
-    const method = init?.method ?? 'GET';
-    calls.push({ url: String(input), method, headers, body: typeof init?.body === 'string' ? init.body : undefined });
+  const fake = asFetch((input, init) => {
+    const { method, headers } = recordCall(calls, input, init);
     if (method === 'POST') {
       issued += 1;
       const token = fakeInstallationToken(100 + issued);
@@ -212,8 +224,8 @@ export function statefulGitHub(options: StatefulGitHubOptions = {}): { fetch: ty
     const bearer = (headers.authorization ?? '').replace(/^Bearer /, '');
     if (method === 'DELETE' && live.delete(bearer)) return new Response(null, { status: 204 });
     return new Response(JSON.stringify(RECORDED_ERRORS.revoked401), { status: 401 });
-  };
-  return { fetch: fake as typeof fetch, calls, live };
+  });
+  return { fetch: fake, calls, live };
 }
 
 /**

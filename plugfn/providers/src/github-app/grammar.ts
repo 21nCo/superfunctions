@@ -57,7 +57,8 @@ function normalizeRepositories(value: unknown): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new TypeError('repositories must be an array of repository names');
   const names: string[] = [];
-  for (let i = 0; i < value.length; i++) {
+  // Own-index reads on purpose: no inherited iterator runs over caller input.
+  for (let i = 0; i < value.length; i++) { // NOSONAR: deliberate own-index loop
     const name: unknown = value[i];
     if (typeof name !== 'string' || !REPOSITORY_NAME.test(name) || name === '.' || name === '..') {
       throw new TypeError('repositories must hold repository names without the owner, such as "app"');
@@ -72,7 +73,7 @@ function normalizePermissions(value: unknown): string[] {
   if (!isRecord(value)) throw new TypeError('permissions must map permission names to "read", "write" or "admin"');
   const items: string[] = [];
   const names = Object.keys(value);
-  for (let i = 0; i < names.length; i++) {
+  for (let i = 0; i < names.length; i++) { // NOSONAR: deliberate own-index loop
     const name = names[i]!;
     const level = levelIndex(value[name]);
     if (!PERMISSION_NAME.test(name) || level < 0) {
@@ -86,7 +87,7 @@ function normalizePermissions(value: unknown): string[] {
 function normalizeGitHubAppScope(input: GitHubAppScope): { repositories: string[]; permissions: string[] } {
   if (!isRecord(input)) throw new TypeError('A GitHub App scope must be an object');
   const keys = Object.keys(input);
-  for (let i = 0; i < keys.length; i++) {
+  for (let i = 0; i < keys.length; i++) { // NOSONAR: deliberate own-index loop
     // An unknown key such as `repository_ids` would otherwise be dropped, and
     // the token would not be narrowed the way the caller meant.
     if (!SCOPE_KEYS.has(keys[i]!)) throw new TypeError('A GitHub App scope holds only repositories and permissions');
@@ -118,6 +119,12 @@ export const githubAppScopeGrammar: GitHubAppScopeGrammar = defineScopeGrammar<G
   riskOf: riskOfGitHubAppItem,
 });
 
+/** UTF-16 code-unit order, independent of locale, so the canonical grant is the same everywhere. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /**
  * The `access_tokens` request body for a normalised scope: the repository
  * names, sorted, and the highest level of each permission.
@@ -127,17 +134,18 @@ export function toAccessTokenRequest(scope: GitHubAppNormalizedScope): {
   permissions: Record<string, GitHubPermissionLevel>;
 } {
   const repositories: string[] = [];
-  for (let i = 0; i < scope.repositories.length; i++) repositories[repositories.length] = scope.repositories[i]!;
-  repositories.sort();
+  // Own-index reads of the frozen snapshot on purpose: no inherited iterator runs.
+  for (let i = 0; i < scope.repositories.length; i++) repositories[repositories.length] = scope.repositories[i]!; // NOSONAR: deliberate own-index loop
+  repositories.sort(compareCodeUnits);
   const highest = new Map<string, number>();
-  for (let i = 0; i < scope.permissions.length; i++) {
+  for (let i = 0; i < scope.permissions.length; i++) { // NOSONAR: deliberate own-index loop
     const match = PERMISSION_ITEM.exec(scope.permissions[i]!);
     if (!match) throw new TypeError('Unrecognised GitHub App permission item');
     const level = levelIndex(match[2]);
     if (level > (highest.get(match[1]!) ?? -1)) highest.set(match[1]!, level);
   }
   const permissions: Record<string, GitHubPermissionLevel> = {};
-  for (const name of [...highest.keys()].sort()) permissions[name] = GITHUB_PERMISSION_LEVELS[highest.get(name)!]!;
+  for (const name of [...highest.keys()].sort(compareCodeUnits)) permissions[name] = GITHUB_PERMISSION_LEVELS[highest.get(name)!]!;
   return { repositories, permissions };
 }
 

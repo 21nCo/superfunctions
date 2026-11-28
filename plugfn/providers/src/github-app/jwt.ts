@@ -16,8 +16,10 @@ export interface GitHubAppJwtClaims {
 
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  for (const byte of bytes) binary += String.fromCodePoint(byte);
+  let base64 = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
+  while (base64.endsWith('=')) base64 = base64.slice(0, -1);
+  return base64;
 }
 
 function base64UrlJson(value: unknown): string {

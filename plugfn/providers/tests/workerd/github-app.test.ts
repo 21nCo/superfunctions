@@ -1,7 +1,9 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CredentialMinterError, ScopeNotGrantable } from 'plugfn/credentials';
 import { createGitHubAppMinter, pemToPkcs8 } from '../../src/github-app/index.js';
 import {
+  controlledBody,
   EXPIRES_AT,
   fakeInstallationToken,
   generateTestAppKeys,
@@ -68,5 +70,43 @@ describe('GitHub App minter on workerd', () => {
     expect(error).toBeInstanceOf(ScopeNotGrantable);
     expect(error).toBeInstanceOf(CredentialMinterError);
     expect(`${(error as Error).message} ${JSON.stringify(error)} ${String((error as Error).stack)}`).not.toContain(jwt);
+  });
+
+  describe('a 201 body that arrives after the handler returned', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('is still read and its token revoked through ctx.waitUntil', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const token = fakeInstallationToken(3);
+      const body = controlledBody();
+      const calls: { method: string; authorization: string | undefined }[] = [];
+      const ctx = createExecutionContext();
+      const minter = createGitHubAppMinter({
+        appId: 12345,
+        privateKey: keys.pkcs8Pem,
+        now: () => NOW_MS,
+        waitUntil: (task) => ctx.waitUntil(task),
+        fetch: (async (_input: unknown, init?: RequestInit) => {
+          calls.push({ method: init!.method!, authorization: (init!.headers as Record<string, string>).authorization });
+          return init!.method === 'POST' ? new Response(body.stream, { status: 201 }) : new Response(null, { status: 204 });
+        }) as typeof fetch,
+      });
+      // The handler answers as soon as mint gives up on the body.
+      const handler = minter.mint({ installation: 42, scope: SCOPE, ttl: 3600 }).then(
+        () => new Response('minted'),
+        (error: CredentialMinterError) => new Response(error.code, { status: 502 }),
+      );
+      await body.pulled;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await (await handler).text()).toBe('mint_outcome_unknown');
+      body.push(JSON.stringify(recordedAccessToken(token)));
+      await waitOnExecutionContext(ctx);
+      expect(calls.map((call) => [call.method, call.authorization === `Bearer ${token}`])).toEqual([
+        ['POST', false],
+        ['DELETE', true],
+      ]);
+    });
   });
 });
