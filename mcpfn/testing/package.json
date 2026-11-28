@@ -30,7 +30,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpfn/auth": "0.0.9",
+    "@mcpfn/auth": "0.1.0",
     "@mcpfn/client": "0.1.3",
     "@mcpfn/core": "0.3.0",
     "@modelcontextprotocol/sdk": "1.32.2",
