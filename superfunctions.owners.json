@@ -172,6 +172,7 @@
     "reviewfn-core": "public",
     "reviewfn-github": "public",
     "reviewfn-harness-claude-code": "public",
+    "reviewfn-harness-cli": "public",
     "reviewfn-harness-codex": "public",
     "reviewfn-testing": "public",
     "searchfn-adapter-contracts": "public",

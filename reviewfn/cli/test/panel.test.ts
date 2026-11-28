@@ -495,7 +495,14 @@ describe("harness resolution through installed packages", () => {
     const installed = await resolvePanelHarnesses(panel([slot("one", 1)]), config);
     expect(installed.harnesses.map(harness => harness.capabilities.id)).toEqual(["codex"]);
     expect(installed.contractVersions).toEqual({});
-    await expect(resolvePanelHarnesses(panel([slot("one", 1), slot("generic", 2, "model-generic", "cli")]), config)).rejects.toMatchObject({ code: "REVIEWFN_HARNESS_NOT_INSTALLED", details: { packageName: "@superfunctions/reviewfn-harness-cli" } });
+    const missing = async (name: string) => { throw Object.assign(new Error(`Cannot find package '${name}' imported from ${import.meta.url}`), { code: "ERR_MODULE_NOT_FOUND" }); };
+    await expect(resolvePanelHarnesses(panel([slot("one", 1), slot("generic", 2, "model-generic", "cli")]), config, async name => name === "@superfunctions/reviewfn-harness-cli" ? missing(name) : import(name))).rejects.toMatchObject({ code: "REVIEWFN_HARNESS_NOT_INSTALLED", details: { packageName: "@superfunctions/reviewfn-harness-cli" } });
+  });
+
+  it("loads the installed generic CLI adapter with its contract version", async () => {
+    const resolved = await resolvePanelHarnesses(panel([slot("one", 1), slot("generic", 2, "model-generic", "cli")]), config);
+    expect(resolved.harnesses.map(harness => [harness.capabilities.id, harness.constructor.name])).toEqual([["codex", "CodexHarnessAdapter"], ["cli", "CliHarnessAdapter"]]);
+    expect(resolved.contractVersions).toEqual({ cli: "1" });
   });
 
   it("loads the installed Claude Code adapter with its contract version", async () => {
