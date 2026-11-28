@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -622,6 +622,26 @@ test('pack: a bare release runs the committed front-door test and checks the tar
   rmSync(path.join(root, 'bare/index.js'), { recursive: true });
   writeFileSync(path.join(root, 'bare/index.js'), TEMPLATE.reexportFiles['index.js']('@fixture/core'));
   writeFileSync(manifestPath, committedManifest);
+
+  // A staging path that is a link (here a dangling one pointing outside the package), or a folder linked outside the
+  // package, is refused before anything is written.
+  const outside = tempDir(t, 'bare-release-outside-');
+  rmSync(testFile);
+  symlinkSync(path.join(outside, 'created.mjs'), testFile);
+  const linked = pack();
+  assert.notEqual(linked.status, 0);
+  assert.match(linked.stderr, /test\/front-door\.test\.mjs is not a regular file; refusing to stage/);
+  assert.equal(existsSync(path.join(outside, 'created.mjs')), false);
+  rmSync(testFile);
+  rmSync(path.join(root, 'bare/test'), { recursive: true });
+  symlinkSync(outside, path.join(root, 'bare/test'), 'dir');
+  const linkedFolder = pack();
+  assert.notEqual(linkedFolder.status, 0);
+  assert.match(linkedFolder.stderr, /test\/front-door\.test\.mjs resolves outside the package/);
+  assert.deepEqual(readdirSync(outside), []);
+  rmSync(path.join(root, 'bare/test'));
+  mkdirSync(path.join(root, 'bare/test'));
+  cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
 
   // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
   const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));

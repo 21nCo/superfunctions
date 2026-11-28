@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SHIM_FILE, TEMPLATE, bareKind, checkPackedBare, gitFile } from './assert-bare-release.mjs';
@@ -64,15 +64,20 @@ if (committedTarget.kind === 'bare') {
       const content = committedFile(file);
       if (content === null) continue;
       const absolute = path.join(cwd, file);
-      let previous;
+      // Only regular files inside the package are replaced: a link (even a dangling one) or anything else there, or a
+      // folder that resolves outside the package, is refused before anything is written.
+      let stats = null;
       try {
-        previous = await readFile(absolute, 'utf8');
+        stats = await lstat(absolute);
       } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
-        previous = null;
       }
-      working.set(absolute, previous);
+      if (stats !== null && !stats.isFile()) throw new Error(`${target.name}: ${file} is not a regular file; refusing to stage the front-door test over it`);
       await mkdir(path.dirname(absolute), { recursive: true });
+      const folder = path.relative(await realpath(cwd), await realpath(path.dirname(absolute)));
+      if (folder.startsWith('..') || path.isAbsolute(folder)) throw new Error(`${target.name}: ${file} resolves outside the package; refusing to stage the front-door test`);
+      const previous = stats === null ? null : await readFile(absolute, 'utf8');
+      working.set(absolute, previous);
       await writeFile(absolute, content);
     }
     // NODE_TEST_CONTEXT would make node --test report to an enclosing test runner instead of exiting non-zero.
