@@ -1133,6 +1133,17 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
   throwsCode(() => releaseMoves({ pinOverlay: pair({}, { name: "@widgetfn/a" }), pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   throwsCode(() => releaseMoves({ pinOverlay: null, pinBase: pair({}, { name: "@widgetfn/a" }), current, paths: ["widgetfn"] }), "release-conflict");
   assert.equal(releaseMoves({ pinOverlay: pair({}, {}), pinBase: [], current, paths: ["widgetfn"] }).moves.length, 2);
+
+  // A bare entry keeps its kind, core and CLI, is compared with them, and needs its linked slugs promoted or present.
+  const bare = { slug: "widgetfn", path: "widgetfn/bare", name: "widgetfn", kind: "bare", core: "widgetfn-core", cli: "alphafn-core" };
+  const withBare = [overlay[0], bare];
+  assert.deepEqual(releaseMoves({ pinOverlay: withBare, pinBase: [], current, paths: ["widgetfn"] }).moves[1], { ...bare, source: "release-packages.next.json" });
+  const plainCopy = [...current, { slug: "widgetfn", path: "widgetfn/bare", name: "widgetfn" }];
+  throwsCode(() => releaseMoves({ pinOverlay: withBare, pinBase: [], current: plainCopy, paths: ["widgetfn"] }), "release-conflict");
+  assert.equal(releaseMoves({ pinOverlay: withBare, pinBase: [], current: [...current, overlay[0], bare], paths: ["widgetfn"] }).moves.length, 0);
+  throwsCode(() => releaseMoves({ pinOverlay: [bare], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  const appended = JSON.parse(appendReleaseEntries("[\n]\n", [{ ...bare, source: "release-packages.next.json" }]));
+  assert.deepEqual(appended, [{ slug: "widgetfn", path: "widgetfn/bare", name: "widgetfn", kind: "bare", core: "widgetfn-core", cli: "alphafn-core" }]);
 });
 
 test("Python identities: one order-independent check across overlay entries, imported pyproject.toml files and this checkout", () => {

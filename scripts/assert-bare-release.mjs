@@ -16,6 +16,7 @@
 //   - the core and the CLI are already on npm at that version, so the bare package never points at a missing release.
 // checkBareManifests (everything but the registry) also runs in CI over every bare target of the checkout.
 
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -69,6 +70,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   const problems = [];
   const where = `${target.name} (${target.path})`;
   const linked = {};
+  let cliBinNames = [];
   for (const field of ['core', 'cli']) {
     const slug = target.bare[field];
     if (slug === null || slug === target.slug) continue;
@@ -81,8 +83,17 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
     }
   }
   const dependencies = manifest.dependencies ?? {};
-  if (linked.core && dependencies[linked.core.name] !== version) {
-    problems.push(`dependencies["${linked.core.name}"] must be exactly ${version}, not ${JSON.stringify(dependencies[linked.core.name] ?? null)}`);
+  // An exact pin lives in dependencies alone: npm lets an optionalDependencies entry of the same name override it, and
+  // a peer entry would add a second range for the same package.
+  const pinnedOnlyInDependencies = name => {
+    if (dependencies[name] !== version) problems.push(`dependencies["${name}"] must be exactly ${version}, not ${JSON.stringify(dependencies[name] ?? null)}`);
+    for (const field of ['optionalDependencies', 'peerDependencies']) {
+      if (manifest[field]?.[name] !== undefined) problems.push(`${field} must not list ${name}; its exact pin belongs in dependencies alone`);
+    }
+  };
+  if (linked.core) {
+    pinnedOnlyInDependencies(linked.core.name);
+    if (!hasRootExport(manifest)) problems.push(`exports must have a "." entry that re-exports ${linked.core.name}`);
   }
   const hasCore = target.bare.core !== null;
   if (target.bare.cli !== null) {
@@ -111,16 +122,21 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
       problems.push(`files must include ${SHIM_FILE}`);
     }
     if (exportTargets(manifest.exports).some(file => normalizeBin(file).startsWith('bin/'))) problems.push('exports must not reach the bin folder');
+    cliBinNames = Object.keys(bins);
     const peer = manifest.peerDependencies?.[cliName];
     if (hasCore) {
       for (const field of ['dependencies', 'optionalDependencies']) {
         if (manifest[field]?.[cliName] !== undefined) problems.push(`${field} must not list ${cliName}: importers of the core would install the CLI; ${SHIM_FILE} makes it available when it runs`);
+        // An npm alias ("x": "npm:@scope/cli@1.2.3") installs the CLI under another name.
+        for (const [alias, spec] of Object.entries(manifest[field] ?? {})) {
+          if (typeof spec === 'string' && (spec === `npm:${cliName}` || spec.startsWith(`npm:${cliName}@`))) problems.push(`${field}["${alias}"] installs ${cliName} through an npm alias`);
+        }
       }
       if (peer !== undefined && (peer !== version || manifest.peerDependenciesMeta?.[cliName]?.optional !== true)) {
         problems.push(`peerDependencies may list ${cliName} only as an optional peer at exactly ${version}`);
       }
-    } else if (dependencies[cliName] !== version) {
-      problems.push(`dependencies["${cliName}"] must be exactly ${version}, not ${JSON.stringify(dependencies[cliName] ?? null)}`);
+    } else {
+      pinnedOnlyInDependencies(cliName);
     }
   } else if (manifest.frontDoor !== undefined) {
     problems.push('frontDoor applies only to a bare target with a "cli" slug');
@@ -128,7 +144,19 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   if (problems.length > 0) {
     throw new BareReleaseError('misaligned', `Bare package ${where} at ${version} does not match its core and CLI:\n  - ${problems.join('\n  - ')}`, { slug: target.slug, problems });
   }
+  if (linked.cli) linked.cli.bins = cliBinNames;
   return { version, packages: Object.values(linked) };
+}
+
+/** Whether `import "<bare>"` resolves: a string `exports`, a "." entry, or (with no exports) a main file. */
+function hasRootExport(manifest) {
+  const { exports } = manifest;
+  if (exports === undefined) return typeof manifest.main === 'string';
+  if (typeof exports === 'string' || Array.isArray(exports)) return true;
+  if (exports === null || typeof exports !== 'object') return false;
+  const keys = Object.keys(exports);
+  // An exports object without subpath keys is the "." entry's conditions.
+  return keys.includes('.') || (keys.length > 0 && keys.every(key => !key.startsWith('.')));
 }
 
 /**
@@ -138,7 +166,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
  */
 export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, fetch = globalThis.fetch } = {}) {
   const base = registry.replace(/\/+$/, '');
-  for (const { slug, name, version } of packages) {
+  for (const { slug, name, version, bins = [] } of packages) {
     const url = `${base}/${name.replace('/', '%2f')}/${encodeURIComponent(version)}`;
     let response;
     try {
@@ -154,6 +182,38 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
     if (body?.name !== name || body?.version !== version) {
       throw new BareReleaseError('registry-unavailable', `${base} returned ${body?.name}@${body?.version} for ${name}@${version}`, { name, version });
     }
+    // The shim runs the published CLI's bin named after the bare package; every other bare bin is an alias of it.
+    if (bins.length > 0) {
+      const published = body.bin !== null && typeof body.bin === 'object' ? body.bin : {};
+      const files = bins.map(bin => normalizeBin(published[bin]));
+      if (files.some(file => typeof file !== 'string') || new Set(files).size !== 1) {
+        throw new BareReleaseError('not-published', `${name}@${version} on npm does not have the bins ${bins.join(', ')} on one file (it has ${JSON.stringify(published)}); release a new CLI version that has them, at the bare package's version.`, { name, version });
+      }
+    }
+  }
+}
+
+/**
+ * Checks the packed tarball itself: its package.json keeps the checked version, pins, bins and frontDoor, and its shim
+ * is the shared template, so a pack lifecycle script cannot change what the gate approved.
+ * @param {{ tarball: string, manifest: Record<string, unknown>, shimTemplate?: string }} input
+ */
+export async function checkPackedBare({ tarball, manifest, shimTemplate = SHIM_TEMPLATE }) {
+  const read = file => execFileSync('tar', ['-xzOf', tarball, `package/${file}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  const packed = JSON.parse(read('package.json'));
+  const fields = ['name', 'version', 'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'exports', 'main', 'frontDoor'];
+  const changed = fields.filter(field => JSON.stringify(packed[field]) !== JSON.stringify(manifest[field]));
+  const binsOf = value => JSON.stringify(Object.entries(value ?? {}).map(([name, file]) => [name, normalizeBin(file)]).sort());
+  if (binsOf(packed.bin) !== binsOf(manifest.bin)) changed.push('bin');
+  if (changed.length > 0) throw new BareReleaseError('misaligned', `The packed ${manifest.name} changed ${changed.join(', ')} after the bare release gate checked them`);
+  if (manifest.frontDoor !== undefined) {
+    let shim;
+    try {
+      shim = read(SHIM_FILE);
+    } catch {
+      throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
+    }
+    if (shim !== (await readFile(shimTemplate, 'utf8'))) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
   }
 }
 

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { checkPackedBare } from './assert-bare-release.mjs';
 import { resolveReleaseTag } from './resolve-release-tag.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -38,5 +39,7 @@ if (packed.length !== 1 || packed[0].name !== target.name || packed[0].version !
   throw new Error('Packed artifact identity does not match resolved release target');
 }
 const tarball = path.join(destination, packed[0].filename);
+// A bare package's tarball must still hold what assert-bare-release.mjs checked before the build and pack scripts ran.
+if (target.bare) await checkPackedBare({ tarball, manifest });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `tarball=${tarball}\n`);
 console.log(JSON.stringify({ ...target, gitHead, tarball, integrity: packed[0].integrity }, null, 2));

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests } from './assert-bare-release.mjs';
+import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
 import { ReleaseTargetError, loadReleaseTargets } from './resolve-release-tag.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -101,7 +101,7 @@ test('manifests: core, CLI and bare package at one version, pinned exactly, with
     version: '1.2.3',
     packages: [
       { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3' },
-      { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3' },
+      { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] },
     ],
   });
 });
@@ -123,6 +123,14 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   await expectProblem({ overrides: { bin: { fixture: './dist/cli.js' } } }, /bin "fixture" must be bin\/cli\.mjs/);
   await expectProblem({ overrides: { files: ['index.js'] } }, /files must include bin\/cli\.mjs/);
   await expectProblem({ overrides: { exports: { '.': './index.js', './cli': './bin/cli.mjs' } } }, /exports must not reach the bin folder/);
+  await expectProblem({ overrides: { optionalDependencies: { '@fixture/core': '1.2.2' } } }, /optionalDependencies must not list @fixture\/core/);
+  await expectProblem({ overrides: { peerDependencies: { '@fixture/core': '^1.2.0' } } }, /peerDependencies must not list @fixture\/core/);
+  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'npm:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli through an npm alias/);
+  await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
+  await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
+  // Root exports in their other forms pass.
+  for (const exports of ['./index.js', { import: './index.js' }, { '.': { import: './index.js' } }]) assert.deepEqual(await problemsOf(product(t, { overrides: { exports } })), []);
+  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: undefined, main: './index.js' } })), []);
 
   const edited = product(t);
   writeFileSync(path.join(edited, 'bare', SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// local change\n`);
@@ -142,11 +150,13 @@ test('manifests: a CLI-only bare package depends on exactly its CLI; a bare core
   assert.deepEqual(await problemsOf(exact), []);
   const ranged = product(t, { entry: cliOnly, overrides: { exports: undefined, dependencies: { '@fixture/cli': '~1.2.3' } } });
   assert.ok((await problemsOf(ranged)).some(problem => /dependencies\["@fixture\/cli"\] must be exactly 1\.2\.3/.test(problem)));
+  const overridden = product(t, { entry: cliOnly, overrides: { exports: undefined, dependencies: { '@fixture/cli': '1.2.3' }, optionalDependencies: { '@fixture/cli': '1.2.2' } } });
+  assert.ok((await problemsOf(overridden)).some(problem => /optionalDependencies must not list @fixture\/cli/.test(problem)));
 
   // plugfn's shape: the bare package is the core itself and adds the CLI's bin.
   const selfCore = product(t, { entry: { core: 'fixture' }, overrides: { dependencies: {} } });
   const { target, targets } = await bareTarget(selfCore);
-  assert.deepEqual((await checkBareManifests({ root: selfCore, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3' }]);
+  assert.deepEqual((await checkBareManifests({ root: selfCore, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] }]);
 
   // Core only: no bin, no frontDoor.
   const coreOnly = product(t, { entry: { cli: undefined }, overrides: { bin: undefined, frontDoor: undefined } });
@@ -158,13 +168,13 @@ test('manifests: a CLI-only bare package depends on exactly its CLI; a bare core
 test('registry: the core and CLI must already be on npm at the version', async () => {
   const packages = [
     { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3' },
-    { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3' },
+    { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] },
   ];
   const registry = 'https://registry.example.test/';
   const urls = [];
   const published = {
     'https://registry.example.test/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3' },
-    'https://registry.example.test/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3' },
+    'https://registry.example.test/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3', bin: { fixture: 'dist/cli.js', fx: './dist/cli.js' } },
   };
   const fetch = async (url, init) => {
     urls.push(url);
@@ -179,13 +189,34 @@ test('registry: the core and CLI must already be on npm at the version', async (
   await assert.rejects(assertPublished(packages, { registry, fetch: async () => { throw new Error('offline'); } }), error => error.code === 'registry-unavailable' && /offline/.test(error.message));
   const wrong = async () => new Response(JSON.stringify({ name: '@fixture/core', version: '1.2.2' }), { status: 200 });
   await assert.rejects(assertPublished(packages, { registry, fetch: wrong }), /returned @fixture\/core@1\.2\.2/);
+
+  // The published CLI must have the bins the bare package runs, on one file.
+  const cliUrl = 'https://registry.example.test/@fixture%2fcli/1.2.3';
+  for (const bin of [undefined, { legacy: 'dist/cli.js' }, { fixture: 'dist/cli.js' }, { fixture: 'dist/cli.js', fx: 'dist/other.js' }]) {
+    const answers = { ...published, [cliUrl]: { name: '@fixture/cli', version: '1.2.3', bin } };
+    await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(answers) }), error => error.code === 'not-published' && /does not have the bins fixture, fx/.test(error.message));
+  }
+});
+
+test('packed tarball: keeps the checked manifest fields and the shared shim', async t => {
+  const root = product(t);
+  const dir = path.join(root, 'bare');
+  writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
+  const pack = () => path.join(root, JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', root], { cwd: dir, encoding: 'utf8' }))[0].filename);
+  const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  const tarball = pack();
+  await checkPackedBare({ tarball, manifest });
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } } }), /changed dependencies/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } } }), /changed bin/);
+  writeFileSync(path.join(dir, SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// changed\n`);
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /differs from the shared shim template/);
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {
   const root = product(t);
   const answers = {
     'https://registry.npmjs.org/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3' },
-    'https://registry.npmjs.org/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3' },
+    'https://registry.npmjs.org/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } },
   };
   const result = await assertBareRelease('fixture-v1.2.3', { root, fetch: registryAnswering(answers) });
   assert.equal(result.bare, true);
@@ -246,21 +277,28 @@ const runShim = (shim, args, env = {}) => {
   return { ...result, output: result.stdout.trim() ? JSON.parse(result.stdout.trim().split('\n').at(-1)) : null };
 };
 
-/** A stand-in npm-cli.js that records its arguments and reports a PATH whose .bin folder holds a fetched CLI. */
-function fakeNpm(t, { fetchedCli, status = 0 }) {
+/**
+ * A stand-in npm-cli.js that records its arguments and working directories, and reports a PATH whose .bin folder holds
+ * a fetched CLI. With `onlyFromEmptyFolder`, a run from the caller's folder reports a PATH without it.
+ */
+function fakeNpm(t, { fetchedCli, status = 0, onlyFromEmptyFolder = false }) {
   const dir = tempDir(t, 'bare-shim-npm-');
   const cache = path.join(dir, 'cache');
   if (fetchedCli) writeCli(path.join(cache, 'node_modules/@fixture/cli'), fetchedCli, 'fetched');
   mkdirSync(path.join(cache, 'node_modules/.bin'), { recursive: true });
-  const record = path.join(dir, 'args.json');
+  const record = path.join(dir, 'calls.jsonl');
+  const bin = JSON.stringify(path.join(cache, 'node_modules/.bin') + path.delimiter);
   writeFileSync(
     path.join(dir, 'npm-cli.js'),
-    `const { writeFileSync } = require('node:fs');\n` +
-      `writeFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)));\n` +
-      `process.stdout.write(${JSON.stringify(path.join(cache, 'node_modules/.bin') + path.delimiter)} + process.env.PATH + '\\n');\n` +
+    `const { appendFileSync } = require('node:fs');\n` +
+      `const path = require('node:path');\n` +
+      `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + '\\n');\n` +
+      `const empty = path.basename(process.cwd()).startsWith('bare-cli-');\n` +
+      `process.stdout.write((${onlyFromEmptyFolder} && !empty ? '' : ${bin}) + process.env.PATH + '\\n');\n` +
       `process.exitCode = ${status};\n`,
   );
-  return { npmCli: path.join(dir, 'npm-cli.js'), args: () => JSON.parse(readFileSync(record, 'utf8')) };
+  const calls = () => readFileSync(record, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  return { npmCli: path.join(dir, 'npm-cli.js'), calls, args: () => calls()[0].args };
 }
 
 test('shim: runs the installed CLI at its version in this process, with arguments, aliases and exit code', t => {
@@ -281,6 +319,33 @@ test('shim: fetches the CLI at exactly its version when no matching copy is inst
   assert.equal(run.output.main, true);
   assert.equal(run.output.path.split(path.delimiter)[0], path.join(path.dirname(npm.npmCli), 'cache/node_modules/.bin'));
   assert.deepEqual(npm.args(), ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH']);
+});
+
+test('shim: fetches again from an empty folder when npm reports no PATH holding the CLI', t => {
+  const { shim } = installedProduct(t, { installedCli: null });
+  const npm = fakeNpm(t, { fetchedCli: '1.2.3', onlyFromEmptyFolder: true });
+  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.output.origin, 'fetched');
+  const calls = npm.calls();
+  assert.equal(calls.length, 2);
+  assert.doesNotMatch(path.basename(calls[0].cwd), /^bare-cli-/);
+  assert.match(path.basename(calls[1].cwd), /^bare-cli-/);
+  assert.deepEqual(calls[1].args, calls[0].args);
+});
+
+test('shim: a CLI bin that resolves outside its package is never run', t => {
+  const { root, shim } = installedProduct(t, { installedCli: null });
+  const outside = path.join(root, 'elsewhere');
+  writeCli(outside, '1.2.4', 'outside');
+  const cliDir = path.join(root, 'node_modules/@fixture/cli');
+  writeJson(path.join(cliDir, 'package.json'), { name: '@fixture/cli', version: '1.2.3', type: 'module', bin: { fixture: './cli.mjs' } });
+  symlinkSync(path.join(outside, 'cli.mjs'), path.join(cliDir, 'cli.mjs'));
+  const npm = fakeNpm(t, {});
+  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
+  assert.equal(run.status, 1);
+  assert.equal(run.output, null);
+  assert.match(run.stderr, /its fixture command was not found/);
 });
 
 test('shim: says what failed when npm cannot fetch the CLI or the fetched copy has no matching bin', t => {

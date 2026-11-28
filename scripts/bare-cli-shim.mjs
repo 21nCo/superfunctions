@@ -12,8 +12,9 @@
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -28,8 +29,8 @@ function fail(message) {
   process.exit(1);
 }
 
-// The CLI's bin file in packageDir: undefined unless packageDir holds the CLI at this exact version with a bin named
-// after this package that stays inside the CLI package.
+// The CLI's bin file in packageDir, as a real path: undefined unless packageDir holds the CLI at this exact version
+// with a bin named after this package that exists and, once symlinks are resolved, stays inside the CLI package.
 function binIn(packageDir) {
   let manifest;
   try {
@@ -41,8 +42,15 @@ function binIn(packageDir) {
   const bin = typeof manifest.bin === 'string' ? { [cli.split('/').pop()]: manifest.bin } : manifest.bin;
   const file = bin?.[own.name];
   if (typeof file !== 'string') return undefined;
-  const resolved = path.resolve(packageDir, file);
-  const relative = path.relative(packageDir, resolved);
+  let realDir;
+  let resolved;
+  try {
+    realDir = realpathSync(packageDir);
+    resolved = realpathSync(path.resolve(packageDir, file));
+  } catch {
+    return undefined;
+  }
+  const relative = path.relative(realDir, resolved);
   if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return undefined;
   return resolved;
 }
@@ -58,8 +66,9 @@ function installedBin() {
 }
 
 // npm, run as `node <npm-cli.js>` with no shell where it can be found, so arguments reach npm unchanged: the npm that
-// started this command (npx and npm exec set npm_execpath), else on Windows the npm installed with Node.js. Elsewhere
-// `npm` from PATH is an executable script that needs no shell.
+// started this command (npx and npm exec set npm_execpath). On Windows, npm is npm.cmd, a shim for
+// node_modules\npm\bin\npm-cli.js in its own folder, so it then takes the first PATH folder holding both, and finally
+// the npm installed with Node.js. Elsewhere `npm` from PATH is an executable script that needs no shell.
 function npmCommand() {
   const launcher = process.env.npm_execpath;
   if (launcher && /(?:^|[\\/])np[mx]-cli\.js$/.test(launcher)) {
@@ -67,19 +76,23 @@ function npmCommand() {
     if (existsSync(npmCli)) return [process.execPath, [npmCli]];
   }
   if (process.platform !== 'win32') return ['npm', []];
-  const bundled = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const cliIn = (folder) => path.join(folder, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  for (const folder of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    if (existsSync(path.join(folder, 'npm.cmd')) && existsSync(cliIn(folder))) return [process.execPath, [cliIn(folder)]];
+  }
+  const bundled = cliIn(path.dirname(process.execPath));
   if (!existsSync(bundled)) fail(`could not find npm. Run npx ${spec} instead.`);
   return [process.execPath, [bundled]];
 }
 
 // Has npm fetch the CLI at this version and report the PATH it would run it with; the CLI's bin is in the first
-// node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr.
-function fetchedBin() {
-  const [command, prefix] = npmCommand();
+// node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr. Returns
+// { error } when npm could not run or fetch it, and undefined when npm ran but no such folder is on that PATH.
+function npmLocate(command, prefix, cwd) {
   const args = [...prefix, 'exec', '--yes', `--package=${spec}`, '--', 'node', '-p', 'process.env.PATH'];
-  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
-  if (result.error) fail(`could not start npm: ${result.error.message}`);
-  if (result.status !== 0) fail(`npm could not fetch ${spec}.`);
+  const result = spawnSync(command, args, { cwd, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
+  if (result.error) return { error: `could not start npm: ${result.error.message}` };
+  if (result.status !== 0) return { error: `npm could not fetch ${spec}.` };
   const reported = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
   for (const folder of reported.split(path.delimiter)) {
     if (path.basename(folder) !== '.bin' || path.basename(path.dirname(folder)) !== 'node_modules') continue;
@@ -87,7 +100,26 @@ function fetchedBin() {
     // The CLI and the commands it starts see the PATH they would have under npx.
     if (file) return { file, PATH: reported };
   }
-  return fail(`npm fetched ${spec}, but its ${own.name} command was not found.`);
+  return undefined;
+}
+
+// npm runs from the working directory first, so the project's npm settings apply. npm may then reuse a copy of the CLI
+// nested elsewhere in the project, which is on no PATH it reports; it runs again from an empty folder, where it can
+// only use its cache.
+function fetchedBin() {
+  const [command, prefix] = npmCommand();
+  let found = npmLocate(command, prefix, process.cwd());
+  if (found === undefined) {
+    const empty = mkdtempSync(path.join(tmpdir(), 'bare-cli-'));
+    try {
+      found = npmLocate(command, prefix, empty);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  }
+  if (found === undefined) fail(`npm fetched ${spec}, but its ${own.name} command was not found.`);
+  if (found.error) fail(found.error);
+  return found;
 }
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');
