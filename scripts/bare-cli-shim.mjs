@@ -7,7 +7,8 @@
 // importer of the core installs, loads and bundles none of the CLI; this command makes the CLI available only when it
 // runs. A copy of the CLI at this exact version that Node.js can find from here (a CLI-only bare package depends on
 // it) runs with Node.js; otherwise npm fetches and runs that exact version, as `npx <cli>@<version>` would. Either way
-// the CLI runs as a child process with this terminal, and this command exits as it did.
+// the CLI runs as a child process with this terminal, and this command exits as it did. The CLI is told the exact
+// version expected (BARE_EXPECTED_CLI) and refuses to run as any other.
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
 import { spawn } from 'node:child_process';
@@ -104,22 +105,22 @@ function runAndExit(command, args, startFailure, { viaNpm = false, env = process
   });
 }
 
-// Set for the npm exec child: if npm resolves the command name back to this package's own bin (it reused a copy of
-// the CLI whose bin folder is not on its PATH), the second start of this command stops instead of looping.
-const LAUNCHED = 'SUPERFUNCTIONS_BARE_CLI_LAUNCHED';
+// The CLI this command expects, as "<package>@<version>", for the CLI it starts. npm exec may reuse a copy of the CLI
+// that is not on the PATH it runs the command with, so the command name can reach another version of the CLI, or this
+// command again. A CLI behind a bare package compares this with its own name and version at startup and exits non-zero
+// on a mismatch (see the README's "Bare packages"); this command refuses to start again under its own expectation.
+const EXPECTED = 'BARE_EXPECTED_CLI';
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');
-if (process.env[LAUNCHED] === spec) {
+if (process.env[EXPECTED] === spec) {
   fail(`npm ran this command again instead of ${spec}'s ${own.name} bin. Install ${spec} in this project, or run npx ${spec} from another folder.`);
 }
 const args = process.argv.slice(2);
+const env = { ...process.env, [EXPECTED]: spec };
 const installed = installedBin();
 if (installed !== undefined) {
-  runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`);
+  runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`, { env });
 } else {
   const [command, prefix] = npmCommand();
-  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', {
-    viaNpm: true,
-    env: { ...process.env, [LAUNCHED]: spec },
-  });
+  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', { viaNpm: true, env });
 }

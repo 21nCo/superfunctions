@@ -194,6 +194,28 @@ core at exactly its version and never on the CLI (at most an optional peer at th
 version), so importers install none of the CLI; a CLI-only bare package depends
 on the CLI at exactly its version.
 
+The shim sets `BARE_EXPECTED_CLI=<cli>@<version>` for the CLI it starts. Like
+`npx <cli>@<version>`, `npm exec` may reuse a copy of the CLI nested under another
+dependency without putting its bin on the PATH, and then run a different version
+the project links under the same bin name. So a CLI behind a bare package checks
+the variable at startup and refuses to run as another version, and its
+`package.json` declares that it does with
+`"frontDoorCli": { "checksExpectedVersion": true }`:
+
+```js
+const expected = process.env.BARE_EXPECTED_CLI;
+if (expected?.startsWith(`${pkg.name}@`)) {
+  if (expected !== `${pkg.name}@${pkg.version}`) {
+    console.error(`expected ${pkg.name} ${expected.slice(pkg.name.length + 1)}, found ${pkg.version}; run npx ${expected}`);
+    process.exit(1);
+  }
+  delete process.env.BARE_EXPECTED_CLI; // not passed on to commands the CLI starts
+}
+```
+
+The shim also refuses to start again under its own expectation, in case npm
+resolves the bin name back to the bare package.
+
 Before installing anything, the build job runs
 `scripts/assert-bare-release.mjs <tag>`, which refuses a bare release unless the
 bare package, its core and its CLI have the tagged version, the pins and shim

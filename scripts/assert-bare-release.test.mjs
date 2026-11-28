@@ -27,7 +27,7 @@ function tempDir(t, prefix) {
 function product(t, { overrides = {}, entry = {}, cliVersion = '1.2.3', coreVersion = '1.2.3' } = {}) {
   const root = tempDir(t, 'bare-release-');
   writeJson(path.join(root, 'core/package.json'), { name: '@fixture/core', version: coreVersion });
-  writeJson(path.join(root, 'cli/package.json'), { name: '@fixture/cli', version: cliVersion, bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } });
+  writeJson(path.join(root, 'cli/package.json'), { name: '@fixture/cli', version: cliVersion, bin: { fixture: './dist/cli.js', fx: './dist/cli.js' }, frontDoorCli: { checksExpectedVersion: true } });
   writeJson(path.join(root, 'bare/package.json'), {
     name: 'fixture',
     version: '1.2.3',
@@ -163,6 +163,10 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   for (const exports of ['./index.js', { import: './index.js' }, { '.': { import: './index.js' } }]) assert.deepEqual(await problemsOf(product(t, { overrides: { exports } })), []);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: undefined, main: './index.js' } })), []);
 
+  const unchecked = product(t);
+  writeJson(path.join(unchecked, 'cli/package.json'), { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } });
+  assert.ok((await problemsOf(unchecked)).some(problem => /its CLI @fixture\/cli must check BARE_EXPECTED_CLI at startup/.test(problem)));
+
   const edited = product(t);
   writeFileSync(path.join(edited, 'bare', SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// local change\n`);
   assert.ok((await problemsOf(edited)).some(problem => /differs from the shared shim template/.test(problem)));
@@ -240,6 +244,8 @@ test('packed tarball: keeps the checked manifest fields and the shared shim', as
   await checkPackedBare({ tarball, manifest });
   await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } } }), /changed dependencies/);
   await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } } }), /changed bin/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, type: 'commonjs' } }), /changed type/);
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, imports: { '#x': './x.js' } } }), /changed imports/);
   rmSync(path.join(dir, 'index.js'));
   await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /lacks \.\/index\.js, which import "fixture" resolves to/);
   writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
@@ -296,12 +302,18 @@ function installedProduct(t, { installedCli = '1.2.3' } = {}) {
   return { root, shim: path.join(bare, SHIM_FILE) };
 }
 
-// A CLI whose bin prints where it ran from, its argv and PATH, and exits with the code its first argument names.
+// A CLI whose bin checks BARE_EXPECTED_CLI as the README describes, then prints where it ran from, its argv and PATH,
+// and exits with the code its first argument names.
 function writeCli(dir, version, origin) {
-  writeJson(path.join(dir, 'package.json'), { name: '@fixture/cli', version, type: 'module', bin: { fixture: './cli.mjs', fx: './cli.mjs' } });
+  writeJson(path.join(dir, 'package.json'), { name: '@fixture/cli', version, type: 'module', bin: { fixture: './cli.mjs', fx: './cli.mjs' }, frontDoorCli: { checksExpectedVersion: true } });
   writeFileSync(
     path.join(dir, 'cli.mjs'),
     `import { fileURLToPath } from 'node:url';\n` +
+      `const expected = process.env.BARE_EXPECTED_CLI;\n` +
+      `if (expected?.startsWith('@fixture/cli@')) {\n` +
+      `  if (expected !== '@fixture/cli@${version}') { console.error(\`expected @fixture/cli \${expected.slice(13)}, found ${version}; run npx \${expected}\`); process.exit(1); }\n` +
+      `  delete process.env.BARE_EXPECTED_CLI;\n` +
+      `}\n` +
       `console.log(JSON.stringify({ origin: ${JSON.stringify(origin)}, version: ${JSON.stringify(version)}, main: process.argv[1] === fileURLToPath(import.meta.url), args: process.argv.slice(2), path: process.env.PATH }));\n` +
       `process.exitCode = Number(process.argv[2] ?? 0);\n`,
   );
@@ -353,6 +365,16 @@ test('shim: has npm fetch and run the CLI at exactly its version when no matchin
   assert.equal(run.output.origin, 'fetched');
   assert.deepEqual(run.output.args, ['4', 'status']);
   assert.deepEqual(npm.args(), ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'fixture', '4', 'status']);
+});
+
+test('shim: a CLI npm reaches at another version (a nested copy npm reused) refuses to run', t => {
+  // npm reused a nested 1.2.3 but the bin name on its PATH is the project's 1.2.2.
+  const { shim } = installedProduct(t, { installedCli: '1.2.2' });
+  const npm = fakeNpm(t, { fetchedCli: '1.2.2' });
+  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
+  assert.equal(run.status, 1);
+  assert.equal(run.output, null);
+  assert.match(run.stderr, /expected @fixture\/cli 1\.2\.3, found 1\.2\.2; run npx @fixture\/cli@1\.2\.3/);
 });
 
 test('shim: passes npm\'s exit code through when npm cannot fetch or run the CLI', t => {

@@ -13,6 +13,8 @@
 //     bin/cli.mjs), which runs exactly that version of the CLI named in "frontDoor": { "cli" }. A bare package that
 //     also exports a core keeps the CLI out of its dependencies (at most an optional peer at that version); a CLI-only
 //     bare package depends on exactly that version of it;
+//   - the CLI declares that it checks BARE_EXPECTED_CLI, which the shim sets to "<cli>@<version>", and refuses to run as
+//     any other version (npm exec can reach another installed version under the bin name);
 //   - the core and the CLI are already on npm at that version, so the bare package never points at a missing release.
 // checkBareManifests (everything but the registry) also runs in CI over every bare target of the checkout.
 
@@ -111,6 +113,11 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
     if (!Object.hasOwn(bins, target.name)) problems.push(`bin must map "${target.name}" to ${SHIM_FILE}`);
     const cliBins = cliManifest.bin !== null && typeof cliManifest.bin === 'object' ? cliManifest.bin : {};
     if (!Object.hasOwn(cliBins, target.name)) problems.push(`its CLI ${cliName} has no "${target.name}" bin for ${SHIM_FILE} to run`);
+    // npm exec can run another installed version of the CLI under the bin name; the CLI then refuses, because the
+    // shim tells it the exact version expected in BARE_EXPECTED_CLI.
+    if (cliManifest.frontDoorCli?.checksExpectedVersion !== true) {
+      problems.push(`its CLI ${cliName} must check BARE_EXPECTED_CLI at startup and declare it with "frontDoorCli": { "checksExpectedVersion": true }`);
+    }
     for (const [name, file] of Object.entries(bins)) {
       if (normalizeBin(file) !== SHIM_FILE) problems.push(`bin "${name}" must be ${SHIM_FILE}, not ${JSON.stringify(file)}`);
       else if (name !== target.name && normalizeBin(cliBins[name]) !== normalizeBin(cliBins[target.name])) {
@@ -288,7 +295,7 @@ export async function checkPackedBare({ tarball, manifest, shim: template }) {
   const packedManifest = read('package.json');
   if (packedManifest === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no package.json`);
   const packed = JSON.parse(packedManifest);
-  const fields = ['name', 'version', 'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'exports', 'main', 'frontDoor'];
+  const fields = ['name', 'version', 'type', 'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'exports', 'imports', 'main', 'frontDoor'];
   const changed = fields.filter(field => JSON.stringify(packed[field]) !== JSON.stringify(manifest[field]));
   const binsOf = value => JSON.stringify(Object.entries(value ?? {}).map(([name, file]) => [name, normalizeBin(file)]).sort());
   if (binsOf(packed.bin) !== binsOf(manifest.bin)) changed.push('bin');
