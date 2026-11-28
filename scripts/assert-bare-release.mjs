@@ -17,7 +17,8 @@
 // checkBareManifests (everything but the registry) also runs in CI over every bare target of the checkout.
 
 import { execFileSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
@@ -42,6 +43,11 @@ export class BareReleaseError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+/** A file as committed at `rev` (default HEAD) in the checkout at `root`. */
+export function gitFile(root, file, rev = 'HEAD') {
+  return execFileSync('git', ['show', `${rev}:${file.split(path.sep).join('/')}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
 
 async function readManifest(root, target) {
@@ -91,9 +97,9 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
       if (manifest[field]?.[name] !== undefined) problems.push(`${field} must not list ${name}; its exact pin belongs in dependencies alone`);
     }
   };
-  if (linked.core) {
-    pinnedOnlyInDependencies(linked.core.name);
-    if (!hasRootExport(manifest)) problems.push(`exports must have a "." entry that re-exports ${linked.core.name}`);
+  if (linked.core) pinnedOnlyInDependencies(linked.core.name);
+  if (target.bare.core !== null && !hasRootExport(manifest)) {
+    problems.push(`exports must have a "." entry with a runtime target (import, require, node or default), so import "${target.name}" gives the core`);
   }
   const hasCore = target.bare.core !== null;
   if (target.bare.cli !== null) {
@@ -124,13 +130,15 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
     if (exportTargets(manifest.exports).some(file => normalizeBin(file).startsWith('bin/'))) problems.push('exports must not reach the bin folder');
     cliBinNames = Object.keys(bins);
     const peer = manifest.peerDependencies?.[cliName];
+    // An npm alias ("x": "npm:@scope/cli@1.2.3"; npm reads the scheme in any case) installs the CLI under another name.
+    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const [alias, spec] of Object.entries(manifest[field] ?? {})) {
+        if (alias !== cliName && aliasTarget(spec) === cliName) problems.push(`${field}["${alias}"] installs ${cliName} through an npm alias`);
+      }
+    }
     if (hasCore) {
       for (const field of ['dependencies', 'optionalDependencies']) {
         if (manifest[field]?.[cliName] !== undefined) problems.push(`${field} must not list ${cliName}: importers of the core would install the CLI; ${SHIM_FILE} makes it available when it runs`);
-        // An npm alias ("x": "npm:@scope/cli@1.2.3") installs the CLI under another name.
-        for (const [alias, spec] of Object.entries(manifest[field] ?? {})) {
-          if (typeof spec === 'string' && (spec === `npm:${cliName}` || spec.startsWith(`npm:${cliName}@`))) problems.push(`${field}["${alias}"] installs ${cliName} through an npm alias`);
-        }
       }
       if (peer !== undefined && (peer !== version || manifest.peerDependenciesMeta?.[cliName]?.optional !== true)) {
         problems.push(`peerDependencies may list ${cliName} only as an optional peer at exactly ${version}`);
@@ -148,15 +156,32 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   return { version, packages: Object.values(linked) };
 }
 
-/** Whether `import "<bare>"` resolves: a string `exports`, a "." entry, or (with no exports) a main file. */
+/** The package an npm alias spec ("npm:<name>" or "npm:<name>@<range>", scheme in any case) installs, or null. */
+function aliasTarget(spec) {
+  const match = typeof spec === 'string' && /^npm:((?:@[^/@]+\/)?[^@]+)(?:@.*)?$/i.exec(spec.trim());
+  return match ? match[1] : null;
+}
+
+const RUNTIME_CONDITIONS = ['import', 'require', 'node', 'default'];
+
+/** Whether an exports target resolves at run time: a string, an array holding one, or a runtime condition leading to one. */
+function hasRuntimeTarget(value) {
+  if (typeof value === 'string') return value !== '';
+  if (Array.isArray(value)) return value.some(hasRuntimeTarget);
+  if (value === null || typeof value !== 'object') return false;
+  return Object.entries(value).some(([key, target]) => RUNTIME_CONDITIONS.includes(key) && hasRuntimeTarget(target));
+}
+
+/** Whether `import "<bare>"` resolves at run time: the root of `exports`, or (with no exports) a main file. */
 function hasRootExport(manifest) {
   const { exports } = manifest;
-  if (exports === undefined) return typeof manifest.main === 'string';
-  if (typeof exports === 'string' || Array.isArray(exports)) return true;
-  if (exports === null || typeof exports !== 'object') return false;
-  const keys = Object.keys(exports);
-  // An exports object without subpath keys is the "." entry's conditions.
-  return keys.includes('.') || (keys.length > 0 && keys.every(key => !key.startsWith('.')));
+  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '';
+  if (exports !== null && typeof exports === 'object' && !Array.isArray(exports)) {
+    const keys = Object.keys(exports);
+    if (keys.some(key => key.startsWith('.'))) return hasRuntimeTarget(exports['.']);
+  }
+  // A string, an array or a conditions-only object is the "." entry itself.
+  return hasRuntimeTarget(exports);
 }
 
 /**
@@ -189,16 +214,46 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
       if (files.some(file => typeof file !== 'string') || new Set(files).size !== 1) {
         throw new BareReleaseError('not-published', `${name}@${version} on npm does not have the bins ${bins.join(', ')} on one file (it has ${JSON.stringify(published)}); release a new CLI version that has them, at the bare package's version.`, { name, version });
       }
+      // The manifest can name a file the tarball lacks, so the published tarball must hold it.
+      if (!(await tarballEntries(body.dist?.tarball, { fetch, name, version })).includes(`package/${files[0]}`)) {
+        throw new BareReleaseError('not-published', `${name}@${version} on npm has no ${files[0]} for its ${bins[0]} bin; release a new CLI version that ships it, at the bare package's version.`, { name, version });
+      }
     }
+  }
+}
+
+/** The entry paths of a published tarball, normalized without a leading "./". */
+async function tarballEntries(url, { fetch, name, version }) {
+  if (typeof url !== 'string' || url === '') throw new BareReleaseError('registry-unavailable', `The registry gave no tarball for ${name}@${version}`, { name, version });
+  let bytes;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`answered ${response.status}`);
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throw new BareReleaseError('registry-unavailable', `Could not download the ${name}@${version} tarball: ${error.message}`, { name, version });
+  }
+  const dir = await mkdtemp(path.join(tmpdir(), 'bare-release-tarball-'));
+  try {
+    const file = path.join(dir, 'package.tgz');
+    await writeFile(file, bytes);
+    return execFileSync('tar', ['-tzf', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean).map(entry => entry.replace(/^\.\//, ''));
+  } catch (error) {
+    throw new BareReleaseError('registry-unavailable', `Could not read the ${name}@${version} tarball: ${error.message}`, { name, version });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
 /**
  * Checks the packed tarball itself: its package.json keeps the checked version, pins, bins and frontDoor, and its shim
- * is the shared template, so a pack lifecycle script cannot change what the gate approved.
- * @param {{ tarball: string, manifest: Record<string, unknown>, shimTemplate?: string }} input
+ * is the shared template, so an install, build or pack lifecycle script cannot change what the gate approved. The
+ * release passes the manifest and template as committed at the tag (gitFile), not as they are on disk after those
+ * scripts ran.
+ * @param {{ tarball: string, manifest: Record<string, unknown>, shim?: string }} input  `shim` is the template's text
  */
-export async function checkPackedBare({ tarball, manifest, shimTemplate = SHIM_TEMPLATE }) {
+export async function checkPackedBare({ tarball, manifest, shim: template }) {
+  template ??= await readFile(SHIM_TEMPLATE, 'utf8');
   const read = file => execFileSync('tar', ['-xzOf', tarball, `package/${file}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   const packed = JSON.parse(read('package.json'));
   const fields = ['name', 'version', 'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'exports', 'main', 'frontDoor'];
@@ -213,7 +268,7 @@ export async function checkPackedBare({ tarball, manifest, shimTemplate = SHIM_T
     } catch {
       throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
     }
-    if (shim !== (await readFile(shimTemplate, 'utf8'))) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
+    if (shim !== template) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
   }
 }
 

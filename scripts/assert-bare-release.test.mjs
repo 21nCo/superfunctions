@@ -67,8 +67,24 @@ async function problemsOf(root) {
 const registryAnswering = answers => async url => {
   const answer = answers[url];
   if (answer === undefined) return new Response('{}', { status: 404 });
-  return new Response(JSON.stringify(answer), { status: 200 });
+  return new Response(Buffer.isBuffer(answer) ? answer : JSON.stringify(answer), { status: 200 });
 };
+
+const CLI_TARBALL = 'https://registry.example.test/@fixture/cli/-/cli-1.2.3.tgz';
+
+/** The bytes of a packed @fixture/cli 1.2.3 holding `files` (bins fixture and fx on dist/cli.js). */
+function cliTarball(t, files = ['dist/cli.js']) {
+  const dir = tempDir(t, 'bare-release-cli-');
+  writeJson(path.join(dir, 'package.json'), { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } });
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), '#!/usr/bin/env node\n');
+  }
+  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', dir], { cwd: dir, encoding: 'utf8' }));
+  return readFileSync(path.join(dir, packed.filename));
+}
+
+const publishedCli = { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' }, dist: { tarball: CLI_TARBALL } };
 
 test('release targets: a bare entry names existing, non-bare core and CLI slugs', async t => {
   const root = product(t);
@@ -126,6 +142,11 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   await expectProblem({ overrides: { optionalDependencies: { '@fixture/core': '1.2.2' } } }, /optionalDependencies must not list @fixture\/core/);
   await expectProblem({ overrides: { peerDependencies: { '@fixture/core': '^1.2.0' } } }, /peerDependencies must not list @fixture\/core/);
   await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'npm:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli through an npm alias/);
+  await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'NPM:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli/);
+  await expectProblem({ overrides: { peerDependencies: { 'cli-alias': 'npm:@fixture/cli' } } }, /peerDependencies\["cli-alias"\] installs @fixture\/cli/);
+  await expectProblem({ overrides: { exports: { '.': null } } }, /exports must have a "\." entry with a runtime target/);
+  await expectProblem({ overrides: { exports: { '.': { types: './index.d.ts' } } } }, /exports must have a "\." entry with a runtime target/);
+  await expectProblem({ entry: { core: 'fixture' }, overrides: { dependencies: {}, exports: { './sub': './sub.js' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
   // Root exports in their other forms pass.
@@ -165,7 +186,7 @@ test('manifests: a CLI-only bare package depends on exactly its CLI; a bare core
   assert.ok((await problemsOf(strayFrontDoor)).some(problem => /frontDoor applies only/.test(problem)));
 });
 
-test('registry: the core and CLI must already be on npm at the version', async () => {
+test('registry: the core and CLI must already be on npm at the version', async t => {
   const packages = [
     { slug: 'fixture-core', name: '@fixture/core', version: '1.2.3' },
     { slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] },
@@ -174,7 +195,8 @@ test('registry: the core and CLI must already be on npm at the version', async (
   const urls = [];
   const published = {
     'https://registry.example.test/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3' },
-    'https://registry.example.test/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3', bin: { fixture: 'dist/cli.js', fx: './dist/cli.js' } },
+    'https://registry.example.test/@fixture%2fcli/1.2.3': { ...publishedCli, bin: { fixture: 'dist/cli.js', fx: './dist/cli.js' } },
+    [CLI_TARBALL]: cliTarball(t),
   };
   const fetch = async (url, init) => {
     urls.push(url);
@@ -182,6 +204,11 @@ test('registry: the core and CLI must already be on npm at the version', async (
   };
   await assertPublished(packages, { registry, fetch });
   assert.deepEqual(urls, Object.keys(published));
+  // A published manifest naming a bin file its tarball lacks is refused.
+  const hollow = { ...published, [CLI_TARBALL]: cliTarball(t, ['README.md']) };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(hollow) }), error => error.code === 'not-published' && /has no dist\/cli\.js for its fixture bin/.test(error.message));
+  const noTarball = { ...published, [CLI_TARBALL]: undefined };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(noTarball) }), error => error.code === 'registry-unavailable' && /tarball/.test(error.message));
 
   const onlyCore = registryAnswering({ 'https://registry.example.test/@fixture%2fcore/1.2.3': published['https://registry.example.test/@fixture%2fcore/1.2.3'] });
   await assert.rejects(assertPublished(packages, { registry, fetch: onlyCore }), error => error.code === 'not-published' && /release fixture-cli-v1\.2\.3 first/.test(error.message));
@@ -193,7 +220,7 @@ test('registry: the core and CLI must already be on npm at the version', async (
   // The published CLI must have the bins the bare package runs, on one file.
   const cliUrl = 'https://registry.example.test/@fixture%2fcli/1.2.3';
   for (const bin of [undefined, { legacy: 'dist/cli.js' }, { fixture: 'dist/cli.js' }, { fixture: 'dist/cli.js', fx: 'dist/other.js' }]) {
-    const answers = { ...published, [cliUrl]: { name: '@fixture/cli', version: '1.2.3', bin } };
+    const answers = { ...published, [cliUrl]: { ...publishedCli, bin } };
     await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(answers) }), error => error.code === 'not-published' && /does not have the bins fixture, fx/.test(error.message));
   }
 });
@@ -216,7 +243,8 @@ test('gate: a bare tag needs aligned manifests and published scoped packages; ot
   const root = product(t);
   const answers = {
     'https://registry.npmjs.org/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3' },
-    'https://registry.npmjs.org/@fixture%2fcli/1.2.3': { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } },
+    'https://registry.npmjs.org/@fixture%2fcli/1.2.3': publishedCli,
+    [CLI_TARBALL]: cliTarball(t),
   };
   const result = await assertBareRelease('fixture-v1.2.3', { root, fetch: registryAnswering(answers) });
   assert.equal(result.bare, true);
@@ -272,8 +300,8 @@ function writeCli(dir, version, origin) {
   );
 }
 
-const runShim = (shim, args, env = {}) => {
-  const result = spawnSync(process.execPath, [shim, ...args], { encoding: 'utf8', env: { ...process.env, npm_execpath: '', ...env } });
+const runShim = (shim, args, env = {}, cwd = undefined) => {
+  const result = spawnSync(process.execPath, [shim, ...args], { cwd, encoding: 'utf8', env: { ...process.env, npm_execpath: '', ...env } });
   return { ...result, output: result.stdout.trim() ? JSON.parse(result.stdout.trim().split('\n').at(-1)) : null };
 };
 
@@ -290,9 +318,10 @@ function fakeNpm(t, { fetchedCli, status = 0, onlyFromEmptyFolder = false }) {
   const bin = JSON.stringify(path.join(cache, 'node_modules/.bin') + path.delimiter);
   writeFileSync(
     path.join(dir, 'npm-cli.js'),
-    `const { appendFileSync } = require('node:fs');\n` +
+    `const { appendFileSync, existsSync, readFileSync } = require('node:fs');\n` +
       `const path = require('node:path');\n` +
-      `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + '\\n');\n` +
+      `const npmrc = existsSync('.npmrc') ? readFileSync('.npmrc', 'utf8') : null;\n` +
+      `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), npmrc }) + '\\n');\n` +
       `const empty = path.basename(process.cwd()).startsWith('bare-cli-');\n` +
       `process.stdout.write((${onlyFromEmptyFolder} && !empty ? '' : ${bin}) + process.env.PATH + '\\n');\n` +
       `process.exitCode = ${status};\n`,
@@ -332,6 +361,15 @@ test('shim: fetches again from an empty folder when npm reports no PATH holding 
   assert.doesNotMatch(path.basename(calls[0].cwd), /^bare-cli-/);
   assert.match(path.basename(calls[1].cwd), /^bare-cli-/);
   assert.deepEqual(calls[1].args, calls[0].args);
+
+  // The retry keeps the project's npm settings: its .npmrc is copied into the empty folder.
+  const project = tempDir(t, 'bare-shim-project-');
+  writeJson(path.join(project, 'package.json'), { private: true });
+  writeFileSync(path.join(project, '.npmrc'), 'registry=https://registry.example.test/\n');
+  mkdirSync(path.join(project, 'src'));
+  const mirrored = fakeNpm(t, { fetchedCli: '1.2.3', onlyFromEmptyFolder: true });
+  assert.equal(runShim(shim, ['0'], { npm_execpath: mirrored.npmCli }, path.join(project, 'src')).status, 0);
+  assert.deepEqual(mirrored.calls().map(call => call.npmrc), [null, 'registry=https://registry.example.test/\n']);
 });
 
 test('shim: a CLI bin that resolves outside its package is never run', t => {

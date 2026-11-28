@@ -1142,6 +1142,10 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
   throwsCode(() => releaseMoves({ pinOverlay: withBare, pinBase: [], current: plainCopy, paths: ["widgetfn"] }), "release-conflict");
   assert.equal(releaseMoves({ pinOverlay: withBare, pinBase: [], current: [...current, overlay[0], bare], paths: ["widgetfn"] }).moves.length, 0);
   throwsCode(() => releaseMoves({ pinOverlay: [bare], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  // Promoting the core alone, while its bare entry stays on next, is refused too.
+  const bareElsewhere = { ...bare, path: "gadgetfn/bare" };
+  throwsCode(() => releaseMoves({ pinOverlay: [overlay[0], bareElsewhere], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  assert.equal(releaseMoves({ pinOverlay: [overlay[0], bareElsewhere], pinBase: [], current, paths: ["widgetfn", "gadgetfn"] }).moves.length, 2);
   const appended = JSON.parse(appendReleaseEntries("[\n]\n", [{ ...bare, source: "release-packages.next.json" }]));
   assert.deepEqual(appended, [{ slug: "widgetfn", path: "widgetfn/bare", name: "widgetfn", kind: "bare", core: "widgetfn-core", cli: "alphafn-core" }]);
 });

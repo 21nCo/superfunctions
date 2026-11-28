@@ -308,7 +308,15 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
     }
     return true;
   });
-  // A bare entry's core and CLI slugs must reach release-packages.json with it, or the public release file is invalid.
+  // A bare entry and its core and CLI move together: a linked slug left behind makes the public release file invalid,
+  // and a bare entry left behind on next would publish from a different repository than its core or CLI.
+  const all = Array.isArray(pinOverlay ?? pinBase) ? (pinOverlay ?? pinBase) : [];
+  for (const entry of moves) {
+    const behind = all.find((other) => other?.kind === "bare" && other.slug !== entry.slug && (other.core === entry.slug || other.cli === entry.slug) && !moves.some((moved) => moved.slug === other.slug) && !current.some((existing) => existing?.slug === other.slug));
+    if (behind) {
+      throw new PromoteError("release-conflict", `release ${JSON.stringify(entry.slug)} from next's ${source} is the ${behind.core === entry.slug ? "core" : "cli"} of bare release ${JSON.stringify(behind.slug)} (${behind.path}), which is not promoted with it; promote both`);
+    }
+  }
   for (const entry of moves) {
     for (const field of ["core", "cli"]) {
       const slug = entry[field];

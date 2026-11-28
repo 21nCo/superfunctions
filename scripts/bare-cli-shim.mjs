@@ -12,7 +12,7 @@
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -103,15 +103,29 @@ function npmLocate(command, prefix, cwd) {
   return undefined;
 }
 
+// The project's .npmrc, as npm finds it: in the nearest folder up from the working directory that holds a
+// package.json or a node_modules folder. Undefined when there is none.
+function projectNpmrc() {
+  for (let folder = process.cwd(); ; folder = path.dirname(folder)) {
+    if (existsSync(path.join(folder, 'package.json')) || existsSync(path.join(folder, 'node_modules'))) {
+      const npmrc = path.join(folder, '.npmrc');
+      return existsSync(npmrc) ? npmrc : undefined;
+    }
+    if (path.dirname(folder) === folder) return undefined;
+  }
+}
+
 // npm runs from the working directory first, so the project's npm settings apply. npm may then reuse a copy of the CLI
-// nested elsewhere in the project, which is on no PATH it reports; it runs again from an empty folder, where it can
-// only use its cache.
+// nested elsewhere in the project, which is on no PATH it reports; it runs again from an empty folder holding a copy of
+// the project's .npmrc (its registry and credentials), where it can only use its cache or that registry.
 function fetchedBin() {
   const [command, prefix] = npmCommand();
   let found = npmLocate(command, prefix, process.cwd());
   if (found === undefined) {
     const empty = mkdtempSync(path.join(tmpdir(), 'bare-cli-'));
     try {
+      const npmrc = projectNpmrc();
+      if (npmrc) copyFileSync(npmrc, path.join(empty, '.npmrc'));
       found = npmLocate(command, prefix, empty);
     } finally {
       rmSync(empty, { recursive: true, force: true });
