@@ -1,0 +1,19 @@
+reviewfn/README.md
+  s_ae5fca1c61c5f2::t_0f476274fb3c5a 67,69-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b650f5394a3edc7ca2c78ac3f56c115b97ac7cb",
+  "prompts": {},
+  "sessions": {
+    "s_ae5fca1c61c5f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ead6be69-6075-49f7-bdc6-2e223b0eca28",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
