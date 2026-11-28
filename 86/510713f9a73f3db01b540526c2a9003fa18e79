@@ -1,0 +1,27 @@
+filefn/client/src/__tests__/offline.test.ts
+  s_062b8f63e6e8a9::t_84abd041833ba1 801-840
+filefn/client/src/index.ts
+  s_062b8f63e6e8a9::t_c3b9dd38973140 541-545,547-550,552,556-557
+filefn/docs/content/docs/features/offline.md
+  s_062b8f63e6e8a9::t_ddf82dd79d4116 35
+filefn/docs/content/docs/reference/changelog.md
+  s_062b8f63e6e8a9::t_ef27e41b3d637b 29
+filefn/docs/static/llms-full.txt
+  s_062b8f63e6e8a9::t_2f9079ba159b19 3872,8412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86510713f9a73f3db01b540526c2a9003fa18e79",
+  "prompts": {},
+  "sessions": {
+    "s_062b8f63e6e8a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a8d2e81-39b8-4639-87fb-9e8b66f1a49c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
