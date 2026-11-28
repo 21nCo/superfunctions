@@ -143,6 +143,17 @@ for (const workflow of WORKFLOWS) {
   });
 }
 
+test('publish-tag.yml: the bare package gate runs on the resolved tag before anything is installed', () => {
+  const { steps } = readJob('publish-tag.yml', 'build');
+  const names = steps.map(step => step.name ?? step.uses);
+  const bare = names.indexOf('Require a bare package to match its published core and CLI');
+  assert.notEqual(bare, -1, 'publish-tag.yml build job has no bare package gate');
+  assert.ok(bare > names.indexOf('Resolve publish target'), 'the bare gate runs after the tag resolves');
+  assert.ok(bare < names.indexOf('Install package dependencies'), 'the bare gate runs before any install');
+  assert.equal(steps[bare].run, 'node ./scripts/assert-bare-release.mjs "${RELEASE_TAG}"');
+  assert.equal(steps[bare].if, '!inputs.channel_only');
+});
+
 test('the publish jobs depend on the build job, so a refused gate publishes nothing', () => {
   for (const file of ['publish-tag.yml', 'publish-python.yml']) {
     const text = readFileSync(path.join(workflowsDir, file), 'utf8');

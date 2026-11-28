@@ -294,11 +294,11 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   const source = pinOverlay === null ? RELEASE_FILES.public : RELEASE_FILES.next;
   const candidates = releaseEntriesUnder(pinOverlay ?? pinBase, source, paths);
   refuseBatchDuplicates(candidates, { slug: (entry) => entry.slug, "npm name": (entry) => entry.name }, (entry) => `release ${JSON.stringify(entry.slug)} (${entry.name}, ${entry.path}) in next's ${source}`);
-  const entries = candidates.map(({ slug, path: directory, name }) => ({ slug, path: directory, name, source }));
+  const entries = candidates.map(({ slug, path: directory, name, ...rest }) => ({ slug, path: directory, name, ...bareFields(rest), source }));
   const moves = entries.filter((entry) => {
     const sameSlug = current.find((existing) => existing?.slug === entry.slug);
     const sameName = current.find((existing) => existing?.name === entry.name);
-    if (sameSlug && sameSlug.path === entry.path && sameSlug.name === entry.name) return false;
+    if (sameSlug && sameSlug.path === entry.path && sameSlug.name === entry.name && sameBareFields(sameSlug, entry)) return false;
     if (sameSlug || sameName) {
       const other = sameSlug ?? sameName;
       throw new PromoteError(
@@ -308,8 +308,33 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
     }
     return true;
   });
+  // A bare entry and its core and CLI move together: a linked slug left behind makes the public release file invalid,
+  // and a bare entry left behind on next would publish from a different repository than its core or CLI.
+  const all = Array.isArray(pinOverlay ?? pinBase) ? (pinOverlay ?? pinBase) : [];
+  for (const entry of moves) {
+    const behind = all.find((other) => other?.kind === "bare" && other.slug !== entry.slug && (other.core === entry.slug || other.cli === entry.slug) && !moves.some((moved) => moved.slug === other.slug) && !current.some((existing) => existing?.slug === other.slug));
+    if (behind) {
+      throw new PromoteError("release-conflict", `release ${JSON.stringify(entry.slug)} from next's ${source} is the ${behind.core === entry.slug ? "core" : "cli"} of bare release ${JSON.stringify(behind.slug)} (${behind.path}), which is not promoted with it; promote both`);
+    }
+  }
+  for (const entry of moves) {
+    for (const field of ["core", "cli"]) {
+      const slug = entry[field];
+      if (slug === undefined || slug === entry.slug) continue;
+      if (!current.some((existing) => existing?.slug === slug) && !entries.some((other) => other.slug === slug)) {
+        throw new PromoteError("release-conflict", `bare release ${JSON.stringify(entry.slug)} from next's ${source} names ${field} ${JSON.stringify(slug)}, which is neither promoted with it nor in ${RELEASE_FILES.public}`);
+      }
+    }
+  }
   return { entries, moves };
 }
+
+/** The bare-package fields of a release entry (resolve-release-tag.mjs), in their written order; none for other entries. */
+const BARE_FIELDS = ["kind", "core", "cli"];
+function bareFields(entry) {
+  return Object.fromEntries(BARE_FIELDS.filter((field) => entry?.[field] !== undefined).map((field) => [field, entry[field]]));
+}
+const sameBareFields = (a, b) => BARE_FIELDS.every((field) => a?.[field] === b?.[field]);
 
 /** A normalised directory without its trailing slash (normalize leaves at most one); the root is ".". */
 const directoryKey = (target) => {
@@ -454,7 +479,10 @@ export function appendReleaseEntries(text, moves) {
   if (moves.length === 0) return text;
   const close = text.lastIndexOf("]");
   const head = text.slice(0, close).trimEnd();
-  const added = moves.map(({ slug, path: directory, name }) => `  { "slug": ${JSON.stringify(slug)}, "path": ${JSON.stringify(directory)}, "name": ${JSON.stringify(name)} }`);
+  const added = moves.map((entry) => {
+    const fields = { slug: entry.slug, path: entry.path, name: entry.name, ...bareFields(entry) };
+    return `  { ${Object.entries(fields).map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(", ")} }`;
+  });
   const updated = `${head}${head.endsWith("[") ? "" : ","}\n${added.join(",\n")}\n${text.slice(close)}`;
   const before = JSON.parse(text);
   const after = JSON.parse(updated);

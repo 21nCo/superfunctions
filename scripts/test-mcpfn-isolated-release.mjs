@@ -25,6 +25,7 @@ const RELEASE_FILES = [
   "release-packages.json",
   "superfunctions.owners.json",
   "scripts/owners.mjs",
+  "scripts/assert-bare-release.mjs",
   "scripts/pack-release-package.mjs",
   "scripts/resolve-release-tag.mjs",
   "scripts/verify-mcpfn-bundled-sdk.mjs",

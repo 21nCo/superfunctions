@@ -169,6 +169,91 @@ BotFn libraries use the controlled `@superfunctions/botfn-*` names;
 the foreign npm user scope `@botfn` is not a publish target.
 Publish the required internal npm dependency closure before its consumers.
 
+#### Bare packages
+
+A product's bare (unscoped) npm package is its front door (see AGENTS.md,
+"Bare npm package names"). Its `release-packages.json` entry has
+`"kind": "bare"` and names the release slugs of the product's scoped `core` and
+`cli`:
+
+```json
+{ "slug": "reviewfn", "path": "reviewfn/bare", "name": "reviewfn", "kind": "bare", "core": "reviewfn-core", "cli": "reviewfn-cli" }
+```
+
+Its slug is listed in `superfunctions.owners.json` like any other, and
+`scripts/verify-owners.mjs` requires the core and CLI slugs to have the same
+owner. A bare entry names a separate scoped core it re-exports, a scoped CLI, or
+both; a bare package that is the core itself is not supported. The release gate
+accepts only the bare template's exact shape (`TEMPLATE` in
+`scripts/assert-bare-release.mjs`):
+
+- every bin is `"./bin/cli.mjs"`, a byte-for-byte copy of
+  `scripts/bare-cli-shim.mjs`, and `"frontDoor": { "cli": "<scoped CLI>" }`
+  names the CLI (a bare package without a CLI has neither);
+- a bare package re-exporting its core has `"type": "module"`, no `main` or
+  `imports`, `"exports": { ".": { "types": "./index.d.ts", "import": "./index.js", "default": "./index.js" } }`,
+  `index.js` and `index.d.ts` each exactly `export * from '<core>';`, exactly
+  `{ "<core>": "<version>" }` as its dependencies and, with a CLI, exactly
+  `{ "<cli>": "<version>" }` as its devDependencies; it never depends on the CLI,
+  so importers install none of it;
+- a CLI-only bare package has `"type": "module"`, no `exports`, `main` or
+  `imports`, and exactly `{ "<cli>": "<version>" }` as its dependencies;
+- its `test` script is `node --test test/front-door.test.mjs`, a byte-for-byte
+  copy of `scripts/bare-front-door-test.mjs`. The release build runs it after
+  installing the pinned core and CLI from npm: `import "<bare>"` must give the
+  core's exports, and every bin's `--version` must print the bare package's
+  version with `BARE_CLI_NO_NPM=1` (which stops the shim from fetching the CLI
+  with npm), so a core that ESM cannot import, a missing or different installed
+  CLI, or a CLI without `--version` fails the release. The packer also runs it
+  directly with Node, whatever the package's scripts say, in a fresh temporary
+  folder that holds only the package's committed manifest, re-export files,
+  shim and test (which must be the committed template), with the pinned core
+  and CLI installed there from npm; it never writes to the working tree.
+
+The shim imports only Node.js built-ins and runs the CLI's bin named after the
+bare package at exactly the bare package's version, as a child process that keeps
+the terminal and passes its exit code back: a copy at that version that Node.js
+finds from the bare package runs with Node.js; otherwise
+`npm exec --yes --package=<cli>@<version> -- <bin>` fetches and runs it, as npx
+would.
+
+The shim sets `BARE_EXPECTED_CLI=<cli>@<version>` for the CLI it starts. Like
+`npx <cli>@<version>`, `npm exec` may reuse a copy of the CLI nested under another
+dependency without putting its bin on the PATH, and then run a different version
+the project links under the same bin name. So a CLI behind a bare package checks
+the variable at startup and refuses to run as another version, and its
+`package.json` declares that it does with
+`"frontDoorCli": { "checksExpectedVersion": true }`:
+
+```js
+const expected = process.env.BARE_EXPECTED_CLI;
+if (expected?.startsWith(`${pkg.name}@`)) {
+  if (expected !== `${pkg.name}@${pkg.version}`) {
+    console.error(`expected ${pkg.name} ${expected.slice(pkg.name.length + 1)}, found ${pkg.version}; run npx ${expected}`);
+    process.exit(1);
+  }
+  delete process.env.BARE_EXPECTED_CLI; // not passed on to commands the CLI starts
+}
+```
+
+The shim also refuses to start again under its own expectation, in case npm
+resolves the bin name back to the bare package. A copy of the CLI released before
+it had this check (for example `@superfunctions/cli` 0.2.2 or earlier) ignores
+the variable: in the setup above it runs, exactly as it would under
+`npx <cli>@<version>`. The gate requires the released CLI, at source and on npm,
+to declare the check, so every CLI version a bare package pins has it. Signals
+follow the same split: with an installed CLI, a Ctrl+C from the terminal reaches
+it once (the shim does not pass it on again); through `npm exec`, npm also
+relays it to the CLI, exactly as under `npx`.
+
+Before installing anything, the build job runs
+`scripts/assert-bare-release.mjs <tag>`, which refuses a bare release unless the
+bare package, its core and its CLI have the tagged version, the pins and shim
+are as above, and the core and CLI are already on npm at that version. Release a
+product in this order: `<core-slug>-v<version>` and `<cli-slug>-v<version>`, then
+`<bare-slug>-v<version>` once both are published. CI runs the same checks, without
+the registry, on every bare entry, so the three versions move together.
+
 ### Python libraries
 
 `.github/workflows/publish-python.yml` releases these 12 projects independently:
