@@ -48,7 +48,10 @@ export function readReleaseEntries(root, repo) {
       if (!["slug", "path", "name"].every((field) => typeof entry?.[field] === "string" && entry[field] !== "")) {
         throw new OwnersError("malformed-manifest", `${file}: entry ${index} needs a non-empty slug, path and name`, { file, index });
       }
-      entries.push({ slug: entry.slug, path: entry.path, name: entry.name, source: file });
+      const release = { slug: entry.slug, path: entry.path, name: entry.name, source: file };
+      // A bare (front-door) entry names the release slugs of the product's core and CLI (resolve-release-tag.mjs).
+      if (entry.kind === "bare") release.bare = { core: entry.core ?? null, cli: entry.cli ?? null };
+      entries.push(release);
     }
   }
   return entries;
@@ -806,6 +809,23 @@ function releaseOwnerErrors({ owners, repo, listedIn }, entry, errors) {
 }
 
 /**
+ * A bare package belongs to and publishes from the repository that publishes the product's scoped core and CLI, so
+ * one release can hold the three at one version: its core and CLI slugs have the bare slug's owner.
+ */
+function bareOwnerErrors({ owners, repo }, entry, errors) {
+  const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
+  if (owner === null) return;
+  for (const field of ["core", "cli"]) {
+    const slug = entry.bare[field];
+    if (slug === null || slug === entry.slug) continue;
+    const linkedOwner = tryOwner(() => owners.ownerOfRelease(slug, { repo }));
+    if (linkedOwner !== null && linkedOwner !== owner) {
+      errors.push(`${entry.path}: bare release ${JSON.stringify(entry.slug)} is ${owner}-published but its ${field} ${JSON.stringify(slug)} is ${linkedOwner}-published; a bare package publishes from its product's repository`);
+    }
+  }
+}
+
+/**
  * Release entries: each slug and each npm name has exactly one entry, in the release file of the repository that
  * publishes it (release-packages.json for public, release-packages.next.json for next), and is listed in the
  * manifests with a path its publisher owns. Listed slugs without an entry are stale.
@@ -819,6 +839,7 @@ function findReleaseErrors({ owners, repo, releases, listed }, errors) {
     if (duplicate) errors.push(duplicate);
     releaseOwnerErrors({ owners, repo, listedIn }, entry, errors);
   }
+  for (const entry of releases) if (entry.bare) bareOwnerErrors({ owners, repo }, entry, errors);
   const stale = listed ? [...listed.releases.keys()].filter((slug) => !bySlug.has(slug)) : [];
   for (const slug of stale) errors.push(`${listed.file}: release ${JSON.stringify(slug)} has no entry in the release files`);
 }

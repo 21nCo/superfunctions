@@ -168,6 +168,25 @@ test("a release listed in the other repository's release file fails and names th
   ]);
 });
 
+test("a bare release publishes from the repository that publishes its core and CLI", (t) => {
+  const bare = { slug: "datafn", path: "datafn/bare", name: "datafn", kind: "bare", core: "datafn-core", cli: "docs-site" };
+  const files = { "datafn/bare/package.json": "{}\n" };
+  const owners = manifest();
+  owners.releases.datafn = "public";
+  const next = { version: 1, paths: { docsfn: "next" }, releases: { "docs-site": "next" } };
+  const nextFiles = {
+    ...files,
+    "docsfn/site/a.md": "a\n",
+    "release-packages.next.json": JSON.stringify([{ slug: "docs-site", path: "docsfn/site", name: "@docsfn/site" }]),
+  };
+  const releases = [{ slug: "datafn-core", path: "datafn/core", name: "@datafn/core" }, bare];
+  assert.deepEqual(verifyOwners({ root: fixture(t, { owners, next, releases, files: nextFiles }), repo: "next" }), [
+    'datafn/bare: bare release "datafn" is public-published but its cli "docs-site" is next-published; a bare package publishes from its product\'s repository',
+  ]);
+  const sameOwner = [{ slug: "datafn-core", path: "datafn/core", name: "@datafn/core" }, { ...bare, cli: undefined, core: "datafn-core" }];
+  assert.deepEqual(verifyOwners({ root: fixture(t, { owners, releases: sameOwner, files }), repo: "public" }), []);
+});
+
 test("on next each release in its publisher's release file passes", (t) => {
   assert.deepEqual(verifyOwners({ root: nextReleaseFixture(t), repo: "next" }), []);
 });

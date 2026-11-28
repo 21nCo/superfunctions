@@ -169,6 +169,37 @@ BotFn libraries use the controlled `@superfunctions/botfn-*` names;
 the foreign npm user scope `@botfn` is not a publish target.
 Publish the required internal npm dependency closure before its consumers.
 
+#### Bare packages
+
+A product's bare (unscoped) npm package is its front door (see AGENTS.md,
+"Bare npm package names"). Its `release-packages.json` entry has
+`"kind": "bare"` and names the release slugs of the product's scoped `core`
+(the bare slug itself when the bare package is the core) and `cli`:
+
+```json
+{ "slug": "reviewfn", "path": "reviewfn/bare", "name": "reviewfn", "kind": "bare", "core": "reviewfn-core", "cli": "reviewfn-cli" }
+```
+
+Its slug is listed in `superfunctions.owners.json` like any other, and
+`scripts/verify-owners.mjs` requires the core and CLI slugs to have the same
+owner. A bare package with a CLI copies `scripts/bare-cli-shim.mjs` byte for byte
+to `bin/cli.mjs`, maps each of its bins to that file, and names the CLI package in
+`"frontDoor": { "cli": "<scoped CLI>" }`. The shim imports only Node.js
+built-ins and runs the CLI's bin named after the bare package at exactly the bare
+package's version: a copy Node.js finds from the bare package, else one npm
+fetches into its cache. A bare package that also exports a core depends on the
+core at exactly its version and never on the CLI (at most an optional peer at that
+version), so importers install none of the CLI; a CLI-only bare package depends
+on the CLI at exactly its version.
+
+Before installing anything, the build job runs
+`scripts/assert-bare-release.mjs <tag>`, which refuses a bare release unless the
+bare package, its core and its CLI have the tagged version, the pins and shim
+are as above, and the core and CLI are already on npm at that version. Release a
+product in this order: `<core-slug>-v<version>` and `<cli-slug>-v<version>`, then
+`<bare-slug>-v<version>` once both are published. CI runs the same checks, without
+the registry, on every bare entry, so the three versions move together.
+
 ### Python libraries
 
 `.github/workflows/publish-python.yml` releases these 12 projects independently:

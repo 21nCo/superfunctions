@@ -107,6 +107,13 @@ jobs:
           echo "Channel-only dispatch requires a prerelease tag." >&2
           exit 1
 
+      # A bare (unscoped) package is its product's front door: it releases at the version of the product's scoped core
+      # and CLI, pins both exactly, runs the CLI through the shared shim, and only once both are on npm. Every other
+      # release passes through. This workflow file and the script come from the same tag commit.
+      - name: Require a bare package to match its published core and CLI
+        if: '!inputs.channel_only'
+        run: node ./scripts/assert-bare-release.mjs "${RELEASE_TAG}"
+
       - name: Install package dependencies
         if: '!inputs.channel_only'
         working-directory: ${{ steps.resolve.outputs.pkg_path }}
