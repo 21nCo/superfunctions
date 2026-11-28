@@ -6,17 +6,16 @@
 // It imports nothing but Node.js built-ins. A bare package that also exports a core never depends on its CLI, so an
 // importer of the core installs, loads and bundles none of the CLI; this command makes the CLI available only when it
 // runs. A copy of the CLI at this exact version that Node.js can find from here (a CLI-only bare package depends on
-// it) runs in place; otherwise npm fetches that version into its cache, as npx would. Either way the CLI's bin module
-// is loaded into this process, as if Node.js had been started on it, so no second process stands between the CLI and
-// the terminal: it alone gets every signal, reads the terminal directly and sets the exit code.
+// it) runs with Node.js; otherwise npm fetches and runs that exact version, as `npx <cli>@<version>` would. Either way
+// the CLI runs as a child process with this terminal, and this command exits as it did.
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
-import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { constants } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
 
 const manifestUrl = new URL('../package.json', import.meta.url);
 const own = JSON.parse(readFileSync(manifestUrl, 'utf8'));
@@ -85,108 +84,31 @@ function npmCommand() {
   return [process.execPath, [bundled]];
 }
 
-// Has npm fetch the CLI at this version and report the PATH it would run it with; the CLI's bin is in the first
-// node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr. Returns
-// { error } when npm could not run or fetch it, and { PATH } alone when no such folder is on that PATH.
-function npmLocate(command, prefix) {
-  const args = [...prefix, 'exec', '--yes', `--package=${spec}`, '--', 'node', '-p', 'process.env.PATH'];
-  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
-  if (result.error) return { error: `could not start npm: ${result.error.message}` };
-  if (result.status !== 0) return { error: `npm could not fetch ${spec}.` };
-  const reported = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
-  for (const folder of reported.split(path.delimiter)) {
-    if (path.basename(folder) !== '.bin' || path.basename(path.dirname(folder)) !== 'node_modules') continue;
-    const file = binIn(path.join(path.dirname(folder), ...cli.split('/')));
-    // The CLI and the commands it starts see the PATH they would have under npx.
-    if (file) return { file, PATH: reported };
-  }
-  return { PATH: reported };
-}
-
-// A copy of the CLI at this version installed anywhere in the project: npm reuses one nested under another package
-// (or installed under an alias) without putting it on the PATH it reports. Searches, nearest first, the node_modules
-// folders Node.js would look in from the working directory (it and each folder above it, which covers a workspace
-// root), at any depth and whatever name a package is installed under, reading each package once. Only when that finds
-// nothing does it also search from linked packages' real locations, where they resolve their own dependencies.
-function projectBin() {
-  const list = (folder) => {
-    try {
-      return readdirSync(folder).filter((name) => !name.startsWith('.')).map((name) => path.join(folder, name));
-    } catch {
-      return [];
+// Runs the command with this terminal and exits as it did: with its exit code, or by the signal that ended it (with
+// 128 + its number should this process survive it). Signals sent to this process alone are passed on to it.
+function runAndExit(command, args, startFailure) {
+  const child = spawn(command, args, { stdio: 'inherit' });
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const forward = (signal) => child.kill(signal);
+  for (const signal of signals) process.on(signal, forward);
+  child.on('error', (error) => fail(`${startFailure}: ${error.message}`));
+  child.on('exit', (code, signal) => {
+    for (const name of signals) process.off(name, forward);
+    if (signal === null) {
+      process.exitCode = code ?? 1;
+      return;
     }
-  };
-  const lookupPaths = (start) => {
-    const folders = [];
-    for (let folder = start; ; folder = path.dirname(folder)) {
-      if (path.basename(folder) !== 'node_modules') folders.push(path.join(folder, 'node_modules'));
-      if (path.dirname(folder) === folder) return folders;
-    }
-  };
-  const search = (starts, followLinks) => {
-    const queue = [];
-    const queued = new Set();
-    const enqueue = (folder) => {
-      if (!queued.has(folder)) {
-        queued.add(folder);
-        queue.push(folder);
-      }
-    };
-    starts.forEach(enqueue);
-    const seen = new Set();
-    const links = [];
-    while (queue.length > 0) {
-      for (const entry of list(queue.shift())) {
-        for (const dir of path.basename(entry).startsWith('@') ? list(entry) : [entry]) {
-          let real;
-          try {
-            real = realpathSync(dir);
-          } catch {
-            continue;
-          }
-          if (seen.has(real)) continue;
-          seen.add(real);
-          const file = binIn(dir);
-          if (file) return { file };
-          if (real === path.resolve(dir)) {
-            enqueue(path.join(real, 'node_modules'));
-          } else {
-            // A linked package lives outside the project's tree: its folders are searched only in the second phase.
-            links.push(path.dirname(real));
-            if (followLinks) {
-              enqueue(path.join(real, 'node_modules'));
-              lookupPaths(path.dirname(real)).forEach(enqueue);
-            }
-          }
-        }
-      }
-    }
-    return { links };
-  };
-  const project = search(lookupPaths(process.cwd()), false);
-  if (project.file) return project.file;
-  if (project.links.length === 0) return undefined;
-  return search([...lookupPaths(process.cwd()), ...project.links.flatMap(lookupPaths)], true).file;
-}
-
-function fetchedBin() {
-  const [command, prefix] = npmCommand();
-  const found = npmLocate(command, prefix);
-  if (found.error) fail(found.error);
-  if (found.file) return found;
-  const file = projectBin();
-  if (file === undefined) fail(`npm found ${spec} but no runnable ${own.name} command for it. Install ${spec} in this project, or run this command from another folder.`);
-  return { file, PATH: found.PATH };
+    process.exitCode = 128 + (constants.signals[signal] ?? 0);
+    process.kill(process.pid, signal);
+  });
 }
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');
-let file = installedBin();
-if (file === undefined) {
-  const fetched = fetchedBin();
-  file = fetched.file;
-  process.env.PATH = fetched.PATH;
+const args = process.argv.slice(2);
+const installed = installedBin();
+if (installed !== undefined) {
+  runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`);
+} else {
+  const [command, prefix] = npmCommand();
+  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm');
 }
-// The real path, as Node.js gives the module it loads in import.meta.url, so a CLI that compares the two runs.
-file = realpathSync(file);
-process.argv = [process.argv[0], file, ...process.argv.slice(2)];
-await import(pathToFileURL(file).href);

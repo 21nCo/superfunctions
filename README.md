@@ -186,9 +186,10 @@ owner. A bare package with a CLI copies `scripts/bare-cli-shim.mjs` byte for byt
 to `bin/cli.mjs`, maps each of its bins to that file, and names the CLI package in
 `"frontDoor": { "cli": "<scoped CLI>" }`. The shim imports only Node.js
 built-ins and runs the CLI's bin named after the bare package at exactly the bare
-package's version: a copy Node.js finds from the bare package, else the one
-npm fetches into its cache (or reuses from the project's own tree). It never
-runs another version. A bare package that also exports a core depends on the
+package's version, as a child process that keeps the terminal and passes its exit
+code back: a copy at that version that Node.js finds from the bare package runs
+with Node.js; otherwise `npm exec --yes --package=<cli>@<version> -- <bin>` fetches
+and runs it, as npx would. A bare package that also exports a core depends on the
 core at exactly its version and never on the CLI (at most an optional peer at that
 version), so importers install none of the CLI; a CLI-only bare package depends
 on the CLI at exactly its version.
