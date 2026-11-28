@@ -195,6 +195,20 @@ describe('mintIdToken', () => {
     expect(sign).not.toHaveBeenCalled();
   });
 
+  it('rejects azp in claims, directly or via toJSON, without advertising it', async () => {
+    // Relying parties such as AWS STS match azp in place of aud, so caller data must not choose it.
+    const sign = vi.fn(activeRing.sign);
+    const issuer = createOidcIssuer({ issuer: ISSUER, keyRing: { activeKid: activeRing.activeKid, jwks: activeRing.jwks, sign } });
+    expect(await rejectionCode(issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', claims: { azp: 'client-b' } }))).toBe('reserved-claim');
+    expect(await rejectionCode(issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', claims: { azp: undefined } }))).toBe('reserved-claim');
+    const sneaky = { toJSON: () => ({ azp: 'client-b' }) };
+    expect(await rejectionCode(issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', claims: sneaky }))).toBe('reserved-claim');
+    expect(sign).not.toHaveBeenCalled();
+    expect(RESERVED_CLAIMS).not.toContain('azp');
+    expect(issuer.discovery.claims_supported).not.toContain('azp');
+    expect(codeOf(() => issuerWith({ claimsSupported: ['azp'] }))).toBe('invalid-options');
+  });
+
   it.each([
     ['an array', []],
     ['a Map', new Map([['email', 'user-1@example.test']])],

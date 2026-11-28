@@ -30,6 +30,10 @@ describe('OIDC issuer on workerd', () => {
     const issuer = createOidcIssuer({ issuer: ISSUER, keyRing: ring([['key-1', 'active', await generateSigner()]]) });
     const reserved = await issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', claims: { exp: 0 } }).catch((caught: unknown) => caught);
     expect((reserved as OidcIssuerError).code).toBe('reserved-claim');
+    for (const claims of [{ azp: 'client-b' }, { toJSON: () => ({ azp: 'client-b' }) }]) {
+      const azp = await issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', claims }).catch((caught: unknown) => caught);
+      expect((azp as OidcIssuerError).code).toBe('reserved-claim');
+    }
     const tooLong = await issuer.mintIdToken({ sub: 'user-1', aud: 'client-a', ttl: 3601 }).catch((caught: unknown) => caught);
     expect((tooLong as OidcIssuerError).code).toBe('invalid-ttl');
   });

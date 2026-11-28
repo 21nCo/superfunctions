@@ -38,7 +38,7 @@ const idToken = await oidc.mintIdToken({ sub: 'workload-1', aud: 'https://api.ex
 | `keyRing` | A `SigningKeyRing` (or any object with `activeKid`, `sign` and `jwks`). Read once: to rotate, build a new ring and a new issuer. The ring's JWKS must publish the active kid. |
 | `defaultTtl` | Lifetime in whole seconds of a token minted without `ttl`; 1 to 3600, default 300. |
 | `jwksUri` | Published `jwks_uri`; an absolute `https` URL with no fragment. Defaults to `<issuer>/.well-known/jwks.json`. |
-| `claimsSupported` | Custom claim names listed in `claims_supported` after `iss`, `sub`, `aud`, `iat`, `nbf`, `exp` and `jti`. |
+| `claimsSupported` | Custom claim names listed in `claims_supported` after `iss`, `sub`, `aud`, `iat`, `nbf`, `exp` and `jti`. `azp` is refused, since the issuer never emits it. |
 | `now` | Clock in milliseconds since the epoch; defaults to `Date.now`. |
 
 ## Contract
@@ -54,10 +54,19 @@ const idToken = await oidc.mintIdToken({ sub: 'workload-1', aud: 'https://api.ex
 - `mintIdToken({ sub, aud, ttl, claims })` signs `iss`, `sub`, `aud`, `iat`, `nbf` (equal to `iat`), `exp` and a random
   UUID `jti`, plus `claims`, with the active key (`typ: "JWT"`). `claims` cannot name any of those seven claims, and
   the lifetime is at most one hour.
+- `claims` cannot set `azp` either (`reserved-claim`): relying parties such as AWS STS match `azp` in place of `aud`,
+  so caller data must not choose the effective audience. The issuer never emits `azp`.
 
 Every failure is an `OidcIssuerError` with a stable `code`: `invalid-options`, `invalid-subject`, `invalid-audience`,
 `invalid-ttl`, `invalid-claims` or `reserved-claim`. A failure inside the key ring while signing (for example a
 token over the ring's size limit) rejects with the ring's `KeyRingError`.
+
+## Release order
+
+This package depends on `@secfn/keys` `0.1.0` (SFNS-108, release slug `secfn-keys`). Publish `@secfn/keys@0.1.0` and
+confirm that `npm view @secfn/keys@0.1.0 version` prints `0.1.0` before pushing the `authfn-oidc-issuer` tag: the
+publish workflow installs the package outside the workspace and fails until that version is on npm. Both releases are
+owner-run.
 
 ## Tests
 

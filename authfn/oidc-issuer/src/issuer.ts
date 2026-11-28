@@ -14,6 +14,11 @@ export const OIDC_CACHE_CONTROL = 'public, max-age=300';
 export const RESERVED_CLAIMS: readonly string[] = Object.freeze(['iss', 'sub', 'aud', 'iat', 'nbf', 'exp', 'jti']);
 
 const RESERVED_CLAIM_SET: ReadonlySet<string> = new Set(RESERVED_CLAIMS);
+/**
+ * Claims the issuer never emits and `claims` may not set either: relying parties such as AWS STS match `azp` in place
+ * of `aud`, so caller data must not choose the effective audience. Kept apart so `claims_supported` does not list it.
+ */
+const AUDIENCE_SELECTING_CLAIMS: ReadonlySet<string> = new Set(['azp']);
 const DISCOVERY_SUFFIX = '/.well-known/openid-configuration';
 const DEFAULT_JWKS_SUFFIX = '/.well-known/jwks.json';
 const MAX_SUBJECT_LENGTH = 255;
@@ -40,7 +45,7 @@ export interface OidcIssuerOptions {
   readonly defaultTtl?: number;
   /** Published `jwks_uri`: an absolute `https` URL with no fragment. Defaults to `<issuer>/.well-known/jwks.json`. */
   readonly jwksUri?: string;
-  /** Names of custom claims to list in `claims_supported` after the registered ones. */
+  /** Names of custom claims to list in `claims_supported` after the registered ones; `azp` is refused. */
   readonly claimsSupported?: readonly string[];
   /** Current time in milliseconds since the epoch. Defaults to `Date.now`. */
   readonly now?: () => number;
@@ -53,7 +58,7 @@ export interface MintIdTokenInput {
   readonly aud: string | readonly string[];
   /** Lifetime in whole seconds, 1 to `MAX_ID_TOKEN_TTL_SECONDS`. Defaults to the issuer's `defaultTtl`. */
   readonly ttl?: number;
-  /** Additional claims: a JSON-serializable plain object that names none of `RESERVED_CLAIMS`. */
+  /** Additional claims: a JSON-serializable plain object that names none of `RESERVED_CLAIMS` and not `azp`. */
   readonly claims?: Readonly<Record<string, unknown>>;
 }
 
@@ -248,6 +253,9 @@ function rejectReserved(name: string): void {
   if (RESERVED_CLAIM_SET.has(name)) {
     throw new OidcIssuerError('reserved-claim', `claim ${describeName(name)} is set by the issuer and cannot be overridden`);
   }
+  if (AUDIENCE_SELECTING_CLAIMS.has(name)) {
+    throw new OidcIssuerError('reserved-claim', `claim ${describeName(name)} selects the audience and cannot be set by claims`);
+  }
 }
 
 function supportedClaims(extra: unknown): string[] {
@@ -258,6 +266,7 @@ function supportedClaims(extra: unknown): string[] {
     if (typeof name !== 'string' || !CLAIM_NAME.test(name)) {
       throw new OidcIssuerError('invalid-options', 'claimsSupported entries must be non-empty claim names without spaces');
     }
+    if (AUDIENCE_SELECTING_CLAIMS.has(name)) throw new OidcIssuerError('invalid-options', `the issuer never emits ${describeName(name)}`);
     names.add(name);
   }
   return [...names];
