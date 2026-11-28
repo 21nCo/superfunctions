@@ -2502,6 +2502,36 @@ describe('sensitive exchange redirect policy', () => {
     expect(canceled).toBe(1);
   });
 
+  it.each([307, 308])('treats a %i with an empty Location as a redirect, not as the envelope its body holds', async (status) => {
+    let canceled = 0;
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => {
+        const body = new TextEncoder().encode(JSON.stringify({ ok: true, data: {} }));
+        return new Response(
+          new ReadableStream({ start: (controller) => controller.enqueue(body), cancel: () => { canceled += 1; } }),
+          { status, headers: { location: '' } }
+        );
+      }
+    });
+    const envelope = await client.exchangeSocialHandoff(input) as { ok: boolean; error: { code: string; details: unknown } };
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+    expect(envelope.error.details).toEqual({ status });
+    expect(canceled).toBe(1);
+  });
+
+  it('judges a relative redirect only by the text the response sent, not the placeholder base', async () => {
+    const client = createAuthFnClient({
+      baseUrl: '/auth',
+      fetch: async () => new Response(null, { status: 307, headers: { location: '/continue' } })
+    });
+    const envelope = await client.exchangeSocialHandoff({ code: 'https', verifier: input.verifier }) as { error: { details: unknown } };
+
+    expect(envelope.error.details).toEqual({ status: 307, redirectTo: '/continue' });
+  });
+
   it('never resends the exchange body to the target of a 307 or 308', async () => {
     const received: Array<{ path: string | undefined; body: string }> = [];
     const http = createServer((request, response) => {

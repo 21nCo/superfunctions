@@ -24,6 +24,10 @@ const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const DURATION_PATTERN = /^\d{1,9}(\.\d{1,6})?$/;
 const COUNT_PATTERN = /^\d{1,9}$/;
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
+/** The statuses fetch follows as redirects. */
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+/** The base a relative reference is resolved against when no request URL is known. */
+const PLACEHOLDER_ORIGIN = 'https://authfn.invalid';
 /** Up to 2048 characters, none of them whitespace or control characters (`new URL` drops some). */
 const URL_TEXT_PATTERN = /^[^\s\u0000-\u001f\u007f-\u009f]{1,2048}$/;
 const ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
@@ -170,7 +174,13 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       const location = response.headers.get('location');
       // A browser answers a redirect it did not follow with an opaque
       // response: status 0 and no Location.
-      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && location)) {
+      // A redirect status with any Location, even an empty one (the request
+      // URL itself), is a redirect fetch would follow.
+      if (
+        response.type === 'opaqueredirect'
+        || (response.status >= 300 && response.status < 400 && location)
+        || (location !== null && REDIRECT_STATUSES.has(response.status))
+      ) {
         releaseBody(response);
         return {
           ok: false,
@@ -461,7 +471,7 @@ function isNavigationTarget(value: string, requestUrl?: string): boolean {
     return false;
   }
   try {
-    const resolved = new URL(value, requestUrl ?? 'https://authfn.invalid/');
+    const resolved = new URL(value, requestUrl ?? PLACEHOLDER_ORIGIN);
     return /^https?:$/.test(resolved.protocol) && !resolved.username && !resolved.password;
   } catch {
     return false;
@@ -486,16 +496,23 @@ function absoluteUrl(url: string): string | undefined {
  */
 function parsedUrlSharesText(value: string, secrets: readonly string[]): boolean {
   let url: URL;
+  let relative = false;
   try {
     // An absolute value is parsed on its own, as `isAbsoluteHttpUrl` parses
     // it: against an https base, 'https:host' would be a path, not a host.
     url = new URL(value);
   } catch {
     try {
-      url = new URL(value, 'https://authfn.invalid');
+      url = new URL(value, PLACEHOLDER_ORIGIN);
+      relative = true;
     } catch {
       return true;
     }
+  }
+  // Text the placeholder base adds is not the response's, so it is not compared.
+  if (relative && url.origin === PLACEHOLDER_ORIGIN) {
+    const rest = url.href.slice(url.origin.length);
+    return secrets.some((secret) => sharesText(rest, secret));
   }
   return secrets.some((secret) => sharesText(url.href, secret) || sharesText(url.hostname, secret.toLowerCase()));
 }
