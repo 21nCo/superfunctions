@@ -1,0 +1,21 @@
+mdfn/core/src/anchors.ts
+  s_73670fb96a0583::t_b9ef0d26e99590 33-35,38-46,50-52,55-62,65-66,68,70-72
+mdfn/core/src/core.test.ts
+  s_73670fb96a0583::t_29bc60fc849ac4 22,515-547,549-571,573,575-576,578-582,584-588,590-614,617-644,647-669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3b298c24ea0ccc9fe67271a942ae6b280bf8e6d",
+  "prompts": {},
+  "sessions": {
+    "s_73670fb96a0583": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21ffd-558e-71a3-aa5d-0e1901d7c827",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
