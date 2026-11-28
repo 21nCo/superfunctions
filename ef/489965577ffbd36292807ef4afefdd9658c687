@@ -1,0 +1,31 @@
+.gitignore
+  s_5a86c214ff9c75::t_89a88f464f3cee 16-18
+reviewfn/bare/index.d.ts
+  s_b7546bb15c0313::t_5704aadd10c0d4 1
+reviewfn/bare/index.js
+  s_b7546bb15c0313::t_61bf386c85f4de 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef489965577ffbd36292807ef4afefdd9658c687",
+  "prompts": {},
+  "sessions": {
+    "s_5a86c214ff9c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09e8e09e-cce6-4cce-a9a1-c340ea0ab8c5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
