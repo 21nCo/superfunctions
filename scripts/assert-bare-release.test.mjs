@@ -236,9 +236,13 @@ test('front-door test template: passes against an importable core and a CLI at t
   writeCore({ '.': { require: './index.cjs' } });
   assert.notEqual(run().status, 0);
   writeCore({ '.': './index.js' });
-  // No CLI installed at the version: npm is out of reach, so the bin fails.
+  // No CLI installed at the version: even with an npm that would supply it, the bin fails.
   writeVersionCli('1.2.2');
   assert.notEqual(run().status, 0);
+  const npm = fakeNpm(t, { fetchedCli: '1.2.3' });
+  const withNpm = spawnSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd: bare, encoding: 'utf8', env: { ...env, npm_execpath: npm.npmCli } });
+  assert.notEqual(withNpm.status, 0);
+  assert.throws(() => npm.args(), /ENOENT/);
 });
 
 test('registry: the core and CLI must already be on npm at the version', async () => {
@@ -504,6 +508,16 @@ test('shim: a SIGHUP sent to the shim reaches npm as SIGTERM, which npm relays t
   assert.equal(readFileSync(record, 'utf8'), 'SIGTERM');
 });
 
+test('shim: with BARE_CLI_NO_NPM=1 it never falls back to npm', t => {
+  const { shim } = installedProduct(t, { installedCli: '1.2.2' });
+  const npm = fakeNpm(t, { fetchedCli: '1.2.3' });
+  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli, BARE_CLI_NO_NPM: '1' });
+  assert.equal(run.status, 1);
+  assert.equal(run.output, null);
+  assert.match(run.stderr, /@fixture\/cli@1\.2\.3 is not installed here, and BARE_CLI_NO_NPM=1 forbids fetching it with npm/);
+  assert.throws(() => npm.args(), /ENOENT/);
+});
+
 test('shim: refuses to run without a CLI named in frontDoor.cli', t => {
   const { root, shim } = installedProduct(t);
   const manifest = path.join(root, 'node_modules/fixture/package.json');
@@ -513,20 +527,45 @@ test('shim: refuses to run without a CLI named in frontDoor.cli', t => {
   assert.match(run.stderr, /names no CLI package in frontDoor\.cli/);
 });
 
-test('pack: a bare tarball is checked against the committed release entry, manifest and shim', t => {
+test('pack: a bare release runs the committed front-door test and checks the tarball against the commit', t => {
+  // The test script is replaced, as an install hook could; the packer still runs the front-door test directly.
   const root = product(t, { overrides: { scripts: { build: 'node -e 0', test: 'node -e 0' } } });
+  // The pinned core and CLI, as publish-tag.yml's install puts them.
+  const installed = path.join(root, 'bare/node_modules/@fixture');
+  const writeCore = exports => {
+    writeJson(path.join(installed, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', type: 'module', exports });
+    writeFileSync(path.join(installed, 'core/index.js'), 'export const answer = 42;\n');
+    writeFileSync(path.join(installed, 'core/index.cjs'), 'exports.answer = 42;\n');
+  };
+  writeCore({ '.': './index.js' });
+  writeJson(path.join(installed, 'cli/package.json'), { name: '@fixture/cli', version: '1.2.3', type: 'module', bin: { fixture: './cli.mjs', fx: './cli.mjs' } });
+  writeFileSync(path.join(installed, 'cli/cli.mjs'), "if (process.argv.includes('--version')) console.log('1.2.3');\n");
+  writeFileSync(path.join(root, '.gitignore'), 'node_modules\n');
   mkdirSync(path.join(root, 'scripts'));
-  for (const file of ['pack-release-package.mjs', 'resolve-release-tag.mjs', 'owners.mjs', 'assert-bare-release.mjs', 'bare-cli-shim.mjs']) {
+  for (const file of ['pack-release-package.mjs', 'resolve-release-tag.mjs', 'owners.mjs', 'assert-bare-release.mjs', 'bare-cli-shim.mjs', 'bare-front-door-test.mjs']) {
     cpSync(path.join(import.meta.dirname, file), path.join(root, 'scripts', file));
   }
   const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
   git('init', '-q');
   git('add', '-A');
   git('-c', 'user.name=test', '-c', 'user.email=test@example.test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture');
-  const pack = () => spawnSync(process.execPath, [path.join(root, 'scripts/pack-release-package.mjs'), 'fixture-v1.2.3'], { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' } });
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  const pack = () => spawnSync(process.execPath, [path.join(root, 'scripts/pack-release-package.mjs'), 'fixture-v1.2.3'], { cwd: root, encoding: 'utf8', env: { ...env, GITHUB_OUTPUT: '' } });
 
   const clean = pack();
-  assert.equal(clean.status, 0, clean.stderr);
+  assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+
+  // A pinned core that ESM cannot import fails the release, though the test script was replaced.
+  writeCore({ '.': { require: './index.cjs' } });
+  assert.notEqual(pack().status, 0);
+  writeCore({ '.': './index.js' });
+  // So does a front-door test file that is not the committed template.
+  const testFile = path.join(root, 'bare', TEMPLATE.testFile);
+  writeFileSync(testFile, "import test from 'node:test';\ntest('nothing', () => {});\n");
+  const replaced = pack();
+  assert.notEqual(replaced.status, 0);
+  assert.match(replaced.stderr, /is not the front-door test template committed at the tag/);
+  cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
 
   // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
   const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));

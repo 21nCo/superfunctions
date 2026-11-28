@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { bareKind, checkPackedBare, gitFile } from './assert-bare-release.mjs';
+import { TEMPLATE, bareKind, checkPackedBare, gitFile } from './assert-bare-release.mjs';
 import { REPOS } from './owners.mjs';
 import { RELEASE_BASE_FILE, releaseOverlayFile, resolveReleaseTag } from './resolve-release-tag.mjs';
 
@@ -39,6 +39,19 @@ const typecheck = manifest.scripts?.typecheck ? 'typecheck' : 'type-check';
 for (const script of ['generate:check', 'build', typecheck, 'test']) {
   if (manifest.scripts?.[script]) npm('run', script);
 }
+// A bare package's front-door test must run even if an install, build or test hook rewrote its test script: check the
+// test file against the template committed at the tag and run it directly with Node, after the pinned core and CLI
+// were installed from npm.
+const committedTarget = committedReleaseEntry(target.slug);
+if (committedTarget.kind === 'bare') {
+  const testFile = path.join(cwd, TEMPLATE.testFile);
+  if ((await readFile(testFile, 'utf8')) !== gitFile(root, 'scripts/bare-front-door-test.mjs')) {
+    throw new Error(`${target.name}: ${TEMPLATE.testFile} is not the front-door test template committed at the tag`);
+  }
+  // NODE_TEST_CONTEXT would make node --test report to an enclosing test runner instead of exiting non-zero.
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  execFileSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd, stdio: 'inherit', env: { ...env, CI: 'true', BARE_CLI_NO_NPM: '1' } });
+}
 // Run pack lifecycle hooks once; publishing this exact tarball cannot rebuild
 // a different artifact in prepublishOnly/prepare/prepack.
 const destination = await mkdtemp(path.join(tmpdir(), 'npm-release-'));
@@ -59,7 +72,7 @@ const tarball = path.join(destination, packed[0].filename);
 // A bare package's tarball must still hold what assert-bare-release.mjs checked at the tag commit, whatever the
 // install, build and pack scripts did to the checkout since: whether the slug is bare, its path, its manifest and the
 // shim template all come from the commit, not the working tree.
-const committed = committedReleaseEntry(target.slug);
+const committed = committedTarget;
 if (committed.path !== target.path) throw new Error(`Release target ${target.slug} is at ${committed.path} in the commit, not ${target.path}`);
 if (committed.kind === 'bare') {
   await checkPackedBare({

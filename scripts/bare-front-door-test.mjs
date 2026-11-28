@@ -2,8 +2,8 @@
 // gate checks. The release build runs it after installing the package's pinned dependencies from npm, so it proves
 // the packed package against the exact published core and CLI:
 //   - with exports, `import "<bare>"` gives exactly the core's exports (the core must be importable as ESM);
-//   - every bin runs the CLI at exactly this package's version: `<bin> --version` prints it. npm_execpath is cleared
-//     and PATH holds only Node.js, so npm cannot stand in for a missing or different installed CLI.
+//   - every bin runs the CLI at exactly this package's version: `<bin> --version` prints it. BARE_CLI_NO_NPM=1 stops
+//     the shim from fetching the CLI with npm, so npm cannot stand in for a missing or different installed CLI.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -27,7 +27,7 @@ for (const [name, file] of Object.entries(manifest.bin ?? {})) {
   test(`${name} runs ${manifest.frontDoor.cli} at ${manifest.version}`, () => {
     const result = spawnSync(process.execPath, [path.join(packageDir, file), '--version'], {
       encoding: 'utf8',
-      env: { ...process.env, npm_execpath: '', PATH: path.dirname(process.execPath) },
+      env: { ...process.env, BARE_CLI_NO_NPM: '1' },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), manifest.version);

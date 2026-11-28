@@ -120,6 +120,9 @@ const env = { ...process.env, [EXPECTED]: spec };
 const installed = installedBin();
 if (installed !== undefined) {
   runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`, { env });
+} else if (process.env.BARE_CLI_NO_NPM === '1') {
+  // The front-door test proves the installed CLI; npm must not stand in for it.
+  fail(`${spec} is not installed here, and BARE_CLI_NO_NPM=1 forbids fetching it with npm.`);
 } else {
   const [command, prefix] = npmCommand();
   runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', { viaNpm: true, env });

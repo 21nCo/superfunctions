@@ -202,8 +202,11 @@ accepts only the bare template's exact shape (`TEMPLATE` in
   copy of `scripts/bare-front-door-test.mjs`. The release build runs it after
   installing the pinned core and CLI from npm: `import "<bare>"` must give the
   core's exports, and every bin's `--version` must print the bare package's
-  version, so a core that ESM cannot import, or a CLI without `--version`, fails
-  the release.
+  version with `BARE_CLI_NO_NPM=1` (which stops the shim from fetching the CLI
+  with npm), so a core that ESM cannot import, a missing or different installed
+  CLI, or a CLI without `--version` fails the release. The packer checks that
+  file against the template committed at the tag and runs it directly with
+  Node, whatever the package's scripts say.
 
 The shim imports only Node.js built-ins and runs the CLI's bin named after the
 bare package at exactly the bare package's version, as a child process that keeps
