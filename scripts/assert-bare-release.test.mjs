@@ -189,6 +189,11 @@ test('manifests: a bare package that is the core itself keeps its own entry poin
   assert.deepEqual((await checkBareManifests({ root, target, targets })).packages, [{ slug: 'fixture-cli', name: '@fixture/cli', version: '1.2.3', bins: ['fixture', 'fx'] }]);
   assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, main: './bin/cli.mjs' } }))).some(problem => /exports and main must not reach the bin folder/.test(problem)));
   assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, exports: { '.': './dist/index.js', './cli': './bin/cli.mjs' } } }))).some(problem => /must not reach the bin folder/.test(problem)));
+  // Node decodes percent-encoded export targets.
+  assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, exports: { '.': './b%69n/cli.mjs' } } }))).some(problem => /must not reach the bin folder/.test(problem)));
+  // Without a CLI slug the core itself has no bin either.
+  const selfNoCli = await problemsOf(product(t, { entry: { core: 'fixture', cli: undefined }, overrides: { ...own, frontDoor: undefined, bin: { fixture: './old.mjs' } } }));
+  assert.ok(selfNoCli.some(problem => /bin applies only/.test(problem)));
   for (const dependencies of [{ '@fixture/cli': '1.2.3' }, { alias: 'npm:@fixture/cli@1.2.3' }]) {
     assert.ok((await problemsOf(product(t, { entry: selfCore, overrides: { ...own, dependencies } }))).some(problem => /would install @fixture\/cli for importers of the core/.test(problem)));
   }
@@ -240,24 +245,42 @@ test('registry: the core and CLI must already be on npm at the version', async (
   }
 });
 
-test('packed tarball: keeps the checked manifest fields, re-export files and the shared shim', async t => {
+test('packed tarball: keeps the checked manifest fields, template files and the shared shim', async t => {
   const root = product(t);
   const dir = path.join(root, 'bare');
   const pack = () => path.join(root, JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', root], { cwd: dir, encoding: 'utf8' }))[0].filename);
   const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
-  const core = '@fixture/core';
+  const reexport = { kind: 'reexport', core: '@fixture/core' };
   const tarball = pack();
-  await checkPackedBare({ tarball, manifest, core });
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } }, core }), /changed dependencies/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } }, core }), /changed bin/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, type: 'commonjs' }, core }), /changed type/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, imports: { '#x': './x.js' } }, core }), /changed imports/);
-  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, main: './bin/cli.mjs' }, core }), /changed main/);
+  await checkPackedBare({ tarball, manifest, ...reexport });
+  for (const [field, value] of [['dependencies', { '@fixture/core': '1.2.2' }], ['type', 'commonjs'], ['imports', { '#x': './x.js' }], ['main', './bin/cli.mjs'], ['bundleDependencies', true], ['bundledDependencies', ['@fixture/core']]]) {
+    await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, [field]: value }, ...reexport }), new RegExp(`changed ${field}`));
+  }
+  await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } }, ...reexport }), /changed bin/);
   writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
-  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, core }), /has no index\.js re-exporting @fixture\/core/);
-  writeFileSync(path.join(dir, 'index.js'), TEMPLATE.reexportFiles['index.js'](core));
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, ...reexport }), /has no index\.js re-exporting @fixture\/core/);
+  writeFileSync(path.join(dir, 'index.js'), TEMPLATE.reexportFiles['index.js']('@fixture/core'));
   writeFileSync(path.join(dir, SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// changed\n`);
-  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, core }), /differs from the shared shim template/);
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest, ...reexport }), /differs from the shared shim template/);
+  cpSync(SHIM_TEMPLATE, path.join(dir, SHIM_FILE));
+
+  // CLI-only: no file Node's legacy resolution would import.
+  const cliOnlyManifest = { ...manifest, exports: undefined, files: ['bin', 'index.js'] };
+  writeJson(path.join(dir, 'package.json'), cliOnlyManifest);
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest: cliOnlyManifest, kind: 'cli-only' }), /is CLI-only but ships index\.js/);
+  const cleanCliOnly = { ...cliOnlyManifest, files: ['bin'] };
+  writeJson(path.join(dir, 'package.json'), cleanCliOnly);
+  await checkPackedBare({ tarball: pack(), manifest: cleanCliOnly, kind: 'cli-only' });
+
+  // The core itself: every file its exports and main name ships.
+  const selfManifest = { ...manifest, exports: { '.': { import: './dist/index.js' }, './*': './dist/*.js' }, files: ['bin', 'index.js'] };
+  writeJson(path.join(dir, 'package.json'), selfManifest);
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest: selfManifest, kind: 'self-core' }), /lacks \.\/dist\/index\.js, which its exports or main name/);
+  mkdirSync(path.join(dir, 'dist'));
+  writeFileSync(path.join(dir, 'dist/index.js'), 'export {};\n');
+  const shipped = { ...selfManifest, files: ['bin', 'dist'] };
+  writeJson(path.join(dir, 'package.json'), shipped);
+  await checkPackedBare({ tarball: pack(), manifest: shipped, kind: 'self-core' });
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {

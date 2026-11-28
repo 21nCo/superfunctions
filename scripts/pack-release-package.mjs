@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { checkPackedBare, gitFile } from './assert-bare-release.mjs';
+import { bareKind, checkPackedBare, gitFile } from './assert-bare-release.mjs';
 import { REPOS } from './owners.mjs';
 import { RELEASE_BASE_FILE, releaseOverlayFile, resolveReleaseTag } from './resolve-release-tag.mjs';
 
@@ -66,7 +66,8 @@ if (committed.kind === 'bare') {
     tarball,
     manifest: JSON.parse(gitFile(root, path.posix.join(committed.path, 'package.json'))),
     shim: gitFile(root, 'scripts/bare-cli-shim.mjs'),
-    core: committed.core !== undefined && committed.core !== committed.slug ? committedReleaseEntry(committed.core).name : undefined,
+    kind: bareKind(committed),
+    core: bareKind(committed) === 'reexport' ? committedReleaseEntry(committed.core).name : undefined,
   });
 }
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `tarball=${tarball}\n`);
