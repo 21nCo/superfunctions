@@ -1,0 +1,19 @@
+.gitignore
+  s_81f3203cbd00da::t_37232b93c97a4b 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "121f4be8de78ce9ab70d81a1b1d7bd803a58657d",
+  "prompts": {},
+  "sessions": {
+    "s_81f3203cbd00da": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2231f-36b0-7a13-a2a9-95a471631056",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
