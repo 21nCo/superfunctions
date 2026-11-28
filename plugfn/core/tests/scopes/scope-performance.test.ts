@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { defineScopeGrammar, SCOPE_LIMITS } from '../../src/scopes/index.js';
+import { defineScopeGrammar, SCOPE_LIMITS, type ScopeRisk } from '../../src/scopes/index.js';
 
 /**
  * Timing tests. vitest.config.ts runs this file in its own project, after
  * every other test file has finished, so the CPU-heavy in-memory type checks
  * never run beside it.
  *
- * Only the issue's acceptance vectors (10k covered and 10k uncovered items) keep an absolute bound: best of three under 50 ms, about
+ * Only the issue's acceptance vectors (10k covered, 10k uncovered and 10k
+ * classified items) keep an absolute bound: best of three under 50 ms, about
  * ten times what they take idle. Every adversarial vector is instead measured
  * against an equal-size control that is not adversarial, interleaved in the
  * same test, and must stay under {@link RATIO_LIMIT} times it: uniform machine
@@ -73,6 +74,7 @@ describe('acceptance: 10k items in under 50 ms', () => {
   const big = defineScopeGrammar({
     provider: 'big',
     dimensions: { ids: { kind: 'exactSet' }, paths: { kind: 'prefixGlobSet' }, ttl: { kind: 'ttlMax' } },
+    riskOf: ({ value }) => (String(value).startsWith('w') ? 'write' : 'read'),
   });
   const ids = Array.from({ length: half }, (_, i) => `id-${i}`);
   // 10k distinct envelope globs: a matcher that compares every request item
@@ -84,6 +86,8 @@ describe('acceptance: 10k items in under 50 ms', () => {
   const env = { ids: [...ids].reverse(), paths: envelopePaths, ttl: 60 };
   // 5k ids + 4,999 paths + 1 ttl = 10k items, every one outside the envelope below.
   const uncovered = { ids, paths: requestPaths, ttl: 61 };
+  // 10k items whose highest risk is the last id, so every item is classified.
+  const writeLast = { ids: [...ids.slice(0, -1), 'w-last'], paths: requestPaths, ttl: 60 };
 
   it('evaluates 10k requested items against 10k envelope globs in under 50 ms', () => {
     let result: ReturnType<typeof big.isSubset> | undefined;
@@ -100,6 +104,25 @@ describe('acceptance: 10k items in under 50 ms', () => {
       result = big.isSubset(uncovered, { ids: [], paths: ['other/*'], ttl: 60 });
     });
     expect(result?.violations).toHaveLength(n);
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  it('classifies 10k items in under 50 ms', () => {
+    let risk: ScopeRisk | undefined;
+    const elapsed = bestOfThree(() => {
+      risk = big.classifyRisk(writeLast);
+    });
+    expect(risk).toBe('write');
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  it('classifies a 10k-item snapshot in under 50 ms', () => {
+    const scope = big.normalize(writeLast).scope!;
+    let risk: ScopeRisk | undefined;
+    const elapsed = bestOfThree(() => {
+      risk = big.classifyScope(scope);
+    });
+    expect(risk).toBe('write');
     expect(elapsed).toBeLessThan(50);
   });
 });

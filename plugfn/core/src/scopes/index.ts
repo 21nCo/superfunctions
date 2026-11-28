@@ -1,2 +1,2 @@
 export * from './types.js';
-export { defineScopeGrammar } from './grammar.js';
+export { defineScopeGrammar, ScopeError } from './grammar.js';
