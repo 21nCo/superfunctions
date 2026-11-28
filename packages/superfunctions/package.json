@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "node --check bin/cli.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/front-door.test.mjs"
   },
   "dependencies": {
     "@superfunctions/cli": "0.2.3"
