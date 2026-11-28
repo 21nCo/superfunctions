@@ -156,6 +156,11 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }], import: './index.js' } } } })), []);
   await expectProblem({ overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }, null], import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ overrides: { exports: { '.': { import: [], default: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  // Node refuses targets with ".", "..", empty or node_modules segments, and stops at a null array entry.
+  for (const exports of ['./dist/../index.js', './a//index.js', './node_modules/x/index.js', './%2e%2e/index.js', { '.': [null, './index.js'] }]) {
+    await expectProblem({ overrides: { exports } }, /exports must have a "\." entry that an ESM import resolves/);
+  }
+  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': ['index.js', './index.js'] } } })), []);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
   // Installing the core must not install the CLI.
@@ -237,6 +242,14 @@ test('registry: the core and CLI must already be on npm at the version', async t
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(linked) }), /has no dist\/cli\.js for its fixture bin/);
   const coreWithCli = { ...published, 'https://registry.example.test/@fixture%2fcore/1.2.3': { name: '@fixture/core', version: '1.2.3', optionalDependencies: { '@fixture/cli': '1.2.3' } } };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(coreWithCli) }), /@fixture\/core@1\.2\.3 on npm depends on @fixture\/cli \(optionalDependencies\["@fixture\/cli"\]\)/);
+  // The package.json inside the tarball, which the shim reads once installed, must map the bins too.
+  const arrayDir = tempDir(t, 'bare-release-array-bin-');
+  mkdirSync(path.join(arrayDir, 'package/dist'), { recursive: true });
+  writeJson(path.join(arrayDir, 'package/package.json'), { name: '@fixture/cli', version: '1.2.3', bin: ['dist/cli.js'] });
+  writeFileSync(path.join(arrayDir, 'package/dist/cli.js'), '\n');
+  execFileSync('tar', ['-czf', path.join(arrayDir, 'cli.tgz'), '-C', arrayDir, 'package']);
+  const arrayBin = { ...published, [CLI_TARBALL]: readFileSync(path.join(arrayDir, 'cli.tgz')) };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(arrayBin) }), /The package\.json inside @fixture\/cli@1\.2\.3 on npm does not map the bins fixture, fx to dist\/cli\.js/);
   const noTarball = { ...published, [CLI_TARBALL]: undefined };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(noTarball) }), error => error.code === 'registry-unavailable' && /tarball/.test(error.message));
 
@@ -436,8 +449,10 @@ test('shim: runs a copy npm reused from deep in the project tree, nested or alia
   const linked = runShim(shim, ['0'], { npm_execpath: npm.npmCli }, root);
   assert.equal(linked.status, 0, linked.stderr);
   assert.equal(linked.output.origin, 'linked');
-  // A copy in the project's own tree wins over one reached only through a link.
-  writeCli(path.join(root, 'node_modules/other/node_modules/@fixture/cli'), '1.2.3', 'nested');
+  // A copy anywhere in the project's own tree wins over one reached only through a link, even one in the linked
+  // package's own node_modules.
+  writeCli(path.join(shared, 'packages/tool/node_modules/@fixture/cli'), '1.2.3', 'linked-own');
+  writeCli(path.join(root, 'node_modules/other/node_modules/deeper/node_modules/@fixture/cli'), '1.2.3', 'nested');
   assert.equal(runShim(shim, ['0'], { npm_execpath: npm.npmCli }, root).output.origin, 'nested');
   rmSync(path.join(root, 'node_modules/other'), { recursive: true });
   rmSync(path.join(root, 'node_modules/tool'));

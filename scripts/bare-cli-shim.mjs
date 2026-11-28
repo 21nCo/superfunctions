@@ -148,10 +148,15 @@ function projectBin() {
           seen.add(real);
           const file = binIn(dir);
           if (file) return { file };
-          enqueue(path.join(real, 'node_modules'));
-          if (real !== path.resolve(dir)) {
+          if (real === path.resolve(dir)) {
+            enqueue(path.join(real, 'node_modules'));
+          } else {
+            // A linked package lives outside the project's tree: its folders are searched only in the second phase.
             links.push(path.dirname(real));
-            if (followLinks) lookupPaths(path.dirname(real)).forEach(enqueue);
+            if (followLinks) {
+              enqueue(path.join(real, 'node_modules'));
+              lookupPaths(path.dirname(real)).forEach(enqueue);
+            }
           }
         }
       }

@@ -188,27 +188,32 @@ function aliasTarget(spec) {
 // The conditions Node.js 22 and later match for `import "<bare>"` by default; a require-only root cannot be imported.
 const IMPORT_CONDITIONS = ['import', 'node', 'node-addons', 'module-sync', 'default'];
 
+// Node.js refuses a target with an empty, ".", ".." or "node_modules" segment after its leading "./", percent-encoded
+// spellings included (ERR_INVALID_PACKAGE_TARGET); this is the pattern its resolver applies.
+const INVALID_SEGMENT = /(^|\\|\/)((\.|%2e)(\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))?(\\|\/|$)/i;
+const INVALID = Symbol('invalid package target');
+
 /**
- * The target Node.js selects for an ESM import from an exports value: the first key, in order, that is a matching
- * condition decides (a nested object that matches nothing lets the next key try); null blocks the import; an array
- * takes its first valid target; a target must start with "./". Returns the target, null (blocked or invalid), or
- * undefined (no condition matched).
+ * The target Node.js selects for an ESM import from an exports value (its PACKAGE_TARGET_RESOLVE): the first key, in
+ * order, that is a matching condition decides, and a nested object that matches nothing lets the next key try; null
+ * blocks; an array takes its first entry that resolves to a target or null, skipping invalid entries and entries that
+ * match nothing, and an empty array blocks. Returns the target, null (blocked), INVALID (Node throws), or undefined
+ * (no condition matched).
  */
 function resolveImport(value) {
-  if (typeof value === 'string') return value.startsWith('./') ? value : null;
+  if (typeof value === 'string') return value.startsWith('./') && !INVALID_SEGMENT.test(value.slice(2)) ? value : INVALID;
+  if (value === null) return null;
   if (Array.isArray(value)) {
-    // The first valid target wins; a nonempty array whose entries all match no condition matches nothing (undefined),
-    // so the next condition can try; an empty array, or a blocked or invalid entry, makes it null.
     if (value.length === 0) return null;
     let last;
     for (const candidate of value) {
       const target = resolveImport(candidate);
-      if (typeof target === 'string') return target;
-      if (target === null) last = null;
+      if (target === INVALID) last = INVALID;
+      else if (target !== undefined) return target;
     }
     return last;
   }
-  if (value === null || typeof value !== 'object') return null;
+  if (typeof value !== 'object') return INVALID;
   for (const [key, candidate] of Object.entries(value)) {
     if (!IMPORT_CONDITIONS.includes(key)) continue;
     const target = resolveImport(candidate);
@@ -317,8 +322,21 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
       }
       // The manifest can name a file the tarball lacks (or holds as a link, which npm does not install), so the
       // published tarball must hold it as a regular file.
-      if (regularFile(await publishedTarball(body.dist?.tarball, { fetch, name, version }), files[0]) === undefined) {
+      const entries = await publishedTarball(body.dist?.tarball, { fetch, name, version });
+      if (regularFile(entries, files[0]) === undefined) {
         throw new BareReleaseError('not-published', `${name}@${version} on npm has no ${files[0]} for its ${bins[0]} bin; release a new CLI version that ships it, at the bare package's version.`, { name, version });
+      }
+      // The shim reads the installed package.json, which is the tarball's own, not the registry's normalized copy: its
+      // bin must be an object (or a string, named after the unscoped package) mapping the same names to that file.
+      let embedded;
+      try {
+        embedded = JSON.parse(regularFile(entries, 'package.json')?.toString('utf8') ?? 'null');
+      } catch {
+        embedded = null;
+      }
+      const embeddedBins = typeof embedded?.bin === 'string' ? { [name.split('/').pop()]: embedded.bin } : embedded?.bin !== null && typeof embedded?.bin === 'object' && !Array.isArray(embedded.bin) ? embedded.bin : {};
+      if (bins.some(bin => normalizeBin(embeddedBins[bin]) !== files[0])) {
+        throw new BareReleaseError('not-published', `The package.json inside ${name}@${version} on npm does not map the bins ${bins.join(', ')} to ${files[0]} (it has ${JSON.stringify(embedded?.bin ?? null)}); release a new CLI version whose package.json does.`, { name, version });
       }
     }
   }
