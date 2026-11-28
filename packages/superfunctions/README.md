@@ -6,10 +6,12 @@ its `superfunctions` command, and the `sfs` alias, run that CLI at exactly this
 package's version.
 
 ```bash
-npx superfunctions --help
-npx superfunctions status
-npx superfunctions generate-migration
+npm exec --package=superfunctions -- superfunctions --help
+npm exec --package=superfunctions -- superfunctions status
 ```
+
+(`npx superfunctions` does the same, unless a global `@superfunctions/cli`
+provides a `superfunctions` command; npx then runs that one instead.)
 
 `npx sfs` looks for an npm package named `sfs`, so use the alias once the
 package is installed, or name the package for npx:
@@ -32,4 +34,7 @@ the Superfunctions libraries, which you install by their scoped names.
 a project depends on both packages directly at different versions, npm links
 those commands to one of them, possibly the older scoped CLI. Remove the direct
 `@superfunctions/cli` dependency when you add `superfunctions`, or keep the two at
-the same version.
+the same version. Likewise, uninstall a global `@superfunctions/cli`
+(`npm uninstall -g @superfunctions/cli`), or `npx superfunctions` keeps running
+it. `superfunctions init` writes a plain config object, which loads without
+`@superfunctions/cli` installed in the project.
