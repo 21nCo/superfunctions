@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -565,20 +566,63 @@ test('shim: refuses to run without a CLI named in frontDoor.cli', t => {
   assert.match(run.stderr, /names no CLI package in frontDoor\.cli/);
 });
 
-test('pack: a bare release runs the committed front-door test and checks the tarball against the commit', t => {
+/**
+ * A minimal npm registry on 127.0.0.1 for the packer's front-door install: publish(dir) packs a package folder and
+ * serves its packument and tarball (a later publish of the same name replaces it).
+ */
+async function localRegistry(t) {
+  const packages = new Map();
+  const tarballs = new Map();
+  const server = createServer((request, response) => {
+    const url = decodeURIComponent(request.url.split('?')[0]);
+    const tarball = tarballs.get(url);
+    if (tarball) return response.end(tarball);
+    const packument = packages.get(url.slice(1));
+    if (!packument) {
+      response.statusCode = 404;
+      return response.end('{}');
+    }
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(packument));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const store = tempDir(t, 'bare-release-registry-');
+  return {
+    url: `${base}/`,
+    publish(dir) {
+      const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', store], { cwd: dir, encoding: 'utf8' }));
+      const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      const route = `/tarballs/${packed.filename}`;
+      tarballs.set(route, readFileSync(path.join(store, packed.filename)));
+      packages.set(manifest.name, {
+        name: manifest.name,
+        'dist-tags': { latest: manifest.version },
+        versions: { [manifest.version]: { ...manifest, dist: { tarball: `${base}${route}`, shasum: packed.shasum, integrity: packed.integrity } } },
+      });
+    },
+  };
+}
+
+test('pack: a bare release runs the committed front-door test in a fresh folder and checks the tarball', async t => {
   // The test script is replaced, as an install hook could; the packer still runs the front-door test directly.
   const root = product(t, { overrides: { scripts: { build: 'node -e 0', test: 'node -e 0' } } });
-  // The pinned core and CLI, as publish-tag.yml's install puts them.
-  const installed = path.join(root, 'bare/node_modules/@fixture');
-  const writeCore = exports => {
-    writeJson(path.join(installed, 'core/package.json'), { name: '@fixture/core', version: '1.2.3', type: 'module', exports });
-    writeFileSync(path.join(installed, 'core/index.js'), 'export const answer = 42;\n');
-    writeFileSync(path.join(installed, 'core/index.cjs'), 'exports.answer = 42;\n');
+  const registry = await localRegistry(t);
+  const published = tempDir(t, 'bare-release-published-');
+  const publishCore = exports => {
+    const dir = path.join(published, 'core');
+    writeJson(path.join(dir, 'package.json'), { name: '@fixture/core', version: '1.2.3', type: 'module', exports });
+    writeFileSync(path.join(dir, 'index.js'), 'export const answer = 42;\n');
+    writeFileSync(path.join(dir, 'index.cjs'), 'exports.answer = 42;\n');
+    registry.publish(dir);
   };
-  writeCore({ '.': './index.js' });
-  writeJson(path.join(installed, 'cli/package.json'), { name: '@fixture/cli', version: '1.2.3', type: 'module', bin: { fixture: './cli.mjs', fx: './cli.mjs' } });
-  writeFileSync(path.join(installed, 'cli/cli.mjs'), "if (process.argv.includes('--version')) console.log('1.2.3');\n");
-  writeFileSync(path.join(root, '.gitignore'), 'node_modules\n');
+  publishCore({ '.': './index.js' });
+  const cliDir = path.join(published, 'cli');
+  writeJson(path.join(cliDir, 'package.json'), { name: '@fixture/cli', version: '1.2.3', type: 'module', bin: { fixture: './cli.mjs', fx: './cli.mjs' } });
+  writeFileSync(path.join(cliDir, 'cli.mjs'), "if (process.argv.includes('--version')) console.log('1.2.3');\n");
+  registry.publish(cliDir);
+
   mkdirSync(path.join(root, 'scripts'));
   for (const file of ['pack-release-package.mjs', 'resolve-release-tag.mjs', 'owners.mjs', 'assert-bare-release.mjs', 'bare-cli-shim.mjs', 'bare-front-door-test.mjs']) {
     cpSync(path.join(import.meta.dirname, file), path.join(root, 'scripts', file));
@@ -588,68 +632,57 @@ test('pack: a bare release runs the committed front-door test and checks the tar
   git('add', '-A');
   git('-c', 'user.name=test', '-c', 'user.email=test@example.test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture');
   const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const pack = () => spawnSync(process.execPath, [path.join(root, 'scripts/pack-release-package.mjs'), 'fixture-v1.2.3'], { cwd: root, encoding: 'utf8', env: { ...env, GITHUB_OUTPUT: '' } });
+  // spawn, not spawnSync: the registry answers from this process while the packer runs.
+  const pack = () => new Promise(resolve => {
+    const child = spawn(process.execPath, [path.join(root, 'scripts/pack-release-package.mjs'), 'fixture-v1.2.3'], {
+      cwd: root,
+      env: { ...env, GITHUB_OUTPUT: '', npm_config_registry: registry.url, npm_config_cache: tempDir(t, 'bare-release-cache-') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => (stdout += chunk));
+    child.stderr.on('data', chunk => (stderr += chunk));
+    child.on('close', status => resolve({ status, stdout, stderr }));
+  });
+  const frontDoorFolders = () => readdirSync(tmpdir()).filter(name => name.startsWith('bare-front-door-')).length;
+  const foldersBefore = frontDoorFolders();
 
-  const clean = pack();
+  const clean = await pack();
   assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+  assert.equal(frontDoorFolders(), foldersBefore, 'the front-door folder is removed');
 
   // A pinned core that ESM cannot import fails the release, though the test script was replaced.
-  writeCore({ '.': { require: './index.cjs' } });
-  assert.notEqual(pack().status, 0);
-  writeCore({ '.': './index.js' });
-  // A working-tree front-door test or manifest changed after the commit (as a hook could) does not replace the
-  // committed ones for the run, and is restored afterwards.
+  publishCore({ '.': { require: './index.cjs' } });
+  const requireOnly = await pack();
+  assert.notEqual(requireOnly.status, 0);
+  assert.match(requireOnly.stderr, /Command failed: .*--test test\/front-door\.test\.mjs/);
+
+  // A working tree changed after the commit (as a hook could) changes nothing in the front-door run, which still
+  // imports the core and fails; and the run writes nothing in the working tree.
   const testFile = path.join(root, 'bare', TEMPLATE.testFile);
   const hollowTest = "import test from 'node:test';\ntest('nothing', () => {});\n";
   writeFileSync(testFile, hollowTest);
   const manifestPath = path.join(root, 'bare/package.json');
   const committedManifest = readFileSync(manifestPath, 'utf8');
-  writeJson(manifestPath, { ...JSON.parse(committedManifest), exports: undefined });
-  writeCore({ '.': { require: './index.cjs' } });
-  assert.notEqual(pack().status, 0);
+  const strippedManifest = `${JSON.stringify({ ...JSON.parse(committedManifest), exports: undefined }, null, 2)}\n`;
+  writeFileSync(manifestPath, strippedManifest);
+  const tampered = await pack();
+  assert.notEqual(tampered.status, 0);
+  assert.match(tampered.stderr, /Command failed: .*--test test\/front-door\.test\.mjs/);
   assert.equal(readFileSync(testFile, 'utf8'), hollowTest);
+  assert.equal(readFileSync(manifestPath, 'utf8'), strippedManifest);
   writeFileSync(manifestPath, committedManifest);
   cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
-  writeCore({ '.': './index.js' });
+  publishCore({ '.': './index.js' });
 
-  // Staging that fails part-way (index.js is a folder) still restores the working files it replaced.
-  const workingManifest = `${committedManifest.trimEnd()}\n\n`;
-  writeFileSync(manifestPath, workingManifest);
-  rmSync(path.join(root, 'bare/index.js'));
-  mkdirSync(path.join(root, 'bare/index.js'));
-  assert.notEqual(pack().status, 0);
-  assert.equal(readFileSync(manifestPath, 'utf8'), workingManifest);
-  rmSync(path.join(root, 'bare/index.js'), { recursive: true });
-  writeFileSync(path.join(root, 'bare/index.js'), TEMPLATE.reexportFiles['index.js']('@fixture/core'));
-  writeFileSync(manifestPath, committedManifest);
-
-  // A staging path that is a link (here a dangling one pointing outside the package), or a folder linked outside the
-  // package, is refused before anything is written.
-  const outside = tempDir(t, 'bare-release-outside-');
-  rmSync(testFile);
-  symlinkSync(path.join(outside, 'created.mjs'), testFile);
-  const linked = pack();
-  assert.notEqual(linked.status, 0);
-  assert.match(linked.stderr, /test\/front-door\.test\.mjs is not a regular file; refusing to stage/);
-  assert.equal(existsSync(path.join(outside, 'created.mjs')), false);
-  rmSync(testFile);
-  rmSync(path.join(root, 'bare/test'), { recursive: true });
-  symlinkSync(outside, path.join(root, 'bare/test'), 'dir');
-  const linkedFolder = pack();
-  assert.notEqual(linkedFolder.status, 0);
-  assert.match(linkedFolder.stderr, /test\/front-door\.test\.mjs resolves outside the package/);
-  assert.deepEqual(readdirSync(outside), []);
-  rmSync(path.join(root, 'bare/test'));
-  mkdirSync(path.join(root, 'bare/test'));
-  cpSync(FRONT_DOOR_TEST_TEMPLATE, testFile);
-
-  // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
+  // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin. The
+  // front-door run passes on the committed files; the packed-tarball check refuses the changed manifest.
   const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));
   writeJson(path.join(root, 'release-packages.json'), releases.map(({ kind, core, cli, ...entry }) => entry));
-  const manifestFile = path.join(root, 'bare/package.json');
-  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-  writeJson(manifestFile, { ...manifest, dependencies: { '@fixture/core': '^1.2.0' } });
-  const tampered = pack();
-  assert.notEqual(tampered.status, 0);
-  assert.match(tampered.stderr, /changed dependencies after the bare release gate checked them/);
+  const manifest = JSON.parse(committedManifest);
+  writeJson(manifestPath, { ...manifest, dependencies: { '@fixture/core': '^1.2.0' } });
+  const loosened = await pack();
+  assert.notEqual(loosened.status, 0);
+  assert.match(loosened.stderr, /changed dependencies after the bare release gate checked them/);
 });

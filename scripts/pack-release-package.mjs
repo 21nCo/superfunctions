@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SHIM_FILE, TEMPLATE, bareKind, checkPackedBare, gitFile } from './assert-bare-release.mjs';
@@ -39,10 +39,10 @@ const typecheck = manifest.scripts?.typecheck ? 'typecheck' : 'type-check';
 for (const script of ['generate:check', 'build', typecheck, 'test']) {
   if (manifest.scripts?.[script]) npm('run', script);
 }
-// A bare package's front-door test must run even if an install, build or test hook rewrote its test script or the
-// files it reads: the package's manifest, re-export files, shim and test, as committed at the tag, are put in place
-// for it (the test file must be the committed template), it runs directly with Node after the pinned core and CLI
-// were installed from npm, and the working files are restored afterwards.
+// A bare package's front-door test runs on what the tag committed, not on the working tree an install, build or test
+// hook may have changed: a fresh folder holds only the package's committed manifest, re-export files, shim and test
+// (which must be the committed template), npm installs the pinned core and CLI there from the registry, and the test
+// runs directly with Node. Nothing in the working tree is written; the folder is removed afterwards.
 const committedTarget = committedReleaseEntry(target.slug);
 if (committedTarget.kind === 'bare') {
   const committedFile = file => {
@@ -55,39 +55,21 @@ if (committedTarget.kind === 'bare') {
   if (committedFile(TEMPLATE.testFile) !== gitFile(root, 'scripts/bare-front-door-test.mjs')) {
     throw new Error(`${target.name}: ${TEMPLATE.testFile} is not the front-door test template committed at the tag`);
   }
-  const pinned = ['package.json', ...Object.keys(TEMPLATE.reexportFiles), SHIM_FILE, TEMPLATE.testFile];
-  // Each working file replaced so far, with its previous content (null: there was none), restored in finally even
-  // when staging fails part-way.
-  const working = new Map();
+  const frontDoor = await mkdtemp(path.join(tmpdir(), 'bare-front-door-'));
   try {
-    for (const file of pinned) {
+    for (const file of ['package.json', ...Object.keys(TEMPLATE.reexportFiles), SHIM_FILE, TEMPLATE.testFile]) {
       const content = committedFile(file);
       if (content === null) continue;
-      const absolute = path.join(cwd, file);
-      // Only regular files inside the package are replaced: a link (even a dangling one) or anything else there, or a
-      // folder that resolves outside the package, is refused before anything is written.
-      let stats = null;
-      try {
-        stats = await lstat(absolute);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') throw error;
-      }
-      if (stats !== null && !stats.isFile()) throw new Error(`${target.name}: ${file} is not a regular file; refusing to stage the front-door test over it`);
-      await mkdir(path.dirname(absolute), { recursive: true });
-      const folder = path.relative(await realpath(cwd), await realpath(path.dirname(absolute)));
-      if (folder.startsWith('..') || path.isAbsolute(folder)) throw new Error(`${target.name}: ${file} resolves outside the package; refusing to stage the front-door test`);
-      const previous = stats === null ? null : await readFile(absolute, 'utf8');
-      working.set(absolute, previous);
-      await writeFile(absolute, content);
+      await mkdir(path.dirname(path.join(frontDoor, file)), { recursive: true });
+      await writeFile(path.join(frontDoor, file), content);
     }
+    // The pinned dependencies (the core, and the CLI as a dependency or devDependency), without lifecycle scripts.
+    execFileSync('npm', ['install', '--workspaces=false', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: frontDoor, stdio: 'inherit', env: { ...process.env, CI: 'true' } });
     // NODE_TEST_CONTEXT would make node --test report to an enclosing test runner instead of exiting non-zero.
     const { NODE_TEST_CONTEXT, ...env } = process.env;
-    execFileSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd, stdio: 'inherit', env: { ...env, CI: 'true', BARE_CLI_NO_NPM: '1' } });
+    execFileSync(process.execPath, ['--test', TEMPLATE.testFile], { cwd: frontDoor, stdio: 'inherit', env: { ...env, CI: 'true', BARE_CLI_NO_NPM: '1' } });
   } finally {
-    for (const [absolute, content] of working) {
-      if (content === null) await rm(absolute, { force: true });
-      else await writeFile(absolute, content);
-    }
+    await rm(frontDoor, { recursive: true, force: true });
   }
 }
 // Run pack lifecycle hooks once; publishing this exact tarball cannot rebuild

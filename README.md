@@ -204,9 +204,11 @@ accepts only the bare template's exact shape (`TEMPLATE` in
   core's exports, and every bin's `--version` must print the bare package's
   version with `BARE_CLI_NO_NPM=1` (which stops the shim from fetching the CLI
   with npm), so a core that ESM cannot import, a missing or different installed
-  CLI, or a CLI without `--version` fails the release. The packer checks that
-  file against the template committed at the tag and runs it directly with
-  Node, whatever the package's scripts say.
+  CLI, or a CLI without `--version` fails the release. The packer also runs it
+  directly with Node, whatever the package's scripts say, in a fresh temporary
+  folder that holds only the package's committed manifest, re-export files,
+  shim and test (which must be the committed template), with the pinned core
+  and CLI installed there from npm; it never writes to the working tree.
 
 The shim imports only Node.js built-ins and runs the CLI's bin named after the
 bare package at exactly the bare package's version, as a child process that keeps
