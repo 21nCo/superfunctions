@@ -419,6 +419,18 @@ describe("AuthFn token authority boundaries", () => {
     expect(init.redirect).toBe("manual");
   });
 
+  it("leaves scope checks to tools, so a wildcard grant reaches them", async () => {
+    const calls = { count: 0 };
+    const endpoint = createAuthFnTokenAuthority({
+      issuer: `${AUTH_ORIGIN}/`,
+      verifyAccessToken: async () => ({
+        clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["*"], expiresAt: later(),
+      }),
+    }).protect(handler(calls), { resource: MEMOTRON, requiredScopes: ["memotron:read"] } as never);
+    expect((await endpoint(bearer())).status).toBe(200);
+    expect(calls.count).toBe(1);
+  });
+
   it("verifier() rejects an inactive token with AuthFnInvalidTokenError", async () => {
     const verifier = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken: async () => null })
       .verifier(MEMOTRON);
@@ -434,6 +446,7 @@ describe("AuthFn token authority boundaries", () => {
       introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET },
     } as never)).toThrow(/exactly one/);
     const authority = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken });
+    expect(createAuthFnTokenAuthority({ issuer: `${AUTH_ORIGIN}/`, verifyAccessToken }).issuer).toBe(AUTH_ORIGIN);
     // MCP clients send the normalized spelling; AuthFn binds tokens to it exactly.
     expect(() => authority.protect(handler({ count: 0 }), { resource: "https://memotron.example.com" }))
       .toThrow(/normalized form/);

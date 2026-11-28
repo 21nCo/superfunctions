@@ -4,7 +4,6 @@ import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/p
 import {
   createOAuthResourceServerHandler,
   createProtectedResourceMetadata,
-  protectedResourceMetadataUrl,
   type McpFnOAuthResourceServerOptions,
   type McpFnWebStandardHandler,
 } from "../resource-server.js";
@@ -113,6 +112,17 @@ function normalizedResource(value: string | URL): string {
   return url.href;
 }
 
+/** The issuer as RFC 9728 metadata advertises it (a bare origin without its slash). */
+function normalizedIssuer(value: string | URL): string {
+  let url: URL;
+  try {
+    url = new URL(value.toString());
+  } catch {
+    throw new TypeError("An AuthFn provider issuer must be an absolute URL");
+  }
+  return url.pathname === "/" && !url.search && !url.hash ? url.origin : url.href;
+}
+
 function isFiniteDate(value: unknown): value is Date {
   return value instanceof Date && Number.isFinite(value.getTime());
 }
@@ -149,7 +159,7 @@ function inProcessCheck(
   };
 }
 
-function unavailableResponse(metadataUrl: URL): Response {
+function unavailableResponse(): Response {
   return new Response(
     JSON.stringify({
       error: "temporarily_unavailable",
@@ -161,7 +171,6 @@ function unavailableResponse(metadataUrl: URL): Response {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
         "retry-after": "5",
-        link: `<${metadataUrl.toString()}>; rel="oauth-protected-resource"`,
       },
     },
   );
@@ -193,7 +202,7 @@ export function createAuthFnTokenAuthority(
   if (provider.issuer === undefined || provider.issuer === null) {
     throw new TypeError("An AuthFn provider needs its issuer");
   }
-  const issuer = provider.issuer.toString();
+  const issuer = normalizedIssuer(provider.issuer);
   const checkFor = hasLocal
     ? (resource: string) => inProcessCheck(provider as AuthFnInProcessTokenProvider, resource)
     : createIntrospectionVerifier((provider as AuthFnIntrospectionTokenProvider).introspection);
@@ -214,10 +223,17 @@ export function createAuthFnTokenAuthority(
     options: AuthFnProtectedResourceOptions,
   ) => {
     const resource = normalizedResource(options.resource);
-    const base = { ...options, resource, authorizationServers: [issuer] };
+    // Scopes are passed through for tools to gate on (`*` and `<app>:*`
+    // included), never matched exactly at the endpoint.
+    const base = {
+      ...options,
+      resource,
+      authorizationServers: [issuer],
+      requiredScopes: undefined,
+      allowTokensWithoutExpiry: false,
+    };
     // Fails now, not on the first request, for an issuer RFC 9728 refuses.
     createProtectedResourceMetadata(base);
-    const metadataUrl = protectedResourceMetadataUrl(resource);
     const tokenVerifier = verifier(resource);
     return async (request: Request): Promise<Response> => {
       // Request-scoped, so concurrent requests never see each other's outcome.
@@ -236,7 +252,7 @@ export function createAuthFnTokenAuthority(
         },
       });
       const response = await handler(request);
-      return unavailable ? unavailableResponse(metadataUrl) : response;
+      return unavailable ? unavailableResponse() : response;
     };
   };
 
