@@ -56,17 +56,19 @@ const fetch = authority.protect(mcp, {
 ```
 
 - `resource` must be written in its normalized form (as `new URL(resource).href`
-  prints it, without a fragment), the form the metadata advertises and MCP
+  prints it, without credentials or a fragment), the form the metadata advertises and MCP
   clients send as RFC 8707 `resource`; configure the same string as the AuthFn
-  resource. Any other spelling throws.
+  resource. Any other spelling throws, with a message that does not repeat
+  the URL.
 - Every request asks AuthFn; nothing is cached, so a revoked grant or token
   stops working on the next request. A token is accepted only when AuthFn
   reports it active for exactly this resource and its `expiresAt` (or `exp`) is
-  in the future; a token for another audience, an expired token and a token of
+  in the future (by the `clock` option in `protect()`); a token for another audience, an expired token and a token of
   a revoked grant are answered 401 `invalid_token`.
 - When AuthFn cannot be asked (`verifyAccessToken` throws; introspection fails,
-  times out after `timeoutMs` (a whole number of milliseconds, default 5000),
-  redirects, answers other than 200
+  times out after `timeoutMs` (a whole number of milliseconds, default 5000,
+  covering the request and the body even when a custom `fetch` ignores the
+  abort signal; a later answer is discarded), redirects, answers other than 200
   or with a body that is not a JSON object), the endpoint answers 503
   `temporarily_unavailable` without calling the MCP handler, so clients keep
   their tokens. Introspection never follows redirects. Its endpoint must use
@@ -75,7 +77,11 @@ const fetch = authority.protect(mcp, {
 - Scopes are passed through, not enforced at the endpoint: gate tools on
   `extra.authInfo.scopes`, for example with `@mcpfn/datafn`'s `sessionScopes`,
   which understands `<app>:*` and `*`.
-- The issuer must not carry credentials, a query or a fragment (RFC 8414).
+- The issuer must not carry credentials, a query or a fragment (RFC 8414), and
+  must be written exactly as AuthFn publishes it in canonical form (lowercase
+  host, no default port, no trailing slash after a bare origin, as in
+  `https://auth.example.com`). It is advertised verbatim, because RFC 8414
+  clients compare it exactly with AuthFn's metadata; any other spelling throws.
 - `authority.verifier(resource, { invalidTokenError })` returns the MCP SDK
   `OAuthTokenVerifier` for hosts that use the SDK's `requireBearerAuth`. Pass
   `InvalidTokenError` from the same `@modelcontextprotocol/sdk` copy as that

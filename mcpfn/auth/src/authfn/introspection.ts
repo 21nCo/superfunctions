@@ -58,9 +58,10 @@ function readScopes(value: unknown): string[] | undefined {
  * Builds a per-resource check that POSTs the token to the introspection
  * endpoint with the resource's secret. An answer that is not `active: true`
  * for exactly this resource, with a client, subject and finite `exp`, is
- * `null` (not active). A failed request, a timeout, a redirect, a non-200
- * status or a body that is not a JSON object throws: the provider could not
- * be asked.
+ * `null` (not active). A failed request, a redirect, a non-200 status, a
+ * body that is not a JSON object, or no complete answer within `timeoutMs`
+ * (enforced here, not left to the fetch's handling of the abort signal)
+ * throws: the provider could not be asked.
  */
 export function createIntrospectionVerifier(
   options: AuthFnIntrospectionOptions,
@@ -83,8 +84,19 @@ export function createIntrospectionVerifier(
   const authorization = `Bearer ${options.secret}`;
 
   return (resource) => async (token) => {
-    let body: unknown;
-    try {
+    // One deadline covers the request and the body, whether or not the
+    // configured fetch honours the abort signal; an answer after it is dropped.
+    const controller = new AbortController();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        void reader?.cancel().catch(() => undefined);
+        reject(new IntrospectionUnavailableError("AuthFn introspection timed out"));
+      }, timeoutMs);
+    });
+    const exchange = (async () => {
       const response = await fetchFn(endpoint.toString(), {
         method: "POST",
         headers: {
@@ -95,7 +107,7 @@ export function createIntrospectionVerifier(
         body: new URLSearchParams({ token, token_type_hint: "access_token" }).toString(),
         // Never resend the secret to wherever a redirect points.
         redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: controller.signal,
       });
       if (response.status !== 200) {
         void response.body?.cancel().catch(() => undefined);
@@ -103,10 +115,28 @@ export function createIntrospectionVerifier(
           `AuthFn introspection answered ${response.status}`,
         );
       }
-      body = await response.json();
+      if (!response.body) throw new IntrospectionUnavailableError("AuthFn introspection answered no body");
+      reader = response.body.getReader();
+      if (controller.signal.aborted) void reader.cancel().catch(() => undefined);
+      const decoder = new TextDecoder();
+      let text = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+      return JSON.parse(text + decoder.decode()) as unknown;
+    })();
+    // The losing side of the race must not surface as an unhandled rejection.
+    exchange.catch(() => undefined);
+    let body: unknown;
+    try {
+      body = await Promise.race([exchange, deadline]);
     } catch (error) {
       if (error instanceof IntrospectionUnavailableError) throw error;
       throw new IntrospectionUnavailableError("AuthFn introspection failed");
+    } finally {
+      clearTimeout(timer);
     }
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new IntrospectionUnavailableError("AuthFn introspection answered a non-object");
@@ -127,12 +157,15 @@ export function createIntrospectionVerifier(
       return null;
     }
     return {
-      token,
-      clientId: answer.client_id,
-      scopes,
-      expiresAt: answer.exp,
-      resource: new URL(resource),
-      extra: { subject: answer.sub },
+      expiresAtMs: answer.exp * 1_000,
+      info: {
+        token,
+        clientId: answer.client_id,
+        scopes,
+        expiresAt: answer.exp,
+        resource: new URL(resource),
+        extra: { subject: answer.sub },
+      },
     };
   };
 }

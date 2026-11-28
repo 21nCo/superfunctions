@@ -428,7 +428,7 @@ describe("AuthFn token authority boundaries", () => {
   it("leaves scope checks to tools, so a wildcard grant reaches them", async () => {
     const calls = { count: 0 };
     const endpoint = createAuthFnTokenAuthority({
-      issuer: `${AUTH_ORIGIN}/`,
+      issuer: AUTH_ORIGIN,
       verifyAccessToken: async () => ({
         clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["*"], expiresAt: later(),
       }),
@@ -446,9 +446,7 @@ describe("AuthFn token authority boundaries", () => {
       introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET },
     } as never)).toThrow(/exactly one/);
     const authority = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken });
-    expect(createAuthFnTokenAuthority({ issuer: `${AUTH_ORIGIN}/`, verifyAccessToken }).issuer).toBe(AUTH_ORIGIN);
-    // RFC 8414 issuers carry no credentials, query or fragment; the root-slash
-    // rewrite must not silently drop them.
+    // RFC 8414 issuers carry no credentials, query or fragment.
     for (const issuer of [
       "https://test-user@auth.example.com/",
       "https://auth.example.com/?tenant=test",
@@ -462,6 +460,25 @@ describe("AuthFn token authority boundaries", () => {
     expect(() => authority.protect(handler({ count: 0 }), { resource: "https://memotron.example.com" }))
       .toThrow(/normalized form/);
     expect(() => authority.protect(handler({ count: 0 }), { resource: `${MEMOTRON}#frag` })).toThrow(/normalized form/);
+    // Public metadata never carries credentials, and the error never echoes
+    // the resource (a query may hold a credential).
+    const userinfo = ["https://", "test-user", ":", "test-password", "@memotron.example.com/mcp"].join("");
+    for (const resource of [
+      userinfo,
+      "https://Memotron.example.com/mcp?k=test-query-value",
+      `${MEMOTRON}?k=test-query-value#test-query-value`,
+    ]) {
+      let thrown: unknown;
+      try {
+        authority.protect(handler({ count: 0 }), { resource });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, resource).toBeInstanceOf(TypeError);
+      const message = (thrown as Error).message;
+      for (const secret of ["test-user", "test-password", "test-query-value"]) expect(message).not.toContain(secret);
+    }
+    expect(() => authority.verifier(userinfo, { invalidTokenError: InvalidTokenError })).toThrow(/without credentials/);
     expect(() => createAuthFnTokenAuthority({ issuer: "http://auth.example.com", verifyAccessToken })
       .protect(handler({ count: 0 }), { resource: MEMOTRON })).toThrow(/HTTPS/);
     for (const introspection of [
@@ -473,6 +490,115 @@ describe("AuthFn token authority boundaries", () => {
       { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, timeoutMs: 2 ** 31 },
     ]) {
       expect(() => createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, introspection })).toThrow(TypeError);
+    }
+  });
+
+  it("advertises the issuer exactly as configured and refuses any other spelling", async () => {
+    const verifyAccessToken = async () => null;
+    for (const issuer of [AUTH_ORIGIN, `${AUTH_ORIGIN}/auth`, new URL(`${AUTH_ORIGIN}/auth`)]) {
+      const authority = createAuthFnTokenAuthority({ issuer, verifyAccessToken });
+      expect(authority.issuer).toBe(issuer.toString());
+      const endpoint = authority.protect(handler({ count: 0 }), { resource: MEMOTRON });
+      const metadata = await (await endpoint(new Request("https://memotron.example.com/.well-known/oauth-protected-resource/mcp"))).json();
+      expect(metadata.authorization_servers).toEqual([issuer.toString()]);
+    }
+    // AuthFn publishes these verbatim; advertising a rewritten form would fail
+    // an RFC 8414 section 3.3 issuer comparison.
+    for (const issuer of [
+      `${AUTH_ORIGIN}/`,
+      new URL(AUTH_ORIGIN),
+      "https://Auth.example.com",
+      "https://auth.example.com:443",
+      "https://auth.example.com/a/../auth",
+    ]) {
+      expect(() => createAuthFnTokenAuthority({ issuer, verifyAccessToken }), issuer.toString()).toThrow(/exactly as AuthFn publishes it/);
+    }
+  });
+
+  it("holds one introspection deadline over the request and the body, whatever fetch does with the signal", async () => {
+    const exp = Math.floor(Date.now() / 1_000) + 60;
+    const active = { active: true, aud: MEMOTRON, client_id: "test-client", sub: "test-user", scope: "memotron:read", exp };
+    let cancelled = 0;
+    const hangingBody = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    }), { status: 200 });
+    const fetches: Array<typeof fetch> = [
+      // Ignores the abort signal and never settles.
+      () => new Promise<Response>(() => undefined),
+      // Answers at once, but the body never finishes.
+      async () => hangingBody(),
+      // Ignores the signal and answers active after the deadline.
+      () => new Promise<Response>((done) => setTimeout(() => done(Response.json(active)), 150)),
+    ];
+    for (const fetch of fetches) {
+      const calls = { count: 0 };
+      const authority = createAuthFnTokenAuthority({
+        issuer: AUTH_ORIGIN,
+        introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch, timeoutMs: 30 },
+      });
+      const started = Date.now();
+      const response = await authority.protect(handler(calls), { resource: MEMOTRON })(bearer());
+      expect(response.status).toBe(503);
+      expect(Date.now() - started).toBeLessThan(140);
+      expect(calls.count).toBe(0);
+      const verification = authority.verifier(MEMOTRON, { invalidTokenError: InvalidTokenError })
+        .verifyAccessToken("test-access-token");
+      await expect(verification).rejects.toThrow(/timed out/);
+      await expect(verification).rejects.not.toBeInstanceOf(InvalidTokenError);
+    }
+    expect(cancelled).toBeGreaterThan(0);
+    // Let the late answers arrive; they must not surface anywhere.
+    await new Promise((done) => setTimeout(done, 200));
+  });
+
+  it("checks expiry to the millisecond, against protect()'s configured clock", async () => {
+    // A post-2038 instant where a seconds round trip (t / 1000 * 1000) exceeds t.
+    const instant = 2_148_210_165_780;
+    expect((instant / 1_000) * 1_000).toBeGreaterThan(instant);
+    let now = instant;
+    const calls = { count: 0 };
+    const endpoint = createAuthFnTokenAuthority({
+      issuer: AUTH_ORIGIN,
+      verifyAccessToken: async () => ({
+        clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["*"], expiresAt: new Date(instant),
+      }),
+    }).protect(handler(calls), { resource: MEMOTRON, clock: () => now });
+    expect((await endpoint(bearer())).status).toBe(401);
+    now = instant - 1;
+    expect((await endpoint(bearer())).status).toBe(200);
+    expect(calls.count).toBe(1);
+
+    // A token valid by the wall clock is refused once the configured clock passes it.
+    const later = createAuthFnTokenAuthority({
+      issuer: AUTH_ORIGIN,
+      verifyAccessToken: async () => ({
+        clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["*"], expiresAt: new Date(Date.now() + 60_000),
+      }),
+    }).protect(handler(calls), { resource: MEMOTRON, clock: () => Date.now() + 120_000 });
+    expect((await later(bearer())).status).toBe(401);
+    expect(calls.count).toBe(1);
+
+    // verifier() has no resource-server check behind it: its own comparison
+    // must refuse an expiry equal to now.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(instant);
+      const verifier = createAuthFnTokenAuthority({
+        issuer: AUTH_ORIGIN,
+        verifyAccessToken: async () => ({
+          clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["*"], expiresAt: new Date(instant),
+        }),
+      }).verifier(MEMOTRON, { invalidTokenError: InvalidTokenError });
+      await expect(verifier.verifyAccessToken("test-access-token")).rejects.toBeInstanceOf(InvalidTokenError);
+      vi.setSystemTime(instant - 1);
+      await expect(verifier.verifyAccessToken("test-access-token")).resolves.toMatchObject({ clientId: "test-client" });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

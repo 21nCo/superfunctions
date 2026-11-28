@@ -27,7 +27,10 @@ export interface AuthFnOAuthAccessTokenLike {
 
 /** Verifies a token in the AuthFn server's process, against its database. */
 export interface AuthFnInProcessTokenProvider {
-  /** The AuthFn environment's issuer, advertised as the authorization server. */
+  /**
+   * The AuthFn environment's issuer, exactly as AuthFn publishes it, advertised
+   * verbatim as the authorization server.
+   */
   issuer: string | URL;
   /**
    * Usually `(token, { resource }) => verifyOAuthAccessToken(store, token, { resource })`.
@@ -103,14 +106,24 @@ class InactiveTokenError extends Error {
   }
 }
 
+/**
+ * An active token as one mode reports it, with its expiry in epoch
+ * milliseconds (exact for in-process `Date`s) for the completion-time check.
+ */
+export interface AuthFnActiveToken {
+  info: AuthInfo;
+  expiresAtMs: number;
+}
+
 /** Verifies a token for an exact resource; `null` means not active there. */
-export type AuthFnTokenCheck = (token: string) => Promise<AuthInfo | null>;
+export type AuthFnTokenCheck = (token: string) => Promise<AuthFnActiveToken | null>;
 
 /**
  * The resource in the form RFC 9728 metadata advertises it, which is the form
  * MCP clients send as RFC 8707 `resource` and AuthFn binds tokens to exactly.
  */
 function normalizedResource(value: string | URL): string {
+  // Diagnostics never echo the value: a query may carry credentials.
   const serialized = value.toString();
   let url: URL;
   try {
@@ -118,20 +131,29 @@ function normalizedResource(value: string | URL): string {
   } catch {
     throw new TypeError("An AuthFn protected resource must be an absolute URL");
   }
-  if (url.hash || serialized.includes("#") || url.href !== serialized) {
+  if (
+    url.username ||
+    url.password ||
+    url.hash ||
+    serialized.includes("#") ||
+    url.href !== serialized
+  ) {
     throw new TypeError(
-      `An AuthFn protected resource must be given in its normalized form without a fragment (${url.origin}${url.pathname}${url.search})`,
+      "An AuthFn protected resource must be given in its normalized form, without credentials or a fragment",
     );
   }
   return url.href;
 }
 
 /**
- * The issuer as RFC 9728 metadata advertises it (a bare origin without its
- * slash). RFC 8414 issuers carry no credentials, query or fragment; they are
- * refused here, before the root-slash rewrite could drop them.
+ * The issuer, exactly as configured. RFC 9728 metadata advertises a bare
+ * origin without its slash and AuthFn publishes its issuer verbatim, and an
+ * RFC 8414 client compares the two exactly, so an issuer that would be
+ * advertised in any other spelling (a root slash, an uppercase host, a
+ * default port) is refused rather than rewritten. RFC 8414 issuers carry no
+ * credentials, query or fragment.
  */
-function normalizedIssuer(value: string | URL): string {
+function exactIssuer(value: string | URL): string {
   const serialized = value.toString();
   let url: URL;
   try {
@@ -144,7 +166,13 @@ function normalizedIssuer(value: string | URL): string {
       "An AuthFn provider issuer must not carry credentials, a query or a fragment",
     );
   }
-  return url.pathname === "/" ? url.origin : url.href;
+  const advertised = url.pathname === "/" ? url.origin : url.href;
+  if (advertised !== serialized) {
+    throw new TypeError(
+      "An AuthFn provider issuer must be given exactly as AuthFn publishes it, in canonical form: a lowercase host, no default port and no trailing slash after a bare origin",
+    );
+  }
+  return advertised;
 }
 
 function isFiniteDate(value: unknown): value is Date {
@@ -168,16 +196,20 @@ function inProcessCheck(
     ) {
       return null;
     }
+    const expiresAtMs = info.expiresAt.getTime();
     return {
-      token,
-      clientId: info.clientId,
-      scopes: [...info.scopes],
-      expiresAt: info.expiresAt.getTime() / 1_000,
-      resource: new URL(resource),
-      extra: {
-        subject: info.userId,
-        ...(typeof info.grantId === "string" ? { grantId: info.grantId } : {}),
-        ...(typeof info.tokenId === "string" ? { tokenId: info.tokenId } : {}),
+      expiresAtMs,
+      info: {
+        token,
+        clientId: info.clientId,
+        scopes: [...info.scopes],
+        expiresAt: expiresAtMs / 1_000,
+        resource: new URL(resource),
+        extra: {
+          subject: info.userId,
+          ...(typeof info.grantId === "string" ? { grantId: info.grantId } : {}),
+          ...(typeof info.tokenId === "string" ? { tokenId: info.tokenId } : {}),
+        },
       },
     };
   };
@@ -226,21 +258,22 @@ export function createAuthFnTokenAuthority(
   if (provider.issuer === undefined || provider.issuer === null) {
     throw new TypeError("An AuthFn provider needs its issuer");
   }
-  const issuer = normalizedIssuer(provider.issuer);
+  const issuer = exactIssuer(provider.issuer);
   const checkFor = hasLocal
     ? (resource: string) => inProcessCheck(provider as AuthFnInProcessTokenProvider, resource)
     : createIntrospectionVerifier((provider as AuthFnIntrospectionTokenProvider).introspection);
 
   // Expiry is checked when the provider's answer arrives, in both modes, so
   // a token that lapsed while it was being checked is not active.
-  const activeCheckFor = (resource: string): AuthFnTokenCheck => {
+  const activeCheckFor = (
+    resource: string,
+    now: () => number = Date.now,
+  ): ((token: string) => Promise<AuthInfo | null>) => {
     const check = checkFor(resource);
     return async (token) => {
-      const info = await check(token);
-      if (!info || typeof info.expiresAt !== "number" || !Number.isFinite(info.expiresAt)) {
-        return null;
-      }
-      return info.expiresAt * 1_000 > Date.now() ? info : null;
+      const active = await check(token);
+      if (!active || !Number.isFinite(active.expiresAtMs)) return null;
+      return active.expiresAtMs > now() ? active.info : null;
     };
   };
 
@@ -280,7 +313,7 @@ export function createAuthFnTokenAuthority(
     };
     // Fails now, not on the first request, for an issuer RFC 9728 refuses.
     createProtectedResourceMetadata(base);
-    const check = activeCheckFor(resource);
+    const check = activeCheckFor(resource, options.clock);
     return async (request: Request): Promise<Response> => {
       // Request-scoped, so concurrent requests never see each other's outcome.
       let unavailable = false;
