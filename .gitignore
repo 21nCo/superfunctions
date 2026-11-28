@@ -13,7 +13,7 @@ build/
 !apifn/docsfn/src/svelte/ApifnApiReference.svelte.d.ts
 !superconsole/src/app.d.ts
 !uifn/catalog/generated/primitive-contracts.d.ts
-# A bare npm package's template re-export files (scripts/assert-bare-release.mjs TEMPLATE)
+# A bare npm package's template re-export files (see the README's "Bare packages")
 !*/bare/index.js
 !*/bare/index.d.ts
 **/*.d.ts.map
