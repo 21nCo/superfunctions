@@ -1,0 +1,21 @@
+packages/superfunctions/package.json
+  s_b7546bb15c0313::t_a28dfaeb55014e 19
+packages/superfunctions/test/front-door.test.mjs
+  s_b7546bb15c0313::t_f0dd98c722b6d5 1-6,16-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "889bb20f78d4d3653f383ea694b190e7b6ad5253",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

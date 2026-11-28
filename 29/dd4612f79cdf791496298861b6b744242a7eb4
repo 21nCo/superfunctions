@@ -1,0 +1,43 @@
+package-lock.json
+  s_404997fa14c6c9::t_cb8d391cd12c92 53390-53393,58482,59570-59583
+packages/cli/CHANGELOG.md
+  s_b7546bb15c0313::t_447d17e87f24c1 3-6
+packages/cli/package.json
+  s_b7546bb15c0313::t_4a74b8e2ac485f 3
+packages/superfunctions/README.md
+  s_b7546bb15c0313::t_b08ceeaa8aa332 1-23
+packages/superfunctions/bin/cli.mjs
+  s_b7546bb15c0313::t_545f914adb1c79 1-30,33-43,53-67,71-77,83-87,91-92,95-101,128-140
+packages/superfunctions/package.json
+  s_b7546bb15c0313::t_c5567df1e7a887 1-47
+packages/superfunctions/test/cli.test.mjs
+  s_b7546bb15c0313::t_72deb31a9ad601 1-27
+release-packages.json
+  s_b7546bb15c0313::t_c0e198cea3537e 53
+superfunctions.owners.json
+  s_b7546bb15c0313::t_9f249e0cc08826 199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29dd4612f79cdf791496298861b6b744242a7eb4",
+  "prompts": {},
+  "sessions": {
+    "s_404997fa14c6c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb71a446-38ba-4274-9eec-e562ce17f87b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
