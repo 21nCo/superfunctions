@@ -1,0 +1,39 @@
+reviewfn/core/src/context/symbols.ts
+  s_b62914e6e0f9ab::t_5dd0a5c5e7943f 37-44,46,55-91,109-110,130-132,135-141,146-148,155-157,163-165,167-168,174,178-179,185-186,189-191,202,205,207-208,213,219,221-222,225-230,232-233,237-238,251-256,267-283,309-376,417,429,455,461-487,490-493,495,502,505,507-513,515-518
+reviewfn/core/test/code-references.test.ts
+  s_b62914e6e0f9ab::t_9732a6af50c07a 2,16,57-61,142-156,172-174,186-200,249,256,266,297,303-357,463-473,499-556
+reviewfn/core/src/context/code-references.ts
+  s_39a868e1585a27::t_00116426fb9385 31-32,37-38,94-103,145,147-151,316-319,325-327,330-350,353-354,357-358,360,363-364,408-411,430-434,436-448,450-452,462,466,468-469,479,484-485,491-493,496,500,506-537,540-543
+reviewfn/core/src/panel/git.ts
+  s_39a868e1585a27::t_2816515c1eae95 8-9,30-32,51-61,63-65
+reviewfn/docs/configuration.md
+  s_39a868e1585a27::t_59e4680d3c0e8e 21,23-24,27
+reviewfn/docs/content/docs/reference/configuration.md
+  s_39a868e1585a27::t_a5bf1a266b06c0 24,26-27,30
+reviewfn/docs/static/llms-full.txt
+  s_39a868e1585a27::t_aee979b2291926 127,129-130,133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10e643a4a491af65eba7efa1635d16e4dca3b109",
+  "prompts": {},
+  "sessions": {
+    "s_39a868e1585a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01fb3e9-ff65-4e23-90f8-246f613a7879",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b62914e6e0f9ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22037-8a9d-7c03-8736-34292adec001",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
