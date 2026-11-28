@@ -4,6 +4,7 @@ import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/p
 import {
   createOAuthResourceServerHandler,
   createProtectedResourceMetadata,
+  protectedResourceMetadataUrl,
   type McpFnOAuthResourceServerOptions,
   type McpFnWebStandardHandler,
 } from "../resource-server.js";
@@ -29,7 +30,7 @@ export interface AuthFnOAuthAccessTokenLike {
 export interface AuthFnInProcessTokenProvider {
   /**
    * The AuthFn environment's issuer, exactly as AuthFn publishes it, advertised
-   * verbatim as the authorization server.
+   * verbatim (never normalized) as the authorization server.
    */
   issuer: string | URL;
   /**
@@ -131,6 +132,9 @@ function normalizedResource(value: string | URL): string {
   } catch {
     throw new TypeError("An AuthFn protected resource must be an absolute URL");
   }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new TypeError("An AuthFn protected resource must be an http or https URL");
+  }
   if (
     url.username ||
     url.password ||
@@ -146,12 +150,12 @@ function normalizedResource(value: string | URL): string {
 }
 
 /**
- * The issuer, exactly as configured. RFC 9728 metadata advertises a bare
- * origin without its slash and AuthFn publishes its issuer verbatim, and an
- * RFC 8414 client compares the two exactly, so an issuer that would be
- * advertised in any other spelling (a root slash, an uppercase host, a
- * default port) is refused rather than rewritten. RFC 8414 issuers carry no
- * credentials, query or fragment.
+ * The issuer, exactly as configured. AuthFn publishes its issuer verbatim
+ * (`environment.issuer`, a region's `issuer`) and an RFC 8414 client compares
+ * it exactly, so it is advertised in the configured spelling, never
+ * normalized. RFC 8414 issuers carry no credentials, query or fragment; the
+ * scheme is checked with the shared RFC 9728 rules when `protect()` builds
+ * its metadata.
  */
 function exactIssuer(value: string | URL): string {
   const serialized = value.toString();
@@ -166,13 +170,10 @@ function exactIssuer(value: string | URL): string {
       "An AuthFn provider issuer must not carry credentials, a query or a fragment",
     );
   }
-  const advertised = url.pathname === "/" ? url.origin : url.href;
-  if (advertised !== serialized) {
-    throw new TypeError(
-      "An AuthFn provider issuer must be given exactly as AuthFn publishes it, in canonical form: a lowercase host, no default port and no trailing slash after a bare origin",
-    );
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new TypeError("An AuthFn provider issuer must be an HTTPS URL");
   }
-  return advertised;
+  return serialized;
 }
 
 function isFiniteDate(value: unknown): value is Date {
@@ -312,9 +313,29 @@ export function createAuthFnTokenAuthority(
       allowTokensWithoutExpiry: false,
     };
     // Fails now, not on the first request, for an issuer RFC 9728 refuses.
-    createProtectedResourceMetadata(base);
+    // The shared helper normalizes identifiers (a root slash dropped, the host
+    // lowercased), so the metadata names the issuer as configured instead.
+    const metadataBody = JSON.stringify({
+      ...createProtectedResourceMetadata(base),
+      authorization_servers: [issuer],
+    });
+    const metadataUrl = protectedResourceMetadataUrl(resource);
     const check = activeCheckFor(resource, options.clock);
     return async (request: Request): Promise<Response> => {
+      const requestUrl = new URL(request.url);
+      if (
+        request.method === "GET" &&
+        requestUrl.origin === metadataUrl.origin &&
+        requestUrl.pathname === metadataUrl.pathname
+      ) {
+        return new Response(metadataBody, {
+          status: 200,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "public, max-age=300",
+          },
+        });
+      }
       // Request-scoped, so concurrent requests never see each other's outcome.
       let unavailable = false;
       const handler = createOAuthResourceServerHandler(mcpHandler, {

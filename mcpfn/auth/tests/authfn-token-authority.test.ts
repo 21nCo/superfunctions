@@ -71,12 +71,14 @@ function mcpHandler(calls: { count: number }): McpFnWebStandardHandler {
 }
 
 /** A real AuthFn OAuth provider on an in-memory database, and a protected Memotron `/mcp`. */
-async function setup(mode: Mode) {
+/** `issuer` makes AuthFn publish that exact issuer through `environment.resolve`. */
+async function setup(mode: Mode, { issuer = AUTH_ORIGIN }: { issuer?: string } = {}) {
   let clock = Date.now();
   const database = memoryAdapter({ debug: false });
   const consents: OAuthConsentInput[] = [];
   const authServer = authfn({ scopes: SCOPES, plugins: [authFnOAuthProviderPlugin()] }).createServer({
     database,
+    ...(issuer === AUTH_ORIGIN ? {} : { environment: { resolve: () => ({ issuer, baseUrl: AUTH_ORIGIN }) } }),
     pluginRuntime: {
       oauthProvider: {
         clients: [TEST_CLIENT],
@@ -120,11 +122,11 @@ async function setup(mode: Mode) {
 
   const provider: AuthFnTokenAuthorityProvider = mode === "in-process"
     ? {
-        issuer: AUTH_ORIGIN,
+        issuer,
         verifyAccessToken: (token, { resource }) =>
           verifyOAuthAccessToken(store, token, { resource, now: () => new Date(clock) }),
       }
-    : { issuer: AUTH_ORIGIN, introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch: route } };
+    : { issuer, introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch: route } };
   const authority = createAuthFnTokenAuthority(provider);
   const calls = { count: 0 };
   protectedEndpoint = authority.protect(mcpHandler(calls), {
@@ -190,6 +192,7 @@ async function setup(mode: Mode) {
     });
 
   return {
+    authority,
     route,
     approve,
     issueToken,
@@ -291,6 +294,46 @@ describe.each<Mode>(["in-process", "introspection"])("AuthFn token authority (%s
     const grants = await Promise.all(tokenRequests.map(async (request) =>
       new URLSearchParams(await request.text()).get("grant_type")));
     expect(grants).toEqual(["authorization_code", "refresh_token"]);
+    await second.client.close();
+  });
+
+  it("discovers a root-slash issuer exactly as AuthFn publishes it and accepts its tokens", async () => {
+    const issuer = `${AUTH_ORIGIN}/`;
+    const env = await setup(mode, { issuer });
+    let authorizationUrl: URL | undefined;
+    const oauth = createMcpFnOAuthClientProvider({
+      redirectUrl: REDIRECT,
+      clientMetadata: {
+        client_name: "Test MCP Host",
+        redirect_uris: [REDIRECT],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+      openAuthorization: (url) => {
+        authorizationUrl = url;
+      },
+    });
+    const connect = () => ({
+      client: new Client({ name: "test-mcp-host", version: "0.0.0" }),
+      transport: new StreamableHTTPClientTransport(new URL(MEMOTRON), { authProvider: oauth, fetch: env.route }),
+    });
+    const first = connect();
+    await expect(first.client.connect(first.transport)).rejects.toThrow(UnauthorizedError);
+
+    const resourceMetadata = await (await env.route("https://memotron.example.com/.well-known/oauth-protected-resource/mcp")).json();
+    const serverMetadata = await (await env.route(`${AUTH_ORIGIN}/.well-known/oauth-authorization-server`)).json();
+    expect(serverMetadata.issuer).toBe(issuer);
+    expect(resourceMetadata.authorization_servers).toEqual([issuer]);
+    expect(env.authority.issuer).toBe(issuer);
+
+    const callback = await env.approve(authorizationUrl!);
+    await oauth.validateAuthorizationState(callback.searchParams.get("state") ?? undefined);
+    await first.transport.finishAuth(callback.searchParams.get("code")!);
+    const second = connect();
+    await second.client.connect(second.transport);
+    const result = await second.client.callTool({ name: "whoami", arguments: {} });
+    expect(whoamiOf(result)).toMatchObject({ resource: MEMOTRON, subject: env.user.id });
     await second.client.close();
   });
 
@@ -460,6 +503,20 @@ describe("AuthFn token authority boundaries", () => {
     expect(() => authority.protect(handler({ count: 0 }), { resource: "https://memotron.example.com" }))
       .toThrow(/normalized form/);
     expect(() => authority.protect(handler({ count: 0 }), { resource: `${MEMOTRON}#frag` })).toThrow(/normalized form/);
+    // Refused now, not by the first request, and without echoing the value.
+    for (const resource of ["file:///test-resource-path/mcp", "urn:test-resource-path"]) {
+      let thrown: unknown;
+      try {
+        authority.protect(handler({ count: 0 }), { resource });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, resource).toBeInstanceOf(TypeError);
+      expect((thrown as Error).message).toMatch(/http or https URL/);
+      expect((thrown as Error).message).not.toContain("test-resource-path");
+    }
+    expect(() => authority.verifier("file:///test-resource-path/mcp", { invalidTokenError: InvalidTokenError }))
+      .toThrow(/http or https URL/);
     // Public metadata never carries credentials, and the error never echoes
     // the resource (a query may hold a credential).
     const userinfo = ["https://", "test-user", ":", "test-password", "@memotron.example.com/mcp"].join("");
@@ -493,26 +550,26 @@ describe("AuthFn token authority boundaries", () => {
     }
   });
 
-  it("advertises the issuer exactly as configured and refuses any other spelling", async () => {
+  it("advertises any issuer spelling AuthFn accepts exactly as configured", async () => {
     const verifyAccessToken = async () => null;
-    for (const issuer of [AUTH_ORIGIN, `${AUTH_ORIGIN}/auth`, new URL(`${AUTH_ORIGIN}/auth`)]) {
+    for (const issuer of [
+      AUTH_ORIGIN,
+      `${AUTH_ORIGIN}/`,
+      new URL(AUTH_ORIGIN),
+      `${AUTH_ORIGIN}/auth`,
+      "https://Auth.example.com",
+      "https://auth.example.com:443",
+    ]) {
       const authority = createAuthFnTokenAuthority({ issuer, verifyAccessToken });
       expect(authority.issuer).toBe(issuer.toString());
       const endpoint = authority.protect(handler({ count: 0 }), { resource: MEMOTRON });
-      const metadata = await (await endpoint(new Request("https://memotron.example.com/.well-known/oauth-protected-resource/mcp"))).json();
+      const response = await endpoint(new Request("https://memotron.example.com/.well-known/oauth-protected-resource/mcp"));
+      expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+      const metadata = await response.json();
+      expect(metadata).toMatchObject({ resource: MEMOTRON, bearer_methods_supported: ["header"] });
       expect(metadata.authorization_servers).toEqual([issuer.toString()]);
     }
-    // AuthFn publishes these verbatim; advertising a rewritten form would fail
-    // an RFC 8414 section 3.3 issuer comparison.
-    for (const issuer of [
-      `${AUTH_ORIGIN}/`,
-      new URL(AUTH_ORIGIN),
-      "https://Auth.example.com",
-      "https://auth.example.com:443",
-      "https://auth.example.com/a/../auth",
-    ]) {
-      expect(() => createAuthFnTokenAuthority({ issuer, verifyAccessToken }), issuer.toString()).toThrow(/exactly as AuthFn publishes it/);
-    }
+    expect(() => createAuthFnTokenAuthority({ issuer: "ftp://auth.example.com", verifyAccessToken })).toThrow(/HTTPS URL/);
   });
 
   it("holds one introspection deadline over the request and the body, whatever fetch does with the signal", async () => {

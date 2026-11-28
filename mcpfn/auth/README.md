@@ -78,11 +78,14 @@ const fetch = authority.protect(mcp, {
 - Scopes are passed through, not enforced at the endpoint: gate tools on
   `extra.authInfo.scopes`, for example with `@mcpfn/datafn`'s `sessionScopes`,
   which understands `<app>:*` and `*`.
-- The issuer must not carry credentials, a query or a fragment (RFC 8414), and
-  must be written exactly as AuthFn publishes it in canonical form (lowercase
-  host, no default port, no trailing slash after a bare origin, as in
-  `https://auth.example.com`). It is advertised verbatim, because RFC 8414
-  clients compare it exactly with AuthFn's metadata; any other spelling throws.
+- Give the issuer exactly as AuthFn publishes it (`environment.issuer`, or a
+  region's `issuer`), for example `https://auth.example.com` or
+  `https://auth.example.com/`. It is advertised verbatim in
+  `authority.issuer` and the metadata's `authorization_servers`, because
+  RFC 8414 clients compare it exactly with AuthFn's metadata. It must be an
+  HTTPS URL (or `http://` loopback with
+  `allowInsecureLoopbackAuthorizationServers`) without credentials, a query or
+  a fragment.
 - `authority.verifier(resource, { invalidTokenError })` returns the MCP SDK
   `OAuthTokenVerifier` for hosts that use the SDK's `requireBearerAuth`. Pass
   `InvalidTokenError` from the same `@modelcontextprotocol/sdk` copy as that
