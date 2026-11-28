@@ -1,0 +1,25 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67ab955bbb30d3b39f80d313e631c8ad466c46ae",
+  "prompts": {},
+  "sessions": {
+    "s_aedb916f2553fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b0483067-7290-4d40-a6fc-0847fde1c583",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_cd56ef25989775": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f651edee-d0de-464a-8496-37c6ad567809",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
