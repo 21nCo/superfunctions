@@ -254,11 +254,12 @@ DataFn uses several internal tables managed via the `adapter.internal` API:
 | Table | Purpose |
 |-------|---------|
 | `__datafn_meta` | Stores `next_server_seq` per namespace |
-| `__datafn_changes` | Change log entries for incremental sync |
+| `__datafn_changes` | Change log entries for incremental sync; the `rev` and `rev_certified` columns hold each change's [revision](/docs/documentation/sync/revisions) |
 | `__datafn_idempotency` | Mutation deduplication records |
 | `__datafn_seed` | Seed tracking metadata |
+| `__datafn_revisions` | Per-record [revisions](/docs/documentation/sync/revisions) and delete tombstones; never pruned, keep it when copying or backing up a namespace |
 
-Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`.
+Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`. Every write path creates `__datafn_revisions`, with revisions on or off, and a server with revisions on adds the `rev` and `rev_certified` columns to an existing `__datafn_changes` table. Create them before the first upgraded worker writes, whether or not revisions are on, when you deploy on MySQL, apply migrations in a separate step, or (with revisions on) run workers whose role may not alter `__datafn_changes`. Creating them first does not remove the worker's need to create tables in the schema DataFn uses, since `CREATE TABLE IF NOT EXISTS` still runs on first use; when another role creates `__datafn_revisions`, grant the worker role read and write access to it. See [Upgrading an existing deployment](/docs/documentation/sync/revisions#upgrading-an-existing-deployment) for the privileges and the statements for each database.
 
 ## Available Adapters
 
