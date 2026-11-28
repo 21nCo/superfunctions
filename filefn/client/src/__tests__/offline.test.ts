@@ -798,3 +798,43 @@ describe('round 21: the built-in uploader marks a generation dispatched only rig
     expect(await queue.list()).toEqual([expect.objectContaining({ entryId: handle.fileId })]);
   });
 });
+
+describe('round 23: an offline uploadFile abort during preparation settles at once', () => {
+  it('an abort while a preprocessor stalls rejects done() promptly, and the late result stages and sends nothing', async () => {
+    let started!: () => void;
+    const preprocessing = new Promise<void>((resolve) => (started = resolve));
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    const client = offlineClient({ implicitReplay: false });
+    const handle = client.uploadFile({
+      policy: 'p',
+      file: new File(['content'], 'test.txt'),
+      preprocessors: [{
+        name: 'stall',
+        matches: () => true,
+        process: async (ctx) => {
+          started();
+          await gate;
+          return { file: ctx.file };
+        },
+      }],
+    });
+    const done = handle.done();
+    void done.catch(() => {});
+    await preprocessing;
+    handle.abort();
+    const outcome = await Promise.race([
+      done.then(() => 'resolved', (error: unknown) => error),
+      new Promise((resolve) => setTimeout(() => resolve('still pending'), 200)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'AbortError' });
+    finish();
+    // Let the late preparation result run through the staging path.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await client.getOfflineQueue().list()).toEqual([]);
+    setOnline(true);
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'not-found' });
+    expect(server.calls).not.toHaveBeenCalled();
+    expect(dataFiles()).toEqual([]);
+  });
+});

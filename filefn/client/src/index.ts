@@ -538,12 +538,23 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         // it removes the generation only if no tab's upload guard admitted
         // its first request yet, and otherwise keeps it
         // (FILEFN_QUEUE_UPLOAD_STARTED).
+        //
+        // Preparation (the preprocessors) runs before any staging and is
+        // raced with the abort: an abort while it runs rejects at once with
+        // an AbortError, and a late preparation result stages nothing (the
+        // aborted check below), so no generation or request ever exists.
         let staged: { entryId: string; generation: number } | undefined;
+        const abortedDuringPreparation = new Promise<never>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => reject(createAbortError()), { once: true });
+        });
+        void abortedDuringPreparation.catch(() => {});
         const stagePromise = (async () => {
-          const prepared = await prepareUploadInput(normalizedInput, [
+          const preparing = prepareUploadInput(normalizedInput, [
             ...preprocessors,
             ...(normalizedInput.preprocessors || []),
           ]);
+          void preparing.catch(() => {});
+          const prepared = await Promise.race([preparing, abortedDuringPreparation]);
           if (abortController.signal.aborted) {
             throw createAbortError();
           }
