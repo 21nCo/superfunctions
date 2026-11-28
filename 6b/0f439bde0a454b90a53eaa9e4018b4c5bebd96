@@ -1,0 +1,29 @@
+plugfn/core/src/scopes/types.ts
+  s_a95c1deb274c6c::t_0dd4555bec2cc7 303-307,313-318,326-328,339-341
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_2a5fa2ebacf8ea::t_12e1bb74c444b6 336-346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b0f439bde0a454b90a53eaa9e4018b4c5bebd96",
+  "prompts": {},
+  "sessions": {
+    "s_2a5fa2ebacf8ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53423c22-f63d-4832-b1b3-33a30ce307d0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a95c1deb274c6c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21edb-af99-7800-b9ce-84df62430856",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

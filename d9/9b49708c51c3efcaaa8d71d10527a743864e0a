@@ -1,0 +1,15 @@
+reviewfn/harness-cli/src/adapter.ts
+  h_bdc5b81c173ee9 207,250,294-296,473-482
+  h_bdc5b81c173ee9 1309-1310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d99b49708c51c3efcaaa8d71d10527a743864e0a",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

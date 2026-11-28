@@ -1,0 +1,27 @@
+authfn/client/src/__tests__/browser-handoff.test.ts
+  s_4e16d38462b927::t_15e8823c284a37 304-316,1230-1239,1428-1477
+authfn/client/src/browser-handoff.ts
+  s_4e16d38462b927::t_aec671e8c90dad 1057-1069,1103-1105
+authfn/client/src/secret-text.ts
+  s_4e16d38462b927::t_8796695c183418 29-31
+authfn/docs/content/docs/sdk/client.md
+  s_4e16d38462b927::t_b40d03e2f4cdf8 189,202
+authfn/docs/static/llms-full.txt
+  s_4e16d38462b927::t_a995e460bc62bd 11048,11061
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce8e29969b483adaa99775d4caf8fc03ab4d8136",
+  "prompts": {},
+  "sessions": {
+    "s_4e16d38462b927": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4e16d38462b927",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
