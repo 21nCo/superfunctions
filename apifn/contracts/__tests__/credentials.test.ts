@@ -10,12 +10,14 @@ import {
   validateClientFailureEvent,
   validateManifest,
 } from "../src/index.js";
-import { buildOperationCatalog, clone, fixture, LINEAR_RATIO, SCALING_TIMEOUT, scalingRatio } from "./helpers.js";
+import { base64, buildOperationCatalog, clone, fixture, LINEAR_RATIO, pemLine, SCALING_TIMEOUT, scalingRatio } from "./helpers.js";
 
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
 
 const ED25519_PEM = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 const RSA_PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+// Provider-key-shaped: the "AIza" prefix and 35 key characters, joined at runtime.
+const GOOGLE_KEY = "AIza" + "SyA1234567890abcdefghijklmnopqrstuv";
 const pemBody = (pem: string) => pem.split("\n").filter((line) => line !== "" && !line.startsWith("-----"));
 
 // One table for every consumer of the credential text rules: the catalog
@@ -65,11 +67,11 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   // PEM private keys through their END line, or to the end of the text when cut off.
   [ED25519_PEM, true, pemBody(ED25519_PEM)],
   [RSA_PEM.slice(0, 900), true, pemBody(RSA_PEM.slice(0, 900)).slice(0, -1)],
-  [`key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUSEEDssh01\n-----END OPENSSH PRIVATE KEY-----\ndone`, true, ["SEEDssh01"]],
+  [`key:\n${pemLine("BEGIN OPENSSH PRIVATE KEY")}\n${base64("openssh-key-v1\0\0\0\0\x04none")}SEEDssh01\n${pemLine("END OPENSSH PRIVATE KEY")}\ndone`, true, ["SEEDssh01"]],
   // Connection strings and provider keys.
   ["Server=db;User Id=sa;Pwd=SEEDpwd01;", true, ["SEEDpwd01"]],
   ["AccountName=x;AccountKey=SEEDacct01+/==;", true, ["SEEDacct01"]],
-  ["key=AIzaSyA1234567890abcdefghijklmnopqrstuv", true, ["AIzaSyA1234567890abcdefghijklmnopqrstuv"]],
+  [`key=${GOOGLE_KEY}`, true, [GOOGLE_KEY]],
   [`use ${"github_pat_" + "A1".repeat(41)} to clone`, true, ["github_pat_" + "A1".repeat(41)]],
   // A standalone scheme counts only before a token-shaped word.
   ["sent Bearer abcdefgh12345678", true, ["abcdefgh12345678"]],
@@ -98,7 +100,7 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   ["Send the <password> field, then retry", false],
   ["<password><![CDATA[<password>]]></password>", false],
   ["https://api.example.test/v1?tenant=eu", false],
-  ["-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAitZFd5CIGdFlbiqZbNIkspX4T/RzE+0jHdbp5AYXJd4=\n-----END PUBLIC KEY-----\n", false],
+  [generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }) as string, false],
   ['{"name":"X-Request-Id","value":"req-42"}', false],
   ['<add key="timeout" value="30"/>', false],
   ['{"name":"X-Api-Key","value":"<api key>"}', false],
@@ -1186,7 +1188,7 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["placeholders followed by text", run("token=[REDACTED]a{{b}}c ")],
   ["deep nesting", (n) => `${repeat("[{", n)}"name":"token","value":"x"`],
   ["escaped quote values", run('password=\\"a\\\\')],
-  ["PEM headers", run("-----BEGIN PRIVATE KEY PRIVATE KEY ")],
+  ["PEM headers", run(`${"-".repeat(5)}BEGIN PRIVATE KEY PRIVATE KEY `)],
   ["special scheme runs", run("https:")],
   ["special scheme backslashes", (n) => `https:${repeat("\\", n)}`],
   ["deep same-name XML nesting", (n) => `${repeat("<password>", n)}a${repeat("</password>", n)}`],

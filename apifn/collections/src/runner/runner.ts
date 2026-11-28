@@ -1,9 +1,12 @@
+import { createCredentialRegistry, sanitizeRequestResult, WITHHELD, type CredentialRegistry } from "@apifn/core";
 import type {
   Collection,
   CollectionItem,
   CookieJar,
   Environment,
   HttpClient,
+  HttpClientResponse,
+  HttpRedirectRecord,
   OpenCollectionRequest,
   RequestResult,
   RunOptions,
@@ -21,28 +24,6 @@ import {
 } from "./script-sandbox.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_CAPTURED_BODY_BYTES = 10 * 1024 * 1024;
-const DEFAULT_REDACT_HEADERS = [
-  "authorization",
-  "cookie",
-  "set-cookie",
-  "x-api-key",
-  "x-auth-token",
-];
-const DEFAULT_REDACT_BODY_KEYS = [
-  "apiKey",
-  "api_key",
-  "authorization",
-  "bearer",
-  "code",
-  "handoffCode",
-  "otp",
-  "password",
-  "refreshToken",
-  "sessionToken",
-  "token",
-];
-
 interface RequestEntry {
   item: CollectionItem;
   request: OpenCollectionRequest;
@@ -90,49 +71,6 @@ function getEnvironment(collection: Collection, env: string | Environment): Envi
     throw new Error(`Environment '${env}' not found`);
   }
   return matched;
-}
-
-function redactHeaders(headers: Record<string, string>, redactList: string[]): Record<string, string> {
-  const redactSet = new Set(redactList.map((header) => header.toLowerCase()));
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    result[key] = redactSet.has(key.toLowerCase()) ? "[REDACTED]" : value;
-  }
-  return result;
-}
-
-function redactBody(body: string | undefined): string | undefined {
-  if (body === undefined) {
-    return undefined;
-  }
-
-  try {
-    return JSON.stringify(redactJsonValue(JSON.parse(body) as unknown), null, 2);
-  } catch {
-    return DEFAULT_REDACT_BODY_KEYS.reduce((value, key) => {
-      const pattern = new RegExp(`(${key}=)([^&\\s]+)`, "gi");
-      return value.replace(pattern, `$1[REDACTED]`);
-    }, body);
-  }
-}
-
-function redactJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactJsonValue(entry));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (DEFAULT_REDACT_BODY_KEYS.some((name) => name.toLowerCase() === key.toLowerCase())) {
-      result[key] = "[REDACTED]";
-    } else {
-      result[key] = redactJsonValue(item);
-    }
-  }
-  return result;
 }
 
 function interpolateRequest(
@@ -213,24 +151,84 @@ async function withTimeout<T>(
   });
 }
 
-function truncateBody(body: string): string {
-  const size = Buffer.byteLength(body, "utf8");
-  if (size <= MAX_CAPTURED_BODY_BYTES) {
-    return body;
+/** Runs work that only records report data; a failure there never changes the run. */
+function remember(work: () => void): void {
+  try {
+    work();
+  } catch {
+    // The report is sanitized again at its boundary; a value that could not be recorded is redacted by the text rules.
   }
+}
 
-  let low = 0;
-  let high = body.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (Buffer.byteLength(body.slice(0, mid), "utf8") <= MAX_CAPTURED_BODY_BYTES) {
-      low = mid;
-    } else {
-      high = mid - 1;
+function readNumber(read: () => unknown): number | undefined {
+  try {
+    const value = read();
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Copies what the report needs from a client response without letting a
+ * throwing or malformed field reject the run or resend the request. A header
+ * that cannot be read is withheld; when the header map or the redirects
+ * cannot be read at all, the report withholds the body, because credentials
+ * they carried could not be collected for scrubbing.
+ */
+function captureResponse(response: HttpClientResponse) {
+  const warnings: string[] = [];
+  const headers: Record<string, string> = {};
+  let withheld = false;
+  try {
+    for (const name of Object.keys(response.headers ?? {})) {
+      try {
+        headers[name] = String(response.headers[name]);
+      } catch {
+        headers[name] = WITHHELD;
+        warnings.push(`Response header '${name}' could not be read.`);
+      }
     }
+  } catch {
+    withheld = true;
+    warnings.push("Response headers could not be read; the response body is withheld from the report.");
   }
+  let redirects: HttpRedirectRecord[] | undefined;
+  try {
+    redirects = response.redirects?.map((record) => ({
+      status: record.status,
+      url: String(record.url),
+      location: String(record.location),
+      duration: record.duration,
+    }));
+  } catch {
+    withheld = true;
+    warnings.push("Response redirects could not be read; the response body is withheld from the report.");
+  }
+  return { headers, redirects, withheld, warnings, size: readNumber(() => response.size), duration: readNumber(() => response.duration) };
+}
 
-  return body.slice(0, low);
+function withheldResult(result: RequestResult): RequestResult {
+  return {
+    name: WITHHELD,
+    path: result.path,
+    method: result.method,
+    url: WITHHELD,
+    status: result.status,
+    statusCode: result.statusCode,
+    duration: result.duration,
+    assertions: [],
+    error: "Report redaction failed; request details were withheld.",
+    request: { method: result.request.method, url: WITHHELD, headers: {} },
+  };
+}
+
+function sanitizeResult(result: RequestResult, redactHeaders: string[], registry: CredentialRegistry): RequestResult {
+  try {
+    return sanitizeRequestResult(result, { redactHeaders, registry });
+  } catch {
+    return withheldResult(result);
+  }
 }
 
 async function executeRequest(
@@ -244,6 +242,7 @@ async function executeRequest(
     httpClient: HttpClient;
     cookieJar?: CookieJar;
     redactHeaders: string[];
+    registry: CredentialRegistry;
     reporter?: RunReporter;
     isolateContext?: boolean;
     scripts: RequestScripts;
@@ -260,7 +259,19 @@ async function executeRequest(
     body: interpolated.body,
   };
   const assertionResults: RequestResult["assertions"] = [];
-  const { scripts } = options;
+  const { scripts, registry } = options;
+  // Results leave the runner (reporters, the returned report) only through this boundary.
+  const finish = (result: RequestResult): RequestResult => {
+    const sanitized = sanitizeResult(result, options.redactHeaders, registry);
+    options.reporter?.onRequestComplete?.(sanitized);
+    return sanitized;
+  };
+  const snapshot = (): RequestResult["request"] => ({
+    method: mutableRequest.method,
+    url: mutableRequest.url,
+    headers: { ...mutableRequest.headers },
+    ...(mutableRequest.body === undefined ? {} : { body: mutableRequest.body }),
+  });
 
   for (const script of scripts) {
     if (script.type !== "pre-request") {
@@ -285,27 +296,28 @@ async function executeRequest(
         assertions: [],
         warnings: interpolated.warnings.length ? interpolated.warnings : undefined,
         error: preRequestResult.error.message,
-        request: {
-          method: mutableRequest.method,
-          url: mutableRequest.url,
-          headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-          body: redactBody(mutableRequest.body),
-        },
+        request: snapshot(),
       };
-      options.reporter?.onRequestComplete?.(result);
-      return result;
+      return finish(result);
     }
   }
 
   const attempts: NonNullable<RequestResult["attempts"]> = [];
   let lastError: string | undefined;
+  // The request as the runner sends it; scripts that run later cannot change what the report shows.
+  const sent = snapshot();
+  remember(() => registry.collectRequest(sent));
 
   for (let attempt = 0; attempt <= options.retries; attempt += 1) {
     const attemptNumber = attempt + 1;
     const startedAt = Date.now();
+    let sentHeaders: Record<string, string> | undefined;
+    let response: HttpClientResponse;
+    let statusCode: number;
+    let responseBody: string;
 
     try {
-      const response = await withTimeout(
+      response = await withTimeout(
         options.httpClient.send({
           method: mutableRequest.method,
           url: mutableRequest.url,
@@ -314,32 +326,60 @@ async function executeRequest(
           timeout: options.timeout,
           followRedirects: entry.request.settings?.followRedirects,
           maxRedirects: entry.request.settings?.maxRedirects,
+          onSent: (hop) => {
+            sentHeaders ??= { ...hop.headers };
+            remember(() => registry.collectRequest(hop));
+          },
+          onReceived: (hop) => remember(() => registry.collectResponse(hop)),
         }),
         options.timeout
       );
-
+      statusCode = response.status;
+      responseBody = response.body;
+      if (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) {
+        throw new Error("HTTP client returned an invalid status code");
+      }
+      if (typeof responseBody !== "string") {
+        throw new Error("HTTP client returned a response body that is not a string");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = message;
       attempts.push({
         attempt: attemptNumber,
-        statusCode: response.status,
-        duration: response.duration,
+        duration: Date.now() - startedAt,
+        error: message,
       });
+      continue;
+    }
 
-      if (response.status >= 500 && attempt < options.retries) {
-        continue;
-      }
+    const captured = captureResponse(response);
+    attempts.push({
+      attempt: attemptNumber,
+      statusCode,
+      duration: captured.duration ?? Date.now() - startedAt,
+    });
+    remember(() => registry.collectResponse({ url: sent.url, headers: captured.headers, redirects: captured.redirects, body: responseBody }));
 
+    if (statusCode >= 500 && attempt < options.retries) {
+      continue;
+    }
+
+    const warnings = [...interpolated.warnings, ...captured.warnings];
+    let result: RequestResult;
+    try {
       const parsedResponseBody = (() => {
         try {
-          return JSON.parse(response.body);
+          return JSON.parse(responseBody);
         } catch {
-          return response.body;
+          return responseBody;
         }
       })();
       const responseForScripts: ScriptResponseContext = {
-        status: response.status,
-        headers: response.headers,
+        status: statusCode,
+        headers: { ...captured.headers },
         body: parsedResponseBody,
-        responseTime: response.duration,
+        responseTime: captured.duration ?? 0,
       };
 
       for (const script of scripts) {
@@ -360,75 +400,62 @@ async function executeRequest(
           break;
         }
       }
+      remember(() => registry.collectNamed(requestContext));
 
       const hasFailedAssertions = assertionResults.some((assertion) => !assertion.passed);
-      const hasExpectedStatus = statusMatchesExpected(response.status, entry.request.settings?.expectedStatus);
-      const status: RequestResult["status"] =
-        !hasExpectedStatus || hasFailedAssertions ? "failed" : "passed";
-      const result: RequestResult = {
+      const hasExpectedStatus = statusMatchesExpected(statusCode, entry.request.settings?.expectedStatus);
+      result = {
         name: entry.request.info.name,
         path: entry.item.path,
-        method: mutableRequest.method,
-        url: mutableRequest.url,
-        status,
-        statusCode: response.status,
+        method: sent.method,
+        url: sent.url,
+        status: !hasExpectedStatus || hasFailedAssertions ? "failed" : "passed",
+        statusCode,
         duration: Date.now() - startedAt,
         assertions: assertionResults,
-        warnings: interpolated.warnings.length ? interpolated.warnings : undefined,
+        warnings: warnings.length ? warnings : undefined,
         attempts,
-        request: {
-          method: mutableRequest.method,
-          url: mutableRequest.url,
-          headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-          body: redactBody(mutableRequest.body),
-        },
+        request: { ...sent, headers: sentHeaders ?? sent.headers },
         response: {
-          status: response.status,
-          headers: redactHeaders(response.headers, options.redactHeaders),
-          body: redactBody(truncateBody(response.body)) ?? "",
-          size: response.size,
-          redirects: response.redirects,
+          status: statusCode,
+          headers: captured.headers,
+          body: captured.withheld ? WITHHELD : responseBody,
+          size: captured.size ?? responseBody.length,
+          redirects: captured.redirects,
         },
       };
-
-      options.reporter?.onRequestComplete?.(result);
-      return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      lastError = message;
-      attempts.push({
-        attempt: attemptNumber,
+      result = {
+        name: entry.request.info.name,
+        path: entry.item.path,
+        method: sent.method,
+        url: sent.url,
+        status: "error",
+        statusCode,
         duration: Date.now() - startedAt,
-        error: message,
-      });
-
-      if (attempt < options.retries) {
-        continue;
-      }
+        assertions: assertionResults,
+        warnings: warnings.length ? warnings : undefined,
+        attempts,
+        error: error instanceof Error ? error.message : String(error),
+        request: { ...sent, headers: sentHeaders ?? sent.headers },
+      };
     }
+    return finish(result);
   }
 
-  const result: RequestResult = {
+  return finish({
     name: entry.request.info.name,
     path: entry.item.path,
-    method: mutableRequest.method,
-    url: mutableRequest.url,
+    method: sent.method,
+    url: sent.url,
     status: "error",
     duration: attempts[attempts.length - 1]?.duration ?? 0,
     assertions: assertionResults,
     warnings: interpolated.warnings.length ? interpolated.warnings : undefined,
     attempts,
     error: lastError ?? "Request failed",
-    request: {
-      method: mutableRequest.method,
-      url: mutableRequest.url,
-      headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-      body: redactBody(mutableRequest.body),
-    },
-  };
-
-  options.reporter?.onRequestComplete?.(result);
-  return result;
+    request: sent,
+  });
 }
 
 function skippedResult(entry: RequestEntry): RequestResult {
@@ -535,7 +562,15 @@ export async function runCollection(
   const retries = options.retries ?? 0;
   const cookieJar = options.cookieJar ?? createCookieJar();
   const httpClient = options.httpClient ?? createFetchHttpClient({ cookieJar });
-  const redactList = [...DEFAULT_REDACT_HEADERS, ...(options.redactHeaders ?? [])];
+  const redactList = [...(options.redactHeaders ?? [])];
+  // One registry per run, seeded before the first send, so a credential is scrubbed wherever it appears later.
+  const registry = createCredentialRegistry(redactList);
+  remember(() => registry.collectNamed(context));
+  remember(() => registry.collectNamed(processEnv));
+  remember(() => {
+    for (const cookie of cookieJar.toJSON()) registry.collectRequest({ headers: { cookie: `${cookie.name}=${cookie.value}` } });
+  });
+  const skip = (entry: RequestEntry): RequestResult => sanitizeResult(skippedResult(entry), redactList, registry);
 
   const results: Array<RequestResult | undefined> = new Array(entries.length);
   let bailTriggered = false;
@@ -556,7 +591,7 @@ export async function runCollection(
         const entry = entries[index];
         const scripts = selected.get(entry);
         if (!scripts) {
-          const skipped = skippedResult(entry);
+          const skipped = skip(entry);
           results[index] = skipped;
           reporter?.onRequestComplete?.(skipped);
           continue;
@@ -571,6 +606,7 @@ export async function runCollection(
           httpClient,
           cookieJar,
           redactHeaders: redactList,
+          registry,
           reporter,
           isolateContext: true,
           scripts,
@@ -589,13 +625,13 @@ export async function runCollection(
       const entry = entries[index];
 
       if (options.bail && bailTriggered) {
-        results[index] = skippedResult(entry);
+        results[index] = skip(entry);
         continue;
       }
 
       const scripts = selected.get(entry);
       if (!scripts) {
-        const skipped = skippedResult(entry);
+        const skipped = skip(entry);
         results[index] = skipped;
         reporter?.onRequestComplete?.(skipped);
         continue;
@@ -610,6 +646,7 @@ export async function runCollection(
         httpClient,
         cookieJar,
         redactHeaders: redactList,
+        registry,
         reporter,
         scripts,
       });
@@ -628,7 +665,7 @@ export async function runCollection(
 
   for (let index = 0; index < entries.length; index += 1) {
     if (!results[index]) {
-      const skipped = skippedResult(entries[index]);
+      const skipped = skip(entries[index]);
       results[index] = skipped;
       reporter?.onRequestComplete?.(skipped);
     }

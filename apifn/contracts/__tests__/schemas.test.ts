@@ -21,7 +21,7 @@ import {
   validateManifest,
   type CreateReleaseInput,
 } from "../src/index.js";
-import { clone, FIXTURES, fixture, readJson, SCHEMAS } from "./helpers.js";
+import { clone, FIXTURES, fixture, liveKey, readJson, SCHEMAS } from "./helpers.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
 const schema = (name: string) => readJson(path.join(SCHEMAS, `${name}.v1.schema.json`));
@@ -379,7 +379,7 @@ describe("schema and runtime agreement", () => {
     ["password:too_short", true, true],
     ["rate:limited", true, true],
     ["token=abc123", false, false],
-    ["sk_live_abcdefgh12345678", false, true],
+    [liveKey("abcdefgh12345678"), false, true],
     ["secrets:read", true, true],
     ["password:hunter2SEED99", false, true],
     ["api_key:AbCdEf123456Ghij", false, true],

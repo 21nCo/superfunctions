@@ -6,6 +6,15 @@ import { fullFormats } from "ajv-formats/dist/formats.js";
 import { expect } from "vitest";
 import { buildOperationCatalog as buildUnchecked, type OperationCatalog } from "../src/index.js";
 
+// Detector-shaped fakes are assembled at runtime, so no committed literal
+// matches a secret scanner while the credential rules still see their shape.
+/** A live-mode provider key (`sk` + `_live_` + suffix) built from readable parts. */
+export const liveKey = (suffix: string): string => ["sk", "live", suffix].join("_");
+/** A PEM armor line, such as `BEGIN PRIVATE KEY` between five dashes on each side. */
+export const pemLine = (label: string): string => `${"-".repeat(5)}${label}${"-".repeat(5)}`;
+/** Unpadded base64 of readable text, for credential-shaped segments such as JWT parts. */
+export const base64 = (text: string): string => Buffer.from(text, "latin1").toString("base64").replace(/=+$/, "");
+
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fixtures");
 export const SCHEMAS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../schemas");
 

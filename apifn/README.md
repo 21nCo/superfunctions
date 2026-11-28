@@ -21,21 +21,22 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The collection runner, OpenAPI validation, watchFn middleware and request idempotency updates keep exact pins aligned across the npm packages. Publish in this order.
+The collection runner, OpenAPI validation, watchFn middleware, request idempotency and run report redaction updates keep exact pins aligned across the npm packages. Publish in this order.
 
-1. `@apifn/core` **0.3.0**.
-2. `@apifn/collections` and `@apifn/mock` **0.0.8**, `@apifn/react` and
-   `@apifn/svelte` **0.0.7**, `@apifn/snippets` **0.0.9**, `@apifn/contracts`
-   **0.1.4**, and `@apifn/admin` **0.1.6**. These packages pin Core. Admin also
-   requires the published `@superfunctions/admin` **^0.1.4** peer.
-3. `@apifn/sdk` **0.1.4** after Contracts, and `@apifn/docsfn` **0.1.4**
+1. `@apifn/core` **0.4.0**.
+2. `@apifn/collections` **0.1.0**, `@apifn/mock` **0.0.9**, `@apifn/react` and
+   `@apifn/svelte` **0.0.7**, `@apifn/snippets` **0.0.10**, `@apifn/contracts`
+   **0.1.5**, and `@apifn/admin` **0.1.7**. These packages pin Core. Admin also
+   pins Collections and requires the published `@superfunctions/admin`
+   **^0.1.4** peer.
+3. `@apifn/sdk` **0.1.5** after Contracts, and `@apifn/docsfn` **0.1.4**
    after both renderers.
-4. `@apifn/cli` **0.1.4** after its dependencies are available.
+4. `@apifn/cli` **0.1.5** after its dependencies are available.
 
 The npm registry lists `@apifn/react` and `@apifn/svelte` up to **0.0.5** and
 `@apifn/docsfn` up to **0.1.2**, so `@apifn/react` and `@apifn/svelte`
 **0.0.7** and `@apifn/docsfn` **0.1.4** are unreleased and ship the Core
-**0.3.0** pin.
+**0.4.0** pin.
 
 The reusable workflow can move to the fixed CLI after it is published. API-6
 tracks the lockfile pin, workflow default, and external caller example.

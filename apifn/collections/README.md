@@ -135,7 +135,13 @@ console.log(report.summary);
 
 A request passes when its status matches the expected status (default `< 400`, or `settings.expectedStatus`) and no assertion fails.
 
-**Redaction:** `authorization`, `cookie`, `set-cookie`, `x-api-key`, and `x-auth-token` headers are redacted by default (plus any `redactHeaders`), and common secret-bearing body keys (`token`, `password`, `apiKey`, `otp`, …) are recursively masked.
+**Redaction:** results leave the runner (the returned report and every reporter call) only after `sanitizeRequestResult` from `@apifn/core`; the JSON, JUnit and console reporters and the LogFn reporter apply it again, so a result passed to them directly is redacted too. Only the send is retried: redaction, test scripts and reporters never resend a request, and a failure while capturing or redacting withholds that field instead of rejecting the run.
+
+- Structured data is redacted exactly. URLs (the request URL, redirect records, `Location`, `Content-Location` and `Referer`) are resolved by the WHATWG URL parser; userinfo is removed and credential query and fragment parameters (by key, such as `code`, `state` or `access_token`) become `[REDACTED]`, and a URL with nothing to redact is kept as written. Headers are redacted by name (`authorization`, `cookie`, `x-api-key` and similar, names with credential words, plus `redactHeaders`; cookies pair by pair). JSON bodies are redacted by member, including the value of a `{name, value}` object or `[name, value]` pair whose name is a credential name, in any member order; form bodies by key.
+- Other text (non-JSON bodies, header values, errors, assertion names and values, warnings) gets three linear passes: credential values the run already knows, a line-oriented keyword rule that redacts from a credential key and separator to the end of its line (and further while brackets stay open), the enclosing container of a quoted credential name such as `"X-Api-Key"`, private keys and `Bearer` credentials, and URL tokens through the URL rule above. This pass may over-redact.
+- The run keeps one registry of credential values, seeded before the first send from credential-named variables, environment entries and jar cookies and updated with what each send puts on the wire (including the jar cookie the client adds), each response, redirect and retried 5xx response, and script-rotated variables. Only values under credential keys or names are recorded, never literals or token counts.
+
+The report shows the request as sent and the response as received. The response body is redacted in full before it is cut to the 10 MiB capture limit.
 
 ---
 

@@ -8,8 +8,52 @@ from typing import Any
 import httpx
 import yaml
 
+from ._redact import Registry, redact_text
 
 _VAR_RE = re.compile(r"{{\s*([\w.-]+)\s*}}")
+_MAX_ERROR_CHARS = 500
+
+
+def _registry(url: str, headers: dict[str, str], body: str | None, variables: dict[str, str], client: Any) -> Registry:
+    """Credential values a request could expose: its own, credential-named variables and the client's defaults."""
+    registry = Registry()
+    try:
+        registry.collect_named(variables)
+        registry.collect_request(url, headers.items(), body)
+        registry.collect_request("", [(str(k), str(v)) for k, v in getattr(client, "headers", {}).items()], None)
+        for cookie in getattr(getattr(client, "cookies", None), "jar", []):
+            registry.collect_request("", [("cookie", f"{cookie.name}={cookie.value}")], None)
+    except Exception:  # noqa: BLE001 - what could not be read adds nothing; the text rules still apply
+        pass
+    return registry
+
+
+def _collect_sent(registry: Registry, exc: BaseException) -> None:
+    """Adds the request an httpx exception carries, as the client sent it (auth flows, default headers)."""
+    try:
+        sent = getattr(exc, "request", None)
+        if isinstance(sent, httpx.Request):
+            content = sent.content.decode("utf-8", errors="replace") or None
+            registry.collect_request(str(sent.url), [(str(k), str(v)) for k, v in sent.headers.items()], content)
+    except Exception:  # noqa: BLE001 - httpx raises when no request is attached or the body was streamed
+        pass
+
+
+def _error_summary(exc: BaseException, registry: Registry) -> str:
+    """The exception type and message, redacted before it is cut, so a cut never exposes part of a credential."""
+    try:
+        message = redact_text(str(exc), registry)
+    except Exception as failure:  # noqa: BLE001 - a summary that cannot be sanitized is withheld
+        message = f"[REDACTED: summary withheld because it could not be sanitized ({type(failure).__name__})]"
+    summary = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+    return summary[:_MAX_ERROR_CHARS]
+
+
+def _safe_name(name: Any, registry: Registry) -> Any:
+    try:
+        return redact_text(name, registry) if isinstance(name, str) else name
+    except Exception:  # noqa: BLE001 - a name that cannot be sanitized is withheld
+        return "[REDACTED]"
 
 
 def _interpolate(value: str, context: dict[str, str]) -> str:
@@ -86,6 +130,7 @@ def run_collection(collection: dict[str, Any], options: dict[str, Any] | None = 
             if req.get("body") and req["body"].get("data") is not None:
                 body = _interpolate(str(req["body"]["data"]), context)
 
+            registry = _registry(url, headers, body, context, client)
             started_req = time.time()
             try:
                 resp = client.request(method, url, headers=headers, content=body)
@@ -93,22 +138,23 @@ def run_collection(collection: dict[str, Any], options: dict[str, Any] | None = 
                 status = "passed" if resp.status_code < 400 else "failed"
                 results.append(
                     {
-                        "name": item["name"],
+                        "name": _safe_name(item["name"], registry),
                         "status": status,
                         "duration": duration_ms,
                         "statusCode": resp.status_code,
                         "assertions": [],
                     }
                 )
-            except Exception as exc:  # pragma: no cover - defensive mapping
+            except Exception as exc:
                 duration_ms = int((time.time() - started_req) * 1000)
+                _collect_sent(registry, exc)
                 results.append(
                     {
-                        "name": item["name"],
+                        "name": _safe_name(item["name"], registry),
                         "status": "error",
                         "duration": duration_ms,
                         "assertions": [],
-                        "error": str(exc),
+                        "error": _error_summary(exc, registry),
                     }
                 )
     finally:

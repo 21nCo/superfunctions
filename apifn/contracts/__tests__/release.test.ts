@@ -9,7 +9,7 @@ import {
   type CatalogOperation,
   type CreateReleaseInput,
 } from "../src/index.js";
-import { clone, fixture, matchFixture, readJson, SCHEMAS } from "./helpers.js";
+import { clone, fixture, liveKey, matchFixture, readJson, SCHEMAS } from "./helpers.js";
 
 const catalog = buildOperationCatalog(fixture("catalog/openapi.json"), fixture("catalog/manifest.json")).catalog!;
 const validateDescriptor = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
@@ -202,16 +202,16 @@ describe("createReleaseDescriptor", () => {
   it("reads its input once, so a getter cannot change a value after it was checked", () => {
     let reads = 0;
     const generator = { version: "0.1.0" };
-    Object.defineProperty(generator, "name", { enumerable: true, get: () => (reads++ === 0 ? "@apifn/contracts-fixture" : "sk_live_abcdefgh12345678") });
+    Object.defineProperty(generator, "name", { enumerable: true, get: () => (reads++ === 0 ? "@apifn/contracts-fixture" : liveKey("abcdefgh12345678")) });
     const { descriptor } = createReleaseDescriptor({ ...input(), generator } as CreateReleaseInput);
     expect(reads).toBe(1);
     expect(descriptor!.generator.name).toBe("@apifn/contracts-fixture");
   });
 
   it.each<[string, (next: CreateReleaseInput) => void, string]>([
-    ["generator.name", (next) => { next.generator.name = "sk_live_abcdefgh12345678"; }, "/generator/name"],
-    ["an artifact package name", (next) => { next.artifacts[0].package.name = "sk_live_abcdefgh12345678"; }, "/artifacts/0/package/name"],
-    ["releaseId", (next) => { next.releaseId = "sk_live_abcdefgh12345678"; }, "/releaseId"],
+    ["generator.name", (next) => { next.generator.name = liveKey("abcdefgh12345678"); }, "/generator/name"],
+    ["an artifact package name", (next) => { next.artifacts[0].package.name = liveKey("abcdefgh12345678"); }, "/artifacts/0/package/name"],
+    ["releaseId", (next) => { next.releaseId = liveKey("abcdefgh12345678"); }, "/releaseId"],
   ])("INVALID_RELEASE: a credential in %s", (_name, mutate, pointer) => {
     const next = input();
     mutate(next);

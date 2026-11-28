@@ -17,6 +17,15 @@ const CROSS_ORIGIN_REDIRECT_SENSITIVE_HEADERS = new Set([
   "x-auth-token",
 ]);
 
+/** Reports a hop to a per-send observer; an observer that throws never affects the send. */
+function notify<T>(observer: ((hop: T) => void) | undefined, hop: T): void {
+  try {
+    observer?.(hop);
+  } catch {
+    // Observers only record what was sent and received.
+  }
+}
+
 function toHeadersRecord(headers: Headers): Record<string, string> {
   const result: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -306,6 +315,7 @@ export function createFetchHttpClient(
         headers.cookie = cookieHeader;
       }
 
+      notify(request.onSent, { method: request.method, url, headers: { ...headers } });
       const response = await fetchImpl(url, {
         method: request.method,
         headers,
@@ -315,6 +325,11 @@ export function createFetchHttpClient(
       });
 
       const setCookieHeaders = getSetCookieHeaders(response.headers);
+      notify(request.onReceived, {
+        url,
+        status: response.status,
+        headers: { ...toHeadersRecord(response.headers), ...(setCookieHeaders.length > 0 ? { "set-cookie": setCookieHeaders.join("; ") } : {}) },
+      });
       if (setCookieHeaders.length > 0) {
         cookieJar.storeFromResponse(url, setCookieHeaders);
       }

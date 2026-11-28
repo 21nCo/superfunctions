@@ -147,3 +147,19 @@ export type {
   RequestIdempotencyOptions,
   StoredIdempotentResponse,
 } from "./idempotency/request-idempotency.js";
+export {
+  DEFAULT_REDACT_HEADERS,
+  REDACTED,
+  WITHHELD,
+  createCredentialRegistry,
+  isSensitiveKey,
+  redactBody,
+  redactHeaders,
+  redactJsonValue,
+  redactText,
+  redactUrl,
+  sanitizeRequestResult,
+  sanitizeRunReport,
+  truncateUtf8,
+} from "./redact.js";
+export type { CredentialRegistry, RedactionOptions, SanitizeOptions } from "./redact.js";

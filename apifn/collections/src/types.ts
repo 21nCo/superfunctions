@@ -119,6 +119,22 @@ export interface HttpClientRequest {
   timeout?: number;
   followRedirects?: boolean;
   maxRedirects?: number;
+  /** Called with each request as the client puts it on the wire (after adding jar cookies), once per redirect hop. */
+  onSent?(hop: HttpSentHop): void;
+  /** Called with each response head the client receives, redirect hops included. */
+  onReceived?(hop: HttpReceivedHop): void;
+}
+
+export interface HttpSentHop {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+}
+
+export interface HttpReceivedHop {
+  url: string;
+  status: number;
+  headers: Record<string, string>;
 }
 
 export interface HttpRedirectRecord {

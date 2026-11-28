@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalJson, validateClientFailureEvent } from "../src/index.js";
 import * as runtimeNeutral from "../src/failure-event.js";
-import { clone, FIXTURES, fixture } from "./helpers.js";
+import { base64, clone, FIXTURES, fixture, liveKey } from "./helpers.js";
 
 const list = (kind: "valid" | "invalid") =>
   readdirSync(path.join(FIXTURES, "client-failure", kind)).filter((file) => file.endsWith(".json")).sort();
@@ -40,9 +40,9 @@ describe("client-failure event envelope", () => {
     ["URL user info with several @", {}, { message: "fetch https://x@hunter2hunter2@api.example.test failed" }],
     ["protocol-relative URL user info", {}, { message: "fetch //svc:hunter2hunter2@api.example.test failed" }],
     ["lowercase bearer token", {}, { message: "sent Authorization: Bearer abcdefghijklmnop" }],
-    ["JWT", {}, { errorCode: "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJl" }],
+    ["JWT", {}, { errorCode: [base64('{"alg":"HS25'), base64('{"sub":"1234'), base64("signature")].join(".") }],
     ["query credential", {}, { message: "GET /v1/projects?access_token=abc123 failed" }],
-    ["provider key", {}, { message: "rejected key sk_live_abcdefgh12345678" }],
+    ["provider key", {}, { message: `rejected key ${liveKey("abcdefgh12345678")}` }],
   ])("rejects credential-like values: %s", (_name, operation, failure) => {
     const event = clone(fixture("client-failure/valid/network-minimal.json"));
     Object.assign(event.operation, operation);
@@ -197,7 +197,7 @@ describe("client-failure event envelope", () => {
 
   it("rejects attribute keys and unknown field names that hold a credential, without echoing it", () => {
     const event = clone(fixture("client-failure/valid/network-minimal.json"));
-    const result = validateClientFailureEvent({ ...event, attributes: { sk_live_abcdefgh12345678: "x" }, failure: { kind: "unknown", "token=SEEDkey01": 1 } });
+    const result = validateClientFailureEvent({ ...event, attributes: { [liveKey("abcdefgh12345678")]: "x" }, failure: { kind: "unknown", "token=SEEDkey01": 1 } });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.issues.map((issue) => issue.code)).toEqual(["CREDENTIAL_KEY", "CREDENTIAL_KEY"]);

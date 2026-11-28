@@ -3,6 +3,7 @@
  * Intended for machine-readable / CI integration usage.
  */
 
+import { sanitizeRunReport } from "@apifn/core";
 import type { RunReport, RunReporter } from "../../types.js";
 
 export interface JsonReporterOptions {
@@ -18,7 +19,7 @@ export function createJsonReporter(options: JsonReporterOptions = {}): RunReport
 
     return {
         onComplete(report: RunReport): void {
-            write(JSON.stringify(report, null, indent));
+            write(JSON.stringify(sanitizeRunReport(report), null, indent));
             write("\n");
         },
     };

@@ -1,3 +1,4 @@
+import { redactText, sanitizeRequestResult } from "../redact.js";
 import type { LogFnClient } from "../types.js";
 
 // Duck-typed interfaces to avoid circular dependency with @apifn/collections
@@ -44,6 +45,8 @@ export interface LogfnRunReporter {
 
 /**
  * Creates a RunReporter that logs collection run events via logfn (LOG-001).
+ * Every result is sanitized before it is logged, so a direct call with a raw
+ * result logs no credentials (the runner's results pass through unchanged).
  *
  * @param logfn The configured logfn client
  */
@@ -60,11 +63,12 @@ export function logfnReporter(logfn: LogFnClient): LogfnRunReporter {
         },
         onRequestStart(item: LogfnCollectionItem) {
             logfn.debug("collection_request_start", {
-                name: item.name,
+                name: typeof item.name === "string" ? redactText(item.name) : item.name,
                 path: item.path,
             });
         },
-        onRequestComplete(result: LogfnRequestResult) {
+        onRequestComplete(unsanitized: LogfnRequestResult) {
+            const result = sanitizeRequestResult(unsanitized);
             // Use child() for per-request context
             const ctx = logfn.child({
                 request_name: result.name,

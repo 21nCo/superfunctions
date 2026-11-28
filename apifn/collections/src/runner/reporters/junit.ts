@@ -1,3 +1,4 @@
+import { sanitizeRequestResult } from "@apifn/core";
 import type { RunReport, RunReporter } from "../../types.js";
 
 export interface JUnitReporterOptions {
@@ -16,7 +17,8 @@ function escapeXml(value: unknown): string {
 export function reportToJUnitXml(report: RunReport): string {
   const failures = report.summary.failed;
   const errors = report.summary.errors;
-  const cases = report.results.map((result) => {
+  const cases = report.results.map((unsanitized) => {
+    const result = sanitizeRequestResult(unsanitized);
     const time = (result.duration / 1000).toFixed(3);
     const name = escapeXml(result.name);
     const classname = escapeXml(result.path);

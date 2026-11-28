@@ -1,6 +1,6 @@
 {
   "name": "@apifn/contracts",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Versioned API operation catalog, release descriptor and client-failure event contracts for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -40,7 +40,7 @@
     "verify:packed:registry": "node scripts/verify-packed-consumer.mjs --registry-core"
   },
   "dependencies": {
-    "@apifn/core": "0.3.0",
+    "@apifn/core": "0.4.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

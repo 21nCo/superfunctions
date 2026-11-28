@@ -12,6 +12,8 @@ export type {
   CookieJar,
   CookieJarCookie,
   HttpRedirectRecord,
+  HttpReceivedHop,
+  HttpSentHop,
   RunOptions,
   RunReport,
   RequestResult,

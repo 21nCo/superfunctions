@@ -2,6 +2,7 @@
  * Console reporter — colored pass/fail output per request with summary at end.
  */
 
+import { sanitizeRequestResult } from "@apifn/core";
 import pc from "picocolors";
 import type { Collection, CollectionItem, RequestResult, RunOptions, RunReport, RunReporter } from "../../types.js";
 
@@ -56,7 +57,8 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Run
       // No per-request start output; results shown on complete
     },
 
-    onRequestComplete(result: RequestResult): void {
+    onRequestComplete(unsanitized: RequestResult): void {
+      const result = sanitizeRequestResult(unsanitized);
       const duration = `${result.duration}ms`;
       const statusCode = result.statusCode ? ` ${result.statusCode}` : "";
       write(`  ${badge(result.status, useColor)}  ${result.method}${statusCode}  ${result.name}  ${c.dim(duration)}\n`);

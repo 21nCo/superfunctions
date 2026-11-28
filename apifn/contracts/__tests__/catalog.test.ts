@@ -16,7 +16,7 @@ import {
   validateManifest,
 } from "../src/index.js";
 import { SCHEMA_KEYWORD_RULES } from "../src/catalog.js";
-import { buildOperationCatalog, clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS, unpublishableSchemas } from "./helpers.js";
+import { buildOperationCatalog, clone, fixture, LINEAR_RATIO, liveKey, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS, unpublishableSchemas } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
   readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))
@@ -453,7 +453,7 @@ describe("idempotency declarations", () => {
 
 describe("credential safety", () => {
   const SEEDED = [
-    "sk_live_SEEDEDsecret0001",
+    liveKey("SEEDEDsecret0001"),
     "SEEDEDquerykey0002",
     "SEEDED-example-0003",
     "SEEDED-ext-0004",
@@ -575,7 +575,7 @@ describe("credential safety", () => {
   it("keeps benign OAuth query parameters while removing credential ones", () => {
     const result = build((nextSpec) => {
       nextSpec.components.securitySchemes.oauth.flows.clientCredentials.tokenUrl =
-        "https://auth.example.test/oauth/token?audience=projects&client_secret=SEEDEDurl0015&x=sk_live_SEEDEDurl0016";
+        `https://auth.example.test/oauth/token?audience=projects&client_secret=SEEDEDurl0015&x=${liveKey("SEEDEDurl0016")}`;
     });
     expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials!.tokenUrl).toBe("https://auth.example.test/oauth/token?audience=projects");
     expect(canonicalJson(result)).not.toMatch(/SEEDEDurl001[56]/);
@@ -1215,7 +1215,7 @@ describe("author strings copied into the catalog", () => {
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBeGreaterThan(0);
   });
 
-  const ID_SECRET = "sk_live_SEEDEDident0030";
+  const ID_SECRET = liveKey("SEEDEDident0030");
   const GET = "/paths/~1workspaces~1{workspaceId}~1projects~1{projectId}/get";
 
   it.each<[string, (nextSpec: any, nextManifest: any) => void, string]>([
