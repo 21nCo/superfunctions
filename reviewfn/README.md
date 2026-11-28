@@ -64,9 +64,11 @@ The release gate requires Docker and the pinned test image documented in `docs/s
 Registry release order is core first, then context-composio, github,
 harness-codex and testing, then harness-claude-code and harness-cli (the CLI's
 development dependencies), then the CLI, and the bare `reviewfn` package last,
-once the core and the CLI are on npm. Each package runs its own
+once the core and the CLI are on npm. Each scoped package runs its own
 `npm run typecheck`, `npm run build`, `npm run lint`, and `npm test` after installing
-its declared registry dependencies in a standalone directory. No release gate
+its declared registry dependencies in a standalone directory; the bare package
+runs `npm run build` and its front-door test (`npm test`), which imports it
+against the published core and runs `reviewfn --version` with the published CLI. No release gate
 substitutes sibling sources for published declarations. The CLI's execution tests
 run real Git snapshots and Docker containers; provide Docker and the pinned image
 rather than replacing those tests with a binary-export smoke check.
