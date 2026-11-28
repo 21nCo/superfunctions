@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- No changes to the CLI itself. Released with the bare `superfunctions` package, the Superfunctions front door: `npx superfunctions` (or `npx sfs`) runs this CLI at the same version.
+
 ## 0.2.2
 
 - MySQL migrations: introspected `TEXT`, `MEDIUMTEXT` and `LONGTEXT` columns (reported with a length such as 65535) now match schema strings without a `maxLength`, and `TINYINT(1)` columns match boolean fields (numeric fields keep comparing them as integers), so unchanged columns no longer produce changes or errors on upgrade.
