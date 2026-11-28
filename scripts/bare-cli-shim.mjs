@@ -12,9 +12,8 @@
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -88,9 +87,9 @@ function npmCommand() {
 // Has npm fetch the CLI at this version and report the PATH it would run it with; the CLI's bin is in the first
 // node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr. Returns
 // { error } when npm could not run or fetch it, and undefined when npm ran but no such folder is on that PATH.
-function npmLocate(command, prefix, cwd) {
+function npmLocate(command, prefix) {
   const args = [...prefix, 'exec', '--yes', `--package=${spec}`, '--', 'node', '-p', 'process.env.PATH'];
-  const result = spawnSync(command, args, { cwd, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
+  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
   if (result.error) return { error: `could not start npm: ${result.error.message}` };
   if (result.status !== 0) return { error: `npm could not fetch ${spec}.` };
   const reported = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
@@ -103,37 +102,29 @@ function npmLocate(command, prefix, cwd) {
   return undefined;
 }
 
-// The project's .npmrc, as npm finds it: in the nearest folder up from the working directory that holds a
-// package.json or a node_modules folder. Undefined when there is none.
-function projectNpmrc() {
-  for (let folder = process.cwd(); ; folder = path.dirname(folder)) {
-    if (existsSync(path.join(folder, 'package.json')) || existsSync(path.join(folder, 'node_modules'))) {
-      const npmrc = path.join(folder, '.npmrc');
-      return existsSync(npmrc) ? npmrc : undefined;
-    }
-    if (path.dirname(folder) === folder) return undefined;
+// The copy of the CLI npm reused from the project's own tree, which may be nested where no reported PATH reaches it:
+// `npm ls` (with the project's npm settings, across every workspace) lists each installed copy's folder.
+function projectTreeBin(command, prefix) {
+  const args = [...prefix, 'ls', cli, '--all', '--parseable', '--workspaces=false'];
+  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
+  // npm ls exits non-zero for an imperfect tree (extraneous or missing packages) but still lists what it found.
+  for (const folder of (result.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
+    const file = binIn(folder.trim());
+    if (file) return file;
   }
+  return undefined;
 }
 
-// npm runs from the working directory first, so the project's npm settings apply. npm may then reuse a copy of the CLI
-// nested elsewhere in the project, which is on no PATH it reports; it runs again from an empty folder holding a copy of
-// the project's .npmrc (its registry and credentials), where it can only use its cache or that registry.
+// npm fetches the CLI at this version into its cache, or reuses a copy in the project's tree, which the first
+// node_modules/.bin folder on its reported PATH may not reach; projectTreeBin then finds that copy.
 function fetchedBin() {
   const [command, prefix] = npmCommand();
-  let found = npmLocate(command, prefix, process.cwd());
-  if (found === undefined) {
-    const empty = mkdtempSync(path.join(tmpdir(), 'bare-cli-'));
-    try {
-      const npmrc = projectNpmrc();
-      if (npmrc) copyFileSync(npmrc, path.join(empty, '.npmrc'));
-      found = npmLocate(command, prefix, empty);
-    } finally {
-      rmSync(empty, { recursive: true, force: true });
-    }
-  }
-  if (found === undefined) fail(`npm fetched ${spec}, but its ${own.name} command was not found.`);
-  if (found.error) fail(found.error);
-  return found;
+  const found = npmLocate(command, prefix);
+  if (found?.error) fail(found.error);
+  if (found) return found;
+  const file = projectTreeBin(command, prefix);
+  if (file === undefined) fail(`npm fetched ${spec}, but its ${own.name} command was not found. Run npx ${spec} instead.`);
+  return { file, PATH: process.env.PATH ?? '' };
 }
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');

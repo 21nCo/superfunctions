@@ -17,8 +17,8 @@
 // checkBareManifests (everything but the registry) also runs in CI over every bare target of the checkout.
 
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
@@ -47,7 +47,7 @@ export class BareReleaseError extends Error {
 
 /** A file as committed at `rev` (default HEAD) in the checkout at `root`. */
 export function gitFile(root, file, rev = 'HEAD') {
-  return execFileSync('git', ['show', `${rev}:${file.split(path.sep).join('/')}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  return execFileSync('git', ['show', `${rev}:${file.split(path.sep).join('/')}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 });
 }
 
 async function readManifest(root, target) {
@@ -99,7 +99,7 @@ export async function checkBareManifests({ root = repoRoot, target, targets, shi
   };
   if (linked.core) pinnedOnlyInDependencies(linked.core.name);
   if (target.bare.core !== null && !hasRootExport(manifest)) {
-    problems.push(`exports must have a "." entry with a runtime target (import, require, node or default), so import "${target.name}" gives the core`);
+    problems.push(`exports must have a "." entry that an ESM import resolves (a string, or an import, node or default condition), so import "${target.name}" gives the core`);
   }
   const hasCore = target.bare.core !== null;
   if (target.bare.cli !== null) {
@@ -162,27 +162,73 @@ function aliasTarget(spec) {
   return match ? match[1] : null;
 }
 
-const RUNTIME_CONDITIONS = ['import', 'require', 'node', 'default'];
+// The conditions under which `import "<bare>"` resolves in Node.js; a require-only root cannot be imported.
+const IMPORT_CONDITIONS = ['import', 'node', 'default'];
 
-/** Whether an exports target resolves at run time: a string, an array holding one, or a runtime condition leading to one. */
-function hasRuntimeTarget(value) {
-  if (typeof value === 'string') return value !== '';
-  if (Array.isArray(value)) return value.some(hasRuntimeTarget);
-  if (value === null || typeof value !== 'object') return false;
-  return Object.entries(value).some(([key, target]) => RUNTIME_CONDITIONS.includes(key) && hasRuntimeTarget(target));
+/** The targets an exports value offers an ESM import: strings, directly, in an array or under an import condition. */
+function importTargets(value) {
+  if (typeof value === 'string') return value === '' ? [] : [value];
+  if (Array.isArray(value)) return value.flatMap(importTargets);
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, target]) => (IMPORT_CONDITIONS.includes(key) ? importTargets(target) : []));
 }
 
-/** Whether `import "<bare>"` resolves at run time: the root of `exports`, or (with no exports) a main file. */
-function hasRootExport(manifest) {
+/** The files `import "<bare>"` can resolve to: the root of `exports`, or (with no exports) the main file. */
+function rootImportTargets(manifest) {
   const { exports } = manifest;
-  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '';
+  if (exports === undefined) return typeof manifest.main === 'string' && manifest.main !== '' ? [manifest.main] : [];
   if (exports !== null && typeof exports === 'object' && !Array.isArray(exports)) {
     const keys = Object.keys(exports);
-    if (keys.some(key => key.startsWith('.'))) return hasRuntimeTarget(exports['.']);
+    if (keys.some(key => key.startsWith('.'))) return importTargets(exports['.']);
   }
   // A string, an array or a conditions-only object is the "." entry itself.
-  return hasRuntimeTarget(exports);
+  return importTargets(exports);
 }
+
+const hasRootExport = manifest => rootImportTargets(manifest).length > 0;
+
+/**
+ * The entries of a gzipped tar archive (an npm tarball), by path without a leading "./": { type, data }, where type is
+ * the tar type flag ("0" for a regular file, "2" for a symlink, "5" for a folder). Reads ustar prefixes, GNU long
+ * names and pax path records, which npm uses for long paths.
+ * @param {Buffer} gzipped
+ */
+export function readTarball(gzipped) {
+  const data = gunzipSync(gzipped);
+  const text = bytes => bytes.toString('utf8').replace(/\0[\s\S]*$/, '');
+  const entries = new Map();
+  let longName = null;
+  let paxPath = null;
+  for (let offset = 0; offset + 512 <= data.length; ) {
+    const header = data.subarray(offset, offset + 512);
+    if (header.every(byte => byte === 0)) break;
+    const size = Number.parseInt(text(header.subarray(124, 136)).trim() || '0', 8);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error(`unreadable tar entry size at byte ${offset}`);
+    const type = header[156] === 0 ? '0' : String.fromCharCode(header[156]);
+    const prefix = text(header.subarray(257, 262)) === 'ustar' ? text(header.subarray(345, 500)) : '';
+    const name = prefix ? `${prefix}/${text(header.subarray(0, 100))}` : text(header.subarray(0, 100));
+    const body = data.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+    if (type === 'x') {
+      paxPath = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(body.toString('utf8'))?.[1] ?? null;
+      continue;
+    }
+    if (type === 'L') {
+      longName = text(body);
+      continue;
+    }
+    if (type === 'g') continue;
+    entries.set((paxPath ?? longName ?? name).replace(/^\.\//, ''), { type: type === '7' ? '0' : type, data: Buffer.from(body) });
+    paxPath = longName = null;
+  }
+  return entries;
+}
+
+/** The regular file at `file` in a tarball's entries, or undefined (a symlink or folder there does not count). */
+const regularFile = (entries, file) => {
+  const entry = entries.get(`package/${normalizeBin(file)}`);
+  return entry?.type === '0' ? entry.data : undefined;
+};
 
 /**
  * Requires every scoped package to be on the registry at its version. Any answer but the version itself refuses.
@@ -214,16 +260,17 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
       if (files.some(file => typeof file !== 'string') || new Set(files).size !== 1) {
         throw new BareReleaseError('not-published', `${name}@${version} on npm does not have the bins ${bins.join(', ')} on one file (it has ${JSON.stringify(published)}); release a new CLI version that has them, at the bare package's version.`, { name, version });
       }
-      // The manifest can name a file the tarball lacks, so the published tarball must hold it.
-      if (!(await tarballEntries(body.dist?.tarball, { fetch, name, version })).includes(`package/${files[0]}`)) {
+      // The manifest can name a file the tarball lacks (or holds as a link, which npm does not install), so the
+      // published tarball must hold it as a regular file.
+      if (regularFile(await publishedTarball(body.dist?.tarball, { fetch, name, version }), files[0]) === undefined) {
         throw new BareReleaseError('not-published', `${name}@${version} on npm has no ${files[0]} for its ${bins[0]} bin; release a new CLI version that ships it, at the bare package's version.`, { name, version });
       }
     }
   }
 }
 
-/** The entry paths of a published tarball, normalized without a leading "./". */
-async function tarballEntries(url, { fetch, name, version }) {
+/** The entries of a published tarball (readTarball). */
+async function publishedTarball(url, { fetch, name, version }) {
   if (typeof url !== 'string' || url === '') throw new BareReleaseError('registry-unavailable', `The registry gave no tarball for ${name}@${version}`, { name, version });
   let bytes;
   try {
@@ -233,15 +280,10 @@ async function tarballEntries(url, { fetch, name, version }) {
   } catch (error) {
     throw new BareReleaseError('registry-unavailable', `Could not download the ${name}@${version} tarball: ${error.message}`, { name, version });
   }
-  const dir = await mkdtemp(path.join(tmpdir(), 'bare-release-tarball-'));
   try {
-    const file = path.join(dir, 'package.tgz');
-    await writeFile(file, bytes);
-    return execFileSync('tar', ['-tzf', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean).map(entry => entry.replace(/^\.\//, ''));
+    return readTarball(bytes);
   } catch (error) {
     throw new BareReleaseError('registry-unavailable', `Could not read the ${name}@${version} tarball: ${error.message}`, { name, version });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -254,22 +296,23 @@ async function tarballEntries(url, { fetch, name, version }) {
  */
 export async function checkPackedBare({ tarball, manifest, shim: template }) {
   template ??= await readFile(SHIM_TEMPLATE, 'utf8');
-  const read = file => execFileSync('tar', ['-xzOf', tarball, `package/${file}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-  const packed = JSON.parse(read('package.json'));
+  const entries = readTarball(await readFile(tarball));
+  const packedManifest = regularFile(entries, 'package.json');
+  if (packedManifest === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no package.json`);
+  const packed = JSON.parse(packedManifest.toString('utf8'));
   const fields = ['name', 'version', 'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'exports', 'main', 'frontDoor'];
   const changed = fields.filter(field => JSON.stringify(packed[field]) !== JSON.stringify(manifest[field]));
   const binsOf = value => JSON.stringify(Object.entries(value ?? {}).map(([name, file]) => [name, normalizeBin(file)]).sort());
   if (binsOf(packed.bin) !== binsOf(manifest.bin)) changed.push('bin');
   if (changed.length > 0) throw new BareReleaseError('misaligned', `The packed ${manifest.name} changed ${changed.join(', ')} after the bare release gate checked them`);
   if (manifest.frontDoor !== undefined) {
-    let shim;
-    try {
-      shim = read(SHIM_FILE);
-    } catch {
-      throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
-    }
-    if (shim !== template) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
+    const shim = regularFile(entries, SHIM_FILE);
+    if (shim === undefined) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has no ${SHIM_FILE}`);
+    if (shim.toString('utf8') !== template) throw new BareReleaseError('misaligned', `The packed ${manifest.name} has a ${SHIM_FILE} that differs from the shared shim template`);
   }
+  // Every file `import "<bare>"` can resolve to ships in the tarball (wildcard targets are left to Node.js).
+  const missing = rootImportTargets(manifest).filter(file => !file.includes('*') && regularFile(entries, file) === undefined);
+  if (missing.length > 0) throw new BareReleaseError('misaligned', `The packed ${manifest.name} lacks ${missing.join(', ')}, which import "${manifest.name}" resolves to`);
 }
 
 /**

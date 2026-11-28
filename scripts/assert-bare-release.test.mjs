@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare } from './assert-bare-release.mjs';
+import { BareReleaseError, SHIM_FILE, SHIM_TEMPLATE, assertBareRelease, assertPublished, checkBareManifests, checkPackedBare, readTarball } from './assert-bare-release.mjs';
 import { ReleaseTargetError, loadReleaseTargets } from './resolve-release-tag.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -144,9 +144,10 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'npm:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli through an npm alias/);
   await expectProblem({ overrides: { dependencies: { '@fixture/core': '1.2.3', 'cli-alias': 'NPM:@fixture/cli@1.2.3' } } }, /dependencies\["cli-alias"\] installs @fixture\/cli/);
   await expectProblem({ overrides: { peerDependencies: { 'cli-alias': 'npm:@fixture/cli' } } }, /peerDependencies\["cli-alias"\] installs @fixture\/cli/);
-  await expectProblem({ overrides: { exports: { '.': null } } }, /exports must have a "\." entry with a runtime target/);
-  await expectProblem({ overrides: { exports: { '.': { types: './index.d.ts' } } } }, /exports must have a "\." entry with a runtime target/);
+  await expectProblem({ overrides: { exports: { '.': null } } }, /exports must have a "\." entry that an ESM import resolves/);
+  await expectProblem({ overrides: { exports: { '.': { types: './index.d.ts' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ entry: { core: 'fixture' }, overrides: { dependencies: {}, exports: { './sub': './sub.js' } } }, /exports must have a "\." entry/);
+  await expectProblem({ overrides: { exports: { '.': { require: './index.cjs' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ overrides: { exports: { './package.json': './package.json' } } }, /exports must have a "\." entry/);
   await expectProblem({ overrides: { exports: undefined } }, /exports must have a "\." entry/);
   // Root exports in their other forms pass.
@@ -207,6 +208,15 @@ test('registry: the core and CLI must already be on npm at the version', async t
   // A published manifest naming a bin file its tarball lacks is refused.
   const hollow = { ...published, [CLI_TARBALL]: cliTarball(t, ['README.md']) };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(hollow) }), error => error.code === 'not-published' && /has no dist\/cli\.js for its fixture bin/.test(error.message));
+  // A link at the bin path is not a bin: npm does not install tar links.
+  const linkDir = tempDir(t, 'bare-release-link-');
+  mkdirSync(path.join(linkDir, 'package/dist'), { recursive: true });
+  writeJson(path.join(linkDir, 'package/package.json'), { name: '@fixture/cli', version: '1.2.3' });
+  writeFileSync(path.join(linkDir, 'package/real.js'), '\n');
+  symlinkSync('../real.js', path.join(linkDir, 'package/dist/cli.js'));
+  execFileSync('tar', ['-czf', path.join(linkDir, 'cli.tgz'), '-C', linkDir, 'package']);
+  const linked = { ...published, [CLI_TARBALL]: readFileSync(path.join(linkDir, 'cli.tgz')) };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(linked) }), /has no dist\/cli\.js for its fixture bin/);
   const noTarball = { ...published, [CLI_TARBALL]: undefined };
   await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(noTarball) }), error => error.code === 'registry-unavailable' && /tarball/.test(error.message));
 
@@ -235,8 +245,25 @@ test('packed tarball: keeps the checked manifest fields and the shared shim', as
   await checkPackedBare({ tarball, manifest });
   await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, dependencies: { '@fixture/core': '1.2.2' } } }), /changed dependencies/);
   await assert.rejects(checkPackedBare({ tarball, manifest: { ...manifest, bin: { fixture: './bin/cli.mjs' } } }), /changed bin/);
+  rmSync(path.join(dir, 'index.js'));
+  await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /lacks \.\/index\.js, which import "fixture" resolves to/);
+  writeFileSync(path.join(dir, 'index.js'), 'export {};\n');
   writeFileSync(path.join(dir, SHIM_FILE), `${readFileSync(SHIM_TEMPLATE, 'utf8')}// changed\n`);
   await assert.rejects(checkPackedBare({ tarball: pack(), manifest }), /differs from the shared shim template/);
+});
+
+test('tarball reader: regular files, links and long (pax) paths', t => {
+  const dir = tempDir(t, 'bare-release-tar-');
+  const long = `dist/${'nested-folder-name/'.repeat(8)}cli.js`;
+  writeJson(path.join(dir, 'package.json'), { name: '@fixture/long', version: '1.0.0', files: ['dist'] });
+  mkdirSync(path.dirname(path.join(dir, long)), { recursive: true });
+  writeFileSync(path.join(dir, long), 'long\n');
+  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', dir], { cwd: dir, encoding: 'utf8' }));
+  const entries = readTarball(readFileSync(path.join(dir, packed.filename)));
+  assert.ok(long.length > 100);
+  assert.equal(entries.get(`package/${long}`)?.type, '0');
+  assert.equal(entries.get(`package/${long}`).data.toString('utf8'), 'long\n');
+  assert.equal(JSON.parse(entries.get('package/package.json').data.toString('utf8')).name, '@fixture/long');
 });
 
 test('gate: a bare tag needs aligned manifests and published scoped packages; other tags pass through', async t => {
@@ -306,10 +333,10 @@ const runShim = (shim, args, env = {}, cwd = undefined) => {
 };
 
 /**
- * A stand-in npm-cli.js that records its arguments and working directories, and reports a PATH whose .bin folder holds
- * a fetched CLI. With `onlyFromEmptyFolder`, a run from the caller's folder reports a PATH without it.
+ * A stand-in npm-cli.js that records each call ({ args, cwd }). `npm exec` reports a PATH whose first .bin folder holds a
+ * fetched CLI (none with `reportsBin: false`); `npm ls` prints the `listed` folders and exits 1, as for an imperfect tree.
  */
-function fakeNpm(t, { fetchedCli, status = 0, onlyFromEmptyFolder = false }) {
+function fakeNpm(t, { fetchedCli, status = 0, reportsBin = true, listed = [] }) {
   const dir = tempDir(t, 'bare-shim-npm-');
   const cache = path.join(dir, 'cache');
   if (fetchedCli) writeCli(path.join(cache, 'node_modules/@fixture/cli'), fetchedCli, 'fetched');
@@ -318,13 +345,10 @@ function fakeNpm(t, { fetchedCli, status = 0, onlyFromEmptyFolder = false }) {
   const bin = JSON.stringify(path.join(cache, 'node_modules/.bin') + path.delimiter);
   writeFileSync(
     path.join(dir, 'npm-cli.js'),
-    `const { appendFileSync, existsSync, readFileSync } = require('node:fs');\n` +
-      `const path = require('node:path');\n` +
-      `const npmrc = existsSync('.npmrc') ? readFileSync('.npmrc', 'utf8') : null;\n` +
-      `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), npmrc }) + '\\n');\n` +
-      `const empty = path.basename(process.cwd()).startsWith('bare-cli-');\n` +
-      `process.stdout.write((${onlyFromEmptyFolder} && !empty ? '' : ${bin}) + process.env.PATH + '\\n');\n` +
-      `process.exitCode = ${status};\n`,
+    `const { appendFileSync } = require('node:fs');\n` +
+      `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + '\\n');\n` +
+      `if (process.argv[2] === 'ls') { process.stdout.write(${JSON.stringify(listed.map(folder => `${folder}\n`).join(''))}); process.exitCode = 1; }\n` +
+      `else { process.stdout.write((${reportsBin} ? ${bin} : '') + process.env.PATH + '\\n'); process.exitCode = ${status}; }\n`,
   );
   const calls = () => readFileSync(record, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   return { npmCli: path.join(dir, 'npm-cli.js'), calls, args: () => calls()[0].args };
@@ -350,26 +374,24 @@ test('shim: fetches the CLI at exactly its version when no matching copy is inst
   assert.deepEqual(npm.args(), ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH']);
 });
 
-test('shim: fetches again from an empty folder when npm reports no PATH holding the CLI', t => {
-  const { shim } = installedProduct(t, { installedCli: null });
-  const npm = fakeNpm(t, { fetchedCli: '1.2.3', onlyFromEmptyFolder: true });
-  const run = runShim(shim, ['0'], { npm_execpath: npm.npmCli });
+test('shim: finds the copy npm reused from the project tree when no reported PATH reaches it', t => {
+  const { root, shim } = installedProduct(t, { installedCli: '1.2.2' });
+  const nested = path.join(root, 'node_modules/other/node_modules/@fixture/cli');
+  writeCli(nested, '1.2.3', 'nested');
+  const npm = fakeNpm(t, { reportsBin: false, listed: [path.join(root, 'node_modules/@fixture/cli'), nested] });
+  const run = runShim(shim, ['0', 'status'], { npm_execpath: npm.npmCli });
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.output.origin, 'fetched');
-  const calls = npm.calls();
-  assert.equal(calls.length, 2);
-  assert.doesNotMatch(path.basename(calls[0].cwd), /^bare-cli-/);
-  assert.match(path.basename(calls[1].cwd), /^bare-cli-/);
-  assert.deepEqual(calls[1].args, calls[0].args);
+  assert.equal(run.output.origin, 'nested');
+  assert.deepEqual(run.output.args, ['0', 'status']);
+  assert.deepEqual(npm.calls().map(call => call.args), [
+    ['exec', '--yes', '--package=@fixture/cli@1.2.3', '--', 'node', '-p', 'process.env.PATH'],
+    ['ls', '@fixture/cli', '--all', '--parseable', '--workspaces=false'],
+  ]);
 
-  // The retry keeps the project's npm settings: its .npmrc is copied into the empty folder.
-  const project = tempDir(t, 'bare-shim-project-');
-  writeJson(path.join(project, 'package.json'), { private: true });
-  writeFileSync(path.join(project, '.npmrc'), 'registry=https://registry.example.test/\n');
-  mkdirSync(path.join(project, 'src'));
-  const mirrored = fakeNpm(t, { fetchedCli: '1.2.3', onlyFromEmptyFolder: true });
-  assert.equal(runShim(shim, ['0'], { npm_execpath: mirrored.npmCli }, path.join(project, 'src')).status, 0);
-  assert.deepEqual(mirrored.calls().map(call => call.npmrc), [null, 'registry=https://registry.example.test/\n']);
+  const nothing = fakeNpm(t, { reportsBin: false, listed: [path.join(root, 'node_modules/@fixture/cli')] });
+  const missing = runShim(shim, [], { npm_execpath: nothing.npmCli });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /its fixture command was not found\. Run npx @fixture\/cli@1\.2\.3 instead\./);
 });
 
 test('shim: a CLI bin that resolves outside its package is never run', t => {
@@ -403,4 +425,31 @@ test('shim: says what failed when npm cannot fetch the CLI or the fetched copy h
   const noCli = runShim(unnamed, []);
   assert.equal(noCli.status, 1);
   assert.match(noCli.stderr, /names no CLI package in frontDoor\.cli/);
+});
+
+test('pack: a bare tarball is checked against the committed release entry, manifest and shim', t => {
+  const root = product(t, { overrides: { scripts: { build: 'node -e 0', test: 'node -e 0' } } });
+  writeFileSync(path.join(root, 'bare/index.js'), 'export {};\n');
+  mkdirSync(path.join(root, 'scripts'));
+  for (const file of ['pack-release-package.mjs', 'resolve-release-tag.mjs', 'owners.mjs', 'assert-bare-release.mjs', 'bare-cli-shim.mjs']) {
+    cpSync(path.join(import.meta.dirname, file), path.join(root, 'scripts', file));
+  }
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture');
+  const pack = () => spawnSync(process.execPath, [path.join(root, 'scripts/pack-release-package.mjs'), 'fixture-v1.2.3'], { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' } });
+
+  const clean = pack();
+  assert.equal(clean.status, 0, clean.stderr);
+
+  // As an install hook could: drop the bare fields from the working tree's release row and loosen the core pin.
+  const releases = JSON.parse(readFileSync(path.join(root, 'release-packages.json'), 'utf8'));
+  writeJson(path.join(root, 'release-packages.json'), releases.map(({ kind, core, cli, ...entry }) => entry));
+  const manifestFile = path.join(root, 'bare/package.json');
+  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+  writeJson(manifestFile, { ...manifest, dependencies: { '@fixture/core': '^1.2.0' } });
+  const tampered = pack();
+  assert.notEqual(tampered.status, 0);
+  assert.match(tampered.stderr, /changed dependencies after the bare release gate checked them/);
 });
