@@ -918,10 +918,10 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     expect(lost.code).toBe('mint_outcome_unknown');
     const mintedRequest = { ...lostRequest, idempotencyKey: 'test-operation-clock-minted' };
     const minted = await m.mint(mintedRequest);
-    // The wall clock steps two hours forward; almost no time has elapsed on the hold clock, so nothing has expired there.
+    // The wall clock steps two hours forward; almost no time has elapsed on the hold clock, so no key is freed and nothing is sent.
     wall += 2 * 3600 * 1000;
     expect(await rejection(m.mint(lostRequest))).toBe(lost);
-    expect(await m.mint(mintedRequest)).toBe(minted);
+    expect((await rejection(m.mint(mintedRequest))).code).toBe('provider_unavailable');
     expect(posts(github.calls)).toBe(2);
     await m.revoke(minted.revokeHandle);
   });
@@ -936,10 +936,12 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     // GitHub's expires_at, converted to the hold clock when the 201 arrived.
     const expiry = Date.parse(EXPIRES_AT) - NOW_MS;
     hold = expiry - 1;
-    for (const step of [3, -3]) {
-      wall = NOW_MS + step * 3600 * 1000;
-      expect(await m.mint(request)).toBe(first);
-    }
+    wall = NOW_MS - 3 * 3600 * 1000;
+    expect(await m.mint(request)).toBe(first);
+    // Forward past expires_at the credential is refused sooner, but the key is not freed and nothing is sent.
+    wall = NOW_MS + 3 * 3600 * 1000;
+    const early = await rejection(m.mint(request));
+    expect([early.code, posts(github.calls)]).toEqual(['provider_unavailable', 1]);
     hold = expiry;
     for (const step of [-3, 3, -3]) {
       // Back by hours the expired credential is still not returned; forward, the key is not freed early.
@@ -953,6 +955,22 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     wall = NOW_MS;
     const second = await m.mint(request);
     expect([second === first, posts(github.calls)]).toEqual([false, 2]);
+  });
+
+  it("stops returning a credential at GitHub's expires_at once a wall-clock error at mint is corrected", async () => {
+    // The wall clock runs four minutes slow when the 201 arrives, within the skew tolerance.
+    let wall = NOW_MS - 4 * 60 * 1000;
+    let hold = 0;
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: () => hold });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-slow-wall' };
+    const first = await m.mint(request);
+    // Corrected, the wall clock reaches GitHub's expires_at while the hold clock still says four minutes remain.
+    hold = Date.parse(EXPIRES_AT) - NOW_MS;
+    wall = Date.parse(EXPIRES_AT);
+    const refused = await rejection(m.mint(request));
+    expect([refused.code, refused.retryable, posts(github.calls)]).toEqual(['provider_unavailable', true, 1]);
+    await m.revoke(first.revokeHandle);
   });
 
   // Each hold starts at hold-clock 0 and ends exactly an hour plus the skew tolerance later.

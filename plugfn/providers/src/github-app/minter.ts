@@ -92,9 +92,11 @@ export interface GitHubAppMinterOptions {
   /** Current time in milliseconds; `Date.now` by default. */
   readonly now?: () => number;
   /**
-   * Milliseconds on the clock every idempotency-key decision is measured on:
-   * key holds, and when a returned credential counts as expired (GitHub's
-   * `expires_at` is converted to this clock once, when the 201 arrives).
+   * Milliseconds on the clock idempotency-key holds are measured on. GitHub's
+   * `expires_at` is converted to this clock once, when the 201 arrives; a
+   * credential is returned again until this clock or the wall clock reaches
+   * it, and its key is freed only once this clock passes it plus the skew
+   * tolerance.
    * `performance.now` by default. On Node and in browsers that does not
    * follow wall-clock changes; on Cloudflare Workers it equals `Date.now()`,
    * so a wall-clock step there moves the holds too. Pass a clock that never
@@ -578,8 +580,9 @@ function permissionsProblem(granted: unknown, requested: Readonly<Record<string,
  * (on Workers, its request was cancelled) holds its key for that hour plus
  * tolerance from its POST (GitHub ends any request it takes longer than 10
  * seconds to process), then frees it; if it settles later, its token is
- * revoked, never returned. Every key decision, including when a credential
- * counts as expired, runs on one clock, `monotonicNow` (`performance.now()`
+ * revoked, never returned. Every key hold runs on one clock, `monotonicNow`
+ * (a credential counts as expired once that clock or the wall clock reaches
+ * its expiry; the key is freed only by the first) (`performance.now()`
  * by default: independent of the wall clock on Node, but equal to
  * `Date.now()` on Workers, where a caller who needs independence injects a
  * clock). Only a definite
@@ -608,9 +611,10 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   const now = options.now ?? (() => Date.now());
   /**
    * The clock of record for every idempotency-key decision. The wall-clock
-   * `now` is read only for the App JWT `iat` and to convert a 201's
-   * `expires_at` to this clock when it arrives (and for a revoke handle's
-   * informational `expiresAt`).
+   * `now` is read for the App JWT `iat`, to convert a 201's `expires_at` to
+   * this clock when it arrives, for a revoke handle's informational
+   * `expiresAt`, and to stop returning a credential once GitHub's
+   * `expires_at` has passed, which can only refuse sooner.
    */
   const elapsed = validateClock(options.monotonicNow) ?? (() => performance.now());
   const userAgent = validateUserAgent(options.userAgent);
@@ -733,6 +737,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     readonly untilMs: number;
     /** For a credential: when it expires, on the hold clock; from then on the key returns no credential. */
     readonly expiresAtHoldMs?: number;
+    /** For a credential: GitHub's `expires_at`; once the wall clock reaches it, the key returns no credential either. */
+    readonly expiresAtMs?: number;
   }
   /** Each credential's expiry converted to the hold clock, from the same observation that validated it. */
   const credentialExpiries = new WeakMap<GitHubAppRevokeHandle, number>();
@@ -963,8 +969,11 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         if (existing.request !== fingerprint) {
           throw fail('invalid_request', 'This idempotencyKey is already in use for a different mint request');
         }
-        const expiresAtHoldMs = existing.hold?.expiresAtHoldMs;
-        if (expiresAtHoldMs !== undefined && elapsed() >= expiresAtHoldMs) {
+        const hold = existing.hold;
+        // Expired by either clock: the hold clock survives wall-clock steps, and GitHub's own expires_at
+        // catches a wall-clock error at mint corrected since. The wall clock can only refuse sooner; it
+        // never frees the key or allows a POST, which wait for the hold below.
+        if (hold?.expiresAtHoldMs !== undefined && (elapsed() >= hold.expiresAtHoldMs || now() >= hold.expiresAtMs!)) {
           // Never hand back an expired credential; GitHub's clock may still accept it, so no new POST yet either.
           throw fail('provider_unavailable', "The credential minted for this idempotencyKey has expired; the key mints again after GitHub's clock-skew tolerance", {
             retryable: true,
@@ -991,7 +1000,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
             const handle = credential.revokeHandle;
             // Until GitHub's expiry on the hold clock the credential is returned; the key is freed after the skew tolerance.
             const expiresAtHoldMs = credentialExpiries.get(handle)!;
-            entry.hold = { handle, untilMs: expiresAtHoldMs + MAX_CLOCK_SKEW_MS, expiresAtHoldMs };
+            entry.hold = { handle, untilMs: expiresAtHoldMs + MAX_CLOCK_SKEW_MS, expiresAtHoldMs, expiresAtMs: handleStates.get(handle)!.expiresAtMs };
             return credential;
           },
           (error: unknown) => {
