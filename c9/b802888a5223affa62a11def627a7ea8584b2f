@@ -1,0 +1,23 @@
+authfn/client/src/__tests__/browser-handoff.test.ts
+  s_39a868e1585a27::t_1a68f454d74b56 2,2435-2518
+authfn/client/src/browser-handoff.ts
+  s_39a868e1585a27::t_7f74640c044e95 265,989-994,1136
+authfn/client/src/http-client.ts
+  s_39a868e1585a27::t_c8698dae368b93 134-137,170-173,182,449,463,489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9b802888a5223affa62a11def627a7ea8584b2f",
+  "prompts": {},
+  "sessions": {
+    "s_39a868e1585a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01fb3e9-ff65-4e23-90f8-246f613a7879",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_b62914e6e0f9ab::t_cc658d91c85f2f 31-32,140
+datafn/docs/content/docs/reference/changelog.mdx
+  s_b62914e6e0f9ab::t_caf3320a661818 17
+datafn/docs/public/llms-full.txt
+  s_3e06c1dce7ae99::t_f2b088ebeebc23 19165-19166,19274,24058
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f629f5b4b3a9ce149a653ce7b6cbb14de74edcb",
+  "prompts": {},
+  "sessions": {
+    "s_3e06c1dce7ae99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2203c-74eb-7f51-8b1f-8d17db8005a7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b62914e6e0f9ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22037-8a9d-7c03-8736-34292adec001",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
