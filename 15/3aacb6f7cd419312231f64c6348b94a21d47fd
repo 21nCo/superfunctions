@@ -1,0 +1,71 @@
+reviewfn/core/src/context/code-references.ts
+  s_922dc586c7ee23::t_c88603948f34cb 1-373
+reviewfn/docs/configuration.md
+  s_922dc586c7ee23::t_7c0da7dd630a6c 19-28
+reviewfn/cli/src/panel.ts
+  s_6177468a7273b6::t_26205472ed3e55 9,67-71,75,362
+reviewfn/cli/test/panel.test.ts
+  s_6177468a7273b6::t_29bd024e1d4b66 549-569
+reviewfn/core/src/context/glob.ts
+  s_6177468a7273b6::t_abd5108fa9f260 1-72
+reviewfn/core/src/context/symbols.ts
+  s_6177468a7273b6::t_a4a07a87950610 1-121
+reviewfn/core/src/coordinator.ts
+  s_6177468a7273b6::t_6477ae85e488d4 162,167
+reviewfn/core/src/errors.ts
+  s_6177468a7273b6::t_7bc267b309ffdd 20-21
+reviewfn/core/src/index.ts
+  s_6177468a7273b6::t_d27787b857fbc0 13-15
+reviewfn/core/src/panel/git.ts
+  s_6177468a7273b6::t_48d671537cd58b 20-21,49
+reviewfn/core/src/panel/policy.ts
+  s_6177468a7273b6::t_69bd62095ef42f 60-63
+reviewfn/core/src/panel/prompt.ts
+  s_6177468a7273b6::t_ea80e4fb4c0ef9 3,9,68,75-80,91,101,104,109,121
+reviewfn/core/src/panel/schema.ts
+  s_6177468a7273b6::t_7836b693b59dd7 99-100
+reviewfn/core/src/panel/types.ts
+  s_6177468a7273b6::t_10e950ff07c03f 51-59,73-76,242-243
+reviewfn/core/src/panel/validate.ts
+  s_6177468a7273b6::t_7e1139e44b0761 3,168,364-371
+reviewfn/core/src/prompt.ts
+  s_6177468a7273b6::t_aaa789fb7e6ea7 2,7-10,12
+reviewfn/core/src/types.ts
+  s_6177468a7273b6::t_8da03864b570cd 313-320,323
+reviewfn/core/src/validator.ts
+  s_6177468a7273b6::t_97c1f132bf4b4c 3,41,120
+reviewfn/core/test/code-references.test.ts
+  s_6177468a7273b6::t_f140cc9964d677 1-400
+reviewfn/docs/content/docs/reference/configuration.md
+  s_6177468a7273b6::t_c0689eaeaae2e8 22-31
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_6177468a7273b6::t_afb66590dac675 14,20-21,94
+reviewfn/docs/panel-report-schema.md
+  s_6177468a7273b6::t_eb255ea6fa27d0 11,17-18,91
+reviewfn/docs/static/llms-full.txt
+  s_6177468a7273b6::t_335f7d9b80af24 125-134,230,236-237,310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "153aacb6f7cd419312231f64c6348b94a21d47fd",
+  "prompts": {},
+  "sessions": {
+    "s_6177468a7273b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5a65f37d-75cc-4b70-923e-928d69070da4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_922dc586c7ee23": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2202c-d9aa-7392-b969-9d1231421aaf",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

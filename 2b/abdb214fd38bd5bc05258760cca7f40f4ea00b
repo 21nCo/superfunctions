@@ -1,0 +1,21 @@
+reviewfn/harness-cli/src/adapter.ts
+  s_af23753a66cbbb::t_455ee81adbbd47 482-485,488-489
+reviewfn/harness-cli/test/adapter.test.ts
+  s_af23753a66cbbb::t_57210b49d5da99 838-839
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2babdb214fd38bd5bc05258760cca7f40f4ea00b",
+  "prompts": {},
+  "sessions": {
+    "s_af23753a66cbbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_af23753a66cbbb",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

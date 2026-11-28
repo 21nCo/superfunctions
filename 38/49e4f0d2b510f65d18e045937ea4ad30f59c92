@@ -1,0 +1,25 @@
+authfn/oidc-issuer/README.md
+  s_567599b16799ba::t_ae01da2c63ad1f 41,57-58,64-70
+authfn/oidc-issuer/src/__tests__/oidc-issuer.test.ts
+  s_567599b16799ba::t_4e9c77fdb95480 198-211
+authfn/oidc-issuer/src/__tests__/workerd/oidc-issuer.workerd.test.ts
+  s_567599b16799ba::t_afa26757ed046f 33-36
+authfn/oidc-issuer/src/issuer.ts
+  s_567599b16799ba::t_dfe33b8bf4085a 17-21,48,61,256-258,269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3849e4f0d2b510f65d18e045937ea4ad30f59c92",
+  "prompts": {},
+  "sessions": {
+    "s_567599b16799ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fe1e1a1-1c01-4d0e-8b8d-1a8758a19767",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

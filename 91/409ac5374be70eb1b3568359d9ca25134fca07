@@ -1,0 +1,27 @@
+plugfn/core/README.md
+  s_a6fb659148b560::t_0b979df0976de2 139,143,146
+plugfn/core/src/scopes/grammar.ts
+  s_a6fb659148b560::t_bef137990d6518 48,82-118,327-332,339-349,361-365,376,378,386-401,408,420-424,428,430,433-436,521,532-533
+plugfn/core/src/scopes/types.ts
+  s_a6fb659148b560::t_2e5418a6296f69 81-83,88-92,98-100,215-220,250-255
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_a6fb659148b560::t_6eae1636b445db 781-864,1169-1215
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_a6fb659148b560::t_3e4e03ff0a480a 123-151,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91409ac5374be70eb1b3568359d9ca25134fca07",
+  "prompts": {},
+  "sessions": {
+    "s_a6fb659148b560": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21bbb-e8c2-75a2-94fb-adfee66a5e16",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

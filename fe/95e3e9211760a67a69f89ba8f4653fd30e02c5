@@ -1,0 +1,33 @@
+datafn/server/__tests__/revisions-postgres-writes.test.ts
+  s_a6fb659148b560::t_60f1c76f25d773 56-57
+datafn/server/__tests__/revisions-writes.test.ts
+  s_a6fb659148b560::t_370121272582aa 692-712,726-727,738-739,741-745,755-762
+datafn/server/src/execution/revisions.ts
+  s_6938022c1cfd65::t_879b85a2f32602 203-210,212,214-215,247,540-547,576,590-596,634,1003
+datafn/server/src/execution/sync/change-tracking.ts
+  s_6938022c1cfd65::t_43515ecb3dce1b 19,60-70,82,103,129-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe95e3e9211760a67a69f89ba8f4653fd30e02c5",
+  "prompts": {},
+  "sessions": {
+    "s_6938022c1cfd65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caf48fd3-d347-46ce-aa24-1e7ef2188bd1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a6fb659148b560": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21bbb-e8c2-75a2-94fb-adfee66a5e16",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

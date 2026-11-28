@@ -1,0 +1,21 @@
+authfn/client/src/http-client.ts
+  s_b62914e6e0f9ab::t_ef78018bfd7835 174,490-492,494-498,503-514
+authfn/client/src/__tests__/browser-handoff.test.ts
+  s_b62914e6e0f9ab::t_b8cf4d8b205619 1301-1303,1412,2488-2504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6389b56f1da246e614cf493da85b936ba2df184",
+  "prompts": {},
+  "sessions": {
+    "s_b62914e6e0f9ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22037-8a9d-7c03-8736-34292adec001",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
