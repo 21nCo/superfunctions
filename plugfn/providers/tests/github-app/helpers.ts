@@ -232,7 +232,7 @@ export function statefulGitHub(options: StatefulGitHubOptions = {}): { fetch: ty
  * A response body that delivers nothing until `push` is called, and records
  * whether the reader cancelled it. `pulled` resolves on the first read.
  */
-export function controlledBody(): { stream: ReadableStream<Uint8Array>; push(text: string): void; readonly cancelled: boolean; pulled: Promise<void> } {
+export function controlledBody(): { stream: ReadableStream<Uint8Array>; push(text: string, close?: boolean): void; readonly cancelled: boolean; pulled: Promise<void> } {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let cancelled = false;
   let onPull!: () => void;
@@ -251,9 +251,9 @@ export function controlledBody(): { stream: ReadableStream<Uint8Array>; push(tex
   );
   return {
     stream,
-    push(text: string) {
+    push(text: string, close = true) {
       controller.enqueue(new TextEncoder().encode(text));
-      controller.close();
+      if (close) controller.close();
     },
     get cancelled() {
       return cancelled;

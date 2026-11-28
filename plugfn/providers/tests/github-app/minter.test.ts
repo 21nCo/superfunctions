@@ -38,14 +38,9 @@ const SKEW_MS = 5 * 60 * 1000;
 
 function minter(responses: RecordedResponse[], options: Partial<GitHubAppMinterOptions> = {}) {
   const recorder = recordingFetch(responses);
-  const instance = createGitHubAppMinter({
-    appId: 12345,
-    privateKey: keys.pkcs1Pem,
-    fetch: recorder.fetch,
-    now: () => NOW_MS,
-    cleanupRetryDelayMs: 0,
-    ...options,
-  });
+  const merged: GitHubAppMinterOptions = { appId: 12345, privateKey: keys.pkcs1Pem, fetch: recorder.fetch, now: () => NOW_MS, cleanupRetryDelayMs: 0, ...options };
+  // Holds follow the test clock unless a test gives them their own.
+  const instance = createGitHubAppMinter({ monotonicNow: merged.now, ...merged });
   return { minter: instance, calls: recorder.calls };
 }
 
@@ -728,10 +723,12 @@ describe('GitHub App minter: retried mint', () => {
     expect((await rejection(m.mint(request))).code).toBe('provider_unavailable');
     const first = await m.mint(request);
     expect(await m.mint(request)).toBe(first);
-    // GitHub's clock may run up to five minutes ahead: the key stays held until expires_at plus that skew.
-    now = Date.parse(EXPIRES_AT) + SKEW_MS - 1;
+    now = Date.parse(EXPIRES_AT) - 1;
     expect(await m.mint(request)).toBe(first);
-    expect(calls).toHaveLength(2);
+    // GitHub's clock may run up to five minutes ahead: past expires_at the key returns no credential and sends no POST until that skew has passed.
+    now = Date.parse(EXPIRES_AT) + SKEW_MS - 1;
+    const blocked = await rejection(m.mint(request));
+    expect([blocked.code, blocked.retryable, calls.length]).toEqual(['provider_unavailable', true, 2]);
     now += 1;
     const second = await m.mint(request);
     expect([first.secret, second.secret]).toEqual([fakeInstallationToken(1), fakeInstallationToken(2)]);
@@ -911,20 +908,20 @@ describe('GitHub App minter: an idempotency key never issues a second live token
     expect(github.live.size).toBe(0);
   });
 
-  it('measures key holds on a clock wall-clock changes cannot move', async () => {
-    const wall = vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
-    try {
-      const github = statefulGitHub({ onPost: () => new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 }) });
-      const { minter: m } = minter([], { fetch: github.fetch, now: undefined });
-      const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-clock' };
-      const lost = await rejection(m.mint(request));
-      expect(lost.code).toBe('mint_outcome_unknown');
-      wall.mockReturnValue(NOW_MS + 2 * 3600 * 1000);
-      expect(await rejection(m.mint(request))).toBe(lost);
-      expect(posts(github.calls)).toBe(1);
-    } finally {
-      wall.mockRestore();
-    }
+  it('measures key holds on a clock wall-clock changes cannot move, even with a caller-supplied now', async () => {
+    let wall = NOW_MS;
+    const github = statefulGitHub({ onPost: (token, n) => (n === 1 ? new Response(JSON.stringify({ message: 'Bad Gateway' }), { status: 502 }) : undefined) });
+    const { minter: m } = minter([], { fetch: github.fetch, now: () => wall, monotonicNow: undefined });
+    const lostRequest = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-clock-lost' };
+    const lost = await rejection(m.mint(lostRequest));
+    expect(lost.code).toBe('mint_outcome_unknown');
+    const minted = await m.mint({ ...lostRequest, idempotencyKey: 'test-operation-clock-minted' });
+    // The wall clock steps two hours forward; almost no time has elapsed.
+    wall += 2 * 3600 * 1000;
+    expect(await rejection(m.mint(lostRequest))).toBe(lost);
+    expect((await rejection(m.mint({ ...lostRequest, idempotencyKey: 'test-operation-clock-minted' }))).code).toBe('provider_unavailable');
+    expect(posts(github.calls)).toBe(2);
+    await m.revoke(minted.revokeHandle);
   });
 
   it('frees the key after a definite refusal (422)', async () => {
@@ -1016,6 +1013,29 @@ describe('GitHub App minter: slow response bodies', () => {
     expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
     expect(calls[1]!.authorization).toBe(`Bearer ${token}`);
     expect([String(lost), JSON.stringify(lost), inspect(lost, { depth: 10, showHidden: true })].join('\n')).not.toContain(token);
+  });
+
+  it('revokes at once a token already read when the rest of the 201 body stalls', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const token = fakeInstallationToken(11);
+    const body = controlledBody();
+    const { fetch: fake, calls } = bodyFetch({
+      POST: () => new Response(body.stream, { status: 201 }),
+      DELETE: () => new Response(null, { status: 204 }),
+    });
+    const tasks: Promise<unknown>[] = [];
+    const { minter: m } = minter([], { fetch: fake, waitUntil: (task) => tasks.push(task) });
+    const pending = rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    await body.pulled;
+    body.push(`{"token":"${token}","expires_at":"${EXPIRES_AT}",`, false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await pending).code).toBe('mint_outcome_unknown');
+    await tasks[0];
+    expect(calls.map((c) => [c.method, c.authorization === `Bearer ${token}`])).toEqual([
+      ['POST', false],
+      ['DELETE', true],
+    ]);
+    expect(body.cancelled).toBe(true);
   });
 
   it('hands the late read and its revocation to waitUntil, so a Workers request can keep them alive', async () => {

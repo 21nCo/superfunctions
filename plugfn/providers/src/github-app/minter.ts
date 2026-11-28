@@ -51,10 +51,12 @@ const DEFAULT_CLEANUP_RETRY_DELAY_MS = 250;
 /** How long the minter waits for a response body before treating it as unreadable. */
 const BODY_READ_TIMEOUT_MS = 10_000;
 /**
- * How long a 201 body that missed {@link BODY_READ_TIMEOUT_MS} is still read,
- * so a token arriving late is revoked rather than left live; then it is cancelled.
+ * How long, from the response, a 201 body that missed {@link BODY_READ_TIMEOUT_MS}
+ * is still read, so a token arriving late is revoked rather than left live;
+ * then it is cancelled. It leaves the cleanup time within the 30 seconds
+ * Workers allow `waitUntil` work after a response.
  */
-const LATE_BODY_LIMIT_MS = 60_000;
+const LATE_BODY_LIMIT_MS = 20_000;
 /** GitHub's limit on the repositories one installation token can name. */
 export const GITHUB_MAX_TOKEN_REPOSITORIES = 500;
 /** Error bodies larger than this are cancelled and treated as unreadable. */
@@ -89,6 +91,11 @@ export interface GitHubAppMinterOptions {
   readonly fetch?: typeof fetch;
   /** Current time in milliseconds; `Date.now` by default. */
   readonly now?: () => number;
+  /**
+   * Milliseconds on a clock that wall-clock changes do not move, which
+   * idempotency-key holds are measured on; `performance.now` by default.
+   */
+  readonly monotonicNow?: () => number;
   /** The `User-Agent` header GitHub requires. */
   readonly userAgent?: string;
   /**
@@ -246,6 +253,11 @@ function validateUserAgent(userAgent: unknown): string {
   return userAgent;
 }
 
+function validateClock(clock: unknown): (() => number) | undefined {
+  if (clock !== undefined && typeof clock !== 'function') throw new TypeError('GitHub App minter: monotonicNow must be a function');
+  return clock as (() => number) | undefined;
+}
+
 function validateWaitUntil(waitUntil: unknown): ((task: Promise<unknown>) => void) | undefined {
   if (waitUntil !== undefined && typeof waitUntil !== 'function') throw new TypeError('GitHub App minter: waitUntil must be a function');
   return waitUntil as ((task: Promise<unknown>) => void) | undefined;
@@ -253,6 +265,14 @@ function validateWaitUntil(waitUntil: unknown): ((task: Promise<unknown>) => voi
 
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+interface BodyReading {
+  readonly result: Promise<BodyRead>;
+  /** The start of what has been read so far. */
+  peek(): string;
+  /** Stops reading and cancels the stream. */
+  cancel(): void;
 }
 
 interface BodyRead {
@@ -268,14 +288,14 @@ interface BodyRead {
  * open after the minter is done with it (Cloudflare Workers limit open
  * subrequests).
  */
-function startBodyRead(response: Response, limitMs: number, maxBytes: number): Promise<BodyRead> {
+function startBodyRead(response: Response, limitMs: number, maxBytes: number): BodyReading {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     const stream = response.body;
-    if (stream === null) return Promise.resolve({ text: '', head: '' });
+    if (stream === null) return { result: Promise.resolve({ text: '', head: '' }), peek: () => '', cancel: () => undefined };
     reader = stream.getReader();
   } catch {
-    return Promise.resolve({ text: undefined, head: '' });
+    return { result: Promise.resolve({ text: undefined, head: '' }), peek: () => '', cancel: () => undefined };
   }
   let finished = false;
   const finish = (cancel: boolean): void => {
@@ -292,7 +312,7 @@ function startBodyRead(response: Response, limitMs: number, maxBytes: number): P
     finish(true);
     return { text: undefined, head: out.slice(0, BODY_HEAD_CHARS) };
   };
-  return (async (): Promise<BodyRead> => {
+  const result = (async (): Promise<BodyRead> => {
     let size = 0;
     try {
       for (;;) {
@@ -314,11 +334,12 @@ function startBodyRead(response: Response, limitMs: number, maxBytes: number): P
     finish(false);
     return { text: out, head: '' };
   })();
+  return { result, peek: () => out.slice(0, BODY_HEAD_CHARS), cancel: () => finish(true) };
 }
 
 /** An error response body, or `undefined` when it cannot be read within {@link BODY_READ_TIMEOUT_MS} (the stream is then cancelled). */
 async function readBody(response: Response): Promise<string | undefined> {
-  return (await startBodyRead(response, BODY_READ_TIMEOUT_MS, MAX_ERROR_BODY_BYTES)).text;
+  return (await startBodyRead(response, BODY_READ_TIMEOUT_MS, MAX_ERROR_BODY_BYTES).result).text;
 }
 
 const TIMED_OUT = Symbol('timed out');
@@ -529,7 +550,7 @@ function permissionsProblem(granted: unknown, requested: Readonly<Record<string,
  * `revoke` accepts to finish the cleanup; the token stays active until then,
  * or until it expires. A 201 whose body cannot be read within 10 seconds, or
  * carries no usable token, rejects with the non-retryable
- * `mint_outcome_unknown`; a body that arrives later (within a minute) is
+ * `mint_outcome_unknown`; a body that arrives later (within 20 seconds of the response) is
  * still read, and any token in it is revoked, never returned. On Workers that
  * late work outlives the request only through the `waitUntil` option. A 201
  * body too large or broken to read whole is searched for its leading token,
@@ -546,13 +567,15 @@ function permissionsProblem(granted: unknown, requested: Readonly<Record<string,
  * hour plus the five-minute skew tolerance, by when any such token has
  * expired. A `rejected_credential_not_revoked` failure is repeated, with the
  * same `revokeHandle`, until that handle is revoked or its token expires (plus
- * the tolerance), and a credential until it is revoked or the tolerance after
- * its `expires_at`. A mint that never settles (on Workers, its request was
- * cancelled) holds its key for that hour plus tolerance from its POST, then
- * frees it; if it settles later, its token is revoked, never returned. Holds
- * run on the injected `now`, or else on `performance.now()`, which wall-clock
- * changes cannot move. Only a definite non-issuance (a failure before the POST, or a
- * 4xx) frees the key at once. Without a key, a transport
+ * the tolerance). A credential is returned again until it is revoked or
+ * expires; from its `expires_at` until the tolerance has passed, the key
+ * rejects with a retryable `provider_unavailable`. A mint that never settles
+ * (on Workers, its request was cancelled) holds its key for that hour plus
+ * tolerance from its POST (GitHub ends any request it takes longer than 10
+ * seconds to process), then frees it; if it settles later, its token is
+ * revoked, never returned. Holds run on `monotonicNow` (`performance.now()`
+ * by default), which wall-clock changes cannot move. Only a definite
+ * non-issuance (a failure before the POST, or a 4xx) frees the key at once. Without a key, a transport
  * failure or 5xx is a retryable `provider_unavailable`: if GitHub had already
  * created a token, it is unknown to the minter and expires within the hour.
  *
@@ -576,7 +599,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   const doFetch: typeof fetch = options.fetch ?? ((input, init) => fetch(input, init));
   const now = options.now ?? (() => Date.now());
   /** The clock key holds are measured on: the injected `now`, or else one that wall-clock changes cannot move. */
-  const elapsed = options.now ?? (() => performance.now());
+  const elapsed = validateClock(options.monotonicNow) ?? (() => performance.now());
   const userAgent = validateUserAgent(options.userAgent);
   const cleanupRetryDelayMs = validateRetryDelay(options.cleanupRetryDelayMs);
   const waitUntil = validateWaitUntil(options.waitUntil);
@@ -695,7 +718,11 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
   interface KeyHold {
     readonly handle: GitHubAppRevokeHandle | undefined;
     readonly untilMs: number;
+    /** For a credential: when it expires (wall clock); past it, the key returns no credential. */
+    readonly expiresAtMs?: number;
   }
+  /** Each credential's key hold end, on the hold clock, from the same observation that validated its expiry. */
+  const credentialHolds = new WeakMap<GitHubAppRevokeHandle, number>();
   /** Failures after which a token may be live, and the hold they put on their idempotency key. */
   const keyHolds = new WeakMap<CredentialMinterError, KeyHold>();
 
@@ -725,13 +752,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
    * Revokes, with bounded retries, a usable token in a 201 body that arrived
    * after the minter gave up on it, registered with `waitUntil` when given.
    */
-  function revokeLateToken(body: Promise<BodyRead>): void {
-    const task = body
-      .then((read) => {
-        const token = bodyToken(read);
-        return token === undefined ? undefined : deleteTokenWithRetry(token);
-      })
-      .catch(() => undefined);
+  function revokeLateToken(token: Promise<string | undefined>): void {
+    const task = token.then((value) => (value === undefined ? undefined : deleteTokenWithRetry(value))).catch(() => undefined);
     try {
       waitUntil?.(task);
     } catch {
@@ -805,9 +827,12 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     }
 
     const body = startBodyRead(response, LATE_BODY_LIMIT_MS, MAX_GRANT_BODY_BYTES);
-    const result = await within(body, BODY_READ_TIMEOUT_MS);
+    const result = await within(body.result, BODY_READ_TIMEOUT_MS);
     if (result === TIMED_OUT) {
-      revokeLateToken(body);
+      // A token already read is revoked at once; otherwise the rest of the body is awaited.
+      const early = usableToken(LEADING_TOKEN.exec(body.peek())?.[1]);
+      if (early !== undefined) body.cancel();
+      revokeLateToken(early === undefined ? body.result.then(bodyToken) : Promise.resolve(early));
       throw outcomeUnknown('GitHub reported a minted installation token but its response did not arrive in time', status);
     }
     const read = result.text === undefined ? undefined : readAccessToken(result.text, grant);
@@ -819,6 +844,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
       throw await rejectGrant(token, Number.NaN, problem, status, installationId);
     }
     const at = now();
+    const observedAt = elapsed();
     let problem = read.problem;
     if (problem === undefined && read.expiresAtMs <= at) problem = 'GitHub returned an installation token that has already expired';
     if (problem === undefined && read.expiresAtMs > at + GITHUB_INSTALLATION_TOKEN_LIFETIME_SECONDS * 1000 + MAX_CLOCK_SKEW_MS) {
@@ -827,6 +853,7 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
     if (problem !== undefined) throw await rejectGrant(read.token, read.expiresAtMs, problem, status, installationId);
 
     const revokeHandle = registerHandle(installationId, read.token, read.expiresAtMs);
+    credentialHolds.set(revokeHandle, observedAt + (read.expiresAtMs - at) + MAX_CLOCK_SKEW_MS);
     return Object.freeze({ secret: read.token, expiresAt: new Date(read.expiresAtMs), revokeHandle });
   }
 
@@ -887,6 +914,13 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
         if (existing.request !== fingerprint) {
           throw fail('invalid_request', 'This idempotencyKey is already in use for a different mint request');
         }
+        const expiresAtMs = existing.hold?.expiresAtMs;
+        if (expiresAtMs !== undefined && now() >= expiresAtMs) {
+          // Never hand back an expired credential; GitHub's clock may still accept it, so no new POST yet either.
+          throw fail('provider_unavailable', "The credential minted for this idempotencyKey has expired; the key mints again after GitHub's clock-skew tolerance", {
+            retryable: true,
+          });
+        }
         return existing.promise;
       }
       // The key is held from the POST until its token is confirmed revoked or
@@ -906,8 +940,8 @@ export function createGitHubAppMinter(options: GitHubAppMinterOptions): GitHubAp
               throw await rejectGrant(credential.secret, Number.NaN, 'The mint settled after its idempotency key expired', 201, installationId);
             }
             const handle = credential.revokeHandle;
-            // GitHub's expiry, as time left on the hold clock, plus the skew tolerance.
-            entry.hold = { handle, untilMs: elapsed() + (handleStates.get(handle)!.expiresAtMs - now()) + MAX_CLOCK_SKEW_MS };
+            // GitHub's expiry as time left on the hold clock, plus the skew tolerance.
+            entry.hold = { handle, untilMs: credentialHolds.get(handle)!, expiresAtMs: handleStates.get(handle)!.expiresAtMs };
             return credential;
           },
           (error: unknown) => {
