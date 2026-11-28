@@ -1,0 +1,27 @@
+reviewfn/bare/package.json
+  s_b7546bb15c0313::t_cb622ca87c7d2f 9-10
+reviewfn/cli/package.json
+  s_b7546bb15c0313::t_00b8144e8aaf2c 31-32
+reviewfn/cli/src/expected-cli.ts
+  s_b7546bb15c0313::t_08b39f85513bcc 1-16
+reviewfn/cli/src/main.ts
+  s_b7546bb15c0313::t_54c0ea66f829f7 3,13,126-128,130-136
+reviewfn/cli/test/expected-cli.test.ts
+  s_b7546bb15c0313::t_dc4bc1190af820 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8646f3cf833ba594345c46822697214df12be395",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+reviewfn/bare/package.json
+  s_b7546bb15c0313::t_aea6afa2cd0bc6 28
+reviewfn/bare/test/front-door.test.mjs
+  s_b7546bb15c0313::t_a884c53b14d076 1-6,16-22,24,26-35
+reviewfn/cli/src/main.ts
+  s_b7546bb15c0313::t_be10393749dde5 34,124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00aa972f929a5d23dffe7286b7c9c9856d719d8f",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
