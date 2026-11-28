@@ -1,0 +1,53 @@
+package-lock.json
+  s_b7546bb15c0313::t_009f9e0f2091c8 51420-51423,60726-60742,60745,60748-60752,60758-60759,60780,60783,60806,61226,61229,61252,61255,61258,61279,61282,61285,61305,61308,61331,61334
+release-packages.json
+  s_b7546bb15c0313::t_6732392968dbd6 167
+reviewfn/ADR-0001-FIRST-RELEASE.md
+  s_b7546bb15c0313::t_47d0b320b87aee 6
+reviewfn/README.md
+  s_b7546bb15c0313::t_f73aacfe05356a 11,25-26
+reviewfn/bare/LICENSE
+  s_b7546bb15c0313::t_fc03ad4620beb6 1-21
+reviewfn/bare/README.md
+  s_b7546bb15c0313::t_2fb063c8ca2314 1-15
+reviewfn/bare/bin/cli.mjs
+  s_b7546bb15c0313::t_722188172850dd 1-14,16,17-89,91,93-104,114,116-117,120-121,128-140
+reviewfn/bare/package.json
+  s_b7546bb15c0313::t_fd92012b7b745e 1-53
+reviewfn/bare/test/front-door.test.mjs
+  s_b7546bb15c0313::t_e2da8dca404621 1-31
+reviewfn/cli/package.json
+  s_b7546bb15c0313::t_97ab80f6f0b141 3,19-23,25
+reviewfn/context-composio/package.json
+  s_b7546bb15c0313::t_4b65412de9015f 3,17
+reviewfn/core/package.json
+  s_b7546bb15c0313::t_3410caf4e3db88 3
+reviewfn/github/package.json
+  s_b7546bb15c0313::t_fbf63039d77dd3 3,17
+reviewfn/harness-claude-code/package.json
+  s_b7546bb15c0313::t_36dafe31dfdf43 3,27,30
+reviewfn/harness-cli/package.json
+  s_b7546bb15c0313::t_594f129845ac31 3,27,30
+reviewfn/harness-codex/package.json
+  s_b7546bb15c0313::t_b2ad5752b82c36 3,28
+reviewfn/testing/package.json
+  s_b7546bb15c0313::t_c516afe5b929fd 3,17
+superfunctions.owners.json
+  s_b7546bb15c0313::t_455eba31b1e3a1 171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6452ee15946cf25ac7836543b39b7401433c02bf",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
