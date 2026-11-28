@@ -217,6 +217,7 @@ export const fileFnClientContract = {
     '/upload/init': {
       post: operation('Initialize an upload session', {
         tags: ['uploads'],
+        parameters: [ref('#/components/parameters/XFileFnReplayScope')],
         includeAuth: true,
         includeIdempotency: true,
         requestBody: {
@@ -540,6 +541,14 @@ export const fileFnClientContract = {
         description: 'Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.',
         schema: { type: 'string', maxLength: 255 },
       },
+      XFileFnReplayScope: {
+        name: 'x-filefn-replay-scope',
+        in: 'header',
+        required: false,
+        description:
+          'Marks an offline replay pinned to one account, from the first upload/init of an upload on: the replay scope of the owner and tenant it must act for (rs_ and the hex SHA-256 of the JSON array ["filefn-replay-scope", principalId, tenantId or null]). A marked request needs an authenticated, non-anonymous caller (401 FILEFN_AUTH_REQUIRED otherwise, also where auth is optional) whose owner and tenant have exactly that scope (409 FILEFN_REPLAY_SCOPE_MISMATCH otherwise), and a non-blank idempotency key in x-idempotency-key or the deprecated body idempotencyKey, neither of them present but empty or blank (400 FILEFN_INVALID_REQUEST otherwise); nothing is created when refused.',
+        schema: { type: 'string', maxLength: 255 },
+      },
       XUploadSessionToken: {
         name: 'x-upload-session-token',
         in: 'header',
@@ -760,6 +769,11 @@ export const fileFnClientContract = {
             additionalProperties: ref('#/components/schemas/JSONValue'),
             description: 'At most 16384 bytes as JSON and 32 levels deep.',
           },
+          idempotencyKey: {
+            type: 'string',
+            deprecated: true,
+            description: 'Deprecated: send the x-idempotency-key header. Honored only without that header (or with the same value) and answered with a deprecation warning; ignored after the next minor release.',
+          },
         },
         required: ['policy', 'fileName', 'size', 'mimeType'],
       },
@@ -772,6 +786,28 @@ export const fileFnClientContract = {
           chunkSizeBytes: { type: 'integer' },
           totalParts: { type: 'integer' },
           expiresAt: { type: 'string' },
+          status: {
+            type: 'string',
+            enum: ['pending', 'in_progress', 'completed', 'aborted', 'expired'],
+            description: 'Set only when an idempotency key replays an existing session. completed carries fileId and versionId; aborted and expired are final, so start again under a new key.',
+          },
+          fileId: { type: 'string', description: 'The file a completed replayed session stored.' },
+          versionId: { type: 'string', description: 'The version a completed replayed session stored.' },
+          versionConfirmed: {
+            type: 'boolean',
+            description:
+              'Set (true) on a completed replay when the recorded version is still stored under its file. The session owner settles on it without read permission on the file; without it, read the version back.',
+          },
+          completionStarted: {
+            type: 'boolean',
+            description:
+              'Set (true) on an in_progress replay whose completion was already decided: send no part, finish it with upload/{uploadSessionId}/complete.',
+          },
+          replayScope: {
+            type: 'string',
+            description:
+              'Returned when the request carried x-filefn-replay-scope: an opaque fingerprint of the caller owner and tenant. Send it in x-filefn-replay-scope on every later replay of the same upload.',
+          },
         },
         required: ['uploadSessionId', 'uploadMode', 'chunkSizeBytes', 'totalParts', 'expiresAt'],
       },
@@ -786,6 +822,10 @@ export const fileFnClientContract = {
           chunkSizeBytes: { type: 'integer' },
           fileSize: { type: 'integer' },
           expiresAt: { type: 'string' },
+          completionStarted: {
+            type: 'boolean',
+            description: 'Set (true) once the completion was decided: send no part, finish it with upload/{uploadSessionId}/complete.',
+          },
         },
         required: ['uploadSessionId', 'status', 'totalParts', 'recordedParts', 'uploadedParts', 'chunkSizeBytes', 'fileSize', 'expiresAt'],
       },

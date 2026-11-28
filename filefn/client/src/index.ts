@@ -1,11 +1,21 @@
 import { createHttpClient, FileFnHttpError } from './client.js';
-import { UploadManager, assertValidExplicitFileId, generateFileId, prepareUploadInput } from './upload-manager.js';
+import {
+  UploadManager,
+  assertValidExplicitFileId,
+  assertValidIdempotencyKey,
+  isValidIdempotencyKey,
+  generateFileId,
+  prepareUploadInput,
+  replayScopeOf,
+  REPLAY_SCOPE_UNCONFIRMED_ERROR,
+} from './upload-manager.js';
 import type {
   ArtifactDescriptor,
   ClientArtifactKind,
   FileFnClientConfig,
   PendingLocalDescriptor,
   RenderDescriptor,
+  ReplayAccount,
   RenderIntent,
   RenderPlaceholderKind,
   UploadInput,
@@ -18,15 +28,12 @@ import type { UploadPreprocessor } from './preprocessing/types.js';
 import { createHeicPreprocessor } from './preprocessing/heic.js';
 
 import {
-  OPFSStore,
-  type PendingUpload,
-} from './offline/opfs-store.js';
-
-import {
   OfflineSync,
   shouldUseOfflineMode,
   generateOfflineSessionId,
+  type SyncConfig,
 } from './offline/sync.js';
+import { CREDENTIALS_UNAVAILABLE_ERROR, OfflineQueue, OfflineQueueError, raceCallerCallback, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
 
 export type {
   ArtifactDescriptor,
@@ -34,6 +41,7 @@ export type {
   ClientArtifactKind,
   UploadArtifactInput,
   FileFnClientConfig,
+  ReplayAccount,
   PendingLocalDescriptor,
   RenderDescriptor,
   RenderIntent,
@@ -92,6 +100,48 @@ export {
   generateOfflineSessionId,
 } from './offline/sync.js';
 
+export type {
+  LegacyPendingUploadSummary,
+  OfflineQueueCapabilities,
+  OfflineQueueChannel,
+  OfflineQueueCurrentPrincipal,
+  OfflineQueueDirectoryHandle,
+  OfflineQueueEntry,
+  OfflineQueueErrorCode,
+  OfflineQueueEvent,
+  OfflineQueueFileHandle,
+  OfflineQueueHoldResult,
+  OfflineQueueHooks,
+  OfflineQueueLimits,
+  OfflineQueueLockCoordinator,
+  OfflineQueueOperationContext,
+  OfflineQueueOptions,
+  OfflineQueuePartition,
+  OfflineQueuePending,
+  OfflineQueuePhase,
+  OfflineQueuePrincipal,
+  OfflineQueueProcessAllItem,
+  OfflineQueueProcessResult,
+  OfflineQueuePublicationCheck,
+  OfflineQueuePublicationOutcome,
+  OfflineQueueReclaimResult,
+  OfflineQueueStageInput,
+  OfflineQueueStageResult,
+  OfflineQueueUploader,
+  OfflineQueueUsage,
+  OfflineQueueVerification,
+} from './offline/queue.js';
+
+export {
+  CREDENTIALS_UNAVAILABLE_ERROR,
+  DEFAULT_MAX_UPLOAD_ATTEMPTS,
+  DEFAULT_OFFLINE_QUEUE_LIMITS,
+  DEFAULT_TERMINAL_RETENTION_MS,
+  OfflineQueue,
+  OfflineQueueError,
+} from './offline/queue.js';
+export { UPLOAD_SESSION_ENDED_ERROR, UPLOAD_RECONCILE_FAILED_ERROR, createUploadSessionEndedError } from './upload-manager.js';
+
 export interface FileFnClient {
   uploadFile(input: UploadInput): UploadHandleWithFileId;
   resumeUpload(
@@ -117,7 +167,25 @@ export interface FileFnClient {
     preferLocal?: boolean;
   }): Promise<RenderDescriptor>;
   deleteFile(fileId: string): Promise<void>;
+  /** A local preview of a provisional offline upload in this client's partition, or null. */
   getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null>;
+  /**
+   * The durable offline queue bound to `offline.partition`. Throws
+   * `FILEFN_OFFLINE_DISABLED`, `FILEFN_OFFLINE_PARTITION_REQUIRED`,
+   * `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or
+   * `FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED`. Where OPFS or Web Locks are
+   * missing it still returns the queue: check `capabilities()`, since its
+   * durable operations fail closed there.
+   */
+  getOfflineQueue(): OfflineQueue;
+  /** A new, unstarted sync of this client's queue. Call `start()` to drive it and `dispose()` to stop. */
+  createOfflineSync(options?: Omit<SyncConfig, 'queue' | 'store' | 'client'>): OfflineSync;
+  /**
+   * Stops this client's offline work: its queue and implicit sync are
+   * disposed and late results are dropped. Staged work stays for a client of
+   * the same partition. Call it on logout or account switch.
+   */
+  dispose(): void;
 }
 
 const CLIENT_ARTIFACT_KINDS: readonly ClientArtifactKind[] = [
@@ -267,128 +335,309 @@ function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
   return preprocessors;
 }
 
+/**
+ * Replays queued uploads with a snapshot of the client's transport. Every
+ * request, retry and part sends only headers `authHeaders(principal)` issued
+ * for the queue's own principal, resolved between two principal checks, and
+ * the principal is checked again right before each request goes out.
+ */
+function replayUploader(
+  transport: FileFnClientConfig,
+  authHeaders: NonNullable<NonNullable<FileFnClientConfig['offline']>['getAuthHeaders']>,
+  replayAccount: NonNullable<FileFnClientConfig['offline']>['replayAccount'],
+  principal: () => OfflineQueuePrincipal,
+): OfflineQueueUploader {
+  return {
+    // The account the partition expects. The queue journals its scope with
+    // the generation's replay identity before the first request, and sends
+    // nothing when a later result differs from the journaled one.
+    replayScope: async (bound) => {
+      const account: ReplayAccount | null = replayAccount
+        ? await replayAccount(bound)
+        : bound.kind === 'user'
+          ? { principalId: bound.principalId, tenantId: bound.tenantId }
+          : null;
+      if (!account) {
+        // This generation's outcome (provisional, no attempt used), not a
+        // principal mismatch: the principal check is the queue's.
+        throw Object.assign(new Error("No server account for the queue's principal"), { code: REPLAY_SCOPE_UNCONFIRMED_ERROR });
+      }
+      return replayScopeOf(account);
+    },
+    upload: async (input) => {
+      if (input.replayScope === undefined) {
+        // Never sent without the journaled scope.
+        throw Object.assign(new Error('The generation has no journaled replay scope'), { code: REPLAY_SCOPE_UNCONFIRMED_ERROR });
+      }
+      // The checks around the credentials admit no request (`checkPrincipal`):
+      // the generation is marked dispatched only by `beforeSend`, right
+      // before a request goes out, so an `uploadFile` abort while the
+      // credentials resolve (or are missing) still removes it, nothing sent.
+      const headers = async (): Promise<Record<string, string>> => {
+        await input.checkPrincipal();
+        // App code that runs before a request goes out (`raceCallerCallback`):
+        // raced with the step's signal, so a disposal or cancellation with
+        // nothing sent settles the step (and frees its entry) even if it never
+        // settles. A late result is discarded.
+        const bound = await raceCallerCallback(() => authHeaders(principal()), [input.signal]);
+        if (!bound) {
+          // A switched principal stops the pass (the check throws); otherwise
+          // the generation waits for credentials under the same key.
+          await input.checkPrincipal();
+          throw new OfflineQueueError(CREDENTIALS_UNAVAILABLE_ERROR, "No credentials for the queue's principal");
+        }
+        await input.checkPrincipal();
+        return bound;
+      };
+      // Already prepared when staged: no preprocessors run again.
+      const manager = new UploadManager(createHttpClient(transport, { beforeSend: input.assertPrincipal, authHeaders: headers }));
+      manager.bindAbortSignal(input.signal);
+      // Every init, the first included, is marked as a replay and carries the
+      // journaled scope: the server refuses one with no account or another,
+      // creating nothing.
+      return manager.startUpload(input, undefined, { scope: input.replayScope });
+    },
+  };
+}
+
 export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   const httpClient = createHttpClient(config);
   const preprocessors = buildPreprocessors(config);
   
-  let offlineSync: OfflineSync | undefined;
-  let offlineStore: OPFSStore | undefined;
+  let offlineQueue: OfflineQueue | undefined;
+  let implicitSync: OfflineSync | undefined;
+  /** Every sync `createOfflineSync` made: disposed with the client. */
+  const createdSyncs = new Set<OfflineSync>();
+  let disposed = false;
 
-  function ensureOfflineSupport(): { store: OPFSStore; sync: OfflineSync } {
+  function offlineError(code: string, message: string): Error & { code: string } {
+    return Object.assign(new Error(message), { code });
+  }
+
+  function getOfflineQueue(): OfflineQueue {
+    if (disposed) {
+      throw offlineError('FILEFN_CLIENT_DISPOSED', 'FileFn client was disposed');
+    }
     if (!config.offline?.enabled) {
-      const error = new Error('Offline uploads are disabled') as Error & { code?: string };
-      error.code = 'FILEFN_OFFLINE_DISABLED';
-      throw error;
+      throw offlineError('FILEFN_OFFLINE_DISABLED', 'Offline uploads are disabled');
     }
-    if (!OPFSStore.isSupported()) {
-      const error = new Error('OPFS unavailable') as Error & { code?: string };
-      error.code = 'FILEFN_OFFLINE_UNSUPPORTED';
-      throw error;
+    if (!config.offline.partition) {
+      throw offlineError('FILEFN_OFFLINE_PARTITION_REQUIRED', 'Offline uploads need offline.partition (service and principal)');
     }
-    if (!offlineStore || !offlineSync) {
-      const store = new OPFSStore({ rootDir: config.offline.opfsDir });
-      store.init().catch(() => {});
-      offlineStore = store;
-      offlineSync = new OfflineSync({
-        store,
-        client: {
-          uploadFile: async (input) => {
-            const manager = new UploadManager(httpClient);
-            manager.bindAbortSignal(input.signal);
-            return manager.startUpload(input);
-          }
-        }
+    const currentPrincipal = config.offline.currentPrincipal;
+    if (typeof currentPrincipal !== 'function') {
+      throw offlineError('FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED', 'Offline uploads need offline.currentPrincipal with offline.partition');
+    }
+    if (config.offline.partition.principal?.kind === 'guest' && !config.offline.uploader) {
+      // The server gives anonymous callers no idempotent replay, so a lost
+      // completion could never be reconciled with the built-in transport.
+      throw offlineError(
+        'FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED',
+        'A guest partition needs offline.uploader, a transport whose replays are idempotent',
+      );
+    }
+    const boundAuthHeaders = config.offline.getAuthHeaders;
+    if (!config.offline.uploader && typeof boundAuthHeaders !== 'function') {
+      // The client's own getAuthHeaders acts for whoever is signed in now:
+      // replays would carry another account's credentials after a switch.
+      throw offlineError(
+        'FILEFN_OFFLINE_CREDENTIALS_REQUIRED',
+        'Offline replay with the built-in transport needs offline.getAuthHeaders(principal), credentials bound to the partition',
+      );
+    }
+    if (!offlineQueue) {
+      // Captured now: later changes to `config` never redirect queued work.
+      // Never ambient cookies: they act for whoever signed in last, in any
+      // tab, not for the partition.
+      const transport: FileFnClientConfig = {
+        ...config,
+        getAuthHeaders: undefined,
+        offline: undefined,
+        credentials: 'omit',
+      };
+      let queue: OfflineQueue | undefined;
+      queue = new OfflineQueue({
+        ...config.offline.queue,
+        partition: config.offline.partition,
+        currentPrincipal,
+        legacyRootDir: config.offline.opfsDir,
+        uploader:
+          config.offline.uploader ??
+          replayUploader(transport, boundAuthHeaders!, config.offline.replayAccount, () => queue!.partition.principal),
       });
-      offlineSync.startAutoSync();
+      offlineQueue = queue;
     }
-    return { store: offlineStore, sync: offlineSync };
+    return offlineQueue;
+  }
+
+  /** The queue for read paths: null when offline is off, unbound or unsupported here. */
+  function readableOfflineQueue(): OfflineQueue | null {
+    if (disposed || !config.offline?.enabled || !config.offline.partition) return null;
+    try {
+      const queue = getOfflineQueue();
+      return queue.capabilities().durable ? queue : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A local read that the current principal may not make yields nothing. */
+  async function readPendingLocal(queue: OfflineQueue, fileId: string): Promise<PendingLocalDescriptor | null> {
+    try {
+      return await queue.getPendingLocalDescriptor(fileId);
+    } catch (error) {
+      if (error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_PRINCIPAL_MISMATCH') return null;
+      throw error;
+    }
+  }
+
+  function startImplicitReplay(queue: OfflineQueue): OfflineSync | undefined {
+    if (config.offline?.implicitReplay === false || disposed || !queue.capabilities().durable) return undefined;
+    if (!implicitSync) {
+      implicitSync = new OfflineSync({ queue });
+      implicitSync.start();
+    }
+    return implicitSync;
   }
 
   return {
     uploadFile(input: UploadInput): UploadHandleWithFileId {
       // Fail before any staging or network work, online or offline.
       assertValidExplicitFileId(input.fileId);
+      assertValidIdempotencyKey(input.idempotencyKey);
       const normalizedInput: UploadInput = {
         ...input,
         fileId: input.fileId ?? generateFileId(),
       };
 
       if (config.offline?.enabled && shouldUseOfflineMode(true)) {
-        const { store: activeOfflineStore, sync: activeOfflineSync } = ensureOfflineSupport();
+        // The queue keeps room in the key for its own suffix: a longer key is
+        // refused now, not after the handle was returned.
+        if (input.idempotencyKey !== undefined && !isValidIdempotencyKey(input.idempotencyKey, 200)) {
+          throw offlineError('FILEFN_INVALID_IDEMPOTENCY_KEY', 'An offline idempotencyKey must be 1-200 visible ASCII characters');
+        }
+        const queue = getOfflineQueue();
+        const sync = startImplicitReplay(queue);
         const uploadSessionId = generateOfflineSessionId();
-        let aborted = false;
-        let rejectStage: ((reason?: unknown) => void) | undefined;
-        const stagePromise = new Promise<void>((resolve, reject) => {
-          rejectStage = reject;
-          void (async () => {
-            try {
-              const prepared = await prepareUploadInput(normalizedInput, [
-                ...preprocessors,
-                ...(normalizedInput.preprocessors || []),
-              ]);
-              if (aborted) {
-                throw createAbortError();
-              }
-
-              const fileData = await prepared.file.arrayBuffer();
-              if (aborted) {
-                throw createAbortError();
-              }
-
-              const pending: PendingUpload = {
-                uploadSessionId,
-                fileId: prepared.fileId,
-                policy: prepared.policy,
-                idempotencyKey: prepared.idempotencyKey,
-                fileName: prepared.fileName,
-                size: prepared.size,
-                mimeType: prepared.mimeType,
-                fileData,
-                localSource: prepared.localSource,
-                metadata: prepared.metadata,
-                createdAt: new Date().toISOString(),
-                retryCount: 0
-              };
-              await activeOfflineStore.stagePendingUpload(pending);
-              if (aborted) {
-                await activeOfflineStore.deletePendingUpload(uploadSessionId);
-                throw createAbortError();
-              }
-              if (activeOfflineSync.isOnline()) {
-                void activeOfflineSync.syncUpload(uploadSessionId).catch(() => {});
-              }
-              resolve();
-            } catch (error) {
-              reject(error);
-            }
-          })();
+        const abortController = new AbortController();
+        /** Settles as the abort does: the cancellation's error, else an AbortError. */
+        let abortOutcome: Promise<never> | undefined;
+        let notifyAbort!: () => void;
+        const abortSignal = new Promise<void>((resolve) => {
+          notifyAbort = resolve;
         });
+        // The generation is staged under an admission hold owned by this
+        // call (`stageAdmitted`): no sync, here or in another tab, runs it
+        // until the call lets it go, and a call that never does (its queue
+        // disposed, its tab reloaded or crashed, a principal switch refusing
+        // the staging after its commit) leaves it runnable for its principal.
+        // Release or cancellation is decided in the transaction that ends the
+        // hold, reading the abort there: only a committed release announces
+        // work, and an abort before it removes the generation unrun. An abort
+        // after the release is a lock-ordered `abortStaged` request at once:
+        // it removes the generation only if no tab's upload guard admitted
+        // its first request yet, and otherwise keeps it
+        // (FILEFN_QUEUE_UPLOAD_STARTED).
+        //
+        // Preparation (the preprocessors) runs before any staging and is
+        // raced with the abort: an abort while it runs rejects at once with
+        // an AbortError, and a late preparation result stages nothing (the
+        // aborted check below), so no generation or request ever exists.
+        let staged: { entryId: string; generation: number } | undefined;
+        const abortedDuringPreparation = new Promise<never>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => reject(createAbortError()), { once: true });
+        });
+        void abortedDuringPreparation.catch(() => {});
+        const stagePromise = (async () => {
+          const preparing = prepareUploadInput(normalizedInput, [
+            ...preprocessors,
+            ...(normalizedInput.preprocessors || []),
+          ]);
+          void preparing.catch(() => {});
+          const prepared = await Promise.race([preparing, abortedDuringPreparation]);
+          if (abortController.signal.aborted) {
+            throw createAbortError();
+          }
+          const result = await queue.stageAdmitted(
+            {
+              entryId: prepared.fileId,
+              fileId: prepared.fileId,
+              policy: prepared.policy,
+              file: prepared.file,
+              fileName: prepared.fileName,
+              mimeType: prepared.mimeType,
+              metadata: prepared.metadata,
+              localSource: prepared.localSource,
+              idempotencyKey: prepared.idempotencyKey,
+            },
+            abortController.signal,
+          );
+          if (result.status === 'cancelled') throw createAbortError();
+          if (result.status !== 'staged') {
+            throw new OfflineQueueError('FILEFN_QUEUE_REFUSED', `Offline staging refused: ${result.reason}`, { ...result });
+          }
+          // Set synchronously with the return: an abort from now on requests
+          // abortStaged itself.
+          staged = { entryId: result.entry.entryId, generation: result.entry.generation };
+          if (abortController.signal.aborted) {
+            // Aborted after stageAdmitted stopped listening.
+            await queue.abortStaged(staged.entryId, staged.generation);
+            throw createAbortError();
+          }
+          if (sync?.isOnline()) {
+            void sync.syncAll().catch(() => {});
+          }
+          return staged;
+        })();
         void stagePromise.catch(() => {});
 
         const handle: UploadHandleWithFileId = {
           uploadSessionId,
           fileId: normalizedInput.fileId!,
           abort: () => {
-            if (aborted) {
+            if (abortController.signal.aborted) {
               return;
             }
-            aborted = true;
-            void activeOfflineSync.cancelUpload(uploadSessionId, createAbortError());
-            rejectStage?.(createAbortError());
+            const known = staged;
+            abortController.abort();
+            // Requested at once once the staging returned; before that, the
+            // staging call itself acts on the abort and settles stagePromise
+            // with its outcome.
+            const requested = known
+              ? queue.abortStaged(known.entryId, known.generation).then(() => {
+                  throw createAbortError();
+                })
+              : undefined;
+            abortOutcome = (requested ?? stagePromise).then(
+              () => {
+                throw createAbortError();
+              },
+              (error) => {
+                throw error;
+              },
+            );
+            void abortOutcome.catch(() => {});
+            notifyAbort();
           },
           onProgress: (_cb) => {
             // Staging progress not implemented
           },
           done: async () => {
-            if (aborted) {
-              throw createAbortError();
+            const onAbort = abortSignal.then(() => abortOutcome!);
+            void onAbort.catch(() => {});
+            try {
+              if (abortOutcome) return await abortOutcome;
+              const { entryId, generation } = await Promise.race([stagePromise, onAbort]);
+              // Settles once this generation is published, not while it is provisional.
+              const settled = queue.whenSettled(entryId, generation);
+              void settled.catch(() => {});
+              const entry = await Promise.race([settled, onAbort]);
+              return entry.upload ?? { fileId: entry.fileId, versionId: '' };
+            } catch (error) {
+              // The abort's outcome: its cancellation error, else an AbortError.
+              if (abortController.signal.aborted) return await abortOutcome!;
+              throw error;
             }
-            await stagePromise;
-            if (aborted) {
-              throw createAbortError();
-            }
-            // Wait for sync to complete when online
-            return activeOfflineSync.waitForUpload(uploadSessionId);
           }
         };
 
@@ -451,8 +700,10 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async resolveRenderable(input): Promise<RenderDescriptor> {
-      if (input.preferLocal && !input.versionId && config.offline?.enabled && OPFSStore.isSupported()) {
-        const pending = await (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(input.fileId);
+      const queue = input.preferLocal && !input.versionId ? readableOfflineQueue() : null;
+      if (queue) {
+        startImplicitReplay(queue);
+        const pending = await readPendingLocal(queue, input.fileId);
         if (pending) {
           return resolvePendingLocalRenderable({ intent: input.intent }, pending);
         }
@@ -469,10 +720,31 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-      if (!config.offline?.enabled || !OPFSStore.isSupported()) {
+      const queue = readableOfflineQueue();
+      if (!queue) {
         return null;
       }
-      return (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(fileId);
+      startImplicitReplay(queue);
+      return readPendingLocal(queue, fileId);
+    },
+
+    getOfflineQueue,
+
+    createOfflineSync(options = {}): OfflineSync {
+      const sync = new OfflineSync({ ...options, queue: getOfflineQueue() });
+      createdSyncs.add(sync);
+      return sync;
+    },
+
+    dispose(): void {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      implicitSync?.dispose();
+      for (const sync of createdSyncs) sync.dispose();
+      createdSyncs.clear();
+      offlineQueue?.dispose();
     },
   };
 }

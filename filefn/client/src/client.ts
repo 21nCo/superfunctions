@@ -15,6 +15,7 @@ import {
   withRetry,
   type ResolvedRetryOptions,
 } from "./retry.js";
+import { isValidFileId } from "./upload-manager.js";
 
 export interface FileFnErrorDetails {
   code: string;
@@ -51,6 +52,176 @@ export class FileFnHttpError extends Error {
   }
 }
 
+
+/** A successful answer that does not prove what it claims: its outcome is unknown. */
+export const UPLOAD_RESULT_INVALID_ERROR = "FILEFN_UPLOAD_RESULT_INVALID";
+
+/** The URL parser as loaded: a later replacement of the global (a test stub, say) cannot change which IDs are well formed. */
+const PathURL = URL;
+
+/**
+ * A server-issued identifier such as a version or session ID. The server's
+ * `generateId` may produce any string, and its router matches a path segment
+ * as `URL#pathname` reports it, without decoding it. So the client sends an
+ * identifier as one raw path segment, and accepts exactly the identifiers that
+ * reach the router as that same segment: 1-1024 characters, none of them `/`,
+ * `\`, `?` or `#`, that URL parsing leaves unchanged inside a path. That
+ * keeps every ID that round-tripped before (`%`, `|`, `^`, `[`, `]` included)
+ * and refuses dot segments (`.`, `..`, `%2e` and the like, which parsing
+ * collapses), whitespace, control and non-ASCII characters (which it
+ * percent-encodes).
+ */
+export function isWellFormedId(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 1024) return false;
+  if (/[/\\?#]/.test(value)) return false;
+  const path = `/s/${value}/x`;
+  try {
+    return new PathURL(path, "http://filefn.invalid").pathname === path;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A version ID as the path segment the router matches: sent raw when it is
+ * well formed (as the server issued it), otherwise encoded so it stays one
+ * segment.
+ */
+function versionSegment(versionId: string): string {
+  return isWellFormedId(versionId) ? versionId : encodeURIComponent(versionId);
+}
+
+/** Checks a decoded payload: true when it has the route's shape. */
+export type FileFnSchema<T> = (data: unknown) => data is T;
+
+/**
+ * What one FileFn answer proves, decided in one place (`decodeFileFnResult`):
+ * - `ok`: a 2xx, not redirected, whose body is `{ ok: true, data }` (with no
+ *   `error`), a legacy `{ data }` envelope (no `ok` or `error`) or a legacy
+ *   bare body (no `ok`, `error` or object `data` member), and whose
+ *   payload passes the route's schema;
+ * - `refused`: a non-2xx from the verified FileFn route, not redirected, whose
+ *   body is a FileFn error envelope with a code;
+ * - `unknown`: anything else. A non-2xx that is not a coded FileFn refusal
+ *   keeps only its HTTP status (`FileFnHttpError` without a code); a 2xx that
+ *   proves nothing is `FILEFN_UPLOAD_RESULT_INVALID`. An offline replay keeps
+ *   an unknown outcome provisional under the same key.
+ */
+export type FileFnResult<T> =
+  | { kind: "ok"; data: T }
+  | { kind: "refused"; error: FileFnHttpError }
+  | { kind: "unknown"; error: Error & { code?: string; status?: number } };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resultInvalid(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: UPLOAD_RESULT_INVALID_ERROR });
+}
+
+/**
+ * The payload of a successful body, through the route's schema: the data of
+ * `{ ok: true, data }` with no `error`, of a legacy `{ data }` envelope that
+ * names no `ok` or `error`, or a bare legacy body. Any other body (an `ok` that is not `true`, an `error`,
+ * a payload of another shape, a payload that itself carries an `ok` other
+ * than `true` or a non-null `error`) proves nothing. Also used for a custom
+ * offline uploader's result.
+ */
+export function decodeFileFnBody<T>(body: unknown, schema: FileFnSchema<T>): FileFnResult<T> {
+  let payload: unknown = body;
+  if (isObject(body) && ("ok" in body || "error" in body)) {
+    if (body.ok !== true || (body.error !== undefined && body.error !== null)) {
+      return { kind: "unknown", error: resultInvalid("The answer is not a FileFn success envelope") };
+    }
+    payload = body.data;
+  } else if (isObject(body) && isObject(body.data)) {
+    // A legacy `{ data: {...} }` envelope without `ok` (accepted since 0.x).
+    payload = body.data;
+  }
+  if (isObject(payload) && (("ok" in payload && payload.ok !== true) || (payload.error !== undefined && payload.error !== null))) {
+    return { kind: "unknown", error: resultInvalid("The answer's payload carries a failure marker") };
+  }
+  if (!schema(payload)) {
+    return { kind: "unknown", error: resultInvalid("The answer does not have the route's shape") };
+  }
+  return { kind: "ok", data: payload };
+}
+
+/** A coded FileFn error envelope: `{ ok: false, error: { code, ... } }` (`ok` may be omitted). */
+function isErrorEnvelope(body: unknown): boolean {
+  return (
+    isObject(body) &&
+    (!("ok" in body) || body.ok === false) &&
+    isObject(body.error) &&
+    typeof body.error.code === "string" &&
+    body.error.code.length > 0
+  );
+}
+
+function optional<T>(value: unknown, check: (value: unknown) => value is T): boolean {
+  return value === undefined || check(value);
+}
+const isString = (value: unknown): value is string => typeof value === "string";
+const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
+const isPartList = (value: unknown): value is number[] => Array.isArray(value) && value.every(isCount);
+
+const SESSION_STATUSES = new Set(["pending", "in_progress", "completed", "aborted", "expired"]);
+
+/** The schemas of the upload-session routes' successful payloads. */
+export const uploadSchemas = {
+  /**
+   * `upload/init`: a well-formed, self-consistent session. A completed one
+   * names its stored file and version; only a completed one may carry
+   * `versionConfirmed`, and only an in-progress one `completionStarted`. An
+   * ended (aborted or expired) one carries neither and names no file or
+   * version: a body that contradicts itself proves nothing.
+   */
+  init: (data: unknown): data is InitUploadResponse =>
+    isObject(data) &&
+    isWellFormedId(data.uploadSessionId) &&
+    optional(data.uploadSessionToken, isString) &&
+    optional(data.totalParts, isCount) &&
+    optional(data.chunkSizeBytes, isCount) &&
+    optional(data.replayScope, isString) &&
+    optional(data.versionConfirmed, isBoolean) &&
+    optional(data.completionStarted, isBoolean) &&
+    (data.status === undefined || (typeof data.status === "string" && SESSION_STATUSES.has(data.status))) &&
+    (data.status !== "completed" || (isValidFileId(data.fileId) && isWellFormedId(data.versionId))) &&
+    (data.versionConfirmed === undefined || data.status === "completed") &&
+    (data.completionStarted === undefined || data.status === "in_progress") &&
+    ((data.status !== "aborted" && data.status !== "expired") ||
+      (data.fileId === undefined && data.versionId === undefined)),
+  status: (data: unknown): data is UploadStatusResponse =>
+    isObject(data) &&
+    typeof data.status === "string" &&
+    SESSION_STATUSES.has(data.status) &&
+    optional(data.recordedParts, isPartList) &&
+    optional(data.uploadedParts, isPartList) &&
+    optional(data.completionStarted, isBoolean),
+  sign: (data: unknown): data is SignPartResponse =>
+    isObject(data) && typeof data.url === "string" && data.url.length > 0 && optional(data.headers, isObject),
+  /** A body-less success (204) or any object. */
+  ack: <T>(data: unknown): data is T => data === undefined || isObject(data),
+  /**
+   * `upload/{id}/complete` and a version read: a stored file and version. A
+   * payload that contradicts that, by the same marker rules as a completed
+   * `upload/init` (a session status other than `completed`, a
+   * `versionConfirmed` other than true, or a `completionStarted` other than
+   * false), proves nothing.
+   */
+  stored: (data: unknown): data is CompleteUploadResponse =>
+    isObject(data) &&
+    isValidFileId(data.fileId) &&
+    isWellFormedId(data.versionId) &&
+    (data.status === undefined || data.status === "completed") &&
+    (data.versionConfirmed === undefined || data.versionConfirmed === true) &&
+    (data.completionStarted === undefined || data.completionStarted === false),
+  part: (data: unknown): data is { etag: string; recorded?: boolean } =>
+    isObject(data) && optional(data.etag, isString) && optional(data.recorded, isBoolean),
+} as const;
+
 export interface HttpClient {
   initUpload(
     params: {
@@ -61,12 +232,21 @@ export interface HttpClient {
       metadata?: Record<string, unknown>;
       fileId?: string;
       idempotencyKey?: string;
+      /** Marks an offline replay pinned to the scope of the account it must act for (`x-filefn-replay-scope`). */
+      replayScope?: string;
     },
     signal?: AbortSignal,
   ): Promise<InitUploadResponse>;
 
   getFile(
     fileId: string,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>>;
+
+  /** Metadata of one stored version (`GET /{fileId}/versions/{versionId}`). */
+  getFileVersion(
+    fileId: string,
+    versionId: string,
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>>;
 
@@ -285,7 +465,22 @@ class RawBody {
   }
 }
 
-export function createHttpClient(config: FileFnClientConfig): HttpClient {
+export interface HttpClientOptions {
+  /**
+   * Runs right before every request is sent, retries included, after its auth
+   * headers are resolved. A rejection stops the request: the offline queue
+   * uses it to send nothing once the credentials act for another principal.
+   */
+  beforeSend?: () => Promise<void>;
+  /**
+   * Resolves the auth headers of each request, retries and part uploads
+   * included, instead of `config.getAuthHeaders`. The offline queue uses it to
+   * bind the credentials a replay sends to its partition's principal.
+   */
+  authHeaders?: () => Promise<Record<string, string> | undefined>;
+}
+
+export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpClientOptions = {}): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const transport = resolveTransport(config);
@@ -330,9 +525,57 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   }
 
   async function readAuthHeaders(): Promise<Record<string, string> | undefined> {
+    if (httpOptions.authHeaders) return httpOptions.authHeaders();
     return config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
   }
 
+  /**
+   * Turns one FileFn response into a `FileFnResult` (see there). `trusted`
+   * is false when the request did not go to the verified FileFn route (a
+   * part URL of another host or path): its error body is then never read as
+   * a FileFn code. A redirected response proves nothing and is never coded.
+   */
+  async function decodeFileFnResult<T>(
+    response: Response,
+    schema: FileFnSchema<T>,
+    trusted = true,
+  ): Promise<FileFnResult<T>> {
+    const redirected = response.redirected === true;
+    if (!response.ok) {
+      const { rawBody, parsedBody, isJson } = await readResponseBody(response).catch(() => ({
+        rawBody: "",
+        parsedBody: undefined,
+        isJson: false,
+      }));
+      const body = rawBody ? (isJson ? parsedBody : rawBody) : parsedBody;
+      const coded = trusted && !redirected && isErrorEnvelope(body);
+      const error = new FileFnHttpError(
+        `HTTP ${response.status}: ${response.statusText ?? ""}`.trim(),
+        response.status,
+        coded ? body : undefined,
+      );
+      return coded ? { kind: "refused", error } : { kind: "unknown", error };
+    }
+    if (redirected) {
+      return { kind: "unknown", error: resultInvalid("A redirected answer proves nothing") };
+    }
+    const contentLength =
+      typeof response.headers?.get === "function" ? response.headers.get("content-length") : null;
+    if (response.status === 204 || contentLength === "0") return decodeFileFnBody(undefined, schema);
+    const { rawBody, parsedBody, isJson } = await readResponseBody(response);
+    if (rawBody && !isJson) {
+      return { kind: "unknown", error: resultInvalid("The answer is not JSON") };
+    }
+    return decodeFileFnBody(parsedBody, schema);
+  }
+
+  /**
+   * A request to the FileFn API. With `schema` (the upload-session routes),
+   * the response goes through `decodeFileFnResult`: the decoded payload is
+   * returned, a refusal or an unknown outcome is thrown. Without it (file,
+   * artifact and render routes), a success envelope is unwrapped and any
+   * other 2xx body is returned as it is.
+   */
   async function request<T>(
     method: string,
     path: string,
@@ -340,6 +583,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     signal?: AbortSignal,
     options: ResolvedRetryOptions = retryOptions,
     extraHeaders?: Record<string, string>,
+    schema?: FileFnSchema<T>,
   ): Promise<T> {
     return withRetry(
       async () => {
@@ -350,6 +594,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           hasJsonBody ? { "Content-Type": "application/json" } : undefined,
           extraHeaders,
         );
+        await httpOptions.beforeSend?.();
         const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
@@ -357,6 +602,12 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           credentials: transport.credentials,
           signal,
         });
+
+        if (schema) {
+          const decoded = await decodeFileFnResult(response, schema);
+          if (decoded.kind === "ok") return decoded.data;
+          throw decoded.error;
+        }
 
         if (!response.ok) {
           const { rawBody, parsedBody, isJson } = await readResponseBody(response);
@@ -372,10 +623,6 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           typeof response.headers?.get === "function"
             ? response.headers.get("content-length")
             : null;
-        const contentType =
-          typeof response.headers?.get === "function"
-            ? response.headers.get("content-type") || ""
-            : "";
         if (response.status === 204 || contentLength === '0') {
           return undefined as T;
         }
@@ -413,11 +660,20 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
 
   return {
     async initUpload(params, signal) {
+      // The key travels in the x-idempotency-key header, the server's contract.
+      // (0.4 and earlier sent it in the body, which servers before 0.8 ignored.)
+      const { idempotencyKey, replayScope, ...body } = params;
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["x-idempotency-key"] = idempotencyKey;
+      if (replayScope) headers["x-filefn-replay-scope"] = replayScope;
       return request<InitUploadResponse>(
         "POST",
         "/upload/init",
-        params,
+        body,
         signal,
+        retryOptions,
+        Object.keys(headers).length > 0 ? headers : undefined,
+        uploadSchemas.init,
       );
     },
 
@@ -427,6 +683,18 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         `/${fileId}`,
         undefined,
         signal,
+      );
+    },
+
+    async getFileVersion(fileId, versionId, signal) {
+      return request<Record<string, unknown>>(
+        "GET",
+        `/${encodeURIComponent(fileId)}/versions/${versionId}`,
+        undefined,
+        signal,
+        retryOptions,
+        undefined,
+        uploadSchemas.stored as unknown as FileFnSchema<Record<string, unknown>>,
       );
     },
 
@@ -452,7 +720,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         ? `?${new URLSearchParams({ durationMs: String(params.durationMs) }).toString()}`
         : "";
       const path =
-        `/${encodeURIComponent(params.fileId)}/versions/${encodeURIComponent(params.versionId)}` +
+        `/${encodeURIComponent(params.fileId)}/versions/${versionSegment(params.versionId)}` +
         `/artifacts/${encodeURIComponent(params.kind)}${search}`;
       // PUT replaces the same artifact record, so a retried upload is safe.
       const response = await request<{ artifact: ArtifactDescriptor }>(
@@ -500,6 +768,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         signal,
         retryOptions,
         uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+        uploadSchemas.status,
       );
     },
 
@@ -511,6 +780,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         signal,
         retryOptions,
         uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+        uploadSchemas.sign,
       );
     },
 
@@ -522,6 +792,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         signal,
         retryOptions,
         uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+        uploadSchemas.ack<CompletePartResponse>,
       );
     },
 
@@ -533,6 +804,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         signal,
         retryOptions,
         uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+        uploadSchemas.stored,
       );
     },
 
@@ -544,6 +816,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         signal,
         retryOptions,
         uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+        uploadSchemas.ack<AbortUploadResponse>,
       );
     },
 
@@ -573,7 +846,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           const issuedRelative = url.startsWith("/") && !isProtocolRelative(url);
           const exactPart =
             !expectedPart ||
-            routePath === `/upload/${encodeURIComponent(expectedPart.uploadSessionId)}/parts/${expectedPart.partNumber}`;
+            routePath === `/upload/${expectedPart.uploadSessionId}/parts/${expectedPart.partNumber}`;
           const partRequest = issuedRelative && toPartRoute && exactPart;
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
@@ -592,42 +865,31 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           const token = uploadSessionToken || headerToken;
           const sendToken = partRequest && Boolean(token);
           if (sendToken) requestHeaders["x-upload-session-token"] = token!;
+          await httpOptions.beforeSend?.();
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
             body,
             credentials: toFileFn ? transport.credentials : "omit",
-            ...(sendToken ? { redirect: "error" as const } : {}),
+            // FileFn's verified part route is never followed elsewhere: a
+            // redirect fails the request (a network error, retried), so no
+            // other host's answer is read as FileFn's.
+            ...(partRequest ? { redirect: "error" as const } : {}),
             signal,
           });
 
-          if (!response.ok) {
-            throw new FileFnHttpError(
-              `Upload failed: HTTP ${response.status}`,
-              response.status,
-            );
+          // Only FileFn's verified part route answers with a coded refusal
+          // (a retryable conflict, an ended session). Any other URL, a
+          // same-origin signed storage URL included, and any redirected
+          // answer stay an uncoded HTTP error: never a FileFn code.
+          const contentType =
+            typeof response.headers?.get === "function" ? response.headers.get("content-type") : null;
+          if (!response.ok || (contentType && contentType.includes("application/json"))) {
+            const decoded = await decodeFileFnResult(response, uploadSchemas.part, partRequest);
+            if (decoded.kind !== "ok") throw decoded.error;
+            return { etag: decoded.data.etag || "", recorded: decoded.data.recorded };
           }
-
-          // Check if response is JSON (proxy upload)
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const json = await response.json();
-            // Canonical envelope check
-            if (
-              json &&
-              typeof json === "object" &&
-              "ok" in json &&
-              json.ok === true &&
-              "data" in json
-            ) {
-              return {
-                etag: json.data.etag,
-                recorded: json.data.recorded,
-              };
-            }
-            // Fallback or raw json
-            return { etag: json.etag || "", recorded: json.recorded };
-          }
+          if (response.redirected === true) throw resultInvalid("A redirected part upload proves nothing");
 
           return { etag: response.headers.get("ETag") || "" };
         },

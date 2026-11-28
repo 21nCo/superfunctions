@@ -114,6 +114,7 @@ A completion publishes in two steps. After storage finalization and its checks, 
 | `Authorization` | request | Whatever your `auth.resolveSession` reads. Typical: `Bearer <token>`. |
 | `x-request-id` | request / response | Correlation id; auto-generated if absent. |
 | `x-idempotency-key` | request | On `POST /upload/init` to dedupe retries. |
+| `x-filefn-replay-scope` | request | On `POST /upload/init` from an offline replay, its first included: the scope of the owner and tenant it must act for, echoed as `replayScope`. Refused without an authenticated, non-anonymous caller (401) or for another owner or tenant (409). |
 | `x-upload-session-token` | request | Anonymous session token for unauthenticated uploads. |
 | `x-filefn-client-version` | request | Sent by the bundled clients. |
 | `etag` | response | On part PUTs. |

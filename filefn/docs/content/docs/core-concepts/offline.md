@@ -20,8 +20,25 @@ import { createFileFnClient } from "@filefn/client";
 const client = createFileFnClient({
   baseUrl: "/filefn",
   getAuthHeaders: async () => ({}),
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: {
+    enabled: true,
+    // Trusted: from your own session, never from the URL or user input.
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    // Who the credentials act for right now, from local state (it is called
+    // offline too); queued work runs and is shown only while it matches.
+    currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+    // A token issued for exactly this principal: queued replays send it and
+    // no cookies (another tab may switch the cookie). Null when there is none.
+    getAuthHeaders: (principal) => {
+      const token = principal.kind === "user" ? readStoredAccessToken(principal.principalId) : null;
+      return token ? { Authorization: `Bearer ${token}` } : null;
+    },
+  },
 });
+
+if (!client.getOfflineQueue().capabilities().durable) {
+  // No OPFS or Web Locks here: offline staging is refused, so upload directly instead.
+}
 ```
 
 ## What happens on `uploadFile(...)`
@@ -40,7 +57,7 @@ flowchart TD
 
 The check `shouldUseOfflineMode(true)` defaults to `true` — meaning the client *always* stages to OPFS first, even when online. The replay starts immediately, but the OPFS staging is the source of truth until the upload finishes.
 
-You can opt out per call by passing `offline: { enabled: false }` to `createFileFnClient` or by checking `OPFSStore.isSupported()` and falling back to the direct path manually.
+Turn it off with `offline: { enabled: false }`, or check `client.getOfflineQueue().capabilities()` (available even where the queue cannot be durable) and fall back to the direct path when it is not `durable`.
 
 ## The pending-local descriptor
 
@@ -68,29 +85,17 @@ This works for images, PDFs, audio, and video. The client picks a preview behavi
 
 ## OfflineSync
 
-`OfflineSync` is the background pump. It:
-
-- Watches `navigator.onLine`.
-- Walks `OPFSStore.listPending()`.
-- Calls `client.uploadFile` for each pending row, with the original input.
-- Removes the OPFS row on success.
-- Increments `retryCount` on failure and schedules a retry.
-
-You can drive it manually:
+`OfflineSync` drives a client's durable queue: it processes every entry of the client's partition when started and on each `online` event, retrying unconfirmed uploads after `retryDelayMs`. By default the client starts one on its own; with `offline.implicitReplay: false` you own it:
 
 ```ts
-import { OfflineSync, OPFSStore } from "@filefn/client";
-
-const store = new OPFSStore({ rootDir: "filefn-offline" });
-await store.init();
-
-const sync = new OfflineSync({ store, client: { /* uploadFile shim */ } });
-sync.startAutoSync();
-// or
-await sync.syncUpload(uploadSessionId);
+const sync = client.createOfflineSync();
+sync.start();
+// on logout or account switch
+sync.dispose();
+client.dispose();
 ```
 
-Most apps don't need this — `createFileFnClient({ offline: { enabled: true } })` does it.
+Holds, verification and publication hooks, partitions, limits and crash recovery are specified in [Features › Offline](../features/offline). The 0.4 `OfflineSync({ store, client })` form over a raw `OPFSStore` is refused with `FILEFN_QUEUE_LEGACY_UNSCOPED` and leaves every record in place: those uploads are unscoped, so nothing replays them automatically. Migrate them with `OfflineQueue.migrateLegacyUpload` once you can prove whose they are.
 
 ## When offline mode is the wrong choice
 

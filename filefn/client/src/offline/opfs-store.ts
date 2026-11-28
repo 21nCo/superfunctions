@@ -15,6 +15,11 @@ const PENDING_METADATA_VERSION = 2;
  * Directory names are unique, so distinct sessions get distinct IDs, and every
  * `offline_<ms>_<base36>` session ID makes a grammar-valid result.
  */
+/** The handle lookup proved the record (or one of its files) does not exist. */
+function isConfirmedAbsence(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'NotFoundError' || error.name === 'TypeMismatchError');
+}
+
 function sessionFileId(uploadSessionId: string): string {
   return `file_${uploadSessionId}`;
 }
@@ -110,11 +115,14 @@ function deriveFallbackLocalSource(upload: Pick<PendingUpload, 'fileName' | 'mim
 
 export interface OPFSStoreConfig {
   rootDir?: string;
+  /** Storage root. Defaults to `navigator.storage.getDirectory()`. */
+  getRoot?: () => Promise<FileSystemDirectoryHandle | { getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<unknown> }>;
 }
 
 export class OPFSStore {
   private static readonly LOCAL_OBJECT_URL_REVOKE_DELAY_MS = 5 * 60 * 1000;
   private rootDirName: string;
+  private getRoot?: OPFSStoreConfig['getRoot'];
   private rootDir: FileSystemDirectoryHandle | null = null;
   private isInitialized = false;
   private localObjectUrls = new Map<string, string>();
@@ -122,6 +130,7 @@ export class OPFSStore {
 
   constructor(config: OPFSStoreConfig = {}) {
     this.rootDirName = config.rootDir || 'filefn-pending-uploads';
+    this.getRoot = config.getRoot;
   }
 
   /**
@@ -141,15 +150,17 @@ export class OPFSStore {
   async init(): Promise<void> {
     if (this.isInitialized) return;
 
-    if (!OPFSStore.isSupported()) {
+    if (!this.getRoot && !OPFSStore.isSupported()) {
       throw new Error('OPFS is not supported in this environment');
     }
 
     try {
-      const opfsRoot = await (navigator.storage as any).getDirectory();
+      const opfsRoot: any = this.getRoot ? await this.getRoot() : await (navigator.storage as any).getDirectory();
       this.rootDir = await opfsRoot.getDirectoryHandle(this.rootDirName, { create: true });
       this.isInitialized = true;
     } catch (error) {
+      // Out of storage is kept as it is, so callers can tell it apart (a typed capacity refusal).
+      if (error instanceof Error && error.name === 'QuotaExceededError') throw error;
       throw new Error(
         `Failed to initialize OPFS: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
@@ -362,23 +373,64 @@ export class OPFSStore {
     }
   }
 
+  /** A pending upload's metadata without its data, or null. */
+  async getPendingUploadMetadata(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
+    await this.ensureInitialized();
+    return this.readPendingMetadata(uploadSessionId);
+  }
+
   private async readPendingMetadata(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
     try {
-      const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
-      const metaFileHandle = await uploadDir.getFileHandle('metadata.json');
-      const metaFile = await metaFileHandle.getFile();
-      const metaText = await metaFile.text();
-      const { metadataVersion, ...metadata } = JSON.parse(metaText);
-      const stored = { fileId: metadata.fileId, metadataVersion };
-      return {
-        ...metadata,
-        fileId: resolveStoredFileId(stored, uploadSessionId),
-        retryCount: isMigratedLegacyRecord(stored, uploadSessionId) ? 0 : metadata.retryCount,
-        localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
-      };
+      return await this.readPendingMetadataStrict(uploadSessionId);
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A pending upload with its data, or null only when it is confirmed absent
+   * (its directory, metadata or data file does not exist). Any other failure,
+   * a transient read error or metadata that does not parse included, throws:
+   * it proves nothing about the record. `OfflineQueue.migrateLegacyUpload`
+   * reads through this.
+   */
+  async readPendingUploadConfirmed(uploadSessionId: string): Promise<PendingUpload | null> {
+    await this.ensureInitialized();
+    try {
+      const metadata = await this.readPendingMetadataStrict(uploadSessionId);
+      const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
+      const dataFile = await (await uploadDir.getFileHandle('data.bin')).getFile();
+      return { ...metadata, fileData: await dataFile.arrayBuffer() };
+    } catch (error) {
+      if (isConfirmedAbsence(error)) return null;
+      throw error;
+    }
+  }
+
+  /** Like `readPendingUploadConfirmed`, without the data. */
+  async readPendingMetadataConfirmed(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
+    await this.ensureInitialized();
+    try {
+      return await this.readPendingMetadataStrict(uploadSessionId);
+    } catch (error) {
+      if (isConfirmedAbsence(error)) return null;
+      throw error;
+    }
+  }
+
+  private async readPendingMetadataStrict(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'>> {
+    const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
+    const metaFileHandle = await uploadDir.getFileHandle('metadata.json');
+    const metaFile = await metaFileHandle.getFile();
+    const metaText = await metaFile.text();
+    const { metadataVersion, ...metadata } = JSON.parse(metaText);
+    const stored = { fileId: metadata.fileId, metadataVersion };
+    return {
+      ...metadata,
+      fileId: resolveStoredFileId(stored, uploadSessionId),
+      retryCount: isMigratedLegacyRecord(stored, uploadSessionId) ? 0 : metadata.retryCount,
+      localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
+    };
   }
 
   private async writePendingMetadata(

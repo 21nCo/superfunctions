@@ -20,7 +20,16 @@ const client = createFileFnClient({
     "Authorization": `Bearer ${getToken()}`,
   }),
   retryOptions: { maxRetries: 5, baseDelayMs: 500, maxDelayMs: 30_000 },
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: {
+    enabled: true,
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+    // Queued replays send only a token issued for the partition's principal.
+    getAuthHeaders: (principal) =>
+      principal.kind === "user" && principal.principalId === session.userId
+        ? { Authorization: `Bearer ${getToken()}` }
+        : null,
+  },
   preprocessing: {
     heic: { enabled: true },
   },
@@ -129,7 +138,7 @@ See [Render intents](../core-concepts/render-intents).
 
 ## OPFS offline
 
-`offline: { enabled: true }` activates the OPFS pipeline. See [Features › Offline](../features/offline) for the details.
+`offline: { enabled: true, partition, currentPrincipal, getAuthHeaders }` activates the OPFS pipeline (all three are required for offline staging with the built-in transport, else `FILEFN_OFFLINE_PARTITION_REQUIRED`, `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`; a guest partition needs `offline.uploader` instead of `getAuthHeaders`). `currentPrincipal` must answer from local state without a network request. Replays never send cookies, so `getAuthHeaders(principal)` returns a token issued for that principal. Each replay is pinned from its first `upload/init` to the server account `offline.replayAccount(principal)` names (by default the partition principal's `principalId` and `tenantId`); credentials of no account or another one create nothing. See [Features › Offline](../features/offline) for the details.
 
 ## HEIC preprocessing
 

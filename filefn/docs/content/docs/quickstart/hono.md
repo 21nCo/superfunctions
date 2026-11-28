@@ -53,7 +53,7 @@ app.use(
   "*",
   cors({
     origin: (origin) => origin ?? "*",
-    allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-upload-session-token"],
+    allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-idempotency-key", "x-filefn-replay-scope", "x-upload-session-token"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   }),
 );

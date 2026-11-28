@@ -80,7 +80,7 @@ export const config = {
 import { createFileFnClient } from "@filefn/client";
 import { useState } from "react";
 
-const client = createFileFnClient({ baseUrl: "/filefn", offline: { enabled: true } });
+const client = createFileFnClient({ baseUrl: "/filefn" });
 
 export function Upload() {
   const [progress, setProgress] = useState(0);

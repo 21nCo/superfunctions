@@ -1,8 +1,21 @@
 import type {
+  OfflineQueueCurrentPrincipal,
+  OfflineQueueOptions,
+  OfflineQueuePartition,
+  OfflineQueuePrincipal,
+  OfflineQueueUploader,
+} from './offline/queue.js';
+import type {
   HeicPreprocessorOptions,
   PendingLocalSourceMetadata,
   UploadPreprocessor,
 } from './preprocessing/types.js';
+
+/** The server account an offline replay must act for: a FileFn principal and tenant. */
+export interface ReplayAccount {
+  principalId: string;
+  tenantId?: string | null;
+}
 
 export interface RetryOptions {
   maxRetries?: number;
@@ -35,6 +48,72 @@ export interface FileFnClientConfig {
   retryOptions?: RetryOptions;
   offline?: {
     enabled: boolean;
+    /**
+     * Trusted service and principal (or guest namespace) the offline queue is
+     * bound to. Required for offline staging; without it offline uploads throw
+     * `FILEFN_OFFLINE_PARTITION_REQUIRED` and nothing is listed or replayed.
+     * Create a new client (and dispose this one) when the principal changes.
+     */
+    partition?: OfflineQueuePartition;
+    /**
+     * Required with `partition`: the principal this client's credentials act
+     * for right now (null when signed out). Queued work uploads and runs hooks
+     * only while it matches `partition`, so an account switch in another tab
+     * that shares cookies cannot upload one principal's files as another. It
+     * is also checked before every local read or staging, so it must answer
+     * from local state (a session store or cookie the app keeps current)
+     * without a network request: offline, a rejected or failed call reads as
+     * a mismatch and staging is refused.
+     */
+    currentPrincipal?: OfflineQueueCurrentPrincipal;
+    /**
+     * Required for a user partition replayed by the built-in transport (else
+     * `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`): auth headers that act for exactly
+     * `principal`, sent by every queued replay request instead of the client's
+     * `getAuthHeaders` (which acts for whoever is signed in now). Return null
+     * when there are none: the replay stays provisional. Replays never send
+     * ambient cookies (credentials `omit`): a cookie is the browser's, not the
+     * partition's, and another tab can switch it after the last
+     * `currentPrincipal` check. These headers must therefore authenticate the
+     * request on their own: a bearer or session token the app issued for
+     * `principal`. A cookie-session app issues such a token, or supplies its
+     * own `uploader`.
+     */
+    getAuthHeaders?: (
+      principal: OfflineQueuePrincipal,
+    ) => Promise<Record<string, string> | null> | Record<string, string> | null;
+    /**
+     * The server account (the FileFn `principalId` and `tenantId` your server's
+     * auth resolves) that replays of `principal` must act for. Defaults to the
+     * partition principal's own `principalId` and `tenantId`. Every built-in
+     * replay `upload/init`, the first included, is pinned to this account
+     * (`x-filefn-replay-scope`): when the credentials resolve to another
+     * account or none, the server creates nothing and the generation stays
+     * provisional under its key (`FILEFN_REPLAY_SCOPE_MISMATCH`, or a 401).
+     * Return null when there is none: nothing is sent and the replay stays
+     * provisional.
+     */
+    replayAccount?: (principal: OfflineQueuePrincipal) => Promise<ReplayAccount | null> | ReplayAccount | null;
+    /**
+     * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
+     * `resolveRenderable` start a sync of the queue on their own. Defaults to
+     * true. With false, only an `OfflineSync` from `createOfflineSync()` that
+     * you `start()` advances queued work.
+     */
+    implicitReplay?: boolean;
+    /**
+     * Transport that replays queued uploads instead of this client's. Required
+     * for a guest partition (the server gives anonymous callers no idempotent
+     * replay): its replays must be idempotent per `idempotencyKey`, and it
+     * must call `assertPrincipal()` before every request.
+     */
+    uploader?: OfflineQueueUploader;
+    /** Queue options: hooks, limits, coordinator, storage root and retention. */
+    queue?: Omit<OfflineQueueOptions, 'partition' | 'uploader' | 'legacyRootDir' | 'currentPrincipal'>;
+    /**
+     * Directory of unscoped uploads staged by 0.4 and earlier. They are never
+     * replayed automatically; see `OfflineQueue.migrateLegacyUpload`.
+     */
     opfsDir?: string;
   };
   preprocessing?: {
@@ -64,6 +143,14 @@ export interface UploadInput {
    * file the caller may not write to is refused with 403 at `upload/init`.
    */
   fileId?: string;
+  /**
+   * Sent as `x-idempotency-key`: 1-255 visible ASCII characters, else
+   * `uploadFile` throws `FILEFN_INVALID_IDEMPOTENCY_KEY`. The server matches a
+   * replay on the key and the request, `fileId` included, so an application
+   * retry must pass the same `fileId` as the first call (persist it with the
+   * key); a generated one differs and is refused as `FILEFN_IDEMPOTENCY_CONFLICT`.
+   * Offline, the key is the prefix of each staged generation's own key.
+   */
   idempotencyKey?: string;
   preprocessors?: UploadPreprocessor[];
 }
@@ -174,12 +261,41 @@ export interface InitUploadResponse {
   chunkSizeBytes: number;
   totalParts: number;
   expiresAt: string;
+  /**
+   * Set when the idempotency key replayed an existing session (servers 0.8+).
+   * `completed` carries the stored `fileId` and `versionId`; `aborted` and
+   * `expired` are final.
+   */
+  status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  fileId?: string;
+  versionId?: string;
+  /**
+   * `true` on a completed replay when the server checked, for the session's
+   * owner, that the recorded version is still stored under its file. The
+   * client then settles without reading the version back (no file read
+   * permission needed); otherwise it reads the version back.
+   */
+  versionConfirmed?: boolean;
+  /**
+   * `true` on an `in_progress` replay whose completion was already decided:
+   * no part is sent again, the completion call finishes it.
+   */
+  completionStarted?: boolean;
+  /**
+   * Returned to an offline replay (`x-filefn-replay-scope`): an opaque
+   * fingerprint of the owner and tenant the credentials resolved to. The
+   * queue pins it to the generation and sends it on every later replay, so
+   * the server refuses a replay under another (or no) account.
+   */
+  replayScope?: string;
 }
 
 export interface UploadStatusResponse {
   uploadSessionId?: string;
   fileId?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'aborted';
+  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  /** `true` once the completion was decided: no part is sent, the completion call finishes it. */
+  completionStarted?: boolean;
   recordedParts: number[];
   uploadedParts?: number[];
   totalParts: number;

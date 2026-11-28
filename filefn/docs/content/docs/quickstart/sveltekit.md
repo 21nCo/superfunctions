@@ -90,14 +90,37 @@ export const fileFn = createFileFn({
 // src/lib/filefn.ts
 import { createFileFnClient } from "@filefn/client";
 
-export const filefn = createFileFnClient({
-  baseUrl: "/filefn",
-  getAuthHeaders: async () => ({}),
-  offline: { enabled: true },
-});
+// One client per signed-in user; call dispose() on sign-out.
+// `readSession()` reads the session your app keeps current locally (for
+// example a store updated on sign-in, sign-out and from other tabs): the
+// offline queue calls it before every local read and staging, also offline,
+// so it must not make a network request. Its `accessToken` is the token your
+// server issued for that user at sign-in (sent as a bearer header).
+export function createFilefnClient(userId: string, readSession: () => { userId: string; accessToken: string } | null) {
+  return createFileFnClient({
+    baseUrl: "/filefn",
+    offline: {
+      enabled: true,
+      partition: { serviceId: "app", principal: { kind: "user", principalId: userId } },
+      // The live session (another tab may have switched it), not the captured userId.
+      currentPrincipal: () => {
+        const session = readSession();
+        return session ? { kind: "user", principalId: session.userId } : null;
+      },
+      // A token issued for exactly this principal: every queued replay sends
+      // it and no cookies (another tab may switch the cookie).
+      getAuthHeaders: (principal) => {
+        const session = readSession();
+        return principal.kind === "user" && session?.userId === principal.principalId
+          ? { Authorization: `Bearer ${session.accessToken}` }
+          : null;
+      },
+    },
+  });
+}
 ```
 
-`offline.enabled` activates the OPFS-staged offline pipeline — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
+`offline.enabled` activates the OPFS-staged offline pipeline, scoped to that user — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
 
 ## Next steps
 

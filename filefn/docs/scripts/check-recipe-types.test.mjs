@@ -243,6 +243,8 @@ test("the DataFn recipe's CORS wrapper answers preflights for allowed origins on
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get("access-control-allow-origin"), "https://app.example.com");
   assert.match(preflight.headers.get("access-control-allow-headers"), /authorization/);
+  // Keyed uploads and offline replays send it: without it the browser blocks them at preflight.
+  assert.match(preflight.headers.get("access-control-allow-headers"), /x-idempotency-key/);
   assert.match(preflight.headers.get("access-control-allow-methods"), /PUT/);
   assert.equal((await handle(request("https://evil.example", "OPTIONS", { "access-control-request-method": "PUT" }))).status, 403);
   const response = await handle(request("https://app.example.com"));

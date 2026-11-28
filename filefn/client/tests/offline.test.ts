@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OPFSStore } from '../src/offline/opfs-store.js';
 import { OfflineSync, shouldUseOfflineMode, generateOfflineSessionId } from '../src/offline/sync.js';
 import type { PendingUpload } from '../src/offline/opfs-store.js';
-import type { ConnectivityChecker, UploadClient } from '../src/offline/sync.js';
+import type { UploadClient } from '../src/offline/sync.js';
 
 // Mock OPFS API
 class MockFileSystemDirectoryHandle {
@@ -442,201 +442,38 @@ describe('OPFSStore', () => {
   });
 });
 
-describe('OfflineSync', () => {
-  let mockStore: OPFSStore;
-  let mockClient: UploadClient;
-  let mockConnectivityChecker: ConnectivityChecker;
-
+describe('OfflineSync over the unscoped pre-0.5 store', () => {
   beforeEach(() => {
     const mockRoot = new MockFileSystemDirectoryHandle();
-
     vi.stubGlobal('navigator', {
       storage: {
         getDirectory: async () => mockRoot,
       },
       onLine: true,
     });
-
-    mockStore = new OPFSStore();
-
-    mockClient = {
-      uploadFile: vi.fn().mockResolvedValue({ fileId: 'file_00000001', versionId: 'ver_001' }),
-    };
-
-    mockConnectivityChecker = {
-      isOnline: () => true,
-      onOnline: vi.fn(),
-      onOffline: vi.fn(),
-    };
   });
 
-  describe('Sync functionality', () => {
-    it('should sync all pending uploads when online', async () => {
-      await mockStore.init();
-
-      // Stage some uploads
-      await mockStore.stagePendingUpload({
-        uploadSessionId: 'offline_001',
-        policy: 'test-policy',
-        fileName: 'file1.txt',
-        size: 100,
-        mimeType: 'text/plain',
-        fileData: new TextEncoder().encode('File 1 content').buffer,
-        createdAt: new Date().toISOString(),
-        retryCount: 0,
-      });
-
-      await mockStore.stagePendingUpload({
-        uploadSessionId: 'offline_002',
-        policy: 'test-policy',
-        fileName: 'file2.txt',
-        size: 200,
-        mimeType: 'text/plain',
-        fileData: new TextEncoder().encode('File 2 content').buffer,
-        createdAt: new Date().toISOString(),
-        retryCount: 0,
-      });
-
-      const sync = new OfflineSync({
-        store: mockStore,
-        client: mockClient,
-      });
-
-      sync.setConnectivityChecker(mockConnectivityChecker);
-
-      const result = await sync.syncAll();
-
-      expect(result.succeeded).toHaveLength(2);
-      expect(result.failed).toHaveLength(0);
-      expect(result.totalProcessed).toBe(2);
-
-      // Verify uploads were called
-      expect(mockClient.uploadFile).toHaveBeenCalledTimes(2);
-
-      // Verify uploads were deleted
-      const remainingUploads = await mockStore.listPendingUploads();
-      expect(remainingUploads).toHaveLength(0);
+  it('is refused with FILEFN_QUEUE_LEGACY_UNSCOPED: nothing is sent and every record stays', async () => {
+    const store = new OPFSStore();
+    await store.init();
+    await store.stagePendingUpload({
+      uploadSessionId: 'offline_001',
+      policy: 'test-policy',
+      fileName: 'file1.txt',
+      size: 14,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('File 1 content').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
     });
+    const client: UploadClient = { uploadFile: vi.fn().mockResolvedValue({ fileId: 'file_00000001', versionId: 'ver_001' }) };
 
-    it('should handle failed uploads and increment retry count', async () => {
-      await mockStore.init();
-
-      await mockStore.stagePendingUpload({
-        uploadSessionId: 'offline_001',
-        policy: 'test-policy',
-        fileName: 'file1.txt',
-        size: 100,
-        mimeType: 'text/plain',
-        fileData: new TextEncoder().encode('File content').buffer,
-        createdAt: new Date().toISOString(),
-        retryCount: 0,
-      });
-
-      // Mock client to fail
-      const failingClient: UploadClient = {
-        uploadFile: vi.fn().mockRejectedValue(new Error('Upload failed')),
-      };
-
-      const sync = new OfflineSync({
-        store: mockStore,
-        client: failingClient,
-      });
-
-      sync.setConnectivityChecker(mockConnectivityChecker);
-
-      const result = await sync.syncAll();
-
-      expect(result.succeeded).toHaveLength(0);
-      expect(result.failed).toHaveLength(1);
-      expect(result.totalProcessed).toBe(1);
-
-      // Verify retry count was incremented
-      const upload = await mockStore.getPendingUpload('offline_001');
-      expect(upload!.retryCount).toBe(1);
-    });
-
-    it('should respect max retries limit', async () => {
-      await mockStore.init();
-
-      await mockStore.stagePendingUpload({
-        uploadSessionId: 'offline_001',
-        policy: 'test-policy',
-        fileName: 'file1.txt',
-        size: 100,
-        mimeType: 'text/plain',
-        fileData: new TextEncoder().encode('File content').buffer,
-        createdAt: new Date().toISOString(),
-        retryCount: 3, // Already at max
-      });
-
-      const sync = new OfflineSync({
-        store: mockStore,
-        client: mockClient,
-        maxRetries: 3,
-      });
-
-      sync.setConnectivityChecker(mockConnectivityChecker);
-
-      const result = await sync.syncAll();
-
-      expect(result.failed).toHaveLength(1);
-      expect(mockClient.uploadFile).not.toHaveBeenCalled();
-    });
-
-    it('should call progress callbacks', async () => {
-      await mockStore.init();
-
-      await mockStore.stagePendingUpload({
-        uploadSessionId: 'offline_001',
-        policy: 'test-policy',
-        fileName: 'file1.txt',
-        size: 100,
-        mimeType: 'text/plain',
-        fileData: new ArrayBuffer(100),
-        createdAt: new Date().toISOString(),
-        retryCount: 0,
-      });
-
-      const onProgress = vi.fn();
-      const onComplete = vi.fn();
-
-      const sync = new OfflineSync({
-        store: mockStore,
-        client: mockClient,
-        onSyncProgress: onProgress,
-        onSyncComplete: onComplete,
-      });
-
-      sync.setConnectivityChecker(mockConnectivityChecker);
-
-      await sync.syncAll();
-
-      expect(onProgress).toHaveBeenCalled();
-      expect(onComplete).toHaveBeenCalledWith(
-        expect.objectContaining({
-          succeeded: ['offline_001'],
-          failed: [],
-          totalProcessed: 1,
-        })
-      );
-    });
-
-    it('should throw when trying to sync while offline', async () => {
-      const offlineChecker: ConnectivityChecker = {
-        isOnline: () => false,
-        onOnline: vi.fn(),
-        onOffline: vi.fn(),
-      };
-
-      const sync = new OfflineSync({
-        store: mockStore,
-        client: mockClient,
-      });
-
-      sync.setConnectivityChecker(offlineChecker);
-
-      await expect(sync.syncAll()).rejects.toThrow('Cannot sync while offline');
-    });
+    for (const config of [{ store, client }, { store }, { client }]) {
+      expect(() => new OfflineSync(config as never)).toThrow(expect.objectContaining({ code: 'FILEFN_QUEUE_LEGACY_UNSCOPED' }));
+    }
+    expect(client.uploadFile).not.toHaveBeenCalled();
+    expect(await store.listPendingUploads()).toEqual(['offline_001']);
+    expect((await store.getPendingUpload('offline_001'))?.retryCount).toBe(0);
   });
 });
 

@@ -26,7 +26,13 @@ The server:
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
-The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
+A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, and `versionConfirmed: true` while that version is still stored under its file, so the client confirms the file instead of uploading again, without needing read permission on it; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
+
+An `in_progress` replay whose completion was already decided adds `completionStarted: true` (so does the session status): send no part, finish it with the completion call.
+
+An offline replay (`@filefn/client`'s queue) also sends `x-filefn-replay-scope` on every `upload/init`, its first included: the scope of the owner and tenant it must act for (`rs_` and the hex SHA-256 of `["filefn-replay-scope", principalId, tenantId ?? null]` as JSON), which the response echoes as `replayScope`. A marked init whose caller is not authenticated or is the shared `anonymous` principal is refused with 401, also where auth is optional, and one whose caller has another owner or tenant with 409 `FILEFN_REPLAY_SCOPE_MISMATCH`; neither creates anything. Unmarked requests are unchanged.
+
+Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value. A body-only key (no header and no `x-filefn-replay-scope`, the pre-0.5 form) returns its session only while parts can still be uploaded (`pending`, or `in_progress` with no completion started): such a client ignores the replay fields and signs parts. For a completed, aborted or expired session, one whose completion started, or a different payload under the key, it gets a fresh session without the key, as servers before 0.8 did. The header form replays every outcome.
 
 Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
 
@@ -59,14 +65,15 @@ If you legitimately want two distinct uploads of the same content (e.g. backing 
 `@filefn/client`, the Python client, and the Swift client all generate stable idempotency keys per `uploadFile(...)` call automatically. You can override:
 
 ```ts
-client.uploadFile({
-  policy: "public-image",
-  file,
-  idempotencyKey: "deterministic-key-from-your-app",
-});
+// Persist both before the first attempt, and pass the same pair on every retry.
+const fileId = saved.fileId ?? generateFileId();
+const idempotencyKey = saved.idempotencyKey ?? `upload-${fileId}`;
+client.uploadFile({ policy: "public-image", file, fileId, idempotencyKey });
 ```
 
-Useful when your app has its own retry logic and wants to stitch retries to a particular logical upload.
+Useful when your app has its own retry logic and wants to stitch retries to a particular logical upload. The server matches a replay on the key *and* the request, file ID included: a retry without `fileId` gets a newly generated one and is refused with `FILEFN_IDEMPOTENCY_CONFLICT`. A key is 1-255 visible ASCII characters (it travels in the `x-idempotency-key` header); anything else throws `FILEFN_INVALID_IDEMPOTENCY_KEY` before a request is sent.
+
+Offline, your key becomes the prefix of each staged generation's own key (`<key>:<operation id>`), so a later generation, or a re-staging after a cancel, never replays an earlier generation's session.
 
 ## Idempotency vs. dedup
 

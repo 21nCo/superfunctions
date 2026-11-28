@@ -1,6 +1,8 @@
 import type { HttpClient } from "./client.js";
 import type {
+  InitUploadResponse,
   PendingLocalDescriptor,
+  ReplayAccount,
   UploadInput,
   UploadHandle,
   UploadProgress,
@@ -33,6 +35,103 @@ export interface PreparedUploadInput {
 }
 
 const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
+/**
+ * The idempotency key replayed a session the server reports as aborted or
+ * expired. Nothing more can be uploaded under that key: start again with a
+ * new one. `details.status` is the reported status.
+ */
+export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
+
+/**
+ * Session ends this client confirmed itself (a decoded, self-consistent
+ * `upload/init` replay reporting aborted or expired) or that a custom offline
+ * uploader confirmed through `createUploadSessionEndedError`. Only these
+ * retire an offline replay key: an error that merely carries the code, such
+ * as a server refusal naming `FILEFN_UPLOAD_SESSION_ENDED`, does not.
+ */
+const confirmedSessionEnds = new WeakSet<object>();
+
+/**
+ * The error that confirms an upload session of the replay key ended for good
+ * (aborted or expired). A custom `OfflineQueueUploader` throws it only when
+ * it confirmed that end itself; the queue then journals a fresh key before
+ * the next request. Any other error, whatever its code, leaves the outcome
+ * unknown under the same key.
+ */
+export function createUploadSessionEndedError(
+  uploadSessionId: string,
+  status: 'aborted' | 'expired',
+): Error & { code: string; details: Record<string, unknown> } {
+  const error = Object.assign(
+    new Error(`Upload session ${uploadSessionId} is ${status}; start again with a new idempotency key`),
+    { code: UPLOAD_SESSION_ENDED_ERROR, details: { uploadSessionId, status } as Record<string, unknown> },
+  );
+  confirmedSessionEnds.add(error);
+  return error;
+}
+
+/** Whether an error is a confirmed session end (see `createUploadSessionEndedError`). */
+export function isConfirmedSessionEnd(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && confirmedSessionEnds.has(error);
+}
+/** A replayed completed session's file could not be read back to confirm it. */
+export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
+/**
+ * An offline replay's credentials resolved to another owner or tenant than
+ * the scope its first `upload/init` pinned (the server's 409, or a response
+ * naming another scope). Nothing more is sent: the outcome stays unknown
+ * under the same key until the right account replays it.
+ */
+export const REPLAY_SCOPE_MISMATCH_ERROR = 'FILEFN_REPLAY_SCOPE_MISMATCH';
+/**
+ * A marked offline replay whose `upload/init` response named no scope (a
+ * server before 0.8 ignores the marker, and may have resolved no account at
+ * all): nothing more is sent under it, and the outcome stays unknown.
+ */
+export const REPLAY_SCOPE_UNCONFIRMED_ERROR = 'FILEFN_REPLAY_SCOPE_UNCONFIRMED';
+
+/**
+ * Binds an offline replay's sessions to one account. Every `upload/init`,
+ * the generation's first included, sends `x-filefn-replay-scope: <scope>`,
+ * the scope journaled with the generation's replay identity before its first
+ * request. The server refuses a marked init from an anonymous caller (401)
+ * or from another owner or tenant (409), creating nothing, so no session is
+ * ever created or advanced under another account.
+ */
+export interface UploadReplayScope {
+  scope: string;
+}
+
+/** A replay scope as the server issues it: 1-255 visible ASCII characters. */
+export function isReplayScope(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7e]{1,255}$/.test(value);
+}
+
+/**
+ * The replay scope of `account`, as `@filefn/server` computes it for an
+ * authenticated caller: `rs_` and the hex SHA-256 of
+ * `["filefn-replay-scope", principalId, tenantId ?? null]` as JSON. An
+ * unusable account (no principal ID, or the shared `anonymous` one) or no Web
+ * Crypto refuses with `FILEFN_REPLAY_SCOPE_UNCONFIRMED`: nothing is sent.
+ */
+export async function replayScopeOf(account: ReplayAccount): Promise<string> {
+  const { principalId, tenantId } = account ?? ({} as ReplayAccount);
+  if (
+    typeof principalId !== 'string' ||
+    principalId === '' ||
+    principalId === 'anonymous' ||
+    (tenantId !== undefined && tenantId !== null && typeof tenantId !== 'string')
+  ) {
+    throw createClientError(REPLAY_SCOPE_UNCONFIRMED_ERROR, 'An offline replay needs the server account it acts for: a non-anonymous principalId');
+  }
+  const subtle = (globalThis as { crypto?: Crypto }).crypto?.subtle;
+  if (!subtle) {
+    throw createClientError(REPLAY_SCOPE_UNCONFIRMED_ERROR, 'An offline replay needs Web Crypto (crypto.subtle) to bind its account');
+  }
+  const data = new TextEncoder().encode(JSON.stringify(['filefn-replay-scope', principalId, tenantId ?? null]));
+  const digest = new Uint8Array(await subtle.digest('SHA-256', data));
+  return `rs_${Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 
 function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
   code: string;
@@ -63,7 +162,7 @@ function currentMimeType(file: File | Blob): string {
   return file.type || 'application/octet-stream';
 }
 
-function derivePendingLocalSource(
+export function derivePendingLocalSource(
   fileName: string,
   mimeType: string,
   size: number,
@@ -126,6 +225,22 @@ export function createInvalidFileIdError(fileId: unknown): Error & {
 export function assertValidExplicitFileId(fileId: unknown): void {
   if (fileId !== undefined && fileId !== null && !isValidFileId(fileId)) {
     throw createInvalidFileIdError(fileId);
+  }
+}
+
+/**
+ * An idempotency key travels in the `x-idempotency-key` header, which trims
+ * whitespace and allows only Latin-1: visible ASCII is the only form the
+ * server receives exactly as given, so two keys never alias on the wire.
+ */
+export function isValidIdempotencyKey(key: unknown, maxLength = 255): key is string {
+  return typeof key === 'string' && key.length > 0 && key.length <= maxLength && /^[\x21-\x7e]+$/.test(key);
+}
+
+/** Throws `FILEFN_INVALID_IDEMPOTENCY_KEY` unless an explicit key is 1-255 visible ASCII characters. */
+export function assertValidIdempotencyKey(key: unknown): void {
+  if (key !== undefined && !isValidIdempotencyKey(key)) {
+    throw createClientError('FILEFN_INVALID_IDEMPOTENCY_KEY', 'idempotencyKey must be 1-255 visible ASCII characters');
   }
 }
 
@@ -272,51 +387,31 @@ export class UploadManager {
     return handle;
   }
 
-  async startUpload(input: UploadInput, handle?: UploadHandle): Promise<UploadResult> {
+  async startUpload(input: UploadInput, handle?: UploadHandle, replay?: UploadReplayScope): Promise<UploadResult> {
     const signal = this.abortController.signal;
     const prepared = await prepareUploadInput(input, [...this.preprocessors, ...(input.preprocessors || [])]);
     this.file = prepared.file;
 
-    const rawInit = await this.httpClient.initUpload(
-      {
-        policy: prepared.policy,
-        fileName: prepared.fileName,
-        size: prepared.size,
-        mimeType: prepared.mimeType,
-        metadata: prepared.metadata,
-        fileId: prepared.fileId,
-        idempotencyKey: prepared.idempotencyKey,
-      },
-      signal,
-    );
-
-    // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } }
-    const initResponse = (
-      rawInit && typeof rawInit === "object" && "uploadSessionId" in rawInit
-        ? rawInit
-        : (
-            rawInit as {
-              data?: {
-                uploadSessionId?: string;
-                totalParts?: number;
-                chunkSizeBytes?: number;
-                uploadSessionToken?: string;
-              };
-            }
-          )?.data
-    ) as {
-      uploadSessionId?: string;
-      totalParts?: number;
-      chunkSizeBytes?: number;
-      uploadSessionToken?: string;
-    };
-
-    const uploadSessionId = initResponse?.uploadSessionId;
-    if (!uploadSessionId) {
-      throw new Error(
-        "Failed to create upload session: no session ID returned. Ensure the server returns { ok: true, data: { uploadSessionId, totalParts, chunkSizeBytes, ... } } or { uploadSessionId, ... }.",
+    const init = () =>
+      this.httpClient.initUpload(
+        {
+          policy: prepared.policy,
+          fileName: prepared.fileName,
+          size: prepared.size,
+          mimeType: prepared.mimeType,
+          metadata: prepared.metadata,
+          fileId: prepared.fileId,
+          idempotencyKey: prepared.idempotencyKey,
+          ...(replay ? { replayScope: replay.scope } : {}),
+        },
+        signal,
       );
-    }
+    // Decoded by the transport (`FileFnResult`): a well-formed session, and a
+    // completed one names its stored file and version. Anything else was
+    // thrown as a refusal or an unknown outcome.
+    const initResponse = await init();
+    const uploadSessionId = initResponse.uploadSessionId;
+    if (replay) this.checkReplayScope(initResponse, replay);
 
     this.session = {
       uploadSessionId,
@@ -331,7 +426,42 @@ export class UploadManager {
       handle.fileId = prepared.fileId;
     }
 
-    await this.uploadAllParts(signal);
+    // An idempotent replay reports the session it found.
+    if (initResponse.status === "completed") {
+      return this.reconcileCompletedSession(initResponse, prepared.fileId, signal);
+    }
+    if (initResponse.status === "aborted" || initResponse.status === "expired") {
+      // A decoded success with a well-formed session confirms the end (and
+      // retires the key).
+      throw createUploadSessionEndedError(uploadSessionId, initResponse.status);
+    }
+    // A session whose completion was already decided gets no part again
+    // (an adopted earlier publication may have no part records left): the
+    // completion call finishes it.
+    let completionStarted = initResponse.status === "in_progress" && initResponse.completionStarted === true;
+    if (initResponse.status === "in_progress" && !completionStarted) {
+      // Skip the parts the server already recorded.
+      const status = await this.httpClient.getUploadStatus(uploadSessionId, this.uploadSessionToken, signal);
+      if (status.status === "completed") {
+        // Completed since the init answered: the same key's replay reports
+        // the recorded version, which is reconciled (no part is sent).
+        const replayed = await init();
+        if (replay) this.checkReplayScope(replayed, replay);
+        if (replayed.uploadSessionId === uploadSessionId && replayed.status === "completed") {
+          return this.reconcileCompletedSession(replayed, prepared.fileId, signal);
+        }
+        throw new Error("Upload session completed meanwhile, but its replay did not report it; the outcome is unknown");
+      }
+      if (status.status === "aborted" || status.status === "expired") {
+        // Only an upload/init replay confirms an end (and retires the key).
+        throw new Error(`Upload session ${uploadSessionId} reads ${status.status}; its replay settles it`);
+      }
+      completionStarted = status.completionStarted === true;
+      this.completedParts = new Set(status.recordedParts || status.uploadedParts || []);
+      this.bytesUploaded = this.calculateUploadedBytes(status);
+    }
+
+    if (!completionStarted) await this.uploadAllParts(signal);
 
     const result = await this.httpClient.completeUpload(
       this.session.uploadSessionId,
@@ -339,6 +469,7 @@ export class UploadManager {
       signal,
     );
 
+    // Decoded by the transport: it names a stored file and version.
     if (result.fileId !== prepared.fileId) {
       throw createClientError(
         FILE_ID_MISMATCH_ERROR,
@@ -351,6 +482,77 @@ export class UploadManager {
     }
 
     return result;
+  }
+
+  /**
+   * The scope check of a marked offline replay: the response must name the
+   * journaled scope the init sent, or nothing more is sent under it.
+   */
+  private checkReplayScope(initResponse: InitUploadResponse, replay: UploadReplayScope): void {
+    const scope = initResponse.replayScope;
+    if (!isReplayScope(scope)) {
+      throw createClientError(
+        REPLAY_SCOPE_UNCONFIRMED_ERROR,
+        "The server did not confirm the account of this offline replay (x-filefn-replay-scope needs @filefn/server 0.8 or later)",
+        { uploadSessionId: initResponse?.uploadSessionId },
+      );
+    }
+    if (scope !== replay.scope) {
+      throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than its journaled scope", {
+        uploadSessionId: initResponse.uploadSessionId,
+      });
+    }
+  }
+
+  /**
+   * A replayed session already completed: read the recorded version back and
+   * return it, without signing or sending any part again. A version that no
+   * longer exists (its file was deleted, even if the ID was reused since) is
+   * never confirmed.
+   */
+  private async reconcileCompletedSession(
+    initResponse: InitUploadResponse,
+    expectedFileId: string,
+    signal: AbortSignal,
+  ): Promise<UploadResult> {
+    // Decoded by the transport: a completed session names a well-formed file and version.
+    const fileId = initResponse.fileId!;
+    const versionId = initResponse.versionId!;
+    if (fileId !== expectedFileId) {
+      throw createClientError(
+        FILE_ID_MISMATCH_ERROR,
+        'Server completed upload with a different fileId than the client requested',
+        { expectedFileId, actualFileId: fileId },
+      );
+    }
+    // The server confirmed, for the session's owner, that the recorded version
+    // is still stored under its file: settle without a file read, which a
+    // write-only uploader may not be allowed (servers before this flag are
+    // read back below).
+    if (initResponse.versionConfirmed === true) return { fileId, versionId };
+    let stored: Record<string, unknown>;
+    try {
+      stored = await this.httpClient.getFileVersion(fileId, versionId, signal);
+    } catch (error) {
+      // An abort and a queue control error (a hold, a principal switch or a
+      // disposal fencing the request) say nothing about the stored file: they
+      // pass through unchanged, so the queue spends no attempt on them.
+      if (isControlError(error)) throw error;
+      throw Object.assign(
+        createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored file of a completed session could not be read back', {
+          uploadSessionId: initResponse.uploadSessionId,
+          fileId,
+        }),
+        { cause: error },
+      );
+    }
+    if (stored.fileId !== fileId || stored.versionId !== versionId) {
+      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored version read back does not match the completed session', {
+        uploadSessionId: initResponse.uploadSessionId,
+        fileId,
+      });
+    }
+    return { fileId, versionId };
   }
 
   async resumeUpload(
@@ -500,4 +702,12 @@ export class UploadManager {
       }
     }
   }
+}
+
+/** An abort, or an offline queue control error (`FILEFN_QUEUE_*`). */
+function isControlError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ((error as { name?: unknown }).name === 'AbortError') return true;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && code.startsWith('FILEFN_QUEUE_');
 }

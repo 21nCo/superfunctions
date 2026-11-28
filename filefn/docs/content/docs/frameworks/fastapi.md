@@ -50,7 +50,7 @@ app.add_middleware(
     allow_origins=[os.environ["APP_ORIGIN"]],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["content-type", "authorization", "x-request-id", "x-idempotency-key", "x-upload-session-token"],
+    allow_headers=["content-type", "authorization", "x-request-id", "x-idempotency-key", "x-filefn-replay-scope", "x-upload-session-token"],
     expose_headers=["x-request-id", "etag"],
 )
 ```

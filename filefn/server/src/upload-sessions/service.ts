@@ -90,6 +90,25 @@ export interface CreateSessionInput {
   idempotencyKey?: string;
 }
 
+/** How `createSession` was called (set by the `upload/init` route). */
+export interface CreateSessionOptions {
+  /**
+   * The key came only in the JSON body, the form `@filefn/client` 0.4 and
+   * earlier send (deprecated, honored for one minor version). Such a client
+   * ignores the replay fields of the answer and signs parts, so a replay
+   * returns its session only while parts can still be uploaded (`pending`,
+   * or `in_progress` with no completion started). A completed, aborted or
+   * expired session, one whose completion started, or a different payload
+   * under the key gets a fresh session without the key instead.
+   */
+  legacyBodyKey?: boolean;
+}
+
+/** Whether a replayed session is one a pre-0.5 client (which signs parts) can still finish. */
+function resumableByLegacyClient(state: { status: string; completionStarted?: boolean }): boolean {
+  return state.status === 'pending' || (state.status === 'in_progress' && !state.completionStarted);
+}
+
 export interface UploadSession {
   uploadSessionId: string;
   // 'refused' is a completion refused at commit or admission whose own objects
@@ -268,6 +287,13 @@ function isExpiredAt(expiresAt: string): boolean {
     return true;
   }
   return expiresAtMs <= Date.now();
+}
+
+// A session that takes no more part work: recorded as 'expired' (a replay
+// reported it ended, so its client starts again under a new key: every
+// worker honours that, whatever its clock says), or past its expiry.
+function isSessionExpired(session: Pick<UploadSession, 'status' | 'expiresAt'>): boolean {
+  return session.status === 'expired' || isExpiredAt(session.expiresAt);
 }
 
 async function forEachBodyChunk(
@@ -506,6 +532,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // the nonces of the earlier retakes whose stitched objects may remain
   // (comma-separated), so every one of them stays known until deleted.
   async function claimCompletion(session: UploadSession): Promise<{ claim: string } | { current: UploadSession | null }> {
+    // An ended session is never claimed, whatever this process's clock says.
+    if (session.status === 'expired') return { current: session };
     const nonce = randomBytes(6).toString('hex');
     let claim = `${new Date().toISOString()} ${nonce}`;
     if (session.completionClaim) {
@@ -732,6 +760,116 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
     }
     return true;
+  }
+
+  /**
+   * What an idempotent `upload/init` replay reports about the session it found,
+   * so a client reconciles instead of uploading again: `status`, plus the
+   * `fileId` and `versionId` a completed session recorded itself, with
+   * `versionConfirmed: true` when that version is still stored under its file
+   * (see recordedVersionStored), so a write-only uploader settles without a
+   * file read. A session
+   * completed before completion versions were recorded reports neither: the
+   * file's current version may belong to a later upload, so the client cannot
+   * confirm the replay and keeps it provisional. A client treats 'expired' and
+   * 'aborted' as final and starts again under a new key, so 'expired' is
+   * reported only once the session was moved to 'expired' by a conditional
+   * write, which no completion claim can follow (a claim also moves the row
+   * from 'pending' or 'in_progress'). A session an earlier FileFn left partly
+   * published is adopted and finished as a publication instead. Anything this
+   * cannot settle reads 'in_progress': the client replays the same key.
+   * An 'in_progress' session whose completion was already decided (a
+   * 'completing' claim, or a 'publishing' row) adds `completionStarted: true`:
+   * its parts are settled (an adopted earlier publication may have none left),
+   * so the client sends no part and finishes it with the completion call.
+   */
+  async function replayedSessionState(found: UploadSession): Promise<{
+    status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+    fileId?: string;
+    versionId?: string;
+    versionConfirmed?: boolean;
+    completionStarted?: boolean;
+  }> {
+    let session: UploadSession | null = found;
+    for (let attempt = 0; attempt < 4 && session; attempt += 1) {
+      if (session.status === 'completed') {
+        if (!session.fileId || !session.completionVersionId) return { status: 'completed' };
+        const recorded = { status: 'completed' as const, fileId: session.fileId, versionId: session.completionVersionId };
+        return (await recordedVersionStored(session)) ? { ...recorded, versionConfirmed: true } : recorded;
+      }
+      if (isAbortedStatus(session.status)) return { status: 'aborted' };
+      if (session.status === 'expired') return { status: 'expired' };
+      // 'publishing' and a live 'completing' claim hold a completion that is
+      // still running; the session can finish even past its expiry. A stale
+      // claim past the expiry is ended like any unfinished session below, so
+      // the replay reaches a durable answer (a completion call agrees, see
+      // expireSession).
+      if (session.status === 'publishing' || (session.status === 'completing' && !isStaleClaim(session))) {
+        return { status: 'in_progress', completionStarted: true };
+      }
+      if (!isExpiredAt(session.expiresAt)) {
+        if (session.status === 'pending') return { status: 'pending' };
+        // A stale claim before the expiry: the next completion call takes it over.
+        return session.status === 'completing' ? { status: 'in_progress', completionStarted: true } : { status: 'in_progress' };
+      }
+      let adopted: UploadSession | null | undefined;
+      try {
+        adopted = await adoptLegacyPublication(session);
+      } catch {
+        return { status: 'in_progress' };
+      }
+      if (adopted !== undefined) {
+        session = adopted;
+        continue;
+      }
+      const ended = await expireSession(session);
+      if (ended.applied) return { status: 'expired' };
+      session = ended.current;
+    }
+    return { status: 'in_progress' };
+  }
+
+  // Whether the version a completed session recorded is still stored under its
+  // file: the session was not marked by a file delete, its version row exists
+  // under that file, and the file row exists. The replay caller already proved
+  // it owns the session (owner, tenant and payload hash), so this answer needs
+  // no read permission on the file and discloses nothing beyond the session's
+  // own recorded IDs. A file deleted since (even if its ID was reused) never
+  // confirms: the version rows go with the file and version IDs are not reused.
+  async function recordedVersionStored(session: UploadSession): Promise<boolean> {
+    if (session.completionPublication?.fileDeleted || session.completionPublication?.fileDeletedAt) return false;
+    try {
+      const version = await db.findOne<{ versionId: string; fileId: string }>({
+        model: 'fileVersions',
+        where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId! }],
+        namespace,
+      });
+      if (!version || version.versionId !== session.completionVersionId || version.fileId !== session.fileId) return false;
+      const file = await db.findOne<{ fileId: string }>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: session.fileId! }],
+        namespace,
+      });
+      return file?.fileId === session.fileId;
+    } catch {
+      // Unknown: the client falls back to reading the version back.
+      return false;
+    }
+  }
+
+  // Records an unfinished session past its expiry (pending, in_progress, or
+  // completing under a stale claim) as 'expired', conditional on its status
+  // and claim, so no completion claim can follow (claimCompletion refuses an
+  // expired row, and a stale holder's move to 'publishing' is conditional on
+  // its claim). Only an applied move may be reported as expired; otherwise
+  // the caller decides again from the row as it is now.
+  function expireSession(session: UploadSession) {
+    return updateSessionIf(
+      session.uploadSessionId,
+      { status: session.status, completionClaim: session.completionClaim ?? null },
+      { status: 'expired' },
+      (row) => row.status === 'expired',
+    );
   }
 
   // The result a completed session recorded.
@@ -1408,7 +1546,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
     },
 
-    async createSession(input: CreateSessionInput, ctx: FileProviderContext): Promise<{
+    async createSession(input: CreateSessionInput, ctx: FileProviderContext, options: CreateSessionOptions = {}): Promise<{
       uploadSessionId: string;
       uploadMode: string;
       chunkSizeBytes: number;
@@ -1416,6 +1554,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       expiresAt: string;
       warnings: string[];
       uploadSessionToken?: string;
+      /** Set only on an idempotent replay; see replayedSessionState. */
+      status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+      fileId?: string;
+      versionId?: string;
+      versionConfirmed?: boolean;
+      completionStarted?: boolean;
     }> {
       const warnings: string[] = [];
       // The route passes the JSON body through unchanged, so check every field
@@ -1475,7 +1619,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // replay could only return the session without its token (which only
       // the creator holds), dead-ending the client's retry. A retry instead
       // gets a fresh session and token; the abandoned one expires.
-      const scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
+      let scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
         ? scopeIdempotencyKey(input.idempotencyKey, ctx)
         : null;
       if (scopedIdempotencyKey && input.idempotencyKey) {
@@ -1511,17 +1655,28 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
 
         if (existing) {
-          if (existing.idempotencyPayloadHash !== expectedHash) {
+          const sameRequest = existing.idempotencyPayloadHash === expectedHash;
+          if (!sameRequest && !options.legacyBodyKey) {
             throw errors.idempotencyConflict();
           }
-          return {
-            uploadSessionId: existing.uploadSessionId,
-            uploadMode: existing.uploadMode,
-            chunkSizeBytes: existing.chunkSizeBytes,
-            totalParts: existing.totalParts,
-            expiresAt: existing.expiresAt,
-            warnings: [],
-          };
+          const state = sameRequest ? await replayedSessionState(existing) : undefined;
+          // A pre-0.5 client (key in the body only) reads none of the replay
+          // fields and signs parts, so it is given back only a session it can
+          // still upload to. For anything else it gets a fresh session without
+          // the key, as before the body key was honored; the key's session is
+          // left as it is.
+          if (state && (!options.legacyBodyKey || resumableByLegacyClient(state))) {
+            return {
+              uploadSessionId: existing.uploadSessionId,
+              uploadMode: existing.uploadMode,
+              chunkSizeBytes: existing.chunkSizeBytes,
+              totalParts: existing.totalParts,
+              expiresAt: existing.expiresAt,
+              warnings: [],
+              ...state,
+            };
+          }
+          scopedIdempotencyKey = null;
         }
       }
 
@@ -1725,6 +1880,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       chunkSizeBytes: number;
       fileSize: number;
       expiresAt: string;
+      completionStarted?: boolean;
     }> {
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
@@ -1759,6 +1915,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         chunkSizeBytes: session.chunkSizeBytes,
         fileSize: session.size,
         expiresAt: session.expiresAt,
+        // Its completion was decided: no part is sent any more, only the completion call.
+        ...(session.status === 'completing' || session.status === 'publishing' ? { completionStarted: true } : {}),
       };
     },
 
@@ -1779,7 +1937,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -1843,7 +2001,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -1927,11 +2085,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // session's parts are never used again, and its cleanup may already
       // have run.
       const afterWrite = await readSession(uploadSessionId).catch(() => 'unknown' as const);
-      if (afterWrite === null || (afterWrite !== 'unknown' && (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed'))) {
+      if (
+        afterWrite === null ||
+        (afterWrite !== 'unknown' &&
+          (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed' || afterWrite.status === 'expired'))
+      ) {
         if (storage.deleteObject) {
           await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
         }
-        throw afterWrite === null ? errors.sessionNotFound() : errors.uploadAborted();
+        // A session another request completed meanwhile is reported as
+        // completed, so a client replays it under the same key and reconciles
+        // the stored version instead of starting over.
+        if (afterWrite === null) throw errors.sessionNotFound();
+        if (afterWrite.status === 'expired') throw errors.uploadExpired();
+        throw afterWrite.status === 'completed' ? errors.uploadAlreadyCompleted() : errors.uploadAborted();
       }
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -1973,7 +2140,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -2036,6 +2203,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       let parts: Array<{ partNumber: number; etag: string }> = [];
       while (claim === undefined) {
         if (isAbortedStatus(session.status)) throw errors.uploadAborted();
+        // Recorded as ended when a replay reported it so: never completed after.
+        if (session.status === 'expired') throw errors.uploadExpired();
         if (session.status === 'completed') return recordedResult(session);
         if (session.status === 'publishing') return publishSession(session, ctx);
         if (!(session.status === 'completing' && !isStaleClaim(session))) {
@@ -2047,7 +2216,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             continue;
           }
         }
-        if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+        // A live completion claim can still publish past the expiry: it is
+        // waited for below, never reported as expired. Anything else past it
+        // is recorded as expired first (as an init replay would), so the
+        // answer is durable and a replay of the key agrees with it.
+        if (isExpiredAt(session.expiresAt) && !(session.status === 'completing' && !isStaleClaim(session))) {
+          const ended = await expireSession(session);
+          if (ended.applied) throw errors.uploadExpired();
+          if (!ended.current) throw errors.sessionNotFound();
+          session = ended.current;
+          continue;
+        }
 
         let current: UploadSession | null;
         if (session.status === 'completing' && !isStaleClaim(session)) {

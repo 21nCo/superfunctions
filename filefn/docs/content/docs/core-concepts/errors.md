@@ -40,6 +40,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_UPLOAD_ABORTED` | 410 | The session was aborted. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` was called on a session that's already closed. |
 | `FILEFN_IDEMPOTENCY_CONFLICT` | 409 | Same `x-idempotency-key`, different canonical payload. |
+| `FILEFN_REPLAY_SCOPE_MISMATCH` | 409 | An offline replay (`x-filefn-replay-scope`) whose credentials act for another owner or tenant than the account it is pinned to. Nothing is created. |
 | `FILEFN_PART_CONFLICT` | 409 | Same `partNumber` completed twice with different etags. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | The recorded total bytes don't match the declared size. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | The storage adapter doesn't support any negotiable mode. |

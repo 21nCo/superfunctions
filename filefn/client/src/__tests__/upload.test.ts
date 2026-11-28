@@ -445,3 +445,64 @@ describe('error handling', () => {
     await expect(client.uploadFile({ policy: 'invalid', file }).done()).rejects.toThrow('HTTP 404');
   });
 });
+
+describe('replayed session end', () => {
+  it.each([
+    ['a numeric session ID', 42],
+    ['a session ID that is a dot segment', '..'],
+  ])('keeps an expired answer with %s ambiguous instead of confirming the end', async (_label, uploadSessionId) => {
+    const { UPLOAD_SESSION_ENDED_ERROR } = await import('../upload-manager.js');
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId, status: 'expired', totalParts: 1, chunkSizeBytes: 100 } }));
+    const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { code?: string }).code).not.toBe(UPLOAD_SESSION_ENDED_ERROR);
+  });
+
+  it('confirms the end of a well-formed expired session', async () => {
+    const { UPLOAD_SESSION_ENDED_ERROR } = await import('../upload-manager.js');
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId: 'ups_1', status: 'expired', totalParts: 1, chunkSizeBytes: 100 } }));
+    const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
+    expect((error as { code?: string }).code).toBe(UPLOAD_SESSION_ENDED_ERROR);
+  });
+});
+
+describe('round 15: the online upload accepts what the server sends', () => {
+  it.each([
+    ['a legacy { data } envelope without ok', 'session_003', (data: Record<string, unknown>) => ({ data })],
+    ['a server-generated session ID with ":" and "."', 'sess:2026.a', (data: Record<string, unknown>) => ({ ok: true, data })],
+    // URL parsing leaves these unchanged, so they reached the router as they are before 0.5 too.
+    ['a server-generated session ID with a literal "%"', 'sess%41x', (data: Record<string, unknown>) => ({ ok: true, data })],
+    ['a server-generated session ID with "|^[]"', 'v|1^[2]', (data: Record<string, unknown>) => ({ ok: true, data })],
+  ])('completes an upload whose init answers with %s', async (_label, uploadSessionId, wrap) => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse(wrap({ uploadSessionId, chunkSizeBytes: 100, totalParts: 1 })))
+      .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/upload/part1' }))
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag-1"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_00000003', versionId: 'ver.2026:1' }));
+    const result = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: 'file_00000003' }).done();
+    expect(result).toEqual({ fileId: 'file_00000003', versionId: 'ver.2026:1' });
+    // The server router matches the raw segment and never decodes it.
+    expect(mockFetch.mock.calls[1][0]).toBe(`https://api.test/files/upload/${uploadSessionId}/parts/1/sign`);
+    expect(mockFetch.mock.calls[4][0]).toBe(`https://api.test/files/upload/${uploadSessionId}/complete`);
+  });
+
+  it.each([
+    ['a path separator', 'sess/1'],
+    ['an escaped dot segment', '%2e'],
+    ['an escaped double-dot segment', '.%2E'],
+    ['a backslash', 'sess\\1'],
+    ['a query delimiter', 'sess?1'],
+    ['whitespace', 'sess 1'],
+    ['a non-ASCII character', 'sess\u00e91'],
+  ])('refuses a session ID with %s, which cannot reach the server as one raw segment', async (_label, uploadSessionId) => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId, chunkSizeBytes: 100, totalParts: 1 } }));
+    const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
+    expect((error as { code?: string }).code).toBe('FILEFN_UPLOAD_RESULT_INVALID');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});

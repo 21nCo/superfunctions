@@ -12,15 +12,23 @@ Goal: a flaky-network-friendly upload that persists across tab reloads and resum
 ```ts
 const client = createFileFnClient({
   baseUrl: "/filefn",
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: {
+    enabled: true,
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    // Who the live credentials act for now (another tab may have switched
+    // accounts), read from local state: it is called offline too.
+    currentPrincipal: () => readLocalSessionPrincipal(),
+    // Credentials issued for exactly this principal (null when there are none).
+    getAuthHeaders: (principal) => readHeadersFor(principal),
+  },
 });
 ```
 
-That's it. Every `uploadFile(...)` call:
+That's it. Every `uploadFile(...)` call made offline:
 
-1. Stages bytes to OPFS at `<opfsDir>/<uploadSessionId>`.
-2. Returns an `UploadHandle` whose `done()` waits for sync.
-3. Auto-syncs when `navigator.onLine` becomes `true`.
+1. Stages the bytes as a new generation in the user's partition of the durable queue.
+2. Returns an `UploadHandle` whose `done()` waits for publication.
+3. Is replayed when `navigator.onLine` becomes `true`, when another tab announces work, and on idle polls.
 
 ## Showing pending-local previews
 
@@ -39,18 +47,19 @@ if (renderable.state === "pending-local") {
 ## Listing pending uploads
 
 ```ts
-import { OPFSStore } from "@filefn/client";
-
-const store = new OPFSStore({ rootDir: "filefn-offline" });
-await store.init();
-const pending = await store.list();
-
-for (const upload of pending) {
-  console.log(upload.fileName, upload.size, upload.retryCount);
+const queue = client.getOfflineQueue();
+for (const entry of await queue.list()) {
+  console.log(entry.fileName, entry.size, entry.phase, entry.state, entry.attempts);
 }
 ```
 
-Useful for an "uploads in progress" UI that survives reloads.
+`list()` returns only this partition's entries and throws
+`FILEFN_QUEUE_PRINCIPAL_MISMATCH` while another account is signed in. Useful
+for an "uploads in progress" UI that survives reloads. Do not read the
+pre-0.5 unscoped `OPFSStore` for this: it cannot see the partitioned journals,
+and its records belong to no verified principal (see
+[Features › Offline](../features/offline) for `listLegacyUploads` and
+`migrateLegacyUpload`).
 
 ## Cancelling
 
@@ -73,19 +82,20 @@ if (quota - usage < file.size) {
 
 ## Headless mode
 
-If you want full control over staging / sync (e.g. an Electron app):
+If you want full control over when queued work runs (e.g. an Electron app),
+turn implicit replay off and drive the partitioned queue with an explicit
+`OfflineSync`:
 
 ```ts
-import { OfflineSync, OPFSStore } from "@filefn/client";
+const client = createFileFnClient({
+  baseUrl: "/filefn",
+  offline: { enabled: true, implicitReplay: false, partition, currentPrincipal, getAuthHeaders },
+});
 
-const store = new OPFSStore({ rootDir: "filefn-offline" });
-await store.init();
-
-const sync = new OfflineSync({ store, client: { uploadFile } });
-
-sync.startAutoSync();           // listen for online events
-await sync.syncUpload(id);      // sync a specific row
-await sync.syncAll();           // sync everything pending
+const sync = client.createOfflineSync({ onSyncError: (error, entryId) => report(error, entryId) });
+sync.start();                               // online events, cross-tab wakeups, idle polls
+await client.getOfflineQueue().process(id); // advance one entry now
+sync.dispose();                             // or client.dispose(), which disposes it too
 ```
 
 ## See also

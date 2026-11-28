@@ -48,7 +48,7 @@ app.use(
   "/filefn/*",
   cors({
     origin: process.env.APP_ORIGIN!,
-    allowHeaders: ["content-type", "authorization", "x-request-id", "x-idempotency-key", "x-upload-session-token"],
+    allowHeaders: ["content-type", "authorization", "x-request-id", "x-idempotency-key", "x-filefn-replay-scope", "x-upload-session-token"],
     exposeHeaders: ["x-request-id", "etag"],
     credentials: true,
   })
