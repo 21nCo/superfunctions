@@ -1,0 +1,33 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_1eb217f2cbe12c::t_0b857d60440510 3036-3080
+filefn/client/src/offline/queue.ts
+  s_1eb217f2cbe12c::t_37998f619a3f7b 566-572,1144-1167,1171,1256,1263,1971,2421-2424,2529-2531,2535-2545,2636,2646-2656,2663-2668,2670,2683,2685,2688-2690,2692,2695-2704,2706-2708,2710,2712-2715,2717-2720
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_1eb217f2cbe12c::t_2682054b328621 35
+filefn/docs/content/docs/reference/changelog.md
+  s_1eb217f2cbe12c::t_f5d27a5de1eb37 19
+filefn/docs/static/llms-full.txt
+  s_1eb217f2cbe12c::t_f7a1c6f0ce3eca 1857,8402
+filefn/server/src/upload-sessions/routes.ts
+  s_1eb217f2cbe12c::t_486e4e6e6572db 192-194
+filefn/server/src/upload-sessions/service.ts
+  s_1eb217f2cbe12c::t_8ab3668df74e79 93-111,1549,1622,1658-1659,1662-1679
+filefn/server/tests/offline-replay.test.ts
+  s_1eb217f2cbe12c::t_d068aaab502c18 221-304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60b2bd2178f36ada6a7bf06aa58fd08b6a5ff167",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

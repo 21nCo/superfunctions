@@ -1,0 +1,41 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_545bb079978e5a::t_d4daf565671182 2158-2176,2707-2708
+filefn/client/src/__tests__/offline.test.ts
+  s_545bb079978e5a::t_97057e4ac15b51 500-515,522-528,531-532,538-543,562-571,592,605-622,624-631,634-693
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_545bb079978e5a::t_95cf9ef9cb0929 403-487
+filefn/client/src/client.ts
+  s_9b0b1c1bc9328f::t_fe659cc61e817c 100-101,112-114
+filefn/client/src/index.ts
+  s_545bb079978e5a::t_75640fa050af8d 515-522,531-545,551
+filefn/client/src/offline/queue.ts
+  s_545bb079978e5a::t_d3eed8604abb95 469-475,999,1001,1026-1035,1118-1119,1124-1130,1266-1354,1385,1748-1751,1756,1758,1763-1770,1773-1778,1780,1785-1788,2527,2593-2594,2700-2701,2711,2899-2905,3004-3013
+filefn/docs/content/docs/features/offline.md
+  s_545bb079978e5a::t_78311411c24ed2 35,94
+filefn/docs/content/docs/reference/changelog.md
+  s_545bb079978e5a::t_035eccd4c02612 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ed53e3cc1dc70d1ee874fc6be31ccbac9e8ca7a",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_9b0b1c1bc9328f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21746-c7a1-7f13-9b40-a138da6f7cf8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

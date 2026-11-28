@@ -1,0 +1,42 @@
+filefn/client/src/__tests__/file-ids.test.ts
+  h_bdc5b81c173ee9 7,146
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  h_bdc5b81c173ee9 251-258
+filefn/client/src/__tests__/offline.test.ts
+  h_bdc5b81c173ee9 5,61
+filefn/client/src/__tests__/transport-offline.test.ts
+  h_bdc5b81c173ee9 3,97,175
+filefn/client/src/client.ts
+  h_bdc5b81c173ee9 64-65,444-447,454
+filefn/client/src/index.ts
+  h_bdc5b81c173ee9 357-359
+filefn/client/src/offline/queue.ts
+  h_bdc5b81c173ee9 5,101-113,321-325,425-429,462-463,622-637,768-772,1004-1005,1008-1018,1022-1023,1044-1045,1052-1061,1127,1213,1222,1238,1264-1265,1267,1276-1277,1279-1280,1289-1290,1305,1319,1336,1339-1342,1344-1345,1378,1392,1411,1416,1423,1516-1517,1524,1527,1543,1551,1568,1658-1660,1669-1673,1678,1698-1705,1708,1729,1744,1756-1765,1767,1769-1779,1793,1845-1878,1924,1934-1958,2042,2076-2079,2084,2087,2111-2115,2121,2123,2252-2254,2256,2260-2261,2265-2267,2292,2296,2307,2349,2361,2371,2481,2636-2638,2656-2660,2666-2667,2673,2709,2722,2747,2788-2789,2871,2877-2888,3044,3047,3071,3104,3107,3110,3114-3121,3123,3125,3130-3132,3170-3173,3175-3176,3179-3181,3183,3190-3191,3193,3196,3228-3229,3232
+filefn/client/src/types.ts
+  h_bdc5b81c173ee9 261-272,278-280
+filefn/client/src/upload-manager.ts
+  h_bdc5b81c173ee9 47-77,342,347-361,376,407-411,414-431,436,465-490
+filefn/docs/content/api/filefn.json
+  h_bdc5b81c173ee9 572-574,1916-1925,2506-2513,2556-2559
+filefn/server/contracts/filefn-client-v1.openapi.json
+  h_bdc5b81c173ee9 572-574,1916-1925,2506-2513,2556-2559
+filefn/server/src/client-contract.ts
+  h_bdc5b81c173ee9 220,544-551,801-810,825-828
+filefn/server/src/errors.ts
+  h_bdc5b81c173ee9 41,157-170
+filefn/server/src/upload-sessions/routes.ts
+  h_bdc5b81c173ee9 5-6,32-53,150-156,177
+filefn/server/src/upload-sessions/service.ts
+  h_bdc5b81c173ee9 762-765,772,789-794,1543,1854,1889-1890
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "413b6afba4878263e2245d920a6383078ddbf3ff",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

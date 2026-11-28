@@ -1,0 +1,19 @@
+filefn/docs/static/llms-full.txt
+  s_16be15e550007d::t_f0040a74f26cb7 3837-3838,3844,3852-3853,3856,3864-3868,3871-3872,3893-3895,3901,3903-3904,3913,3916-3917,3922,3928,3945,3956,5391-5395,6433-6441,7255-7260,8326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d5aef43f7d4b3e1f370073642135c5b28561f2f",
+  "prompts": {},
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

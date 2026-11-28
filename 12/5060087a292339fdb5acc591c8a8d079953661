@@ -1,0 +1,146 @@
+datafn/docs/public/llms-full.txt
+  s_f28924c6e75cbb::t_2a2521da2b8439 22217
+filefn/docs/content/docs/reference/changelog.md
+  s_f28924c6e75cbb::t_e30ca7c27f86cd 17-20
+filefn/docs/content/docs/features/offline.md
+  s_f28924c6e75cbb::t_0db414afd0d4ae 140
+  s_bd8caca8b9ac65::t_775c2046b1c324 96
+  s_5462f6f33afb2d::t_e11a9fa972f7ec 120,126
+  s_bd8caca8b9ac65::t_7f0e1c41429324 97-99
+  s_78487463d47055::t_8d2778ef8a1f7c 100
+filefn/client/src/client.ts
+  h_bdc5b81c173ee9 64-65,444-447,454
+filefn/server/src/client-contract.ts
+  h_bdc5b81c173ee9 220,544-551,801-810,825-828
+datafn/docs/content/docs/recipes/filefn-integration.mdx
+  s_f28924c6e75cbb::t_7962a313fe902b 118
+filefn/docs/content/api/filefn.json
+  h_bdc5b81c173ee9 572-574,1916-1925,2506-2513,2556-2559
+filefn/client/src/__tests__/offline.test.ts
+  h_bdc5b81c173ee9 5,61
+filefn/server/src/upload-sessions/routes.ts
+  h_bdc5b81c173ee9 5-6,32-53,150-156,177
+filefn/client/src/types.ts
+  h_bdc5b81c173ee9 261-272,278-280
+filefn/docs/static/llms-full.txt
+  s_5462f6f33afb2d::t_85629ef4813cfb 3957,3963
+  s_f28924c6e75cbb::t_5ac01acaa5e19c 6222,8396-8399
+  s_f28924c6e75cbb::t_c7b46bded7f4e0 3977
+  s_78487463d47055::t_3d9cbba3c7bae2 1573,1853-1856,3933-3937,4970,5160,9025
+filefn/server/src/errors.ts
+  h_bdc5b81c173ee9 41,157-170
+filefn/docs/content/docs/quickstart/hono.md
+  s_f28924c6e75cbb::t_a6e643fd60f656 56
+filefn/server/contracts/filefn-client-v1.openapi.json
+  h_bdc5b81c173ee9 572-574,1916-1925,2506-2513,2556-2559
+filefn/client/src/upload-manager.ts
+  h_bdc5b81c173ee9 47-77,342,347-361,376,407-411,414-431,436,465-490
+filefn/server/src/upload-sessions/service.ts
+  h_bdc5b81c173ee9 762-765,772,789-794,1543,1854,1889-1890
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  s_e120983e115e7f::t_e158013d754d4f 14-16
+  s_bd8caca8b9ac65::t_e38e278f82a1a3 96-104
+  h_bdc5b81c173ee9 263-270
+  s_78487463d47055::t_b7d18b4282a2ec 17-19
+filefn/client/src/__tests__/file-ids.test.ts
+  h_bdc5b81c173ee9 7,146
+filefn/client/src/__tests__/transport-offline.test.ts
+  h_bdc5b81c173ee9 3,97,175
+filefn/client/src/index.ts
+  h_bdc5b81c173ee9 357-359
+filefn/server/tests/offline-replay.test.ts
+  s_16be15e550007d::t_af49cf086312a7 365,383,412,436,452
+  s_5462f6f33afb2d::t_0fec310c138924 25
+  s_545bb079978e5a::t_f9f4e32987b1da 39,47-48,53,413,453
+  s_f28924c6e75cbb::t_f9ab5dda08ff7a 454
+  s_16be15e550007d::t_08db611e61a9d5 362-364
+  s_16be15e550007d::t_f6cc9389217267 366-368,380-382
+  s_16be15e550007d::t_911cffb023114e 384-386,409-411
+  s_16be15e550007d::t_e0ccb84b022189 437-439,449-451
+  s_16be15e550007d::t_eb1699a352db82 100-102,345-361,369-379,387-408,414-435,440-448
+filefn/client/src/offline/queue.ts
+  h_bdc5b81c173ee9 5,101-113,321-325,425-429,462-463,622-637,768-772,1004-1005,1008-1018,1022-1023,1044-1045,1052-1061,1127,1213,1222,1238,1264-1265,1267,1276-1277,1279-1280,1289-1290,1305,1319,1336,1339-1342,1344-1345,1378,1392,1411,1416,1423,1516-1517,1524,1527,1543,1551,1568,1658-1660,1669-1673,1678,1698-1705,1708,1729,1744,1756-1765,1767,1769-1779,1793,1845-1878,1924,1934-1958,2042,2076-2079,2084,2087,2111-2115,2121,2123,2252-2254,2256,2260-2261,2265-2267,2292,2296,2307,2349,2361,2371,2481,2636-2638,2656-2660,2666-2667,2673,2709,2722,2747,2788-2789,2871,2877-2888,3044,3047,3071,3104,3107,3110,3114-3121,3123,3125,3130-3132,3170-3173,3175-3176,3179-3181,3183,3190-3191,3193,3196,3228-3229,3232
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_78487463d47055::t_8b225e96f46080 31-34
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_16be15e550007d::t_d0b77497ed3b55 2238-2456
+filefn/docs/content/docs/core-concepts/errors.md
+  s_16be15e550007d::t_bbece1ae2049c1 43
+filefn/docs/content/docs/frameworks/fastapi.md
+  s_16be15e550007d::t_c91ec9dca55128 53
+filefn/docs/content/docs/frameworks/hono.md
+  s_16be15e550007d::t_b60d000675fd83 51
+filefn/docs/content/docs/reference/routes.md
+  s_16be15e550007d::t_8c624843c66825 117
+filefn/examples/production/server/src/index.ts
+  s_16be15e550007d::t_5409a7855c21c0 130-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "125060087a292339fdb5acc591c8a8d079953661",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_5462f6f33afb2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1b3453b-6176-48dc-a38b-121c1cef6f9a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_78487463d47055": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216c5-7ab7-7720-aec3-bb9ec6dc2cfa",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_bd8caca8b9ac65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d2df9a-a640-491e-97cf-5c3bd3762daa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e120983e115e7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf59acf4-77ba-44fd-9362-a485d4d2897a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f28924c6e75cbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec49bf15-18d9-4f16-941f-7b2db768b4a7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

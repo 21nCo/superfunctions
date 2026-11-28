@@ -1,0 +1,47 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_aa789c2aef2476::t_8d472bbc1b8b94 2927-3021
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_aa789c2aef2476::t_fd37cebd38f0e6 556-629
+filefn/client/src/__tests__/upload.test.ts
+  s_aa789c2aef2476::t_beec95866dcee5 485-501
+filefn/client/src/client.ts
+  s_aa789c2aef2476::t_29eea1d21f5d6b 61-68,74,76,674,748,760,772,784,796,831
+filefn/client/src/index.ts
+  s_aa789c2aef2476::t_b8694348c906c1 36,136,361-363,380-383
+filefn/client/src/offline/queue.ts
+  s_aa789c2aef2476::t_1a0580349e2b0b 258-263,430-435,514-517,550-557,778-782,919-929,1129,1132,1216-1224,1228-1231,1622,1626,1804,1840,1844-1846,1915-1917,1921,1931-1935,1940,1942,1948-1955,1963,2031-2033,2087-2088,2132,2302,2312-2318,2473-2477,2479,2486,2570,2580,2584-2587,2589-2622,2628-2637,2639,2727,3152,3162-3166,3169,3248,3260,3575-3583,3632,3660,3694,3696-3697,3796-3797
+filefn/docs/content/api/filefn.json
+  s_aa789c2aef2476::t_cfcd65e9b08429 1920
+filefn/docs/content/docs/features/offline.md
+  s_aa789c2aef2476::t_a0c8a832dc88ba 47,49,94,101,124
+filefn/docs/content/docs/reference/changelog.md
+  s_aa789c2aef2476::t_e3f03b52d7d12a 12-14
+filefn/docs/static/llms-full.txt
+  s_aa789c2aef2476::t_d67143522cdf11 3872,3884,3886,3931,3938,3961,8395-8397
+filefn/server/contracts/filefn-client-v1.openapi.json
+  s_aa789c2aef2476::t_6346a5f4c1c1fa 1920
+filefn/server/src/client-contract.ts
+  s_aa789c2aef2476::t_80d7a1cb7566a4 549
+filefn/server/src/upload-sessions/routes.ts
+  s_aa789c2aef2476::t_5d9fda9bc4d096 171-177
+filefn/server/tests/offline-replay.test.ts
+  s_aa789c2aef2476::t_df7fcc5fca59c7 436-468
+filefn/server/tests/session-id-segment.test.ts
+  s_aa789c2aef2476::t_7b431d93a113a3 1-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "274fcfcaaadde839d3e59b2f4a3e277663be5bb6",
+  "prompts": {},
+  "sessions": {
+    "s_aa789c2aef2476": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_aa789c2aef2476",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

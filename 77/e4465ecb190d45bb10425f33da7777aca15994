@@ -1,0 +1,63 @@
+filefn/client/README.md
+  s_f28924c6e75cbb::t_8ba86af63f6aa6 74
+filefn/client/src/__tests__/file-ids.test.ts
+  s_f28924c6e75cbb::t_5b13c36267f4d1 170-172,174,181,184,193-197,199,324,326
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  s_f28924c6e75cbb::t_6475d2169f3267 2,217-249
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_f28924c6e75cbb::t_88ba2ccff919ad 14,29,54,117,1259,1273-1275,1353-1542
+filefn/client/src/__tests__/offline.test.ts
+  s_f28924c6e75cbb::t_14af2e637859d5 77-84,86,93,97,124-128,130,225-233,298-337,405-412,464-465
+filefn/client/src/__tests__/sync.test.ts
+  s_f28924c6e75cbb::t_b42a9c8c689ce5 75-111
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_f28924c6e75cbb::t_a7a39793a9579f 68-74,104-111
+filefn/client/src/index.ts
+  s_f28924c6e75cbb::t_6e986e0003568e 32,101-102,108,332-361,368-369,398-420,637-639,648-649
+filefn/client/src/offline/opfs-store.ts
+  s_f28924c6e75cbb::t_7f475d4736c068 369-374
+filefn/client/src/offline/queue.ts
+  s_f28924c6e75cbb::t_815861c39c0199 6,131-136,191-205,411-416,431,433-434,456-461,572-581,749,752-778,833-835,877-878,927-928,931,952-956,961,1079,1081,1090,1092,1094-1098,1126-1129,1158,1169,1212-1216,1221,1223-1224,1235,1239-1242,1262,1336-1345,1356-1435,1469-1513,1664-1669,1681-1684,1689,1695,1758,1764-1765,1767-1768,1772-1773,1775-1779,1797,1800,1806,1835-1840,1846,1848-1853,1855-1859,1863-1866,1870,1873,1906-1907,1923-1924,2090,2110-2113,2116-2125,2143-2146,2154,2163,2178,2189,2205,2242,2295,2302,2309-2313,2316,2322-2323,2326,2423
+filefn/client/src/offline/sync.ts
+  s_f28924c6e75cbb::t_758616bb3e6702 26-32,65-66,90,136,149-150,164,332,390-393,397-418,485-486,517,524-525,528,571
+filefn/client/src/types.ts
+  s_f28924c6e75cbb::t_b94c12bb2b99c0 56-60,64-72
+filefn/client/src/upload-manager.ts
+  s_f28924c6e75cbb::t_6e781b82799818 48-52,54,382,415
+filefn/docs/content/docs/core-concepts/offline.md
+  s_f28924c6e75cbb::t_aae4d9973f1229 27-28,30-32
+filefn/docs/content/docs/features/offline.md
+  s_f28924c6e75cbb::t_0db414afd0d4ae 23-24,26-27,33,43,45,47,79,89-91,99,101,114,134
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_f28924c6e75cbb::t_6a27be3d92c523 60-62
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_f28924c6e75cbb::t_8293dd75f141c8 94-98,104-106,109-111
+filefn/docs/content/docs/recipes/opfs-offline.md
+  s_f28924c6e75cbb::t_9c3d243b18f586 18-22,27,29-31,50-52,56-62,85-87,90-93,95-98
+filefn/docs/content/docs/reference/changelog.md
+  s_f28924c6e75cbb::t_5e086744d3517a 12,15
+filefn/docs/content/docs/sdk/client.md
+  s_f28924c6e75cbb::t_408f4743f80faf 27-31,141
+filefn/docs/static/llms-full.txt
+  s_f28924c6e75cbb::t_c7b46bded7f4e0 2200-2201,2203-2205,3852-3853,3855-3856,3862,3872,3874,3876,3908,3918-3920,3928,3930,3943,3963,5422-5424,6459-6463,6469-6471,6474-6476,7294-7298,7303,7305-7307,7326-7328,7332-7338,7361-7363,7366-7369,7371-7374,8367,8370,9238-9242,9352
+filefn/server/src/upload-sessions/service.ts
+  s_f28924c6e75cbb::t_3cf169dffb5c2c 739-749,751,755-786,788,791,1582
+filefn/server/tests/offline-replay.test.ts
+  s_f28924c6e75cbb::t_34342a5faba875 66,291-299,303-305,353-402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77e4465ecb190d45bb10425f33da7777aca15994",
+  "prompts": {},
+  "sessions": {
+    "s_f28924c6e75cbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec49bf15-18d9-4f16-941f-7b2db768b4a7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

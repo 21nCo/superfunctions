@@ -1,0 +1,23 @@
+plugfn/core/README.md
+  s_062b8f63e6e8a9::t_d8f2cdac064a3b 196
+plugfn/providers/src/github-app/minter.ts
+  s_062b8f63e6e8a9::t_c490d6b2283272 95-99,583-585,614-617,740-741,972-976,1003
+plugfn/providers/tests/github-app/minter.test.ts
+  s_062b8f63e6e8a9::t_5e183fc8268854 921,924,939-944,960-975
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1471ed3716b3267a56a43812bf0a07ff3e8064d5",
+  "prompts": {},
+  "sessions": {
+    "s_062b8f63e6e8a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a8d2e81-39b8-4639-87fb-9e8b66f1a49c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
