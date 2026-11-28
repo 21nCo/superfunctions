@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/reviewfn-harness-claude-code",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Claude Code CLI harness adapter for ReviewFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,10 +24,10 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@superfunctions/reviewfn-core": "0.1.1"
+    "@superfunctions/reviewfn-core": "0.1.2"
   },
   "devDependencies": {
-    "@superfunctions/reviewfn-testing": "0.1.1",
+    "@superfunctions/reviewfn-testing": "0.1.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +10,7 @@ import { CodexHarnessAdapter } from "@superfunctions/reviewfn-harness-codex";
 import { evaluate, type EvaluationCase, type EvaluationOutcome } from "@superfunctions/reviewfn-testing";
 
 import { initializeConfiguration, initializePanelPolicy } from "./config.js";
+import { expectedCliMismatch } from "./expected-cli.js";
 import { LocalIsolatedExecutionAdapter } from "./execution.js";
 import { contextAdapters, createReviewSnapshot, loadRunConfiguration, optional, parseArguments, publication, renderStoredReport, required, runPanelCommand } from "./panel.js";
 
@@ -29,6 +31,7 @@ async function createCoordinator(root: string, config: ReviewFnConfig, pullReque
 async function run(): Promise<number> {
   const args = parseArguments(process.argv.slice(2));
   const root = path.resolve(optional(args.flags, "root") ?? process.cwd());
+  if (args.command === "--version") { process.stdout.write(`${(createRequire(import.meta.url)("../package.json") as { version: string }).version}\n`); return 0; }
   if (!args.command || args.command === "help" || args.flags.has("help")) { process.stdout.write(help()); return 0; }
   if (args.command === "init") {
     if (typeof args.flags.get("panel") === "string") throw new Error("--panel takes no value.");
@@ -118,11 +121,17 @@ async function run(): Promise<number> {
 }
 
 function help(): string {
-  return `ReviewFn — evidence-backed pull request review\n\nUsage:\n  reviewfn init [--root PATH] [--panel]\n  reviewfn preflight --base REF --head REF [--issue ID] [--trusted-config-from-base]\n  reviewfn review --base REF --head REF [--pull-request N] [--issue ID] [--output DIR]\n  reviewfn publish --input report.json --repository OWNER/REPO --pull-request N --head SHA --profile NAME\n  reviewfn panel --base REF --head REF [--since SHA] [--issue ID] [--pull-request N] [--panel FILE] [--output DIR] [--trusted-config-from-base] [--json]\n  reviewfn report [--panel] [--input FILE]\n  reviewfn publish --input panel-report.json --repository OWNER/REPO --pull-request N --head SHA [--profile panel]\n  reviewfn render --input report.json\n  reviewfn evaluate --input evaluation.json\n\nReview is advisory by default. Configuration and policy are loaded from .reviewfn/, and the panel policy from .reviewfn/panel.json.\nreviewfn panel exits 0 (complete), 2 (incomplete coverage or quorum not met), 3 (preflight failed), 4 (canceled) or 1 (other error).\n`;
+  return `ReviewFn — evidence-backed pull request review\n\nUsage:\n  reviewfn --version\n  reviewfn init [--root PATH] [--panel]\n  reviewfn preflight --base REF --head REF [--issue ID] [--trusted-config-from-base]\n  reviewfn review --base REF --head REF [--pull-request N] [--issue ID] [--output DIR]\n  reviewfn publish --input report.json --repository OWNER/REPO --pull-request N --head SHA --profile NAME\n  reviewfn panel --base REF --head REF [--since SHA] [--issue ID] [--pull-request N] [--panel FILE] [--output DIR] [--trusted-config-from-base] [--json]\n  reviewfn report [--panel] [--input FILE]\n  reviewfn publish --input panel-report.json --repository OWNER/REPO --pull-request N --head SHA [--profile panel]\n  reviewfn render --input report.json\n  reviewfn evaluate --input evaluation.json\n\nReview is advisory by default. Configuration and policy are loaded from .reviewfn/, and the panel policy from .reviewfn/panel.json.\nreviewfn panel exits 0 (complete), 2 (incomplete coverage or quorum not met), 3 (preflight failed), 4 (canceled) or 1 (other error).\n`;
 }
 
-run().then((code) => { process.exitCode = code; }).catch((error) => {
-  const payload = error instanceof ReviewFnError ? { error: error.code, message: error.message, details: error.details } : { error: "REVIEWFN_UNEXPECTED", message: error instanceof Error ? error.message : String(error) };
-  process.stderr.write(`${JSON.stringify(payload, null, 2)}\n`);
+const mismatch = expectedCliMismatch(createRequire(import.meta.url)("../package.json") as { name: string; version: string });
+if (mismatch) {
+  process.stderr.write(`reviewfn: ${mismatch}\n`);
   process.exitCode = 1;
-});
+} else {
+  run().then((code) => { process.exitCode = code; }).catch((error) => {
+    const payload = error instanceof ReviewFnError ? { error: error.code, message: error.message, details: error.details } : { error: "REVIEWFN_UNEXPECTED", message: error instanceof Error ? error.message : String(error) };
+    process.stderr.write(`${JSON.stringify(payload, null, 2)}\n`);
+    process.exitCode = 1;
+  });
+}

@@ -8,6 +8,7 @@ The first release is deliberately advisory. It cannot edit code, push, merge, or
 
 | Package | Responsibility |
 | --- | --- |
+| `reviewfn` | The front door: re-exports `@superfunctions/reviewfn-core`, and its `reviewfn` command runs `@superfunctions/reviewfn-cli` at the same version |
 | `@superfunctions/reviewfn-core` | Versioned contracts, identity, policy, orchestration, validation, artifacts and rendering |
 | `@superfunctions/reviewfn-cli` | Initialization, preflight, review, report rendering and evaluation commands |
 | `@superfunctions/reviewfn-harness-codex` | Codex CLI capability checks, bounded execution, JSONL normalization and structured output |
@@ -20,6 +21,8 @@ Every package is independently installable. No package depends on another Superf
 ## Local quick start
 
 Requires Node.js 22 or newer, Git, and a supported Codex CLI installation.
+
+Run it once with `npx reviewfn <command>` (the `reviewfn` package fetches the CLI at its own version), or install the CLI in the repository:
 
 ```sh
 npm install --save-dev @superfunctions/reviewfn-cli
@@ -59,9 +62,13 @@ See [configuration](./docs/configuration.md), [security](./docs/security.md), [G
 The release gate requires Docker and the pinned test image documented in `docs/security.md`. PR inference additionally requires the trusted Codex image and a credential-isolating proxy. Publication is a separate `reviewfn publish` command/job. See `docs/github-action.md` for identity checks, concurrency, retries and permissions.
 
 Registry release order is core first, then context-composio, github,
-harness-codex, and testing, followed by the CLI. Each package runs its own
+harness-codex and testing, then harness-claude-code and harness-cli (the CLI's
+development dependencies), then the CLI, and the bare `reviewfn` package last,
+once the core and the CLI are on npm. Each scoped package runs its own
 `npm run typecheck`, `npm run build`, `npm run lint`, and `npm test` after installing
-its declared registry dependencies in a standalone directory. No release gate
+its declared registry dependencies in a standalone directory; the bare package
+runs `npm run build` and its front-door test (`npm test`), which imports it
+against the published core and runs `reviewfn --version` with the published CLI. No release gate
 substitutes sibling sources for published declarations. The CLI's execution tests
 run real Git snapshots and Docker containers; provide Docker and the pinned image
 rather than replacing those tests with a binary-export smoke check.

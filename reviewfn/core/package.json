@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/reviewfn-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Evidence identity, policy, orchestration, validation, and report contracts for ReviewFn",
   "type": "module",
   "main": "./dist/index.js",

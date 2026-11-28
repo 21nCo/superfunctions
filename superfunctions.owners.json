@@ -168,6 +168,7 @@
     "plugfn-cli": "public",
     "plugfn-client": "public",
     "plugfn-providers": "public",
+    "reviewfn": "public",
     "reviewfn-cli": "public",
     "reviewfn-context-composio": "public",
     "reviewfn-core": "public",

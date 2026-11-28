@@ -1,0 +1,52 @@
+{
+  "name": "reviewfn",
+  "version": "0.1.2",
+  "description": "ReviewFn, evidence-backed pull request review: import \"reviewfn\" for @superfunctions/reviewfn-core, npx reviewfn for @superfunctions/reviewfn-cli",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "bin": {
+    "reviewfn": "./bin/cli.mjs"
+  },
+  "frontDoor": {
+    "cli": "@superfunctions/reviewfn-cli"
+  },
+  "files": [
+    "bin",
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node --check bin/cli.mjs",
+    "test": "node --test test/front-door.test.mjs"
+  },
+  "dependencies": {
+    "@superfunctions/reviewfn-core": "0.1.2"
+  },
+  "devDependencies": {
+    "@superfunctions/reviewfn-cli": "0.1.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "reviewfn/bare"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/superfunctions/issues"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}
