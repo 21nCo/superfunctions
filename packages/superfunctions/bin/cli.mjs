@@ -6,17 +6,17 @@
 // It imports nothing but Node.js built-ins. A bare package that also exports a core never depends on its CLI, so an
 // importer of the core installs, loads and bundles none of the CLI; this command makes the CLI available only when it
 // runs. A copy of the CLI at this exact version that Node.js can find from here (a CLI-only bare package depends on
-// it) runs in place; otherwise npm fetches that version into its cache, as npx would. Either way the CLI's bin module
-// is loaded into this process, as if Node.js had been started on it, so no second process stands between the CLI and
-// the terminal: it alone gets every signal, reads the terminal directly and sets the exit code.
+// it) runs with Node.js; otherwise npm fetches and runs that exact version, as `npx <cli>@<version>` would. Either way
+// the CLI runs as a child process with this terminal, and this command exits as it did. The CLI is told the exact
+// version expected (BARE_EXPECTED_CLI) and refuses to run as any other.
 //
 // The release gate keeps this file byte-for-byte identical to the shared template in every bare package.
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { constants } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
 
 const manifestUrl = new URL('../package.json', import.meta.url);
 const own = JSON.parse(readFileSync(manifestUrl, 'utf8'));
@@ -45,7 +45,8 @@ function binIn(packageDir) {
   let resolved;
   try {
     realDir = realpathSync(packageDir);
-    resolved = realpathSync(path.resolve(packageDir, file));
+    // npm treats a backslash in a bin path as a folder separator on every platform.
+    resolved = realpathSync(path.resolve(packageDir, file.replaceAll('\\', '/')));
   } catch {
     return undefined;
   }
@@ -84,57 +85,42 @@ function npmCommand() {
   return [process.execPath, [bundled]];
 }
 
-// Has npm fetch the CLI at this version and report the PATH it would run it with; the CLI's bin is in the first
-// node_modules/.bin folder on it whose package is the CLI at this version. npm's messages go to stderr. Returns
-// { error } when npm could not run or fetch it, and undefined when npm ran but no such folder is on that PATH.
-function npmLocate(command, prefix) {
-  const args = [...prefix, 'exec', '--yes', `--package=${spec}`, '--', 'node', '-p', 'process.env.PATH'];
-  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
-  if (result.error) return { error: `could not start npm: ${result.error.message}` };
-  if (result.status !== 0) return { error: `npm could not fetch ${spec}.` };
-  const reported = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
-  for (const folder of reported.split(path.delimiter)) {
-    if (path.basename(folder) !== '.bin' || path.basename(path.dirname(folder)) !== 'node_modules') continue;
-    const file = binIn(path.join(path.dirname(folder), ...cli.split('/')));
-    // The CLI and the commands it starts see the PATH they would have under npx.
-    if (file) return { file, PATH: reported };
-  }
-  return undefined;
+// Runs the command with this terminal and exits as it did: with its exit code, or by the signal that ended it (with
+// 128 + its number should this process survive it). SIGINT, SIGTERM and SIGHUP sent to this process alone are passed
+// on; through npm, which relays only SIGINT and SIGTERM to the command it runs, a SIGHUP is passed on as SIGTERM.
+function runAndExit(command, args, startFailure, { viaNpm = false, env = process.env } = {}) {
+  const child = spawn(command, args, { stdio: 'inherit', env });
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const forward = (signal) => child.kill(viaNpm && signal === 'SIGHUP' ? 'SIGTERM' : signal);
+  for (const signal of signals) process.on(signal, forward);
+  child.on('error', (error) => fail(`${startFailure}: ${error.message}`));
+  child.on('exit', (code, signal) => {
+    for (const name of signals) process.off(name, forward);
+    if (signal === null) {
+      process.exitCode = code ?? 1;
+      return;
+    }
+    process.exitCode = 128 + (constants.signals[signal] ?? 0);
+    process.kill(process.pid, signal);
+  });
 }
 
-// The copy of the CLI npm reused from the project's own tree, which may be nested where no reported PATH reaches it:
-// `npm ls` (with the project's npm settings, across every workspace) lists each installed copy's folder.
-function projectTreeBin(command, prefix) {
-  const args = [...prefix, 'ls', cli, '--all', '--parseable', '--workspaces=false'];
-  const result = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
-  // npm ls exits non-zero for an imperfect tree (extraneous or missing packages) but still lists what it found.
-  for (const folder of (result.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
-    const file = binIn(folder.trim());
-    if (file) return file;
-  }
-  return undefined;
-}
-
-// npm fetches the CLI at this version into its cache, or reuses a copy in the project's tree, which the first
-// node_modules/.bin folder on its reported PATH may not reach; projectTreeBin then finds that copy.
-function fetchedBin() {
-  const [command, prefix] = npmCommand();
-  const found = npmLocate(command, prefix);
-  if (found?.error) fail(found.error);
-  if (found) return found;
-  const file = projectTreeBin(command, prefix);
-  if (file === undefined) fail(`npm fetched ${spec}, but its ${own.name} command was not found. Run npx ${spec} instead.`);
-  return { file, PATH: process.env.PATH ?? '' };
-}
+// The CLI this command expects, as "<package>@<version>", for the CLI it starts. npm exec may reuse a copy of the CLI
+// that is not on the PATH it runs the command with, so the command name can reach another version of the CLI, or this
+// command again. A CLI behind a bare package compares this with its own name and version at startup and exits non-zero
+// on a mismatch (see the README's "Bare packages"); this command refuses to start again under its own expectation.
+const EXPECTED = 'BARE_EXPECTED_CLI';
 
 if (typeof cli !== 'string' || cli === '') fail('package.json names no CLI package in frontDoor.cli.');
-let file = installedBin();
-if (file === undefined) {
-  const fetched = fetchedBin();
-  file = fetched.file;
-  process.env.PATH = fetched.PATH;
+if (process.env[EXPECTED] === spec) {
+  fail(`npm ran this command again instead of ${spec}'s ${own.name} bin. Install ${spec} in this project, or run npx ${spec} from another folder.`);
 }
-// The real path, as Node.js gives the module it loads in import.meta.url, so a CLI that compares the two runs.
-file = realpathSync(file);
-process.argv = [process.argv[0], file, ...process.argv.slice(2)];
-await import(pathToFileURL(file).href);
+const args = process.argv.slice(2);
+const env = { ...process.env, [EXPECTED]: spec };
+const installed = installedBin();
+if (installed !== undefined) {
+  runAndExit(process.execPath, [installed, ...args], `could not start ${installed}`, { env });
+} else {
+  const [command, prefix] = npmCommand();
+  runAndExit(command, [...prefix, 'exec', '--yes', `--package=${spec}`, '--', own.name, ...args], 'could not start npm', { viaNpm: true, env });
+}

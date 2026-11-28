@@ -2,7 +2,8 @@
 
 ## 0.2.3
 
-- No changes to the CLI itself. Released with the bare `superfunctions` package, the Superfunctions front door: `npx superfunctions` (or `npx sfs`) runs this CLI at the same version.
+- Released with the bare `superfunctions` package, the Superfunctions front door: `npx superfunctions` (or `npx sfs`) runs this CLI at the same version.
+- When started with `BARE_EXPECTED_CLI` naming `@superfunctions/cli` at another version (the bare package reached a different installed copy through `npm exec`), the CLI exits 1 with the version it expected and how to run it.
 
 ## 0.2.2
 
