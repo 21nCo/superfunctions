@@ -152,6 +152,9 @@ test('manifests: each way a bare package can drift from its core and CLI is refu
   // Node.js takes the first matching condition in key order, so a blocking "node" ahead of "import" wins.
   await expectProblem({ overrides: { exports: { '.': { node: null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   await expectProblem({ overrides: { exports: { '.': { 'node-addons': null, import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
+  // An array matching no condition lets the next condition try; a blocked entry in it blocks.
+  assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }], import: './index.js' } } } })), []);
+  await expectProblem({ overrides: { exports: { '.': { 'module-sync': [{ browser: './browser.js' }, null], import: './index.js' } } } }, /exports must have a "\." entry that an ESM import resolves/);
   assert.deepEqual(await problemsOf(product(t, { overrides: { exports: { '.': { types: './index.d.ts', browser: { worker: './w.js' }, import: './index.js' } } } })), []);
 
   // Installing the core must not install the CLI.
@@ -421,6 +424,19 @@ test('shim: runs a copy npm reused from deep in the project tree, nested or alia
   const aliased = runShim(shim, ['0'], { npm_execpath: npm.npmCli }, path.join(root, 'src'));
   assert.equal(aliased.status, 0, aliased.stderr);
   assert.equal(aliased.output.origin, 'aliased');
+
+  // A linked package resolves its dependencies from its real location, outside the project.
+  rmSync(path.join(root, 'node_modules/cli-alias'), { recursive: true });
+  const shared = tempDir(t, 'bare-shim-shared-');
+  mkdirSync(path.join(shared, 'packages/tool'), { recursive: true });
+  writeJson(path.join(shared, 'packages/tool/package.json'), { name: 'tool', version: '1.0.0' });
+  writeCli(path.join(shared, 'node_modules/@fixture/cli'), '1.2.3', 'linked');
+  symlinkSync(path.join(shared, 'packages/tool'), path.join(root, 'node_modules/tool'), 'dir');
+  const linked = runShim(shim, ['0'], { npm_execpath: npm.npmCli }, root);
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.equal(linked.output.origin, 'linked');
+  rmSync(path.join(root, 'node_modules/tool'));
+  writeCli(path.join(root, 'node_modules/cli-alias'), '1.2.3', 'aliased');
 
   // No copy at this version anywhere: it stops rather than run 1.2.2.
   rmSync(path.join(root, 'node_modules/cli-alias'), { recursive: true });

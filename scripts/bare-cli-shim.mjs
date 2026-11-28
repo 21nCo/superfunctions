@@ -104,15 +104,24 @@ function npmLocate(command, prefix) {
 
 // A copy of the CLI at this version installed anywhere in the project: npm reuses one nested under another package
 // (or installed under an alias) without putting it on the PATH it reports. Searches, nearest first, the node_modules
-// folders of the working directory and each folder above it (which covers a workspace root), at any depth and
-// whatever name a package is installed under, reading each package once.
+// folders Node.js would look in from the working directory (it and each folder above it, which covers a workspace
+// root) and, for a linked package, from its real location; at any depth and whatever name a package is installed
+// under, reading each package once.
 function projectBin() {
   const queue = [];
-  for (let folder = process.cwd(); ; folder = path.dirname(folder)) {
-    queue.push(path.join(folder, 'node_modules'));
-    if (path.dirname(folder) === folder) break;
-  }
-  const seen = new Set();
+  const queued = new Set();
+  const enqueue = (folder) => {
+    if (!queued.has(folder)) {
+      queued.add(folder);
+      queue.push(folder);
+    }
+  };
+  const enqueueLookupPaths = (start) => {
+    for (let folder = start; ; folder = path.dirname(folder)) {
+      if (path.basename(folder) !== 'node_modules') enqueue(path.join(folder, 'node_modules'));
+      if (path.dirname(folder) === folder) break;
+    }
+  };
   const list = (folder) => {
     try {
       return readdirSync(folder).filter((name) => !name.startsWith('.')).map((name) => path.join(folder, name));
@@ -120,6 +129,8 @@ function projectBin() {
       return [];
     }
   };
+  const seen = new Set();
+  enqueueLookupPaths(process.cwd());
   while (queue.length > 0) {
     for (const entry of list(queue.shift())) {
       for (const dir of path.basename(entry).startsWith('@') ? list(entry) : [entry]) {
@@ -133,7 +144,9 @@ function projectBin() {
         seen.add(real);
         const file = binIn(dir);
         if (file) return file;
-        queue.push(path.join(dir, 'node_modules'));
+        enqueue(path.join(real, 'node_modules'));
+        // A linked package resolves its own dependencies from where it really is.
+        if (real !== path.resolve(dir)) enqueueLookupPaths(path.dirname(real));
       }
     }
   }
