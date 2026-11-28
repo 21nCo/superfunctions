@@ -268,6 +268,12 @@ function assertUniqueToolNames<TMcpContext>(
   }
 }
 
+/** Locale-independent string order, so tool registration order never varies by host. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /**
  * Resolves the scopes each exposed resource's read and write tools need,
  * before any tool is registered. Without `sessionScopes` no resource may
@@ -280,7 +286,7 @@ function resolveResourceScopes<TMcpContext, TDatafnContext>(
   if (options.sessionScopes !== undefined && typeof options.sessionScopes !== "function") {
     throw new McpFnValidationError("DataFn sessionScopes must be a function");
   }
-  for (const resourceName of Object.keys(options.expose).sort()) {
+  for (const resourceName of Object.keys(options.expose).sort(compareCodeUnits)) {
     const exposure = options.expose[resourceName]!;
     const declared = exposure.scopes;
     if (!options.sessionScopes) {
@@ -370,7 +376,7 @@ export function createDatafnMcpAdapter<TMcpContext, TDatafnContext>(
     }
   }
 
-  for (const resourceName of Object.keys(options.expose).sort()) {
+  for (const resourceName of Object.keys(options.expose).sort(compareCodeUnits)) {
     const exposure = options.expose[resourceName]!;
     const resource = schema.resources.find((candidate) => candidate.name === resourceName);
     if (!resource) {

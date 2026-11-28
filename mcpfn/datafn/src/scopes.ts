@@ -1,5 +1,4 @@
 import {
-  McpFnError,
   McpFnValidationError,
   type McpFnRequestExtra,
   type McpFnSchemaIssue,
@@ -8,6 +7,13 @@ import {
 
 /** The MCP error code a scope-gated tool answers when the session lacks a scope. */
 export const DATAFN_INSUFFICIENT_SCOPE = "insufficient_scope";
+
+/** What a scope-gated tool throws, and McpFn returns as the tool error. */
+export interface DatafnInsufficientScopeError {
+  code: typeof DATAFN_INSUFFICIENT_SCOPE;
+  message: string;
+  details: { requiredScopes: string[]; missingScopes: string[] };
+}
 
 const ALL_SCOPES = "*";
 
@@ -144,11 +150,17 @@ export class ScopeGate<TContext> {
   ): Promise<void> {
     const missingScopes = ScopeGate.missing(scopes, await this.resolve(context, extra));
     if (missingScopes.length) {
-      throw new McpFnError(
-        DATAFN_INSUFFICIENT_SCOPE,
-        `Tool ${toolName} needs scopes the session was not granted: ${missingScopes.join(", ")}`,
-        { requiredScopes: [...scopes], missingScopes },
-      );
+      // A coded plain object, not an McpFnError: McpFn returns a thrown
+      // `{ code, message, details }` object as the tool error whichever copy
+      // of @mcpfn/core serves the call, while another copy's McpFnError (an
+      // ESM adapter beside a CommonJS server, say) fails its instanceof check
+      // and is withheld as MCPFN_TOOL_ERROR without the scope lists.
+      const denial: DatafnInsufficientScopeError = {
+        code: DATAFN_INSUFFICIENT_SCOPE,
+        message: `Tool ${toolName} needs scopes the session was not granted: ${missingScopes.join(", ")}`,
+        details: { requiredScopes: [...scopes], missingScopes },
+      };
+      throw denial;
     }
   }
 

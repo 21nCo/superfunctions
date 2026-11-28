@@ -1,7 +1,9 @@
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "@datafn/server";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import {
+  McpFnError,
   McpFnRegistry,
   createMcpFnServer,
   structuredResult,
@@ -178,6 +180,41 @@ describe("scope-aware DataFn tools", () => {
       mutationId: "update-1",
       record: { title: "Renamed" },
     }))).toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    expect(query).not.toHaveBeenCalled();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps insufficient_scope and both scope lists when the server runs on another @mcpfn/core copy", async () => {
+    // The CommonJS build is a separate copy of @mcpfn/core with its own
+    // McpFnError class, as when a host loads the adapter and server through
+    // different entry points.
+    const otherCore = createRequire(import.meta.url)("@mcpfn/core") as typeof import("@mcpfn/core");
+    expect(otherCore.McpFnError).not.toBe(McpFnError);
+    const { adapter, query, mutate } = await setup();
+    const call = async (scopes: string[], name: string, args: Record<string, unknown>) => {
+      const server = otherCore.createMcpFnServer<Session>({
+        info: { name: "datafn-other-core-test", version: "1.0.0" },
+        registry: adapter.registry as never,
+        context: () => ({ scopes }),
+        toolVisibility: adapter.toolVisibility as never,
+      });
+      const client = await McpFnTestClient.connect(server as never);
+      closeables.push(client);
+      return errorOf(await client.callTool(name, args));
+    };
+    const write = { id: "note-1", mutationId: "write-1", record: { title: "First" } };
+
+    expect(await call([], "datafn_notes_list", {}))
+      .toMatchObject(insufficientScope(["memotron:read"], ["memotron:read"]));
+    expect(await call([], "datafn_notes_get", { id: "note-1" }))
+      .toMatchObject(insufficientScope(["memotron:read"], ["memotron:read"]));
+    expect(await call(["memotron:read"], "datafn_notes_create", write))
+      .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    expect(await call(["memotron:read"], "datafn_notes_update", write))
+      .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
+    // The invalid-arguments path answers the same denial.
+    expect(await call(["memotron:read"], "datafn_notes_update", { ...write, record: { title: 7 } }))
+      .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
     expect(query).not.toHaveBeenCalled();
     expect(mutate).not.toHaveBeenCalled();
   });

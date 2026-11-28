@@ -107,6 +107,11 @@ const server = createMcpFnServer({
   size limit (100,000 values) is refused as invalid arguments, and with
   `clientProfiles` a failed argument enrichment answers first. Unknown tool
   names keep McpFn's usual error.
+- The denial is thrown as a plain `{ code, message, details }` object
+  (`DatafnInsufficientScopeError`), not an `McpFnError`, so it keeps its code
+  and scope lists even when the adapter and the server load different copies
+  of `@mcpfn/core` (one ESM, one CommonJS). A direct `registry.callTool`
+  caller receives that object as the rejection.
 - The session's scopes are resolved once per `tools/list` and afresh for every
   call.
 - A tool with `scopes` cannot support task execution: registering one with a
