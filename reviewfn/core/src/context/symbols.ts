@@ -39,8 +39,19 @@ export function symbolLanguage(path: string): SymbolLanguage | undefined {
 const JS_ID_PART = "[\\p{ID_Continue}$\\u200C\\u200D]";
 const JS_ID = `[\\p{ID_Start}$_]${JS_ID_PART}*(?!${JS_ID_PART})`;
 const PYTHON_ID = "[\\p{XID_Start}_]\\p{XID_Continue}*(?!\\p{XID_Continue})";
-const SWIFT_ID_PART = "[\\p{ID_Continue}\\u200C\\u200D]";
-const SWIFT_ID = `[\\p{ID_Start}_]${SWIFT_ID_PART}*(?!${SWIFT_ID_PART})`;
+/**
+ * Swift's identifier-head ranges from its lexical grammar beyond Unicode's ID_Start, such as emoji (`func save🐱()`), and
+ * the combining ranges its identifier-character adds, so a name never stops before a character Swift continues it with.
+ */
+const SWIFT_HEAD_RANGES = "A-Za-z_\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF"
+  + "\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054"
+  + "\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007"
+  + "\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD"
+  + "\\u{10000}-\\u{1FFFD}\\u{20000}-\\u{2FFFD}\\u{30000}-\\u{3FFFD}\\u{40000}-\\u{4FFFD}\\u{50000}-\\u{5FFFD}\\u{60000}-\\u{6FFFD}"
+  + "\\u{70000}-\\u{7FFFD}\\u{80000}-\\u{8FFFD}\\u{90000}-\\u{9FFFD}\\u{A0000}-\\u{AFFFD}\\u{B0000}-\\u{BFFFD}\\u{C0000}-\\u{CFFFD}"
+  + "\\u{D0000}-\\u{DFFFD}\\u{E0000}-\\u{EFFFD}";
+const SWIFT_ID_PART = `[\\p{ID_Continue}\\u200C\\u200D${SWIFT_HEAD_RANGES}0-9\\u0300-\\u036F\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F]`;
+const SWIFT_ID = `[\\p{ID_Start}${SWIFT_HEAD_RANGES}]${SWIFT_ID_PART}*(?!${SWIFT_ID_PART})`;
 const GO_ID = "[\\p{L}_][\\p{L}\\p{Nd}_]*(?![\\p{L}\\p{Nd}_])";
 /** A Rust identifier, including a raw identifier such as `r#type`, which is how its references are written. */
 const RUST_ID = "(?:r#)?[\\p{XID_Start}_]\\p{XID_Continue}*(?!\\p{XID_Continue})";
@@ -828,8 +839,9 @@ function rustType(text: string, index: number): { name: string; end: number } | 
   }
   let name: string | undefined;
   for (;;) {
+    // Every `::` needs a following segment: `impl Render for model::` names no type, never its qualifier `model`.
     const segment = readWith(RUST_IDENTIFIER, text, at);
-    if (!segment) break;
+    if (!segment) return undefined;
     name = segment.name;
     at = skipTrivia(text, segment.end, RUST_DIALECT);
     // Generic arguments, also as a turbofish: `Ledger<T>`, `Ledger::<T>`.

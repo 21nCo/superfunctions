@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -143,6 +143,8 @@ const MANY: ManyCase[] = [
   ["a whole non-ASCII TypeScript class name", "typescript", "export class Café {}", [{ name: "Café", kind: "class" }], "const café = new Café();"],
   ["a non-ASCII TypeScript function name", "typescript", "export function café() {}", [{ name: "café", kind: "function" }], "café();"],
   ["a whole non-ASCII Swift function name", "swift", "func café() -> Int {", [{ name: "café", kind: "function" }], "let value = café()"],
+  ["a whole Swift function name with an emoji its grammar allows", "swift", "func save🐱() {}", [{ name: "save🐱", kind: "function" }], "let saved = save🐱()"],
+  ["a Swift extension type ending in a grammar-only character", "swift", "extension Outer.Inner🐱 {", [{ name: "Inner🐱", kind: "extension" }], "extension Outer.Inner🐱."],
   ["a non-ASCII Python function name", "python", "def café():", [{ name: "café", kind: "function" }], "café()"],
   ["a whole Go type name before a receive-only channel", "go", "type Recv <-chan int", [{ name: "Recv", kind: "type" }], "\tvar recv <-chan int"],
   ["a named default class, and no keyword for an anonymous one", "typescript", "export default class Named extends Base {", [{ name: "Named", kind: "class" }], "export default class extends Base {"],
@@ -167,6 +169,7 @@ const MANY: ManyCase[] = [
   ["a Rust impl target after a block comment", "rust", "impl Display for /* note */ Ledger {}", [{ name: "Ledger", kind: "impl" }], "impl /* note */ Display for /* note */ (A, B) {}"],
   ["a Rust inherent impl after a block comment", "rust", "impl /* note */ Ledger {}", [{ name: "Ledger", kind: "impl" }], "impl /* Ledger */ {}"],
   ["a Rust impl target with a turbofish path", "rust", "impl<T> Trait for model::Vec::<T> {", [{ name: "Vec", kind: "impl" }], "impl<T> Trait for [T] {"],
+  ["a Rust impl target path, never a qualifier without its segment", "rust", "impl Render for model::Ledger {", [{ name: "Ledger", kind: "impl" }], "impl Render for model::"],
   ["no type argument of an object type literal", "typescript", "export const store = configure<{ user: User; token: string }, Action, Deps>();", [{ name: "store", kind: "const" }], "const store = configure<{ user: User; token: string }, Action, Deps>();"],
   ["every declarator after call type arguments with a leading comment", "typescript", "export const first = make</* type */ A, B, C>(), second = 2;", [{ name: "first", kind: "const" }, { name: "second", kind: "const" }], "const first = make</* type */ A, B, C>(), second = 2;"],
   ["no type argument after a trailing comment", "typescript", "export const first = make<A /* t */, B, C>();", [{ name: "first", kind: "const" }], "const first = make<A /* t */, B, C>();"],
@@ -263,6 +266,16 @@ describe("code references: symbol forms", () => {
     expect(swift("extension Outer = {")).toEqual([]);
     expect(swift("extension Array</* > */ Int> {")).toEqual(["Array"]);
     expect(swift("extension Array<Int /* unclosed")).toEqual([]);
+    // A name is never the prefix of a longer Swift identifier: Swift continues names with characters outside ID_Continue.
+    expect(swift("func save🐱() {}")).not.toContain("save");
+    expect(swift("struct Point\u0301 {")).toEqual(["Point\u0301"]);
+    expect(swift("class A\u{1F600}B {")).toEqual(["A\u{1F600}B"]);
+    // A Rust path needs a segment after every separator, also across a turbofish.
+    const rust = (...lines: string[]) => lineSymbols("rust", ...lines).map(symbol => symbol.name);
+    expect(rust("impl Render for model::")).toEqual([]);
+    expect(rust("impl Render for model::Vec::<T>::")).toEqual([]);
+    expect(rust("impl model:: {")).toEqual([]);
+    expect(rust("impl Render for model::", "    Ledger {")).not.toContain("model");
     expect(names("export const first = <div>a, b = 1</div>, second = 2;", true)).toEqual(["first", "second"]);
     expect(names("export const a = f(<p>don't, x = 1</p>), b = 2;", true)).toEqual(["a", "b"]);
     expect(names("export const a = <Comp prop={x} label=\"y, z = 1\" {...rest} />, b = 2;", true)).toEqual(["a", "b"]);
@@ -660,6 +673,25 @@ describe("code references: Git processes end before their callers settle", () =>
     expect(list.truncated).toBe(true);
     expect(await markers()).toEqual({ started: ["many"], closed: ["many"] });
   });
+
+  it.skipIf(process.platform === "win32")("rejects on the caller's abort within a bound when a process Git started keeps its output open", async () => {
+    // A stand-in Git whose child holds the inherited stdout and stderr long after the stopped Git itself has exited.
+    const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-fake-git-"));
+    roots.push(directory);
+    const executable = path.join(directory, "git");
+    const pidFile = path.join(directory, "helper.pid");
+    await writeFile(executable, ["#!/bin/sh", "sleep 20 &", 'echo $! > "$HELPER_PID"', "trap 'exit 143' TERM", "while :; do sleep 0.05; done", ""].join("\n"), { mode: 0o755 });
+    const caller = new AbortController();
+    const started = Date.now();
+    setTimeout(() => caller.abort(new Error("caller stopped the review")), 200);
+    try {
+      await expect(runGit(executable, ["cat-file", "blob", "HEAD:a"], { cwd: directory, env: { PATH: process.env.PATH, HELPER_PID: pidFile }, signal: caller.signal })).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(4_000);
+    } finally {
+      const helper = Number((await readFile(pidFile, "utf8").catch(() => "")).trim());
+      if (helper > 0) { try { process.kill(helper, "SIGKILL"); } catch { /* already gone */ } }
+    }
+  });
 });
 
 describe("code references: an abort stops the fetch", () => {
@@ -727,7 +759,7 @@ describe("code references: glob grammar", () => {
       const source = segments.map((segment, index) => {
         const last = index === segments.length - 1;
         if (segment === "**") return last ? "[^]+" : "(?:[^/]+/)*";
-        return [...segment].map(unit => unit === "*" ? "[^/]*" : unit === "?" ? "[^/]" : unit.replace(/[.+^$()|]/gu, "\\$&")).join("") + (last ? "" : "/");
+        return [...segment].map(unit => unit === "*" ? "[^/]*" : unit === "?" ? "[^/]" : unit.replace(/[\\^$.*+?()[\]{}|/]/gu, "\\$&")).join("") + (last ? "" : "/");
       }).join("");
       return new RegExp(`^${source}$`, "u");
     };
