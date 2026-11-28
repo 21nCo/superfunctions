@@ -602,6 +602,43 @@ describe("completion names and descriptions", () => {
     ]);
   });
 
+  it("reports a deep chain inside a command left out without running out of stack", () => {
+    const chain = (length: number): CompletionCommand => {
+      let node: CompletionCommand = { name: `n${length - 1}`, options: [] };
+      for (let index = length - 2; index >= 0; index -= 1) {
+        node = { name: `n${index}`, options: [], commands: [node] };
+      }
+      return node;
+    };
+    const parents: { commands: CompletionCommand[]; reason: CompletionSkipReason; before: number }[] = [
+      { commands: [{ name: "bad!", options: [], commands: [chain(3001)] }], reason: "invalid-name", before: 1 },
+      { commands: [{ name: "dup", options: [] }, { name: "dup", options: [], commands: [chain(3001)] }], reason: "duplicate", before: 1 },
+      { commands: [{ name: "l1", options: [], commands: [{ name: "l2", options: [], commands: [chain(3002)] }] }], reason: "too-deep", before: 0 },
+    ];
+    for (const { commands, reason, before } of parents) {
+      const { script, skipped } = renderCompletion({ name: "tool", options: [], commands }, "bash");
+      expect(script).toContain("-F _clifn_tool tool");
+      expect(skipped).toHaveLength(before + 3001);
+      expect(skipped.every((entry) => entry.kind === "command" && entry.reason === reason)).toBe(true);
+    }
+  });
+
+  it("reports each command object of a shared subtree once", () => {
+    // Every node lists all ten nodes, so walking each path would grow factorially; each object is reported once.
+    const nodes: { name: string; options: never[]; commands: unknown[] }[] = Array.from({ length: 10 }, (_, index) => ({
+      name: `n${index}`,
+      options: [],
+      commands: [],
+    }));
+    for (const node of nodes) node.commands.push(...nodes);
+    const spec = { name: "tool", options: [], commands: [{ name: "bad!", options: [], commands: nodes }] } as CompletionSpec;
+    const { skipped } = renderCompletion(spec, "bash");
+    expect(skipped).toEqual([
+      { kind: "command", name: "bad!", path: [], reason: "invalid-name" },
+      ...nodes.map((node) => ({ kind: "command", name: node.name, path: ["bad!"], reason: "invalid-name" })),
+    ]);
+  });
+
   it("stops at the third level of a cyclic hand-written spec", () => {
     const loop: { name: string; options: never[]; commands: unknown[] } = { name: "loop", options: [], commands: [] };
     loop.commands.push(loop);
