@@ -10,4 +10,6 @@ The large-document test builds a ~200k-character fixture and times the full
 `parseMarkdown` → `serializeMarkdown` → `renderHtml` pipeline. Local development
 must stay under **5s**; CI shared runners use a **20s** ceiling. Scoped GHA runs
 finish in ~12s, but full-graph turbo CI (300+ tasks) was observed at ~12.1s on
-PR 133, so the ceiling leaves headroom for runner contention.
+PR 133, so the ceiling leaves headroom for runner contention. The test keeps the
+best of up to three runs, so other suites competing for the runner's CPU do not
+fail it; each run still checks the round trip and the rendered output.
