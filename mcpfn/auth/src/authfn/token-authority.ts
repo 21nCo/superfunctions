@@ -59,15 +59,30 @@ export type AuthFnProtectedResourceOptions = Omit<
   "verifier" | "authorizationServers" | "requiredScopes" | "allowTokensWithoutExpiry"
 >;
 
+/** What `verifier()` needs from the host's MCP SDK. */
+export interface AuthFnVerifierOptions {
+  /**
+   * The `InvalidTokenError` class the host's bearer middleware recognizes,
+   * imported from the same `@modelcontextprotocol/sdk` copy as that middleware
+   * (`@modelcontextprotocol/sdk/server/auth/errors.js`). The SDK's
+   * `requireBearerAuth` answers 401 `invalid_token` only for an error that is
+   * `instanceof` its own class, and `@mcpfn/auth` inlines a separate SDK copy,
+   * so the class has to come from the host.
+   */
+  invalidTokenError: new (message: string) => Error;
+}
+
 export interface AuthFnTokenAuthority {
   /** The issuer every protected resource advertises. */
   readonly issuer: string;
   /**
-   * An MCP SDK verifier for one resource. It rejects with an `invalid_token`
-   * error for a token the provider does not report active for `resource`, and
-   * with any other error when the provider could not be asked.
+   * An MCP SDK verifier for one resource, for hosts that use the SDK's own
+   * bearer middleware. It rejects with `options.invalidTokenError` for a token
+   * the provider does not report active for `resource` or whose expiry has
+   * passed, and with the provider's own error when the provider could not be
+   * asked.
    */
-  verifier(resource: string | URL): OAuthTokenVerifier;
+  verifier(resource: string | URL, options: AuthFnVerifierOptions): OAuthTokenVerifier;
   /**
    * Wraps an MCP Web Standard handler: serves RFC 9728 metadata naming the
    * AuthFn issuer at the resource's well-known URL, and passes requests whose
@@ -80,12 +95,11 @@ export interface AuthFnTokenAuthority {
   ): (request: Request) => Promise<Response>;
 }
 
-/** Thrown by the verifier for a token the provider does not report active. */
-export class AuthFnInvalidTokenError extends Error {
-  readonly errorCode = "invalid_token";
-  constructor(message = "The access token is not active for this resource") {
-    super(message);
-    this.name = "AuthFnInvalidTokenError";
+/** Marks a token the provider does not report active, inside `protect()`. */
+class InactiveTokenError extends Error {
+  constructor() {
+    super("The access token is not active for this resource");
+    this.name = "AuthFnInactiveTokenError";
   }
 }
 
@@ -112,15 +126,25 @@ function normalizedResource(value: string | URL): string {
   return url.href;
 }
 
-/** The issuer as RFC 9728 metadata advertises it (a bare origin without its slash). */
+/**
+ * The issuer as RFC 9728 metadata advertises it (a bare origin without its
+ * slash). RFC 8414 issuers carry no credentials, query or fragment; they are
+ * refused here, before the root-slash rewrite could drop them.
+ */
 function normalizedIssuer(value: string | URL): string {
+  const serialized = value.toString();
   let url: URL;
   try {
-    url = new URL(value.toString());
+    url = new URL(serialized);
   } catch {
     throw new TypeError("An AuthFn provider issuer must be an absolute URL");
   }
-  return url.pathname === "/" && !url.search && !url.hash ? url.origin : url.href;
+  if (url.username || url.password || url.search || url.hash || /[?#]/.test(serialized)) {
+    throw new TypeError(
+      "An AuthFn provider issuer must not carry credentials, a query or a fragment",
+    );
+  }
+  return url.pathname === "/" ? url.origin : url.href;
 }
 
 function isFiniteDate(value: unknown): value is Date {
@@ -207,12 +231,34 @@ export function createAuthFnTokenAuthority(
     ? (resource: string) => inProcessCheck(provider as AuthFnInProcessTokenProvider, resource)
     : createIntrospectionVerifier((provider as AuthFnIntrospectionTokenProvider).introspection);
 
-  const verifier = (resource: string | URL): OAuthTokenVerifier => {
-    const check = checkFor(normalizedResource(resource));
+  // Expiry is checked when the provider's answer arrives, in both modes, so
+  // a token that lapsed while it was being checked is not active.
+  const activeCheckFor = (resource: string): AuthFnTokenCheck => {
+    const check = checkFor(resource);
+    return async (token) => {
+      const info = await check(token);
+      if (!info || typeof info.expiresAt !== "number" || !Number.isFinite(info.expiresAt)) {
+        return null;
+      }
+      return info.expiresAt * 1_000 > Date.now() ? info : null;
+    };
+  };
+
+  const verifier = (
+    resource: string | URL,
+    options: AuthFnVerifierOptions,
+  ): OAuthTokenVerifier => {
+    const InvalidToken = options?.invalidTokenError;
+    if (typeof InvalidToken !== "function") {
+      throw new TypeError(
+        "verifier() needs the invalidTokenError class of the host's MCP SDK bearer middleware",
+      );
+    }
+    const check = activeCheckFor(normalizedResource(resource));
     return {
       verifyAccessToken: async (token) => {
         const info = await check(token);
-        if (!info) throw new AuthFnInvalidTokenError();
+        if (!info) throw new InvalidToken("The access token is not active for this resource");
         return info;
       },
     };
@@ -234,7 +280,7 @@ export function createAuthFnTokenAuthority(
     };
     // Fails now, not on the first request, for an issuer RFC 9728 refuses.
     createProtectedResourceMetadata(base);
-    const tokenVerifier = verifier(resource);
+    const check = activeCheckFor(resource);
     return async (request: Request): Promise<Response> => {
       // Request-scoped, so concurrent requests never see each other's outcome.
       let unavailable = false;
@@ -242,12 +288,15 @@ export function createAuthFnTokenAuthority(
         ...base,
         verifier: {
           verifyAccessToken: async (token) => {
+            let info: AuthInfo | null;
             try {
-              return await tokenVerifier.verifyAccessToken(token);
+              info = await check(token);
             } catch (error) {
-              if (!(error instanceof AuthFnInvalidTokenError)) unavailable = true;
+              unavailable = true;
               throw error;
             }
+            if (!info) throw new InactiveTokenError();
+            return info;
           },
         },
       });

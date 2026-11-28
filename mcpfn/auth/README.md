@@ -65,7 +65,8 @@ const fetch = authority.protect(mcp, {
   in the future; a token for another audience, an expired token and a token of
   a revoked grant are answered 401 `invalid_token`.
 - When AuthFn cannot be asked (`verifyAccessToken` throws; introspection fails,
-  times out after `timeoutMs`, default 5000, redirects, answers other than 200
+  times out after `timeoutMs` (a whole number of milliseconds, default 5000),
+  redirects, answers other than 200
   or with a body that is not a JSON object), the endpoint answers 503
   `temporarily_unavailable` without calling the MCP handler, so clients keep
   their tokens. Introspection never follows redirects. Its endpoint must use
@@ -74,9 +75,25 @@ const fetch = authority.protect(mcp, {
 - Scopes are passed through, not enforced at the endpoint: gate tools on
   `extra.authInfo.scopes`, for example with `@mcpfn/datafn`'s `sessionScopes`,
   which understands `<app>:*` and `*`.
-- `authority.verifier(resource)` returns the MCP SDK `OAuthTokenVerifier` for
-  hosts that compose their own handler; it rejects an inactive token with
-  `AuthFnInvalidTokenError`.
+- The issuer must not carry credentials, a query or a fragment (RFC 8414).
+- `authority.verifier(resource, { invalidTokenError })` returns the MCP SDK
+  `OAuthTokenVerifier` for hosts that use the SDK's `requireBearerAuth`. Pass
+  `InvalidTokenError` from the same `@modelcontextprotocol/sdk` copy as that
+  middleware: it recognizes only its own class, and `@mcpfn/auth` inlines a
+  separate SDK copy. An inactive, other-audience, expired or revoked token
+  rejects with that class (401 `invalid_token`); a provider that cannot be
+  asked rejects with its own error.
+
+  ```ts
+  import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+  import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+
+  app.use("/mcp", requireBearerAuth({
+    verifier: authority.verifier("https://memotron.example.com/mcp", {
+      invalidTokenError: InvalidTokenError,
+    }),
+  }));
+  ```
 
 ## Client provider
 

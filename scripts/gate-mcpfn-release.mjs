@@ -583,6 +583,18 @@ try {
   npmStep("client:build", ["run", "build", "--workspace", "@mcpfn/client"]);
   npmStep("client:test", ["run", "test", "--workspace", "@mcpfn/client"]);
 
+  // The AuthFn token authority test (MCP-10) runs a real @authfn/oauth-provider,
+  // and auth's typecheck covers tests/, so build it and the workspace packages
+  // it resolves (auth, db, observability and oauth-storage are built above).
+  for (const workspace of [
+    "@superfunctions/delivery",
+    "@superfunctions/http",
+    "@superfunctions/http-openapi",
+    "authfn",
+    "@authfn/oauth-provider",
+  ]) {
+    npmStep(`dependency:build:${workspace}`, ["run", "build", "--workspace", workspace]);
+  }
   npmStep("auth:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/auth"]);
   npmStep("auth:build", ["run", "build", "--workspace", "@mcpfn/auth"]);
   npmStep("auth:test", ["run", "test", "--workspace", "@mcpfn/auth"]);

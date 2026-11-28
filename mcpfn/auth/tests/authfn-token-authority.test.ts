@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { authfn, type AuthFnRuntimeConfig } from "authfn";
 import { issueSession } from "authfn/core/sessions";
@@ -16,10 +19,13 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { HandleRequestOptions } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  AuthFnInvalidTokenError,
   createAuthFnTokenAuthority,
   createMcpFnOAuthClientProvider,
   type AuthFnTokenAuthorityProvider,
@@ -431,12 +437,6 @@ describe("AuthFn token authority boundaries", () => {
     expect(calls.count).toBe(1);
   });
 
-  it("verifier() rejects an inactive token with AuthFnInvalidTokenError", async () => {
-    const verifier = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken: async () => null })
-      .verifier(MEMOTRON);
-    await expect(verifier.verifyAccessToken("test-access-token")).rejects.toBeInstanceOf(AuthFnInvalidTokenError);
-  });
-
   it("refuses unusable configuration when it is created", () => {
     const verifyAccessToken = async () => null;
     expect(() => createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN } as never)).toThrow(/exactly one/);
@@ -447,6 +447,17 @@ describe("AuthFn token authority boundaries", () => {
     } as never)).toThrow(/exactly one/);
     const authority = createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken });
     expect(createAuthFnTokenAuthority({ issuer: `${AUTH_ORIGIN}/`, verifyAccessToken }).issuer).toBe(AUTH_ORIGIN);
+    // RFC 8414 issuers carry no credentials, query or fragment; the root-slash
+    // rewrite must not silently drop them.
+    for (const issuer of [
+      "https://test-user@auth.example.com/",
+      "https://auth.example.com/?tenant=test",
+      "https://auth.example.com/#frag",
+      "https://auth.example.com/?",
+      "https://auth.example.com/auth#",
+    ]) {
+      expect(() => createAuthFnTokenAuthority({ issuer, verifyAccessToken }), issuer).toThrow(/credentials, a query or a fragment/);
+    }
     // MCP clients send the normalized spelling; AuthFn binds tokens to it exactly.
     expect(() => authority.protect(handler({ count: 0 }), { resource: "https://memotron.example.com" }))
       .toThrow(/normalized form/);
@@ -457,8 +468,152 @@ describe("AuthFn token authority boundaries", () => {
       { endpoint: "http://auth.example.com/auth/oauth/introspect", secret: MEMOTRON_SECRET },
       { endpoint: INTROSPECT, secret: "has spaces" },
       { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, timeoutMs: 0 },
+      { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, timeoutMs: 1.5 },
+      // Node would clamp this timer to 1 ms and fail every check.
+      { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, timeoutMs: 2 ** 31 },
     ]) {
       expect(() => createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, introspection })).toThrow(TypeError);
     }
   });
+});
+
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const BUILT_ENTRY = join(PACKAGE_ROOT, "dist", "index.js");
+
+interface BearerOutcome {
+  status: number;
+  wwwAuthenticate?: string;
+  body?: unknown;
+  auth?: AuthInfo;
+}
+
+/** Runs the MCP SDK's own Express bearer middleware with a minimal req/res. */
+async function sdkBearerAuth(verifier: OAuthTokenVerifier, token = "test-access-token"): Promise<BearerOutcome> {
+  const outcome: BearerOutcome = { status: 0 };
+  const req: { headers: Record<string, string>; auth?: AuthInfo } = {
+    headers: { authorization: `Bearer ${token}` },
+  };
+  const res = {
+    set(name: string, value: string) {
+      if (name.toLowerCase() === "www-authenticate") outcome.wwwAuthenticate = value;
+      return res;
+    },
+    status(code: number) {
+      outcome.status = code;
+      return res;
+    },
+    json(body: unknown) {
+      outcome.body = body;
+      return res;
+    },
+  };
+  await requireBearerAuth({ verifier })(req as never, res as never, () => {
+    outcome.status = 200;
+    outcome.auth = req.auth;
+  });
+  return outcome;
+}
+
+describe("AuthFn verifier with the MCP SDK bearer middleware", () => {
+  const options = { invalidTokenError: InvalidTokenError };
+  const later = () => new Date(Date.now() + 60_000);
+  const local = (verifyAccessToken: AuthFnTokenAuthorityProvider["verifyAccessToken"]) =>
+    createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken } as AuthFnTokenAuthorityProvider);
+  const remote = (fetch: typeof globalThis.fetch) =>
+    createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, introspection: { endpoint: INTROSPECT, secret: MEMOTRON_SECRET, fetch } });
+  const claims = (overrides: Record<string, unknown> = {}) => ({
+    clientId: "test-client", userId: "test-user", resource: MEMOTRON, scopes: ["memotron:read"], expiresAt: later(), ...overrides,
+  });
+  const introspected = (overrides: Record<string, unknown> = {}) => async () => Response.json({
+    active: true, aud: MEMOTRON, client_id: "test-client", sub: "test-user", scope: "memotron:read",
+    exp: Math.floor(Date.now() / 1_000) + 60, ...overrides,
+  });
+
+  it("answers 401 invalid_token for inactive, other-audience and expired tokens, in both modes", async () => {
+    for (const authority of [
+      local(async () => null),
+      local(async () => claims({ resource: POINTRON })),
+      local(async () => claims({ expiresAt: new Date(Date.now() - 1_000) })),
+      remote(introspected({ active: false })),
+      remote(introspected({ aud: POINTRON })),
+      remote(introspected({ exp: Math.floor(Date.now() / 1_000) - 1 })),
+    ]) {
+      const outcome = await sdkBearerAuth(authority.verifier(MEMOTRON, options));
+      expect(outcome.status).toBe(401);
+      expect(outcome.wwwAuthenticate).toMatch(/^Bearer error="invalid_token"/);
+      expect(outcome.body).toMatchObject({ error: "invalid_token" });
+    }
+  });
+
+  it("passes an active token's authInfo through and keeps a provider outage apart from invalid_token", async () => {
+    for (const authority of [local(async () => claims()), remote(introspected())]) {
+      const outcome = await sdkBearerAuth(authority.verifier(MEMOTRON, options));
+      expect(outcome.status).toBe(200);
+      expect(outcome.auth).toMatchObject({ clientId: "test-client", scopes: ["memotron:read"], extra: { subject: "test-user" } });
+    }
+    for (const authority of [
+      local(async () => {
+        throw new Error("database offline");
+      }),
+      remote(async () => new Response("down", { status: 503 })),
+    ]) {
+      const outcome = await sdkBearerAuth(authority.verifier(MEMOTRON, options));
+      expect(outcome.status).toBe(500);
+      expect(outcome.wwwAuthenticate).toBeUndefined();
+    }
+  });
+
+  it("rejects a token whose expiry is at or before now when verification completes", async () => {
+    const start = 1_900_000_000_000;
+    let now = start;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      // The deadline equals the clock: not active.
+      await expect(local(async () => claims({ expiresAt: new Date(start) })).verifier(MEMOTRON, options)
+        .verifyAccessToken("test-access-token")).rejects.toBeInstanceOf(InvalidTokenError);
+      await expect(remote(introspected({ exp: start / 1_000 })).verifier(MEMOTRON, options)
+        .verifyAccessToken("test-access-token")).rejects.toBeInstanceOf(InvalidTokenError);
+      // Active when asked, lapsed by the time the answer arrives.
+      const lapsing = local(async () => {
+        now = start + 2_000;
+        return claims({ expiresAt: new Date(start + 1_000) });
+      });
+      await expect(lapsing.verifier(MEMOTRON, options).verifyAccessToken("test-access-token"))
+        .rejects.toBeInstanceOf(InvalidTokenError);
+      now = start;
+      const lapsingRemote = remote(async () => {
+        now = start + 2_000;
+        return Response.json({ active: true, aud: MEMOTRON, client_id: "test-client", sub: "test-user", exp: start / 1_000 + 1 });
+      });
+      await expect(lapsingRemote.verifier(MEMOTRON, options).verifyAccessToken("test-access-token"))
+        .rejects.toBeInstanceOf(InvalidTokenError);
+      now = start;
+      await expect(local(async () => claims({ expiresAt: new Date(start + 1_000) })).verifier(MEMOTRON, options)
+        .verifyAccessToken("test-access-token")).resolves.toMatchObject({ expiresAt: start / 1_000 + 1 });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("needs the host SDK's InvalidTokenError class", () => {
+    const authority = local(async () => null);
+    expect(() => authority.verifier(MEMOTRON, undefined as never)).toThrow(/invalidTokenError/);
+    expect(() => authority.verifier(MEMOTRON, {} as never)).toThrow(/invalidTokenError/);
+  });
+
+  // The published bundle inlines its own SDK copy; the host's class must still
+  // be the one thrown, or requireBearerAuth answers 500 for an inactive token.
+  it.runIf(existsSync(BUILT_ENTRY) || Boolean(process.env.CI))(
+    "answers 401 invalid_token through the built entry's inlined SDK",
+    async () => {
+      const built = (await import(pathToFileURL(BUILT_ENTRY).href)) as typeof import("../src/index.js");
+      const inactive = built.createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken: async () => null });
+      const outcome = await sdkBearerAuth(inactive.verifier(MEMOTRON, options));
+      expect(outcome.status).toBe(401);
+      expect(outcome.wwwAuthenticate).toMatch(/^Bearer error="invalid_token"/);
+      const active = built.createAuthFnTokenAuthority({ issuer: AUTH_ORIGIN, verifyAccessToken: async () => claims() });
+      expect((await sdkBearerAuth(active.verifier(MEMOTRON, options))).status).toBe(200);
+    },
+    60_000,
+  );
 });

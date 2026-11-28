@@ -11,7 +11,7 @@ export interface AuthFnIntrospectionOptions {
    */
   secret: string;
   fetch?: typeof fetch;
-  /** Deadline for the whole introspection answer. Defaults to 5000 ms. */
+  /** Deadline for the whole introspection answer, in whole milliseconds up to 2147483647. Defaults to 5000. */
   timeoutMs?: number;
   /** Allow `http://` for a literal loopback endpoint in local testing. */
   allowInsecureLoopback?: boolean;
@@ -73,8 +73,11 @@ export function createIntrospectionVerifier(
     throw new TypeError("The AuthFn introspection secret must be an RFC 6750 b64token");
   }
   const timeoutMs = options.timeoutMs ?? 5_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new TypeError("The AuthFn introspection timeoutMs must be a positive number");
+  // Node clamps a timer above 2^31 - 1 ms to 1 ms, which would fail every check.
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+    throw new TypeError(
+      "The AuthFn introspection timeoutMs must be a positive integer of at most 2147483647",
+    );
   }
   const fetchFn = options.fetch ?? globalThis.fetch;
   const authorization = `Bearer ${options.secret}`;
