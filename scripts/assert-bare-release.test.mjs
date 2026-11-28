@@ -70,7 +70,7 @@ const registryAnswering = answers => async url => {
   return new Response(Buffer.isBuffer(answer) ? answer : JSON.stringify(answer), { status: 200 });
 };
 
-const publishedCli = { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' } };
+const publishedCli = { name: '@fixture/cli', version: '1.2.3', bin: { fixture: './dist/cli.js', fx: './dist/cli.js' }, frontDoorCli: { checksExpectedVersion: true } };
 
 test('release targets: a bare entry names existing, non-bare core and CLI slugs', async t => {
   const root = product(t);
@@ -225,6 +225,10 @@ test('registry: the core and CLI must already be on npm at the version', async (
   await assert.rejects(assertPublished(packages, { registry, fetch: async () => { throw new Error('offline'); } }), error => error.code === 'registry-unavailable' && /offline/.test(error.message));
   const wrong = async () => new Response(JSON.stringify({ name: '@fixture/core', version: '1.2.2' }), { status: 200 });
   await assert.rejects(assertPublished(packages, { registry, fetch: wrong }), /returned @fixture\/core@1\.2\.2/);
+
+  // The published CLI must declare that it checks BARE_EXPECTED_CLI, as the checkout does.
+  const undeclared = { ...published, 'https://registry.example.test/@fixture%2fcli/1.2.3': { ...publishedCli, frontDoorCli: undefined } };
+  await assert.rejects(assertPublished(packages, { registry, fetch: registryAnswering(undeclared) }), /does not declare that it checks BARE_EXPECTED_CLI/);
 
   // The published CLI must have the bins the bare package runs, on one file.
   const cliUrl = 'https://registry.example.test/@fixture%2fcli/1.2.3';

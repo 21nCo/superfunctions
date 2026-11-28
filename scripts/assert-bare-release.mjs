@@ -271,6 +271,9 @@ export async function assertPublished(packages, { registry = DEFAULT_REGISTRY, f
     }
     // The shim runs the published CLI's bin named after the bare package; every other bare bin is an alias of it.
     if (bins.length > 0) {
+      if (body.frontDoorCli?.checksExpectedVersion !== true) {
+        throw new BareReleaseError('not-published', `${name}@${version} on npm does not declare that it checks BARE_EXPECTED_CLI ("frontDoorCli": { "checksExpectedVersion": true }); release a new CLI version that does, at the bare package's version.`, { name, version });
+      }
       const published = body.bin !== null && typeof body.bin === 'object' ? body.bin : {};
       const files = bins.map(bin => normalizeBin(published[bin]));
       if (files.some(file => typeof file !== 'string') || new Set(files).size !== 1) {
