@@ -1002,7 +1002,7 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const runner: CommandRunner = async (_command, args) => {
       if (!args.includes("--version")) return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
       if ((probes += 1) === 2) await new Promise(resolve => setTimeout(resolve, 150));
-      return { code: 0, signal: null, stdout: `fake-cli version ${probes === 1 ? `1.2.3+build.${secret}` : "9.8.7"}\n`, stderr: "", timedOut: false, canceled: false };
+      return { code: 0, signal: null, stdout: `fake-cli version ${[`1.2.3+build.${secret}`, "9.8.7"][probes - 1] ?? "1.2.3"}\n`, stderr: "", timedOut: false, canceled: false };
     };
     const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, REVIEW_AUTH: secret }, runner });
     const designated = configuration(profile({ envAllowlist: ["REVIEW_AUTH"] }));
@@ -1011,7 +1011,9 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 50 } };
     const output = await harness.run(input(designated, { policy }));
     expect([output.terminal, output.error]).toEqual(["timed_out", "The CLI exceeded its configured bound before its version was read."]);
-    expect(probes).toBe(2);
+    // The late observation was not cached: the next run probes again and confirms its own version.
+    expect((await harness.run(input(designated))).observed?.harnessVersion).toBe("1.2.3");
+    expect(probes).toBe(3);
   });
 
   it("caches nothing an interrupted version probe printed, so a later run probes again", async () => {
