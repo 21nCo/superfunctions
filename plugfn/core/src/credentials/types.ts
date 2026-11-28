@@ -29,6 +29,19 @@ export interface CredentialMintRequest<TInstallation = unknown, TScope = unknown
    * treats a `ttl` its provider cannot honour exactly.
    */
   readonly ttl: number;
+  /**
+   * An optional caller-chosen key (1 to 256 characters) that makes a retried
+   * mint idempotent within one minter instance. Mints with the same key and
+   * the same installation, scope and `ttl` share one provider call while it
+   * is in flight, and then return the same credential while it is neither
+   * revoked nor expired; after that the key mints a new credential. The same
+   * key with a different request rejects with `invalid_request` while the
+   * earlier credential is live. A mint that failed with no credential frees
+   * the key. A `mint_outcome_unknown` failure keeps it: every mint with that
+   * key repeats the failure until any credential the provider may have issued
+   * has expired, so no retry issues a second one.
+   */
+  readonly idempotencyKey?: string;
 }
 
 /** A minted credential. */
@@ -49,13 +62,19 @@ export interface MintedCredential<THandle = unknown> {
  *   A scope the provider cannot grant rejects with `ScopeNotGrantable`; every
  *   other failure rejects with `CredentialMinterError`. Errors never carry
  *   the minted secret or the minter's own signing material.
- * - `mint` keeps no state between calls, so retrying a failed or successful
- *   mint with the same request asks the provider for the same grant again.
- *   A provider without an idempotency key may have issued a credential whose
- *   response was lost; the minter cannot know it, and it expires on its own.
+ * - Without `idempotencyKey`, each `mint` asks the provider for a new
+ *   credential. With one, a retried or concurrent mint of the same request
+ *   returns the same credential (see {@link CredentialMintRequest.idempotencyKey}).
+ *   When the provider reports success but its response is lost, `mint`
+ *   rejects with the non-retryable `mint_outcome_unknown`: a credential may
+ *   have been issued, and it expires on its own. A transport failure before
+ *   any response is retryable `provider_unavailable`; for a provider without
+ *   its own idempotency key, a request it received before the connection
+ *   failed may still have issued a credential nobody can see.
  * - When the provider issues a credential the minter rejects, the minter
  *   revokes it before failing; if that revoke fails, it rejects with
- *   `rejected_credential_not_revoked`.
+ *   `rejected_credential_not_revoked`, with a `revokeHandle` to retry the
+ *   cleanup when the minter still holds the credential.
  * - `revoke` is idempotent: revoking a credential that is already revoked or
  *   expired resolves without error.
  */

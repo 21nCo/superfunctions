@@ -168,3 +168,30 @@ export const RECORDED_ERRORS = {
   },
   revoked401: { message: 'Bad credentials', documentation_url: 'https://docs.github.com/rest', status: '401' },
 } as const;
+
+/**
+ * A stateful fake of the two GitHub endpoints: each POST issues a new fake
+ * token and records it as live, and each DELETE ends the bearer's token (204)
+ * or answers 401 for one that is not live, as GitHub does.
+ */
+export function statefulGitHub(): { fetch: typeof fetch; calls: RecordedCall[]; live: Set<string> } {
+  const calls: RecordedCall[] = [];
+  const live = new Set<string>();
+  let issued = 0;
+  const fake = async (input: unknown, init?: RequestInit): Promise<Response> => {
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
+    const method = init?.method ?? 'GET';
+    calls.push({ url: String(input), method, headers, body: typeof init?.body === 'string' ? init.body : undefined });
+    if (method === 'POST') {
+      issued += 1;
+      const token = fakeInstallationToken(100 + issued);
+      live.add(token);
+      return new Response(JSON.stringify(recordedAccessToken(token)), { status: 201 });
+    }
+    const bearer = (headers.authorization ?? '').replace(/^Bearer /, '');
+    if (method === 'DELETE' && live.delete(bearer)) return new Response(null, { status: 204 });
+    return new Response(JSON.stringify(RECORDED_ERRORS.revoked401), { status: 401 });
+  };
+  return { fetch: fake as typeof fetch, calls, live };
+}

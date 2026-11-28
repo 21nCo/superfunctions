@@ -44,7 +44,15 @@ describe('credential minter errors', () => {
       cause,
     ]);
     const plain = new CredentialMinterError('example', 'unauthorized', 'no');
-    expect([plain.status, plain.retryable, Object.hasOwn(plain, 'cause')]).toEqual([undefined, false, false]);
+    expect([plain.status, plain.retryable, Object.hasOwn(plain, 'cause'), plain.revokeHandle]).toEqual([undefined, false, false, undefined]);
+  });
+
+  it('carry a revoke handle for a rejected credential whose cleanup failed', () => {
+    const revokeHandle = { id: 'test-handle' };
+    const error = new CredentialMinterError('example', 'rejected_credential_not_revoked', 'cleanup failed', { revokeHandle });
+    expect([error.code, error.revokeHandle, error.retryable]).toEqual(['rejected_credential_not_revoked', revokeHandle, false]);
+    const unknown = new CredentialMinterError('example', 'mint_outcome_unknown', 'response lost', { status: 201 });
+    expect([unknown.code, unknown.retryable]).toEqual(['mint_outcome_unknown', false]);
   });
 
   it('ScopeNotGrantable is a non-retryable CredentialMinterError with frozen violations', () => {

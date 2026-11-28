@@ -19,6 +19,7 @@ import {
   RECORDED_ERRORS,
   recordedAccessToken,
   recordingFetch,
+  statefulGitHub,
   verifyJwt,
   type RecordedResponse,
   type TestAppKeys,
@@ -39,6 +40,7 @@ function minter(responses: RecordedResponse[], options: Partial<GitHubAppMinterO
     privateKey: keys.pkcs1Pem,
     fetch: recorder.fetch,
     now: () => NOW_MS,
+    cleanupRetryDelayMs: 0,
     ...options,
   });
   return { minter: instance, calls: recorder.calls };
@@ -157,15 +159,43 @@ describe('GitHub App minter: mint (recorded responses)', () => {
   });
 
   it('revokes a returned token whose expires_at is missing, unparseable or already past', async () => {
-    for (const expires of [undefined, 'not a date', 42, '2026-11-28T11:00:00Z']) {
+    const notStrictUtc = ['2050', '2026-11-28', '2026-11-28T13:00:00+00:00', '2026-11-28 13:00:00Z', '2026-02-30T13:00:00Z', 'Sat, 28 Nov 2026 13:00:00 GMT'];
+    for (const expires of [undefined, 'not a date', 42, '2026-11-28T11:00:00Z', ...notStrictUtc]) {
       const token = fakeInstallationToken(3);
       const body = recordedAccessToken(token, { expires_at: expires });
       const { minter: m, calls } = minter([{ status: 201, body }, { status: 204 }]);
       const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
-      expect(error.code).toBe('provider_error');
+      expect(error.code, String(expires)).toBe('provider_error');
       expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
       expect(calls[1]!.headers.authorization).toBe(`Bearer ${token}`);
       expect(error.message).not.toContain(token);
+    }
+  });
+
+  it('accepts expires_at with fractional seconds', async () => {
+    const body = recordedAccessToken(fakeInstallationToken(1), { expires_at: '2026-11-28T13:00:00.500Z' });
+    const { minter: m } = minter([{ status: 201, body }]);
+    const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+    expect(minted.expiresAt.toISOString()).toBe('2026-11-28T13:00:00.000Z');
+  });
+
+  it('fails closed, revoking the token, when the 201 grants less than requested', async () => {
+    const cases: Record<string, unknown>[] = [
+      { repositories: [{ name: 'app' }] },
+      { permissions: { contents: 'read' } },
+      { permissions: { contents: 'read', issues: 'read' } },
+      { permissions: { contents: 'read', issues: 'write', metadata: 'read' }, repositories: [{ name: 'lib' }] },
+      { repositories: [], permissions: {} },
+      { repositories: [], permissions: { metadata: 'read' } },
+    ];
+    for (const override of cases) {
+      const token = fakeInstallationToken(6);
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, override) }, { status: 204 }]);
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect(error.code, JSON.stringify(override)).toBe('provider_error');
+      expect(error.message).toMatch(/did not grant the token every requested (repository|permission)/);
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+      expect(calls[1]!.headers.authorization).toBe(`Bearer ${token}`);
     }
   });
 
@@ -191,24 +221,57 @@ describe('GitHub App minter: mint (recorded responses)', () => {
     }
   });
 
-  it('reports a rejected token whose revoke fails as possibly still active, without the token', async () => {
-    const responses: RecordedResponse[] = [
-      { status: 503, body: { message: 'Service unavailable' } },
-      { status: 403, body: { message: 'Forbidden' } },
-      { throws: new TypeError('socket hang up') },
-    ];
-    for (const deleteResponse of responses) {
+  it('retries a transient failure of the cleanup DELETE inside mint', async () => {
+    for (const transient of [{ status: 503, body: { message: 'Service unavailable' } }, { status: 429 }, { throws: new TypeError('socket hang up') }] as RecordedResponse[]) {
       const token = fakeInstallationToken(4);
-      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, { repository_selection: 'all' }) }, deleteResponse]);
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, { repository_selection: 'all' }) }, transient, { status: 204 }]);
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect([error.code, error.revokeHandle]).toEqual(['provider_error', undefined]);
+      expect(error.message).toContain('was revoked');
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE', 'DELETE']);
+      expect(calls.slice(1).map((c) => c.headers.authorization)).toEqual([`Bearer ${token}`, `Bearer ${token}`]);
+    }
+  });
+
+  it('hands back a revoke handle, never the token, when the cleanup still fails', async () => {
+    const persistent: RecordedResponse[][] = [
+      Array(3).fill({ status: 503, body: { message: 'Service unavailable' } }),
+      Array(3).fill({ throws: new TypeError('socket hang up') }),
+      [{ status: 403, body: { message: 'Forbidden' } }],
+    ];
+    for (const failures of persistent) {
+      const token = fakeInstallationToken(4);
+      const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(token, { repository_selection: 'all' }) }, ...failures, { status: 204 }]);
       const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
       expect(error.code).toBe('rejected_credential_not_revoked');
       expect(error.retryable).toBe(false);
       expect(error.message).toMatch(/may stay active until it expires/);
       expect(error.cause).toBeInstanceOf(CredentialMinterError);
-      expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+      // Retried only while the failure is transient.
+      expect(calls.map((c) => c.method)).toEqual(['POST', ...failures.map(() => 'DELETE')]);
+      expect(error.revokeHandle).toBeInstanceOf(GitHubAppRevokeHandle);
       const text = [String(error), JSON.stringify(error), inspect(error, { depth: 10, showHidden: true })].join('\n');
       expect(text).not.toContain(token);
+
+      await m.revoke(error.revokeHandle as GitHubAppRevokeHandle);
+      expect(calls.at(-1)).toMatchObject({ method: 'DELETE', url: 'https://api.github.com/installation/token' });
+      expect(calls.at(-1)!.headers.authorization).toBe(`Bearer ${token}`);
+      await m.revoke(error.revokeHandle as GitHubAppRevokeHandle);
+      expect(calls).toHaveLength(failures.length + 2);
     }
+  });
+
+  it('waits between cleanup attempts', async () => {
+    const token = fakeInstallationToken(4);
+    const started = Date.now();
+    const { minter: m, calls } = minter(
+      [{ status: 201, body: recordedAccessToken(token, { repository_selection: 'all' }) }, { status: 503 }, { status: 503 }, { status: 204 }],
+      { cleanupRetryDelayMs: 20 },
+    );
+    await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+    expect(calls).toHaveLength(4);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+    expect(() => createGitHubAppMinter({ appId: 1, privateKey: keys.pkcs1Pem, cleanupRetryDelayMs: -1 })).toThrow(TypeError);
   });
 
   it('decides by status when the response body cannot be read', async () => {
@@ -219,7 +282,8 @@ describe('GitHub App minter: mint (recorded responses)', () => {
 
     const unreadable201 = minter([{ status: 201, bodyThrows: reset() }]);
     const lost = await rejection(unreadable201.minter.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
-    expect([lost.code, lost.status, lost.retryable]).toEqual(['provider_unavailable', 201, true]);
+    expect([lost.code, lost.status, lost.retryable]).toEqual(['mint_outcome_unknown', 201, false]);
+    expect(lost.message).toMatch(/may have been issued/);
 
     for (const status of [204, 401]) {
       const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(fakeInstallationToken(5)) }, { status, bodyThrows: reset() }]);
@@ -227,6 +291,21 @@ describe('GitHub App minter: mint (recorded responses)', () => {
       await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
       await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
       expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+    }
+  });
+
+  it('does not wait for a DELETE body when the status already decides', async () => {
+    for (const status of [204, 401]) {
+      const stalled = (async (_input: unknown, init?: RequestInit) => {
+        if (init?.method === 'POST') return new Response(JSON.stringify(recordedAccessToken(fakeInstallationToken(5))), { status: 201 });
+        const response = new Response(null, { status });
+        // A body that never finishes arriving.
+        Object.defineProperty(response, 'text', { value: () => new Promise<string>(() => undefined) });
+        return response;
+      }) as typeof fetch;
+      const { minter: m } = minter([], { fetch: stalled });
+      const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+      await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
     }
   });
 });
@@ -431,13 +510,31 @@ describe('GitHub App minter: revoke (recorded responses)', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('skips the call for a token that has already expired', async () => {
+  it('still asks GitHub after the local expiry, and a 401 for the expired token resolves', async () => {
     let now = NOW_MS;
-    const { minter: m, calls } = minter([{ status: 201, body: recordedAccessToken(fakeInstallationToken(3)) }], { now: () => now });
+    const token = fakeInstallationToken(3);
+    const { minter: m, calls } = minter(
+      [{ status: 201, body: recordedAccessToken(token) }, { status: 401, body: RECORDED_ERRORS.revoked401 }],
+      { now: () => now },
+    );
     const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
-    now = Date.parse(EXPIRES_AT);
+    now = Date.parse(EXPIRES_AT) + 1000;
+    await expect(m.revoke(minted.revokeHandle)).resolves.toBeUndefined();
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE']);
+    expect(calls[1]!.headers.authorization).toBe(`Bearer ${token}`);
+  });
+
+  it('does not mark a token revoked on the local clock alone', async () => {
+    let now = NOW_MS;
+    const { minter: m, calls } = minter(
+      [{ status: 201, body: recordedAccessToken(fakeInstallationToken(3)) }, { status: 503 }, { status: 204 }],
+      { now: () => now },
+    );
+    const minted = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+    now = Date.parse(EXPIRES_AT) + 1000;
+    await rejection(m.revoke(minted.revokeHandle));
     await m.revoke(minted.revokeHandle);
-    expect(calls).toHaveLength(1);
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'DELETE', 'DELETE']);
   });
 
   it('keeps a failed revoke retryable', async () => {
@@ -490,6 +587,118 @@ describe('GitHub App minter: retried mint', () => {
     expect([first.secret, second.secret]).toEqual([fakeInstallationToken(1), fakeInstallationToken(2)]);
     // Each grant revokes on its own.
     expect(first.revokeHandle).not.toBe(second.revokeHandle);
+  });
+
+  it('revokes each token of an unkeyed retry with its own bearer', async () => {
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600 };
+    const first = await m.mint(request);
+    const second = await m.mint(request);
+    expect(github.live.size).toBe(2);
+    await m.revoke(first.revokeHandle);
+    await m.revoke(second.revokeHandle);
+    const deletes = github.calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.map((c) => c.headers.authorization)).toEqual([`Bearer ${first.secret}`, `Bearer ${second.secret}`]);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('returns the same credential for a retried mint with the same idempotency key', async () => {
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-1' };
+    const first = await m.mint(request);
+    const retried = await m.mint({ ...request, installation: '42', scope: { repositories: ['app', 'lib'], permissions: { contents: 'read', issues: 'write' } } });
+    expect(retried).toBe(first);
+    expect(github.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+
+    await m.revoke(retried.revokeHandle);
+    expect(github.live.size).toBe(0);
+    await m.revoke(first.revokeHandle);
+    expect(github.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+
+    // Once revoked, the key mints a new credential.
+    const after = await m.mint(request);
+    expect(after.secret).not.toBe(first.secret);
+    expect(github.live).toEqual(new Set([after.secret]));
+  });
+
+  it('shares one POST between concurrent mints with the same idempotency key', async () => {
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-2' };
+    const results = await Promise.all([m.mint(request), m.mint(request), m.mint(request)]);
+    expect(new Set(results).size).toBe(1);
+    expect(github.calls).toHaveLength(1);
+    await m.revoke(results[0]!.revokeHandle);
+    expect(github.live.size).toBe(0);
+  });
+
+  it('rejects an idempotency key reused for a different request, without calling GitHub', async () => {
+    const github = statefulGitHub();
+    const { minter: m } = minter([], { fetch: github.fetch });
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-3' };
+    const pending = m.mint(request);
+    for (const changed of [
+      { ...request, ttl: 600 },
+      { ...request, installation: 43 },
+      { ...request, scope: { repositories: ['app'], permissions: { contents: 'read', issues: 'write' } } },
+      { ...request, scope: { repositories: ['app', 'lib'], permissions: { contents: 'write', issues: 'write' } } },
+    ]) {
+      expect((await rejection(m.mint(changed))).code).toBe('invalid_request');
+    }
+    await pending;
+    expect((await rejection(m.mint({ ...request, ttl: 600 }))).code).toBe('invalid_request');
+    expect(github.calls).toHaveLength(1);
+    // Other keys are independent.
+    await m.mint({ ...request, ttl: 600, idempotencyKey: 'test-operation-4' });
+    expect(github.calls).toHaveLength(2);
+  });
+
+  it('frees a key after a failed mint and after its credential expires', async () => {
+    let now = NOW_MS;
+    const { minter: m, calls } = minter(
+      [
+        { status: 502, body: { message: 'Bad Gateway' } },
+        { status: 201, body: recordedAccessToken(fakeInstallationToken(1)) },
+        { status: 201, body: recordedAccessToken(fakeInstallationToken(2), { expires_at: '2026-11-28T14:00:00Z' }) },
+      ],
+      { now: () => now },
+    );
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-5' };
+    expect((await rejection(m.mint(request))).code).toBe('provider_unavailable');
+    const first = await m.mint(request);
+    expect(await m.mint(request)).toBe(first);
+    now = Date.parse(EXPIRES_AT);
+    const second = await m.mint(request);
+    expect([first.secret, second.secret]).toEqual([fakeInstallationToken(1), fakeInstallationToken(2)]);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('keeps reporting a lost 201 for its key until any token it carried has expired', async () => {
+    let now = NOW_MS;
+    const { minter: m, calls } = minter(
+      [{ status: 201, bodyThrows: new TypeError('body stream reset') }, { status: 201, body: recordedAccessToken(fakeInstallationToken(1), { expires_at: '2026-11-28T14:00:01Z' }) }],
+      { now: () => now },
+    );
+    const request = { installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey: 'test-operation-6' };
+    const lost = await rejection(m.mint(request));
+    expect([lost.code, lost.retryable]).toEqual(['mint_outcome_unknown', false]);
+    now += 30 * 60 * 1000;
+    expect(await rejection(m.mint(request))).toBe(lost);
+    expect(calls).toHaveLength(1);
+    now = NOW_MS + 3600 * 1000;
+    await expect(m.mint(request)).resolves.toMatchObject({ secret: fakeInstallationToken(1) });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('rejects an invalid idempotency key before calling GitHub', async () => {
+    const { minter: m, calls } = minter([]);
+    for (const idempotencyKey of ['', 'k'.repeat(257), 42, null]) {
+      const error = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600, idempotencyKey } as never));
+      expect(error.code).toBe('invalid_request');
+    }
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -566,6 +775,42 @@ describe('GitHub App minter: redaction', () => {
     expect((error.cause as Error).name).toBe('Error');
     expect(rendered(error)).not.toContain(jwt);
     expect(rendered(error)).not.toContain(jwt.split('.')[2]!);
+  });
+
+  it('contains a throwing name or message getter on a fetch error, in mint and revoke', async () => {
+    for (const field of ['name', 'message'] as const) {
+      let jwt = '';
+      const token = fakeInstallationToken(10);
+      const hostile = (secret: string) => {
+        const error = new Error('request failed');
+        Object.defineProperty(error, field, {
+          get() {
+            throw new Error(`Bearer ${secret}`);
+          },
+        });
+        return error;
+      };
+      let failMint = true;
+      const failingFetch = (async (_input: unknown, init?: RequestInit) => {
+        const bearer = (init!.headers as Record<string, string>).authorization!.replace(/^Bearer /, '');
+        if (init?.method === 'POST' && !failMint) return new Response(JSON.stringify(recordedAccessToken(token)), { status: 201 });
+        if (init?.method === 'POST') jwt = bearer;
+        throw hostile(bearer);
+      }) as typeof fetch;
+      const { minter: m } = minter([], { fetch: failingFetch });
+      const mintError = await rejection(m.mint({ installation: 42, scope: SCOPE, ttl: 3600 }));
+      expect(mintError.code).toBe('provider_unavailable');
+      expect([(mintError.cause as Error).name, (mintError.cause as Error).message]).toEqual(['Error', 'unreadable error']);
+      expect(jwt.length).toBeGreaterThan(100);
+      expect(rendered(mintError)).not.toContain(jwt);
+      expect(rendered(mintError)).not.toContain(jwt.split('.')[2]!);
+
+      failMint = false;
+      const credential = await m.mint({ installation: 42, scope: SCOPE, ttl: 3600 });
+      const revokeError = await rejection(m.revoke(credential.revokeHandle));
+      expect(revokeError.code).toBe('provider_unavailable');
+      expect(rendered(revokeError)).not.toContain(token);
+    }
   });
 
   it('keeps a plain error name on the cause', async () => {

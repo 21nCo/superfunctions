@@ -20,14 +20,25 @@ export type CredentialMinterErrorCode =
   /**
    * The provider issued a credential the minter rejected (wider than asked,
    * or a response it cannot trust), and revoking that credential failed too:
-   * it may stay active until it expires. The error never carries it.
+   * it may stay active until it expires. The error never carries it; when
+   * the minter can still revoke it, `revokeHandle` lets the caller retry the
+   * cleanup with `revoke`.
    */
-  | 'rejected_credential_not_revoked';
+  | 'rejected_credential_not_revoked'
+  /**
+   * The provider may have issued a credential whose response was lost (it
+   * reported success, but the body could not be read). The minter cannot
+   * know or revoke it and it stays active until it expires, so this is not
+   * retryable: a retry could issue a second credential.
+   */
+  | 'mint_outcome_unknown';
 
 export interface CredentialMinterErrorOptions {
   readonly status?: number;
   readonly retryable?: boolean;
   readonly cause?: unknown;
+  /** A handle `revoke` accepts, for a rejected credential whose cleanup failed. */
+  readonly revokeHandle?: unknown;
 }
 
 /**
@@ -41,6 +52,12 @@ export class CredentialMinterError extends Error {
   readonly status: number | undefined;
   /** Whether repeating the same call may succeed. */
   readonly retryable: boolean;
+  /**
+   * For `rejected_credential_not_revoked`, when the minter can still revoke
+   * the rejected credential: pass it to the minter's `revoke` to finish the
+   * cleanup. A handle never contains the secret. Otherwise `undefined`.
+   */
+  readonly revokeHandle: unknown;
 
   constructor(provider: string, code: CredentialMinterErrorCode, message: string, options: CredentialMinterErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -49,6 +66,7 @@ export class CredentialMinterError extends Error {
     this.provider = provider;
     this.status = options.status;
     this.retryable = options.retryable ?? false;
+    this.revokeHandle = options.revokeHandle;
   }
 }
 
