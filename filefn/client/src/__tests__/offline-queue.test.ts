@@ -3433,3 +3433,100 @@ describe('round 21: a stopped pass never waits on a stalled principal check befo
     a.dispose();
   });
 });
+
+describe("round 22: an AbortError a step raises by itself is that generation's failure, not a stop of the pass", () => {
+  const ENTRY_A = 'file_00000000entry0a';
+  const ENTRY_B = 'file_00000000entry0b';
+  const ownAbort = () => new DOMException('The uploader timed out', 'AbortError');
+  const statusById = (results: Awaited<ReturnType<OfflineQueue['processAll']>>) =>
+    Object.fromEntries(results.map((item) => [item.entryId, 'result' in item ? item.result.status : `error:${item.error.message}`]));
+
+  it("records an uploader's own AbortError as a failed attempt, goes on to the next entry and stops at the retry limit", async () => {
+    const sent: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        sent.push(input.fileId);
+        await input.assertPrincipal();
+        // Its own timeout controller, not the step's signal.
+        if (input.fileId === ENTRY_A) throw ownAbort();
+        return { fileId: input.fileId, versionId: 'ver_b' };
+      },
+    };
+    const a = tab('a', { uploader, maxUploadAttempts: 2 });
+    await stage(a, 'aaa', { fileId: ENTRY_A });
+    await stage(a, 'bbb', { fileId: ENTRY_B });
+
+    expect(statusById(await a.processAll())).toEqual({ [ENTRY_A]: 'provisional', [ENTRY_B]: 'published' });
+    expect(await a.get(ENTRY_A)).toMatchObject({ phase: 'uploading', attempts: 1, pending: { stage: 'upload', reason: 'ambiguous' } });
+    expect(sent).toEqual([ENTRY_A, ENTRY_B]);
+
+    expect(statusById(await a.processAll())).toEqual({ [ENTRY_A]: 'provisional' });
+    expect(await a.get(ENTRY_A)).toMatchObject({ attempts: 2 });
+    const third = await a.processAll();
+    expect(third).toEqual([{ entryId: ENTRY_A, result: expect.objectContaining({ status: 'provisional', reason: 'retry-limit' }) }]);
+    // No upload past the limit.
+    expect(sent).toEqual([ENTRY_A, ENTRY_B, ENTRY_A]);
+    a.dispose();
+  });
+
+  it.each(['verify', 'publish'] as const)("records a %s hook's own AbortError as an ambiguous outcome and goes on to the next entry", async (kind) => {
+    let calls = 0;
+    const hook = async (context: { entryId: string }) => {
+      calls += 1;
+      if (context.entryId === ENTRY_A) throw ownAbort();
+      return kind === 'verify' ? ({ verified: true } as const) : undefined;
+    };
+    const hooks: OfflineQueueHooks =
+      kind === 'verify' ? { verify: hook as OfflineQueueHooks['verify'] } : { publish: { run: hook as never, idempotent: true } };
+    const a = tab('a', { hooks });
+    await stage(a, 'aaa', { fileId: ENTRY_A });
+    await stage(a, 'bbb', { fileId: ENTRY_B });
+
+    const results = await a.processAll();
+    expect(results).toEqual([
+      { entryId: ENTRY_A, result: expect.objectContaining({ status: 'provisional', reason: 'ambiguous' }) },
+      { entryId: ENTRY_B, result: expect.objectContaining({ status: 'published' }) },
+    ]);
+    expect(calls).toBe(2);
+    expect(await a.get(ENTRY_A)).toMatchObject({
+      phase: kind === 'verify' ? 'verifying' : 'publishing',
+      pending: { stage: kind === 'verify' ? 'verification' : 'publication', reason: 'ambiguous' },
+    });
+    a.dispose();
+  });
+
+  it('still stops the pass, with no attempt used, when its signal aborts or its queue is disposed during the step', async () => {
+    for (const how of ['signal', 'dispose'] as const) {
+      storage = createStorage();
+      const entered = deferred<void>();
+      const uploader: OfflineQueueUploader = {
+        async upload(input) {
+          entered.resolve();
+          await new Promise((_, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason ?? ownAbort()), { once: true }));
+          return { fileId: input.fileId, versionId: 'ver_x' };
+        },
+      };
+      const a = tab(`a-${how}`, { uploader });
+      await stage(a, 'aaa', { fileId: ENTRY_A });
+      await stage(a, 'bbb', { fileId: ENTRY_B });
+      const controller = new AbortController();
+      const pass = a.processAll({ signal: controller.signal });
+      await entered.promise;
+      if (how === 'signal') {
+        controller.abort();
+        expect(await pass).toEqual([]);
+        expect(await a.get(ENTRY_A)).toMatchObject({ attempts: 0 });
+        expect((await a.get(ENTRY_A))!.pending).toBeUndefined();
+        expect(await a.get(ENTRY_B)).toMatchObject({ phase: 'staged', attempts: 0 });
+        a.dispose();
+      } else {
+        a.dispose();
+        await expect(pass).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+        const b = tab(`b-${how}`);
+        expect(await b.get(ENTRY_A)).toMatchObject({ attempts: 0 });
+        expect((await b.get(ENTRY_A))!.pending).toBeUndefined();
+        b.dispose();
+      }
+    }
+  });
+});

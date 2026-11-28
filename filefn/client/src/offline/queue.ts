@@ -97,7 +97,9 @@ export interface OfflineQueueUploader {
    * mismatch stops the pass: the queue's own `currentPrincipal` check, which
    * runs after it, or a rejection with an OfflineQueueError
    * FILEFN_QUEUE_PRINCIPAL_MISMATCH (the credentials act for another
-   * principal). Then no attempt is used and no waiter settles.
+   * principal). Then no attempt is used and no waiter settles. A rejection
+   * with an AbortError of its own (no pass abort or disposal) is a refusal
+   * like any other.
    */
   replayScope?(principal: OfflineQueuePrincipal, signal: AbortSignal): Promise<string>;
   upload(input: {
@@ -133,6 +135,13 @@ export interface OfflineQueueUploader {
      * or another one, creating nothing.
      */
     replayScope?: string;
+    /**
+     * A rejection is a failed attempt of this generation (it counts toward
+     * `maxUploadAttempts`, and the pass goes on to other entries), an
+     * AbortError of the uploader's own (its own timeout controller, say)
+     * included. Only an abort of `signal` (the pass stopped, the queue was
+     * disposed or the generation was cancelled or replaced) uses no attempt.
+     */
   }): Promise<UploadResult>;
 }
 
@@ -160,6 +169,13 @@ export type OfflineQueuePublicationCheck = { published: true; result?: unknown }
  */
 export type OfflineQueuePublicationOutcome = OfflineQueuePublicationCheck & { attemptId: string };
 
+/**
+ * A hook's rejection, an AbortError of its own included (its own timeout
+ * controller, say), leaves the generation provisional (`ambiguous`) and the
+ * pass goes on to other entries; only an abort of the context's `signal`
+ * (the pass stopped, the queue was disposed or the generation was cancelled
+ * or replaced) records nothing.
+ */
 export interface OfflineQueueHooks {
   /**
    * Confirms an uploaded generation. Only a plain `{ verified: true }` or
@@ -2502,7 +2518,11 @@ export class OfflineQueue {
     try {
       await this.discloseFence(signal);
     } catch (error) {
-      const stopped = this.stoppedResult(error);
+      // The fence's abort (raced with the pass signal and the queue's
+      // lifetime) stays a stop, as before.
+      this.assertUsable();
+      if (isAbort(error)) return { status: 'stopped', reason: 'aborted' };
+      const stopped = this.stoppedResult(error, signal);
       if (stopped) return stopped;
       throw error;
     }
@@ -3349,7 +3369,7 @@ export class OfflineQueue {
           continue;
         }
       } catch (error) {
-        const stopped = this.stoppedResult(error);
+        const stopped = this.stoppedResult(error, signal);
         if (stopped) return stopped;
         throw error;
       }
@@ -3407,14 +3427,19 @@ export class OfflineQueue {
   }
 
   /**
-   * The entry-free result of a pass stopped by its signal or by a principal
-   * mismatch; null for any other error. Throws FILEFN_QUEUE_DISPOSED once
-   * disposed.
+   * The entry-free result of a pass stopped by a principal mismatch, or by an
+   * abort while the queue's lifetime or `signal` (the call's or pass's signal,
+   * or a step's controller, which follows both) has aborted; null for any
+   * other error. An AbortError that an uploader, hook or other app callback
+   * raised by itself (its own timeout controller, say) while none of those
+   * signals aborted is not a stop: it is that generation's error (a step
+   * records it as a retryable failure) and the pass goes on. Throws
+   * FILEFN_QUEUE_DISPOSED once disposed.
    */
-  private stoppedResult(error: unknown): OfflineQueueProcessResult | null {
+  private stoppedResult(error: unknown, signal: AbortSignal | undefined): OfflineQueueProcessResult | null {
     this.assertUsable();
     if (isPrincipalMismatch(error)) return { status: 'stopped', reason: 'principal-mismatch' };
-    if (isAbort(error)) return { status: 'stopped', reason: 'aborted' };
+    if (isAbort(error) && (this.lifetime.signal.aborted || signal?.aborted === true)) return { status: 'stopped', reason: 'aborted' };
     return null;
   }
 
@@ -3702,8 +3727,14 @@ export class OfflineQueue {
       ) {
         return REPLAN;
       }
-      // Stopped, or the principal changed: nothing is recorded or returned.
-      const stopped = this.stoppedResult(controller.signal.aborted && !isPrincipalMismatch(error) ? abortError() : error);
+      // Stopped (the queue, the pass or the step's controller aborted), or the
+      // principal changed: nothing is recorded or returned. An AbortError the
+      // uploader or hook raised by itself while none of those aborted falls
+      // through to recordFailure: a retryable failure of this generation.
+      const stopped = this.stoppedResult(
+        controller.signal.aborted && !isPrincipalMismatch(error) ? abortError() : error,
+        controller.signal,
+      );
       if (stopped) return stopped;
       // A hold stopped the upload between requests: no attempt is used, and
       // the next step reports it held.
@@ -3885,7 +3916,7 @@ export class OfflineQueue {
         return found.record;
       }, { signal, disclose: true });
     } catch (error) {
-      const stopped = this.stoppedResult(error);
+      const stopped = this.stoppedResult(error, signal);
       if (stopped) return stopped;
       throw error;
     }
