@@ -102,8 +102,17 @@ const server = createMcpFnServer({
 - `tools/list` omits a gated tool the session's scopes do not allow.
 - A call to such a tool, listed or not, returns a tool error with code
   `insufficient_scope` and `details: { requiredScopes, missingScopes }` before
-  any DataFn operation runs, and before an invalid-arguments error. Unknown
-  tool names keep McpFn's usual error.
+  any DataFn operation runs, and before an invalid-arguments error, with two
+  exceptions McpFn decides before any tool code: a call over McpFn's argument
+  size limit (100,000 values) is refused as invalid arguments, and with
+  `clientProfiles` a failed argument enrichment answers first. Unknown tool
+  names keep McpFn's usual error.
+- The session's scopes are resolved once per `tools/list` and afresh for every
+  call.
+- A tool with `scopes` cannot support task execution: registering one with a
+  `taskHandler` or a `taskSupport` other than `"forbidden"` fails, and a
+  task-augmented call to a gated tool gets McpFn's "does not support task
+  augmentation" error. Ungated host tools keep task support.
 - The handlers check scopes even without the visibility hook, so a server that
   omits `toolVisibility` (or uses `createDatafnMcpRegistry`) still refuses the
   calls but lists every tool.
@@ -111,8 +120,9 @@ const server = createMcpFnServer({
   `scopes` or already in a supplied `registry`, are always visible to its hook;
   combine it with your own hook as
   `toolVisibility: async (input) => (await adapter.toolVisibility(input)) && mine(input)`.
-- With `sessionScopes`, every enabled operation needs a non-empty list of
-  concrete scopes (no `*` or `<owner>:*`); without it, declaring scopes fails.
+- With `sessionScopes`, every enabled operation needs a non-empty, unique list
+  of concrete `<owner>:<action>` scopes, each part lowercase letters, digits,
+  `_`, `.` or `-` (no `*` or `<owner>:*`); without it, declaring scopes fails.
   A resolver result that is not an array grants nothing.
 
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.

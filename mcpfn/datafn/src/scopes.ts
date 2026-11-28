@@ -26,21 +26,33 @@ const TOOL_FIELDS = [
   "handleInvalidArguments",
 ] as const;
 
-/** Checks a declared list of needed scopes: concrete, non-wildcard strings. */
+// One `<owner>:<action>` segment, as AuthFn shapes scopes (no AuthFn import).
+const SCOPE_SEGMENT = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+
+function splitScope(scope: string): { owner: string; action: string } | undefined {
+  const separator = scope.indexOf(":");
+  if (separator <= 0 || separator !== scope.lastIndexOf(":")) return undefined;
+  return { owner: scope.slice(0, separator), action: scope.slice(separator + 1) };
+}
+
+function isConcreteScope(scope: unknown): scope is string {
+  if (typeof scope !== "string") return false;
+  const parts = splitScope(scope);
+  return parts !== undefined &&
+    SCOPE_SEGMENT.test(parts.owner) &&
+    SCOPE_SEGMENT.test(parts.action);
+}
+
+/** Checks a declared list of needed scopes: unique, concrete `<owner>:<action>` strings. */
 export function validateNeededScopes(label: string, scopes: unknown): string[] {
   if (
     !Array.isArray(scopes) ||
     scopes.length === 0 ||
     new Set(scopes).size !== scopes.length ||
-    scopes.some((scope) =>
-      typeof scope !== "string" ||
-      !scope ||
-      /\s/.test(scope) ||
-      scope === ALL_SCOPES ||
-      scope.endsWith(":*"))
+    !scopes.every(isConcreteScope)
   ) {
     throw new McpFnValidationError(
-      `${label} must be a non-empty, unique list of scope strings without wildcards`,
+      `${label} must be a non-empty, unique list of concrete <owner>:<action> scopes without wildcards`,
     );
   }
   return [...(scopes as string[])];
@@ -49,8 +61,7 @@ export function validateNeededScopes(label: string, scopes: unknown): string[] {
 /** Granted exactly, by `<owner>:*` for the scope's owner, or by `*`. */
 function isGranted(granted: ReadonlySet<string>, needed: string): boolean {
   if (granted.has(ALL_SCOPES) || granted.has(needed)) return true;
-  const separator = needed.indexOf(":");
-  return separator > 0 && granted.has(`${needed.slice(0, separator)}:*`);
+  return granted.has(`${splitScope(needed)!.owner}:*`);
 }
 
 function readGrant(value: unknown): Set<string> {
@@ -65,12 +76,18 @@ export type SessionScopesResolver<TContext> = (
 
 /**
  * Records which tools need which scopes and answers both the visibility hook
- * and the handler-side check from one per-request grant.
+ * and the handler-side check.
  */
 export class ScopeGate<TContext> {
   private readonly needed = new Map<string, readonly string[]>();
-  // One resolution per request: a tools/list asks for every tool at once.
-  private readonly grants = new WeakMap<object, Promise<Set<string>>>();
+  // A tools/list asks the hook about every tool at once, synchronously, with
+  // one context and extra: share one resolution among those questions while
+  // it is pending. A settled grant is never reused, so a later list (or a
+  // direct caller reusing `extra`) sees the scopes as they are then.
+  private readonly pending = new WeakMap<
+    object,
+    { context: TContext; grant: Promise<Set<string>> }
+  >();
 
   constructor(private readonly resolver: SessionScopesResolver<TContext> | undefined) {}
 
@@ -82,26 +99,26 @@ export class ScopeGate<TContext> {
     return this.needed.get(toolName);
   }
 
-  private grant(context: TContext, extra: McpFnRequestExtra): Promise<Set<string>> {
-    const resolve = () =>
-      Promise.resolve()
-        .then(() => this.resolver!(context, extra))
-        .then(readGrant);
-    if (!extra || typeof extra !== "object") return resolve();
-    let grant = this.grants.get(extra);
-    if (!grant) {
-      grant = resolve();
-      this.grants.set(extra, grant);
-    }
+  private resolve(context: TContext, extra: McpFnRequestExtra): Promise<Set<string>> {
+    return Promise.resolve()
+      .then(() => this.resolver!(context, extra))
+      .then(readGrant);
+  }
+
+  private sharedGrant(context: TContext, extra: McpFnRequestExtra): Promise<Set<string>> {
+    if (!extra || typeof extra !== "object") return this.resolve(context, extra);
+    const shared = this.pending.get(extra);
+    if (shared && shared.context === context) return shared.grant;
+    const grant = this.resolve(context, extra);
+    this.pending.set(extra, { context, grant });
+    const release = () => {
+      if (this.pending.get(extra)?.grant === grant) this.pending.delete(extra);
+    };
+    grant.then(release, release);
     return grant;
   }
 
-  private async missing(
-    scopes: readonly string[],
-    context: TContext,
-    extra: McpFnRequestExtra,
-  ): Promise<string[]> {
-    const granted = await this.grant(context, extra);
+  private static missing(scopes: readonly string[], granted: ReadonlySet<string>): string[] {
     return scopes.filter((scope) => !isGranted(granted, scope));
   }
 
@@ -114,16 +131,18 @@ export class ScopeGate<TContext> {
   }): Promise<boolean> {
     const scopes = this.needed.get(input.tool.name);
     if (!scopes || input.requestKind !== "tools/list") return true;
-    return (await this.missing(scopes, input.context, input.extra)).length === 0;
+    const granted = await this.sharedGrant(input.context, input.extra);
+    return ScopeGate.missing(scopes, granted).length === 0;
   }
 
+  /** Resolves the session's scopes afresh for every call. */
   private async assert(
     toolName: string,
     scopes: readonly string[],
     context: TContext,
     extra: McpFnRequestExtra,
   ): Promise<void> {
-    const missingScopes = await this.missing(scopes, context, extra);
+    const missingScopes = ScopeGate.missing(scopes, await this.resolve(context, extra));
     if (missingScopes.length) {
       throw new McpFnError(
         DATAFN_INSUFFICIENT_SCOPE,
@@ -134,8 +153,14 @@ export class ScopeGate<TContext> {
   }
 
   /**
-   * Returns the definition with its handler (and task creation) checking the
-   * scopes before any other work, and records the tool as gated.
+   * Returns the definition with its handler checking the scopes before any
+   * other work, and records the tool as gated.
+   *
+   * Gated tools cannot support task execution: McpFn validates a task's
+   * arguments before any tool callback runs and answers a failed task
+   * creation with a bare JSON-RPC error, so neither order nor the
+   * `insufficient_scope` details could be kept. A task-augmented call to a
+   * gated tool gets McpFn's usual "does not support task augmentation" error.
    */
   wrap(
     definition: McpFnToolDefinition<TContext>,
@@ -154,13 +179,25 @@ export class ScopeGate<TContext> {
     if (typeof handler !== "function") {
       throw new McpFnValidationError(`Tool ${String(name)} handler must be a function`);
     }
+    const execution = fields.execution as McpFnToolDefinition<TContext>["execution"];
+    if (
+      fields.taskHandler !== undefined ||
+      (execution !== null && typeof execution === "object" &&
+        (execution.taskSupport ?? "forbidden") !== "forbidden")
+    ) {
+      throw new McpFnValidationError(
+        `Tool ${String(name)} declares scopes, so it cannot support task execution`,
+      );
+    }
     const needed = Object.freeze([...scopes]);
     const invalidArguments = fields.handleInvalidArguments;
-    const gated = {
+    return {
       ...fields,
-      // Arguments are validated before the handler runs: check scopes first
-      // there too, so an out-of-scope call never learns more than
-      // insufficient_scope. Without a host handler, fail as McpFn does.
+      // McpFn validates arguments before the handler runs: check scopes first
+      // there too, so an out-of-scope call learns no more than
+      // insufficient_scope. Without a host handler, fail as McpFn does. (McpFn
+      // refuses arguments over its size limit before this, and client-profile
+      // argument enrichment runs before it too.)
       handleInvalidArguments: async (
         args: Record<string, unknown>,
         issues: McpFnSchemaIssue[],
@@ -182,20 +219,6 @@ export class ScopeGate<TContext> {
         return handler.call(definition, args, context, extra);
       },
     } as McpFnToolDefinition<TContext>;
-    const taskHandler = fields.taskHandler as McpFnToolDefinition<TContext>["taskHandler"];
-    if (taskHandler && typeof taskHandler === "object") {
-      const createTask = taskHandler.createTask;
-      if (typeof createTask !== "function") {
-        throw new McpFnValidationError(`Tool ${name} taskHandler.createTask must be a function`);
-      }
-      gated.taskHandler = {
-        createTask: async (args, context, extra) => {
-          await this.assert(name, needed, context, extra);
-          return createTask.call(taskHandler, args, context, extra);
-        },
-      };
-    }
-    return gated;
   }
 
   /** Records a tool as gated once the registry accepted it. */

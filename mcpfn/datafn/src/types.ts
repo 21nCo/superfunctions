@@ -87,7 +87,10 @@ export interface CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext> {
 }
 
 export interface DatafnMcpToolOptions {
-  /** Scopes the session needs to see and run the tool; needs `sessionScopes`. */
+  /**
+   * Scopes the session needs to see and run the tool; needs `sessionScopes`.
+   * A gated tool cannot support task execution.
+   */
   scopes?: string[];
 }
 

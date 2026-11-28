@@ -92,12 +92,14 @@ describe("scope-aware DataFn tools", () => {
     scopes: unknown,
     toolVisibility: ((input: McpFnToolVisibilityInput<Session>) => boolean | Promise<boolean>) | null =
       adapter.toolVisibility,
+    serverOptions: Partial<Parameters<typeof createMcpFnServer<Session>>[0]> = {},
   ) {
     const server = createMcpFnServer<Session>({
       info: { name: "datafn-scope-test", version: "1.0.0" },
       registry: adapter.registry,
       context: () => ({ scopes }),
       ...(toolVisibility ? { toolVisibility } : {}),
+      ...serverOptions,
     });
     const client = await McpFnTestClient.connect(server);
     closeables.push(client);
@@ -206,6 +208,103 @@ describe("scope-aware DataFn tools", () => {
       .toMatchObject(insufficientScope(["memotron:write"], ["memotron:write"]));
     expect((await (await connect(adapter, ["memotron:write"])).callTool("memotron_tag", {}))
       .structuredContent).toEqual({ hint: "pass a tag" });
+  });
+
+  it("refuses arguments over McpFn's size limit before the scope check, without running DataFn", async () => {
+    const { adapter, query } = await setup();
+    const client = await connect(adapter, []);
+
+    // The one documented exception to scope-first: McpFn rejects an oversized
+    // call before any tool callback, so it answers invalid arguments.
+    const result = await client.callTool("datafn_notes_list", {
+      padding: Array.from({ length: 100_001 }, () => 0),
+    });
+    expect(errorOf(result)).toMatchObject({
+      error: {
+        code: "MCPFN_INVALID_ARGUMENTS",
+        details: { issues: [expect.objectContaining({ keyword: "maxNodes" })] },
+      },
+    });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("resolves the scopes afresh for each call when a direct caller reuses extra", async () => {
+    const { adapter, query, sessionScopes } = await setup();
+    const extra = {} as never;
+    const session: Session = { scopes: ["memotron:read"] };
+
+    expect((await adapter.registry.callTool("datafn_notes_list", {}, session, extra)).isError)
+      .not.toBe(true);
+    const denied = {
+      code: "insufficient_scope",
+      details: { requiredScopes: ["memotron:read"], missingScopes: ["memotron:read"] },
+    };
+    session.scopes = [];
+    await expect(adapter.registry.callTool("datafn_notes_list", {}, session, extra))
+      .rejects.toMatchObject(denied);
+    await expect(adapter.registry.callTool("datafn_notes_list", {}, { scopes: [] }, extra))
+      .rejects.toMatchObject(denied);
+    expect(query).toHaveBeenCalledTimes(1);
+
+    const tool = { name: "datafn_notes_list" } as never;
+    const list = (scopes: string[]) =>
+      adapter.toolVisibility({ tool, context: { scopes }, extra, requestKind: "tools/list" });
+    expect(await list(["memotron:read"])).toBe(true);
+    expect(await list([])).toBe(false);
+    session.scopes = ["memotron:read"];
+    expect(await adapter.toolVisibility({ tool, context: session, extra, requestKind: "tools/list" }))
+      .toBe(true);
+    expect(sessionScopes).toHaveBeenCalledTimes(6);
+  });
+
+  it("refuses task support on scope-gated host tools, whatever shape the task handler has", async () => {
+    const { adapter } = await setup();
+    const createTask = vi.fn();
+    const tool = {
+      name: "memotron_export",
+      description: "Export notes.",
+      inputSchema: { type: "object" as const },
+      handler: async () => structuredResult({}),
+    };
+    class StaticTasks {
+      static createTask = createTask;
+    }
+    for (const definition of [
+      { ...tool, execution: { taskSupport: "optional" as const }, taskHandler: { createTask } },
+      { ...tool, execution: { taskSupport: "required" as const }, taskHandler: Object.assign(() => undefined, { createTask }) },
+      { ...tool, execution: { taskSupport: "optional" as const }, taskHandler: StaticTasks },
+      { ...tool, execution: { taskSupport: "required" as const } },
+    ]) {
+      expect(() => adapter.registerTool(definition as never, { scopes: ["memotron:read"] }))
+        .toThrow(/declares scopes, so it cannot support task execution/);
+    }
+    expect(adapter.registry.listTools().map((listed) => listed.name)).not.toContain("memotron_export");
+    expect(adapter.requiredScopes("memotron_export")).toBeUndefined();
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it("answers a task-augmented call to a gated tool with McpFn's task-support error", async () => {
+    const { adapter, query } = await setup();
+    // Ungated host tools keep task support, so the server offers tasks.
+    adapter.registerTool({
+      name: "memotron_export",
+      description: "An ungated task tool.",
+      inputSchema: { type: "object" },
+      execution: { taskSupport: "optional" },
+      handler: async () => structuredResult({}),
+      taskHandler: { createTask: vi.fn() as never },
+    });
+    // The refused call never reaches the store.
+    const taskStore = new Proxy({}, {
+      get: () => () => {
+        throw new Error("the task store must not be used");
+      },
+    });
+    const client = await connect(adapter, [], adapter.toolVisibility, { taskStore: taskStore as never });
+
+    await expect(client.createToolTask("datafn_notes_list", {}))
+      .rejects.toThrow(/does not support task augmentation/);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it("keeps the unknown-tool error for names the server does not register", async () => {
@@ -390,12 +489,18 @@ describe("scope-aware DataFn tools", () => {
       [["memotron:read", "memotron:read"]],
       [["memotron read"]],
       [[""]],
+      [["memotron"]],
+      [["memotron:"]],
+      [[":read"]],
+      [["memotron:read:all"]],
+      [["Memotron:read"]],
+      [[7]],
     ])("refuses the needed scope list %j", (read) => {
       expect(() => createDatafnMcpAdapter<Session, undefined>({
         ...base,
         sessionScopes: () => ["*"],
-        expose: { notes: { fields: ["id"], scopes: { read } } },
-      })).toThrow(/without wildcards/);
+        expose: { notes: { fields: ["id"], scopes: { read: read as string[] } } },
+      })).toThrow(/concrete <owner>:<action> scopes without wildcards/);
     });
   });
 });
