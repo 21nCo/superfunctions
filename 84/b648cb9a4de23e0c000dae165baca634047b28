@@ -1,0 +1,29 @@
+reviewfn/core/src/context/code-references.ts
+  s_1eb217f2cbe12c::t_eac86a40934964 310,315,321,375-379,382-385,396,407-408,411-414,471,488,561-565
+reviewfn/core/src/context/symbols.ts
+  s_1eb217f2cbe12c::t_4a3be811c5344a 144,275,742-745,749-761,763-798,800-801,804
+reviewfn/core/test/code-references.test.ts
+  s_1eb217f2cbe12c::t_6e6b265dabeee0 178-179,203,252-265,665-701
+reviewfn/docs/configuration.md
+  s_1eb217f2cbe12c::t_33aab7067a80bc 21
+reviewfn/docs/content/docs/reference/configuration.md
+  s_1eb217f2cbe12c::t_8103d8e42d253d 24
+reviewfn/docs/static/llms-full.txt
+  s_1eb217f2cbe12c::t_69b72682483bcd 127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "84b648cb9a4de23e0c000dae165baca634047b28",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
