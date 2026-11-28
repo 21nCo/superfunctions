@@ -1,0 +1,61 @@
+mcpfn/core/tests/server.test.ts
+  s_1051f670bb7c4f::t_27396951dda6d1 12,581-709
+langfn/typescript/package.json
+  s_2a5a5e4ca142b0::t_b956eabf9821ed 104
+mcpfn/cli/package.json
+  s_2a5a5e4ca142b0::t_29a9fb22a3e0ec 28,30
+mcpfn/client/package.json
+  s_2a5a5e4ca142b0::t_48812d7797bf95 59
+mcpfn/core/README.md
+  s_2a5a5e4ca142b0::t_af426c6a45eedb 504-510,522-530
+mcpfn/core/package.json
+  s_2a5a5e4ca142b0::t_447145a9621283 3
+mcpfn/core/src/server.ts
+  s_2a5a5e4ca142b0::t_118b0785147c2f 70-72,77-82,90-94,623,669,1119,1123-1125
+mcpfn/datafn/package.json
+  s_2a5a5e4ca142b0::t_403dea77e1e168 26,30
+mcpfn/docs/content/docs/reference/core.md
+  s_2a5a5e4ca142b0::t_f43cf4d331fd0c 84-90,102-110
+mcpfn/docs/content/docs/server.md
+  s_2a5a5e4ca142b0::t_d37f903ee2a5cf 26
+mcpfn/docs/static/llms-full.txt
+  s_2a5a5e4ca142b0::t_2c365a828a2346 826-832,844-852,1697
+mcpfn/inspector/package.json
+  s_2a5a5e4ca142b0::t_edde3b28688d78 25,31
+mcpfn/testing/package.json
+  s_2a5a5e4ca142b0::t_b8e74c89f545cf 3,35
+mcpfn/testing/tests/testing.test.ts
+  s_2a5a5e4ca142b0::t_5ae6a346b2decd 547-589
+memoryfn/typescript/package.json
+  s_2a5a5e4ca142b0::t_cb588a96bb3a99 45
+package-lock.json
+  s_2a5a5e4ca142b0::t_49ba822cf887c9 14934,17303,17305,17766,18226,18703,18706,19162,19168,19624,19629,24280,53098-53104,58403,64210
+packages/admin/package.json
+  s_2a5a5e4ca142b0::t_df2532ec66717c 31
+superconsole/package.json
+  s_2a5a5e4ca142b0::t_5932d3244a1950 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f12872f1396c842df32fd8a76f41d65f74594e6",
+  "prompts": {},
+  "sessions": {
+    "s_1051f670bb7c4f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21e02-55d7-73c2-b74d-039023114388",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_2a5a5e4ca142b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40c723bc-af2b-4a46-ae79-70440544e602",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

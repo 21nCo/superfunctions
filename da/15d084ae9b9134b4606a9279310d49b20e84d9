@@ -1,0 +1,25 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da15d084ae9b9134b4606a9279310d49b20e84d9",
+  "prompts": {},
+  "sessions": {
+    "s_2504f4a4138452": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21d62-e759-7360-a261-eb40be3de864",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_affb333f806fbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd338035-979f-46d6-8482-68b9220e4c4d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

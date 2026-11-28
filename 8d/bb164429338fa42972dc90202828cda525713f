@@ -1,0 +1,23 @@
+mdfn/server/turbo.json
+  s_52f1636747d8e3::t_f8c0d82e2b61c6 1-12
+mdfn/core/src/anchors.ts
+  s_52f1636747d8e3::t_0cb9d52eb4e78c 32-51,53-59,61-65,70,73-75,95-100
+mdfn/core/src/core.test.ts
+  s_52f1636747d8e3::t_44ab6d7804edb7 560-615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8dbb164429338fa42972dc90202828cda525713f",
+  "prompts": {},
+  "sessions": {
+    "s_52f1636747d8e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "96a2e362-aaa7-4a13-9c31-651ad52710a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
