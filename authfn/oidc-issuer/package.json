@@ -1,0 +1,63 @@
+{
+  "name": "@authfn/oidc-issuer",
+  "version": "0.1.0",
+  "description": "Framework-neutral OpenID Connect issuer for AuthFn: discovery document, JWKS and ES256 ID-token minting",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
+    "test:node": "vitest run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts",
+    "test:watch": "vitest --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "authfn",
+    "oidc",
+    "openid-connect",
+    "id-token",
+    "jwks",
+    "es256",
+    "cloudflare-workers"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "dependencies": {
+    "@secfn/keys": "0.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.4",
+    "@types/node": "^22.0.0",
+    "jose": "^5.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/oidc-issuer"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/superfunctions/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

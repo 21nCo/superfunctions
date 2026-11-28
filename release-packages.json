@@ -17,6 +17,7 @@
   { "slug": "authfn-multi-region", "path": "authfn/multi-region", "name": "@authfn/multi-region" },
   { "slug": "authfn-native-handoff", "path": "authfn/native-handoff", "name": "@authfn/native-handoff" },
   { "slug": "authfn-oauth-provider", "path": "authfn/oauth-provider", "name": "@authfn/oauth-provider" },
+  { "slug": "authfn-oidc-issuer", "path": "authfn/oidc-issuer", "name": "@authfn/oidc-issuer" },
   { "slug": "authfn-password", "path": "authfn/password", "name": "@authfn/password" },
   { "slug": "authfn-schema-plugin", "path": "authfn/schema-plugin", "name": "@authfn/schema-plugin" },
   { "slug": "authfn-social-oauth", "path": "authfn/social-oauth", "name": "@authfn/social-oauth" },
