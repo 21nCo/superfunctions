@@ -1,0 +1,29 @@
+scripts/bare-cli-shim.mjs
+  s_b7546bb15c0313::t_114a87521533a3 105-107,111-115
+scripts/assert-bare-release.mjs
+  s_b7546bb15c0313::t_9bc0573cc49c73 239-244,247
+  s_b7546bb15c0313::t_c2cbd88ca81f82 184,187-208,211-212,214-219,222,300,358-360
+  s_b7546bb15c0313::t_c4c43c3078ebb5 79,87,154-157,162-163,167-175,281,297-299
+  s_b7546bb15c0313::t_2283b89ecfc005 176-177
+scripts/test-mcpfn-isolated-release.mjs
+  s_b7546bb15c0313::t_114a87521533a3 28
+scripts/assert-bare-release.test.mjs
+  s_b7546bb15c0313::t_b1668c9fc7ab99 7,120,152-159,201,229-230,278-283,287,398-405,419,431
+  s_b7546bb15c0313::t_d8684291ac3440 284-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ad8314a1e7d40e1a09677eef655e9027d3f617d",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
