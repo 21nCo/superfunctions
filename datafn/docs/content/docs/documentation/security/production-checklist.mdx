@@ -9,6 +9,8 @@ Don't ship DataFn to production without ticking every item below. They're indepe
 
 ## Server configuration
 
+The server and schema items below apply to `@datafn/server` (TypeScript). The Python server SDK does not enforce most of them; see [Python server SDK](#python-server-sdk).
+
 - [ ] `authorize` requires a verified authenticated session for protected actions. Selector extraction does not authenticate callers.
 
 - [ ] Resource gating in `authorize` uses `extractStructuralResourceSelectors` rather than reading `payload.resource` or recursively searching JSON.
@@ -90,3 +92,13 @@ Don't ship DataFn to production without ticking every item below. They're indepe
 - [Structural resource selectors](/docs/documentation/security/resource-selectors)
 - [Server Setup](/docs/documentation/server/setup)
 - [Production / Deploy](/docs/documentation/deploy)
+
+## Python server SDK
+
+The Python server SDK (`datafn` on PyPI) is not at parity with `@datafn/server` and should not face untrusted clients yet:
+
+- An ordinary resource without `permissions` can be read and written; there is no deny-by-default. Private shareable resources are the exception: queries and mutations on them need explicit `permissions`.
+- Queries and clones load whole tables and filter in memory.
+- There is no rate limit, payload limit, REST or search.
+
+Use `@datafn/server` for anything exposed to end users, or put the Python server behind your own authorization and request limits.

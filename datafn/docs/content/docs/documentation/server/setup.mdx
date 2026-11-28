@@ -149,7 +149,9 @@ DataFn supports both TypeScript (Node.js) and Python servers. Use the language t
     | `schema` | `dict` | Required. DataFn schema definition with `resources` and optional `relations`. |
     | `db` | `Adapter` | Database adapter implementing the adapter protocol. |
     | `authorize` | `callable` | Async authorization callback `(ctx, action, payload) -> bool`. |
-    | `limits` | `dict` | Optional limits: `maxLimit`, `maxTransactSteps`, `maxPayloadBytes`. |
+    | `limits` | `dict` | Optional limits: `maxLimit`, `maxTransactSteps`. |
+
+    The Python SDK does not enforce a request body size or a rate limit, and an ordinary resource without `permissions` can be read and written (no deny-by-default; private shareable resources are the exception and need explicit `permissions` for queries and mutations). Enforce body size and rate limits in your host framework or proxy, and see the [production checklist](/docs/documentation/security/production-checklist#python-server-sdk) before exposing it to untrusted clients.
   </Tab>
 </Tabs>
 

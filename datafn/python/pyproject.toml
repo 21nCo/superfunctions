@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "datafn"
 version = "0.1.0"
 description = "Python Server SDK for DataFn"
-readme = { text = "DataFn Python server SDK for declaring resources, processing queries and mutations, and integrating data providers.", content-type = "text/markdown" }
+readme = { text = "DataFn Python server SDK for declaring resources, processing queries and mutations, and integrating data providers.\n\n**Not for untrusted clients yet.** This SDK is not at parity with `@datafn/server`: an ordinary resource without `permissions` can be read and written (there is no deny-by-default; private shareable resources are the exception: queries and mutations on them need explicit `permissions`), queries and clones load whole tables and filter in memory, and there is no rate limit, payload limit, REST or search. Put it behind your own authorization and request limits, or use `@datafn/server` for anything exposed to end users.", content-type = "text/markdown" }
 requires-python = ">=3.8"
 dependencies = []
 
