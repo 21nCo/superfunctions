@@ -1,0 +1,21 @@
+mcpfn/auth/src/authfn/token-authority.ts
+  s_922dc586c7ee23::t_43c6dea6e1727a 115-125,162,205,226-234,255
+mcpfn/auth/tests/authfn-token-authority.test.ts
+  s_922dc586c7ee23::t_cb3b14a06a0117 422-433,449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5260ca1c268f578da01fd33903d948b1fee8573",
+  "prompts": {},
+  "sessions": {
+    "s_922dc586c7ee23": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2202c-d9aa-7392-b969-9d1231421aaf",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

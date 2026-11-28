@@ -1,0 +1,27 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_9e2b3bac90acaa::t_a4d57b0c84356b 14
+datafn/docs/public/llms-full.txt
+  s_9e2b3bac90acaa::t_901d9626cd7723 19150
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_9e2b3bac90acaa::t_a33062fc8bb41c 252-283
+datafn/server/__tests__/revisions.test.ts
+  s_9e2b3bac90acaa::t_e77a042f479b5f 1851-2010
+datafn/server/src/execution/revisions.ts
+  s_9e2b3bac90acaa::t_20047564dce480 188-201,209-210,218-221,228,235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf9d804681eacca0ca6d8472d655ba21b7c8e9a7",
+  "prompts": {},
+  "sessions": {
+    "s_9e2b3bac90acaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5286a5b0-573a-4dff-b8dd-91b1c2ffd33d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+mcpfn/core/src/registry.ts
+  s_1eb217f2cbe12c::t_ae76a76c4014c5 305-307,313-326,328-337,1048-1049,1169,1178-1185,1257
+mcpfn/core/tests/registry-clone-empty.test.ts
+  s_1eb217f2cbe12c::t_5684b38f6e1733 490-492
+mcpfn/core/tests/registry-custom-compiler.test.ts
+  s_1eb217f2cbe12c::t_e9089517e1ef8d 273-314
+plugfn/core/src/core/connection-manager.ts
+  s_1eb217f2cbe12c::t_0ea9d7b53614ec 362-364,369,373,379-380,395
+plugfn/core/tests/connection-manager.test.ts
+  s_1eb217f2cbe12c::t_90928bf63d1f88 1551-1569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70e41d489cf0032f7b2f011b90e7cde499aeb48e",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

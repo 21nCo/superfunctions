@@ -1,0 +1,49 @@
+datafn/client/__tests__/clone-completeness.test.ts
+  s_66ece2dd4e848c::t_72404d65089a75 763-764
+datafn/client/__tests__/revisions.test.ts
+  s_83fa589146e8c6::t_dd9f938c38f239 154-168,663,667,948-1000,1009-1010,1012-1017,1020-1024,1027-1030,1032-1040,1042,1044,1048
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_83fa589146e8c6::t_1f19923698e148 48,50,52,81,84
+datafn/docs/public/llms-full.txt
+  s_83fa589146e8c6::t_f5bcf0de37187b 19179,19181,19183,19212,19215
+datafn/server/__tests__/revisions.test.ts
+  s_83fa589146e8c6::t_7892f54562e8bf 255-343,367-369,631,643-661,663-667,670,672,676,861-1003
+datafn/server/src/routes/query.ts
+  s_83fa589146e8c6::t_4682383c0e5332 130-132,150-154,157-159,161-162,930-941
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_83fa589146e8c6::t_f4d3ce64437e37 412-416,531,726-729
+datafn/client/src/adapters/memoryStorage.ts
+  s_83fa589146e8c6::t_a5addc1027cf15 76-86,99,361-362
+datafn/client/src/query.ts
+  s_83fa589146e8c6::t_c97841529598a5 58-75,105
+datafn/server/src/execution/revisions.ts
+  s_83fa589146e8c6::t_4ac5b3fae772d1 272-281,295,297,300-305,308,312,314,332-333
+datafn/server/src/execution/sync/pull.ts
+  s_83fa589146e8c6::t_70f4720a05cb66 917-969,1041-1042,1045-1052,1130-1136,1154-1159,1164-1179
+datafn/server/src/execution/sync/push.ts
+  s_83fa589146e8c6::t_07724668b016f0 23,502-511,514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6da95a830b99757e787d9fc33f3b09dc1dc69fef",
+  "prompts": {},
+  "sessions": {
+    "s_66ece2dd4e848c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212c4-fe52-7392-95db-27fb5a992964",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+clifn/core/CHANGELOG.md
+  s_495c50c7902218::t_1219bb664254e7 5-6
+clifn/core/README.md
+  s_495c50c7902218::t_5687ff5a923583 296-297
+clifn/core/src/completion.ts
+  s_495c50c7902218::t_86d8ef459b23f5 22-28,149,154,176,209,247-254,256-259,264-265,277-279,282-286,316-325,345-346,348,381-382,385-395,415-416,434,449-450,487,489,492-494,502,603-627,631-633,641-642,647-648,650,652,655,661,664-665,669-673,678-691,693-694,697-698,701,723-733,751-757,763,770,779-784,788,800,805,838-839,842,845,851-853,857,877-878,922-933,940,942,945,954,958,960-961,964,966,969-971,991,995-998,1003,1005,1017-1020,1023-1039
+clifn/core/tests/completion.test.ts
+  s_495c50c7902218::t_56d39d33874d1f 46-56,128,134,143-156,159,162-163,167,171-179,187,191-192,209-211,220,222,226,228,230-255,257-293,352,355-357,365,368,377,414-415,512-542,549-552
+clifn/core/tests/fixtures/completion/commander15.ts
+  s_495c50c7902218::t_577207bc05348a 117-118
+clifn/core/tests/fixtures/completion/demo.bash.golden
+  s_495c50c7902218::t_c8f483f2bf7cc0 3-4,9,16,19,31,34-35,39-43,48-61,63-64,67-68,71,93-103,116-122,128,135,144,150
+clifn/core/tests/fixtures/completion/demo.fish.golden
+  s_495c50c7902218::t_92fd0f8cc293fa 3,7-9,11-14,24,28,30-31,34,36,39-41,59,63-66,75-81
+clifn/core/tests/fixtures/completion/demo.zsh.golden
+  s_495c50c7902218::t_12cd7007d22f0d 7,28,31,39,42,65,68,76,81-82,94,110
+clifn/core/tests/fixtures/completion/program.ts
+  s_495c50c7902218::t_4835b055cc385b 4-6,17-21
+clifn/docs/content/docs/reference/core-readme.md
+  s_495c50c7902218::t_c490ae7627cabe 299-300
+clifn/docs/static/llms-full.txt
+  s_495c50c7902218::t_7362689a1f5054 630-631
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b2cdfc2d6011cba634cb7870eb034d9ca5570c4",
+  "prompts": {},
+  "sessions": {
+    "s_495c50c7902218": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21d09-eada-7691-8225-e1e3e7c0154e",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_16be15e550007d::t_25529d095ba17c 14,58
+datafn/docs/public/llms-full.txt
+  s_16be15e550007d::t_6517b64b0c7bfd 19150,19194
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_16be15e550007d::t_36aca0a416d97a 814-815
+datafn/server/__tests__/mutation-optimization.test.ts
+  s_16be15e550007d::t_71f125b870fd79 158-160,337-339
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_16be15e550007d::t_cfef9b425e749e 13,19,49-61,87-92,94-95,105-106,113-114,244,259,280,288
+datafn/server/__tests__/revisions-postgres.test.ts
+  s_16be15e550007d::t_40a6d5d23511ca 13,96-98
+datafn/server/__tests__/revisions.test.ts
+  s_16be15e550007d::t_7db6c4502121e8 19,1759,1762-1763,1838,1869-1874,2003,2009-2018,2023,2146-2151,2157-2158,2160-2161,3510-3511,3525-3526,3531-3535,3538,3542-3543,3549,3557-3558,3560,3562,3659-3863
+datafn/server/src/execution/internal-tables.ts
+  s_16be15e550007d::t_0accee20efca08 118-131,142,145-146
+datafn/server/src/execution/mutation/__tests__/relation-delete-policies.test.ts
+  s_16be15e550007d::t_45b370232d29da 238-245
+datafn/server/src/execution/mutation/execute.ts
+  s_16be15e550007d::t_b4a60beb18511c 48,1409-1411,1555-1556,1628,1631,1635
+datafn/server/src/execution/revisions.ts
+  s_16be15e550007d::t_e69d5f32c7ac94 15,18,21,267,272,280,287-288,292-295,297-313,315-421,423-439,442-446,456,459,728-733,737,741,749-760,774,777-783,788,790-814,816-823
+datafn/server/src/execution/sync/change-tracking.ts
+  s_16be15e550007d::t_5334887c5167a6 18-19,44-45,69,246,249,418,431
+datafn/server/src/execution/sync/namespace-lock.ts
+  s_16be15e550007d::t_606d7b8cee4203 1-2,32-33
+datafn/server/src/execution/sync/push.ts
+  s_16be15e550007d::t_9d8a0666dac124 23,1382-1384,1473,1489,1530
+datafn/server/src/routes/query.ts
+  s_16be15e550007d::t_06053bc813c895 1083-1087,1132-1171
+datafn/server/src/server.ts
+  s_16be15e550007d::t_5ea552a58d02a9 472,488,502-510,575-580,582-585,589,591,594-600,602,605,609-620,627-630,644-647,677,1442-1444,1446,1450-1451,1454,1461,1467,1470,1472-1478
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac077f4e935424ac9add71f4c56c0361fb2e554c",
+  "prompts": {},
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

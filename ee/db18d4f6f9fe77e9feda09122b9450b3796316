@@ -1,0 +1,29 @@
+mcpfn/core/src/openapi/from-openapi.ts
+  s_77d925015862fe::t_8e428616852f03 1582-1583,1592,1601-1618,1622
+mcpfn/core/tests/openapi-http-executor.test.ts
+  s_6919616020cfb4::t_ae22a68a4800c3 1931-1953
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eedb18d4f6f9fe77e9feda09122b9450b3796316",
+  "prompts": {},
+  "sessions": {
+    "s_6919616020cfb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f97debb-6d74-4057-a134-145a8e4f0851",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_77d925015862fe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21926-9c0d-72f1-b474-b9caca68cf7b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

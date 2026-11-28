@@ -1,0 +1,45 @@
+mcpfn/auth/README.md
+  s_922dc586c7ee23::t_dcb03feba99a84 25-80
+mcpfn/auth/src/authfn/index.ts
+  s_922dc586c7ee23::t_b1f6446029548a 1-12
+mcpfn/auth/src/authfn/introspection.ts
+  s_922dc586c7ee23::t_800855115c013f 1-135
+mcpfn/auth/src/authfn/token-authority.ts
+  s_922dc586c7ee23::t_2e60780678abb9 1-244
+mcpfn/auth/src/index.ts
+  s_922dc586c7ee23::t_36b361d30147d9 1
+mcpfn/auth/tests/authfn-token-authority.test.ts
+  s_922dc586c7ee23::t_5748b6e13c0d12 1-451
+package-lock.json
+  s_922dc586c7ee23::t_757d4045aaa212 16744,16752,16755,16757,17304,19636
+mcpfn/auth/package.json
+  s_1eb217f2cbe12c::t_ff9fabe6670c33 3,37,40,42
+mcpfn/cli/package.json
+  s_1eb217f2cbe12c::t_7ee48f54b551f0 26
+mcpfn/testing/package.json
+  s_1eb217f2cbe12c::t_86bb36eace3575 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad0e349ffdad9f0590146233acb3db2943f4c13a",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_922dc586c7ee23": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2202c-d9aa-7392-b969-9d1231421aaf",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

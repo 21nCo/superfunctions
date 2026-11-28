@@ -1,0 +1,29 @@
+plugfn/providers/src/github-app/minter.ts
+  s_0785937b2c4f0a::t_0b8d07abdd2188 341,343,345-346,348,350,552-554,577-579,720,767,779-780,786,789-791,813-816,848,898-901,903-907,909-910,921
+plugfn/providers/tests/github-app/minter.test.ts
+  s_d3b3672c483a2b::t_2e5d0fa619b81f 186-196,865,867,869-871,874,889-892,894-927
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65ee8c97acc1d32bf430181f1499dbc479a1ef14",
+  "prompts": {},
+  "sessions": {
+    "s_0785937b2c4f0a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22286-8cf4-7651-83b3-579e826863d9",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d3b3672c483a2b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22280-818f-7ad3-8bd7-dfe7c7b876b8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

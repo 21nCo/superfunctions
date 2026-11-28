@@ -1,0 +1,39 @@
+plugfn/providers/scripts/test.mjs
+  s_f1b0c1b84188e9::t_1a2000327b54aa 4-9,11-13,16,18-21,24
+plugfn/providers/tests/github-app/helpers.ts
+  s_f1b0c1b84188e9::t_20bc81e96284e7 125-132,176-185,191,195,205-210,218-251
+plugfn/core/README.md
+  s_39a868e1585a27::t_88e7853878c2b9 183-184,195-196
+plugfn/core/src/credentials/errors.ts
+  s_39a868e1585a27::t_25e22bd0b92cd1 29-34
+plugfn/core/src/credentials/types.ts
+  s_39a868e1585a27::t_11bf5edc50c9c7 39-48,74-80
+plugfn/providers/src/github-app/minter.ts
+  s_39a868e1585a27::t_80a9846ab9e972 34-40,46-52,81,170,180,204-212,214-216,218-267,273-286,394,457-467,472-482,490-493,537-538,545,558,583-586,588-594,613-658,661,665-681,687-698,700-705,707-721,724-729,731,740-741,745,749-752,774,785-787,790,792-793,797-799,803
+plugfn/providers/tests/github-app/minter.test.ts
+  s_39a868e1585a27::t_8eb783aaa38155 3,13,153-154,157-158,165-167,179-190,673,680,717-903
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "458b5ab3e83a34d78e2733b2e867d202272c45dd",
+  "prompts": {},
+  "sessions": {
+    "s_39a868e1585a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01fb3e9-ff65-4e23-90f8-246f613a7879",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f1b0c1b84188e9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a221ab-bb2c-7e42-9047-ba3648897488",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

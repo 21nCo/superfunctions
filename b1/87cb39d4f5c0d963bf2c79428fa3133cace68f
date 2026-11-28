@@ -1,0 +1,23 @@
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_14dcb444ab2683::t_40257bd680dccb 21,273-301
+plugfn/core/src/scopes/grammar.ts
+  s_14dcb444ab2683::t_6e627f581e7d07 4,200-203,1065-1070,1074
+plugfn/core/src/scopes/types.ts
+  s_14dcb444ab2683::t_cbb0a8e5208e6c 296-298,300-314,338-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b187cb39d4f5c0d963bf2c79428fa3133cace68f",
+  "prompts": {},
+  "sessions": {
+    "s_14dcb444ab2683": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d1f2e6ca-6982-4f36-a174-bc44e8988b36",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+plugfn/core/src/types/trigger.ts
+  s_cff285c8033656::t_716f87b679e35d 45-46
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_92d3dd135570ca 30-37,451-471,501-535,943,992-994,1010-1018
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_716f87b679e35d 1035,1037-1039
+plugfn/docs/content/docs/getting-started.md
+  s_cff285c8033656::t_716f87b679e35d 75-76
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_716f87b679e35d 7,161-164,457-458,468-474,564-573,609
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "869ac328c87de19441c3f36613e4a165fc147514",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

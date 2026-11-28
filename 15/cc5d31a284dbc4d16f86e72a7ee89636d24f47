@@ -1,0 +1,59 @@
+plugfn/core/README.md
+  s_d3b3672c483a2b::t_294860cd389198 196-197
+plugfn/providers/src/github-app/index.ts
+  s_7413d96850b2e3::t_f0577a8d678268 5
+plugfn/providers/src/github-app/minter.ts
+  s_0785937b2c4f0a::t_1a7554c555718f 21,25-26,28,30-37,58-75,99-106,160-169,174,241-253,258-264,266-269,271,275,278,289-295,300,303-306,312,315,319-321,341-343,345,389-391,449,459-470,472-474,477-478,480-485,487,491,493,495,497,517-519,531-534,544-551,574,576,675,704-705,714,718-725,729-733,761,772-773,777,779,782,798-801,804-809,811,830-834,838,843-846,870-872,889-891,894,905,913,917-926
+plugfn/providers/src/github-app/grammar.ts
+  s_39a868e1585a27::t_896159b27e2b88 60-61,76,90,122-127,137-139,141,148
+plugfn/providers/src/github-app/jwt.ts
+  s_39a868e1585a27::t_566d36915edb47 19-22
+plugfn/providers/src/github-app/key.ts
+  s_39a868e1585a27::t_aba8c4398d4013 39
+plugfn/providers/tests/github-app/helpers.ts
+  s_39a868e1585a27::t_f241cbfcfd1809 16,68,71,113-136,141-142,146,148-149,211-212,227-228
+plugfn/providers/tests/github-app/minter.test.ts
+  s_39a868e1585a27::t_efbf4c8e5d4fa8 36-37,155-185,480-482,720-724,741-742,744,788-789,854-880,971-993,1113-1122
+plugfn/providers/tests/workerd/github-app.test.ts
+  s_39a868e1585a27::t_f46f002de97a60 1-2,6,74-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15cc5d31a284dbc4d16f86e72a7ee89636d24f47",
+  "prompts": {},
+  "sessions": {
+    "s_0785937b2c4f0a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22286-8cf4-7651-83b3-579e826863d9",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_39a868e1585a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01fb3e9-ff65-4e23-90f8-246f613a7879",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7413d96850b2e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22286-8cde-75a2-9e6b-2944e94cb8cc",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d3b3672c483a2b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a22280-818f-7ad3-8bd7-dfe7c7b876b8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

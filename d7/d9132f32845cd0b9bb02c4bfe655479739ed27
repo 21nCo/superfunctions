@@ -1,0 +1,95 @@
+plugfn/docs/static/llms-full.txt
+  s_cff285c8033656::t_f155de175ad2be 113,117,128,130,136-144,159-160,167-170,575,578-586,593,602
+plugfn/core/src/types/runtime.ts
+  s_cff285c8033656::t_f155de175ad2be 68-69,75-76,83-84,95-96
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_c783cceadae6e6 54,500-501,514,867
+  s_cff285c8033656::t_f155de175ad2be 36,48-53,113-117,202,359,430-431,496-499,502-513,515-521,868-878,1017
+  s_cff285c8033656::t_24ce170e8ac21b 1018
+plugfn/docs/content/docs/workflows-and-sync.md
+  s_cff285c8033656::t_f155de175ad2be 56,59-67,74,83
+plugfn/providers/src/github/index.ts
+  s_cff285c8033656::t_f155de175ad2be 839,845-846,903-904,945-946,996-997,1037-1038,1080-1081,1125-1126,1168-1227
+  s_cff285c8033656::t_ae618f37919925 1228
+plugfn/README.md
+  s_cff285c8033656::t_f155de175ad2be 64-65,67-69
+  s_cff285c8033656::t_bc47d6bb517629 66
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_5f6f63bf52ff2b 502-503,505,509-514,539-547,550-553,559,561-563
+  s_cff285c8033656::t_f155de175ad2be 15,487,496-501,504,506-508,515-525,579,606-611,620,632,663
+  s_cff285c8033656::t_c75ba1c57b5594 548-549,554-558
+plugfn/core/tests/workflow-lifecycle.test.ts
+  s_cff285c8033656::t_f155de175ad2be 1,4,7,20-26,51,54,57,65,69,73-90,92-93,98,128,161-168,210-216,222-230,243,250
+plugfn/core/src/types/config.ts
+  s_cff285c8033656::t_f155de175ad2be 10,80-89,94-95
+plugfn/core/src/schema.ts
+  s_cff285c8033656::t_f155de175ad2be 8-9,14,182-183,190,201-205,216-217
+plugfn/core/src/storage/index.ts
+  s_cff285c8033656::t_f155de175ad2be 5-13
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_cff285c8033656::t_f73d38d03f07ed 433,441
+  s_cff285c8033656::t_f155de175ad2be 7,12,19-38,251,256,394,398,404,410-432,434-440,442-446
+  s_cff285c8033656::t_c32675cdd9bdb1 447
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_f155de175ad2be 1-13,18-82,89-91,93,100,116,123,136-146,148-152,154-165,178-184,194-217,225,227,236-247,249,263,284,287-308,318,325-406,411,422,434-453,455-456,463-465,471,494-503,508-522,524-528,537-542,555-556,604-674
+  s_cff285c8033656::t_21ad14ca17f91f 14
+  s_cff285c8033656::t_ea2311e20a1695 17,675
+plugfn/core/tests/schema.test.ts
+  s_cff285c8033656::t_f155de175ad2be 12-18,24-26,28
+  s_cff285c8033656::t_b72f740add917d 27
+plugfn/core/README.md
+  s_cff285c8033656::t_f155de175ad2be 125-167,170-182,184-191
+  s_cff285c8033656::t_085f02ae9bd423 168-169,183
+plugfn/core/src/types/trigger.ts
+  s_cff285c8033656::t_f155de175ad2be 19-28,38-43,45-46,110-113
+  s_cff285c8033656::t_4658fa14575918 114-115
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_f73d38d03f07ed 50,60,67,74,84,425-427,429-431,434-435,438-440,442-446
+  s_cff285c8033656::t_f155de175ad2be 1-49,51-59,61-66,68-73,75-83,85-424,428,432-433,436-437,441,447-637,643-1190
+  s_cff285c8033656::t_435ab25196ad40 638-642
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_f155de175ad2be 1,13,19-22,39-40,45,54,155-159,163,165-168,177-181,193-196,198,201-202,239,241-242,244-254,262-275,289-295,300,307,323-324,326-330,626-629,635-637
+  s_cff285c8033656::t_21ad14ca17f91f 208,299,308,320,322,325
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_f155de175ad2be 13-19,1167,1175,1258-1269
+  s_cff285c8033656::t_c783cceadae6e6 12,866-867,904-918,936-942,1056,1077,1087,1108-1166,1168-1172,1174,1176,1178-1179,1196-1197
+  s_cff285c8033656::t_1ee861388ce8b0 1270-1271
+plugfn/docs/content/docs/getting-started.md
+  s_cff285c8033656::t_f155de175ad2be 19,23,34,36,42-50,65-66,73-75
+  s_cff285c8033656::t_260c6055a243bd 76
+plugfn/core/src/types/workflow.ts
+  s_cff285c8033656::t_f155de175ad2be 53-54,122,126
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_cff285c8033656::t_f155de175ad2be 230,232-233,237-238,255,259
+plugfn/core/package.json
+  s_cff285c8033656::t_f155de175ad2be 79
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_cff285c8033656::t_775a824e7143e4 177,179
+  s_cff285c8033656::t_f155de175ad2be 1,3,14-72,74-85,87-132,136,143-145,149,156-162,164-176,178,180-183,185,188,199,203-213
+  s_cff285c8033656::t_96811281686cbe 214
+plugfn/core/src/router/index.ts
+  s_cff285c8033656::t_f155de175ad2be 1-2
+plugfn/CHANGELOG.md
+  s_cff285c8033656::t_f155de175ad2be 5
+  s_cff285c8033656::t_4cd05e410c07ba 6-7
+plugfn/core/src/webhooks/index.ts
+  s_cff285c8033656::t_f155de175ad2be 1
+plugfn/core/src/core/workflow-engine.ts
+  s_cff285c8033656::t_f155de175ad2be 17-23,34,37,40-50,78,95,117-119,140,152,159-160,163,168-175,181,184-185,189,192-196,215-228,233-252,258-259,265-266,284,288,293-300,305,320-332,339-340,363,367-368,390-392,399,401-403,415-421,452-453,455,475,480,507-508,521,530-531,540-543,646,649-659,662,664,666-668,674-677,685,688,692,707,712,807-831,893-895
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7d9132f32845cd0b9bb02c4bfe655479739ed27",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

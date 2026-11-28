@@ -1,0 +1,31 @@
+scripts/assert-bare-release.test.mjs
+  s_b7546bb15c0313::t_036fcb104f9072 2-3,7,104,126-133,153-154,159,171,177,192-212,219,280-284,289-290,293-297,300-301,324-349
+  s_b7546bb15c0313::t_9032fbd41734c8 350
+scripts/assert-bare-release.mjs
+  s_b7546bb15c0313::t_6e028ee4f8af46 19,73,86-96,125,130-133,138-139,147,151-161,169,185-216
+scripts/bare-cli-shim.mjs
+  s_b7546bb15c0313::t_4699c5b46cd00a 15,17,32-33,45-53,69-71,79-83,89,93,103-109
+  s_b7546bb15c0313::t_fe0af9068b5784 90-91,94-95,110-122
+scripts/promote.test.mjs
+  s_b7546bb15c0313::t_1b53045473d231 1136-1146
+scripts/pack-release-package.mjs
+  s_b7546bb15c0313::t_373194d3492067 5,42-43
+scripts/promote.mjs
+  s_b7546bb15c0313::t_1b53045473d231 297,301,311-320,324-330,474-477
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2cba920d47d572039c5de061e24c12506fa30ad",
+  "prompts": {},
+  "sessions": {
+    "s_b7546bb15c0313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1896e3e0-cbe7-4fb2-b40a-dbb9a6bdc4e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

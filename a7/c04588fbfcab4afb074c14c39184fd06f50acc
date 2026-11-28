@@ -1,0 +1,23 @@
+mcpfn/core/README.md
+  s_c2a5d567caf9e5::t_4ee05cf7bcde33 522-525,528-533,536-539
+mcpfn/docs/content/docs/reference/core.md
+  s_c2a5d567caf9e5::t_6fe5ce25ce37e0 102-105,108-113,116-119
+mcpfn/docs/static/llms-full.txt
+  s_c2a5d567caf9e5::t_af30487c7a501b 844-847,850-855,858-861
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7c04588fbfcab4afb074c14c39184fd06f50acc",
+  "prompts": {},
+  "sessions": {
+    "s_c2a5d567caf9e5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21e3d-5894-73c1-b159-8e4dadc7dbaa",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

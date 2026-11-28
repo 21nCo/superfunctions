@@ -1,0 +1,49 @@
+plugfn/core/src/scopes/grammar.ts
+  s_c2a5d567caf9e5::t_4ab7c44bf2b9d0 4-24,56-222,230-234,238,290-326,359-367,399-406,408,436,444,839,842-843,1000-1018,1022-1030,1032-1038,1054-1056,1078-1079,1083-1085,1088-1094,1098-1118,1122,1126-1159,1163,1168-1170,1195-1214
+plugfn/core/src/scopes/index.ts
+  s_c2a5d567caf9e5::t_24ceba4ff436ab 2
+plugfn/core/src/scopes/types.ts
+  s_c2a5d567caf9e5::t_b685eaed2a3d41 6-8,11-15,205-214,233-322,353-357,359,371,377-394,398,400,408-413
+plugfn/core/tests/scopes/scope-callbacks.test.ts
+  s_c2a5d567caf9e5::t_c9b06ee80da8d3 1-1386
+plugfn/core/tests/scopes/scope-grammar.test.ts
+  s_192d8000f9c548::t_19c89b4e921f61 86,88-89
+plugfn/core/tests/scopes/scope-performance.test.ts
+  s_c2a5d567caf9e5::t_0c47ff96f68ef7 2,9-10,77,89-90,109-127
+plugfn/core/tests/scopes/scope-types.test.ts
+  s_192d8000f9c548::t_71c5ef8e25a55a 17,20,23-25,200-260
+plugfn/core/README.md
+  s_68b9a3d54a3a4c::t_6c9c9bf57475bb 131-154,162-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ddb00e6acf4f8935c52030c40c0558a01bbea57",
+  "prompts": {},
+  "sessions": {
+    "s_192d8000f9c548": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21c26-9871-7603-9d38-fd52d40daf11",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_68b9a3d54a3a4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_68b9a3d54a3a4c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c2a5d567caf9e5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21e3d-5894-73c1-b159-8e4dadc7dbaa",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
