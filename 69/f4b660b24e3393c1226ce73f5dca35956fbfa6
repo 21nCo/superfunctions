@@ -1,0 +1,35 @@
+apifn/collections/README.md
+  s_aedb916f2553fc::t_896ec6ca642921 138,140-143,145
+apifn/collections/__tests__/redaction.test.ts
+  s_aedb916f2553fc::t_59896e56ad0607 8,198,344-606
+apifn/collections/src/runner/redact.ts
+  s_aedb916f2553fc::t_55963a425644c4 7-8,12-19,33,38-41,46,51,54-55,60-64,67-82,84-91,94-133,139-141,146-148,151,153-161,170,173,178-228,231-232,234-238,240-247,250-252,256-259,261,263-275,277,282-302,306,308-309,312-332,334-395,398,401-407,411-412,415,417-418,424-444,453,455-465,493-521,524-545,559-561,564-567,570,573-575,577,579,581,584-585,588-594,597-610,613-617,622-667,669
+apifn/collections/src/runner/reporters/console.ts
+  s_aedb916f2553fc::t_d47a902338da38 7,61
+apifn/collections/src/runner/reporters/junit.ts
+  s_aedb916f2553fc::t_29c519f79cc938 2,21
+apifn/collections/src/runner/runner.ts
+  s_aedb916f2553fc::t_3b2b0764c559cb 7,15,172-173,175,230-231,233-234,237,240,252-254,257-258,260-261,263-267,269-274,276-288,291-295,297-310,312-327,331-333,338-340,350-357,361
+apifn/python/apifn/_redact.py
+  s_aedb916f2553fc::t_df24bf161a0654 1-277
+apifn/python/apifn/collections.py
+  s_aedb916f2553fc::t_1bc0a7e98953e9 11,18-26
+apifn/python/tests/test_collections.py
+  s_aedb916f2553fc::t_2fc9330d3d3da6 3,140-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69f4b660b24e3393c1226ce73f5dca35956fbfa6",
+  "prompts": {},
+  "sessions": {
+    "s_aedb916f2553fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b0483067-7290-4d40-a6fc-0847fde1c583",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
